@@ -1,0 +1,255 @@
+"""Canonical registry of the 24 MKF converter topologies + 3 magnetic-only components.
+
+This is the **single source of truth** for what Heaviside dispatches into
+``PyOpenMagnetics.process_converter()``.
+
+Each entry records:
+
+* ``name``        — Python module name under ``heaviside.topologies``
+* ``mas_schema``  — base filename in ``MAS/schemas/inputs/topologies/`` (without ``.json``)
+* ``pyom_names``  — list of strings to try with ``process_converter`` (first match wins);
+                    captures camelCase / short-form variants observed in MKF 1.3.10+.
+* ``per_topology_binding`` — name of the dedicated ``process_<topology>`` function in
+                    PyOpenMagnetics if one exists, else ``None``. Probed in Phase 1.
+* ``kind``        — ``"converter"`` or ``"magnetic"`` (CMC / DMC / current transformer).
+* ``family``      — coarse grouping for docs / agent dispatch.
+
+If you add a topology here without first adding (or verifying) the matching
+binding in ``vendor/PyOpenMagnetics/``, the empirical probe (``scripts/probe_topologies.py``)
+will mark it as ``UNBOUND`` and CI will record it in ``docs/probe-report.md``.
+Heaviside ships regardless; the missing binding is upstream work.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+
+@dataclass(frozen=True, slots=True)
+class TopologyEntry:
+    name: str
+    mas_schema: str
+    pyom_names: tuple[str, ...]
+    per_topology_binding: str | None
+    kind: Literal["converter", "magnetic"]
+    family: str
+
+
+# Ordered by family for readability; iteration order is stable.
+TOPOLOGIES: tuple[TopologyEntry, ...] = (
+    # --- non-isolated DC/DC ---
+    TopologyEntry("buck", "buck", ("buck",), "process_buck", "converter", "non_isolated"),
+    TopologyEntry("boost", "boost", ("boost",), "process_boost", "converter", "non_isolated"),
+    TopologyEntry("cuk", "cuk", ("cuk", "Cuk"), None, "converter", "non_isolated"),
+    TopologyEntry("sepic", "sepic", ("sepic", "Sepic"), None, "converter", "non_isolated"),
+    TopologyEntry("zeta", "zeta", ("zeta", "Zeta"), None, "converter", "non_isolated"),
+    TopologyEntry(
+        "four_switch_buck_boost",
+        "fourSwitchBuckBoost",
+        ("fourSwitchBuckBoost", "FourSwitchBuckBoost"),
+        None,
+        "converter",
+        "non_isolated",
+    ),
+    # --- isolated single-switch ---
+    TopologyEntry(
+        "isolated_buck",
+        "isolatedBuck",
+        ("isolatedBuck",),
+        "process_isolated_buck",
+        "converter",
+        "isolated_single_switch",
+    ),
+    TopologyEntry(
+        "isolated_buck_boost",
+        "isolatedBuckBoost",
+        ("isolatedBuckBoost",),
+        "process_isolated_buck_boost",
+        "converter",
+        "isolated_single_switch",
+    ),
+    TopologyEntry(
+        "flyback",
+        "flyback",
+        ("flyback",),
+        "process_flyback",
+        "converter",
+        "isolated_single_switch",
+    ),
+    TopologyEntry(
+        "single_switch_forward",
+        "forward",
+        ("singleSwitchForward",),
+        "process_single_switch_forward",
+        "converter",
+        "isolated_single_switch",
+    ),
+    TopologyEntry(
+        "two_switch_forward",
+        "forward",
+        ("twoSwitchForward",),
+        "process_two_switch_forward",
+        "converter",
+        "isolated_two_switch",
+    ),
+    TopologyEntry(
+        "active_clamp_forward",
+        "forward",
+        ("activeClampForward",),
+        "process_active_clamp_forward",
+        "converter",
+        "isolated_two_switch",
+    ),
+    # --- isolated push-pull / bridge ---
+    TopologyEntry(
+        "push_pull",
+        "pushPull",
+        ("pushPull",),
+        "process_push_pull",
+        "converter",
+        "isolated_push_pull",
+    ),
+    TopologyEntry(
+        "asymmetric_half_bridge",
+        "asymmetricHalfBridge",
+        ("asymmetricHalfBridge", "AsymmetricHalfBridge"),
+        None,
+        "converter",
+        "isolated_bridge",
+    ),
+    TopologyEntry(
+        "phase_shifted_full_bridge",
+        "phaseShiftedFullBridge",
+        ("phaseShiftedFullBridge", "PhaseShiftedFullBridge"),
+        None,
+        "converter",
+        "isolated_bridge",
+    ),
+    TopologyEntry(
+        "phase_shifted_half_bridge",
+        "phaseShiftedHalfBridge",
+        ("phaseShiftedHalfBridge", "PhaseShiftedHalfBridge"),
+        None,
+        "converter",
+        "isolated_bridge",
+    ),
+    TopologyEntry(
+        "weinberg",
+        "weinberg",
+        ("weinberg", "Weinberg"),
+        None,
+        "converter",
+        "isolated_bridge",
+    ),
+    # --- resonant ---
+    TopologyEntry(
+        "llc",
+        "llcResonant",
+        ("llc", "llcResonant", "LLC"),
+        None,
+        "converter",
+        "resonant",
+    ),
+    TopologyEntry(
+        "cllc",
+        "cllcResonant",
+        ("cllc", "cllcResonant", "CLLC"),
+        None,
+        "converter",
+        "resonant",
+    ),
+    TopologyEntry(
+        "clllc",
+        "clllcResonant",
+        ("clllc", "clllcResonant", "CLLLC"),
+        None,
+        "converter",
+        "resonant",
+    ),
+    TopologyEntry(
+        "series_resonant",
+        "seriesResonant",
+        ("src", "seriesResonant", "SRC"),
+        None,
+        "converter",
+        "resonant",
+    ),
+    TopologyEntry(
+        "dual_active_bridge",
+        "dualActiveBridge",
+        ("dab", "dualActiveBridge", "DAB"),
+        None,
+        "converter",
+        "resonant",
+    ),
+    # --- AC/DC ---
+    TopologyEntry(
+        "power_factor_correction",
+        "powerFactorCorrection",
+        ("powerFactorCorrection", "pfc", "PFC"),
+        None,
+        "converter",
+        "ac_dc",
+    ),
+    TopologyEntry(
+        "vienna",
+        "vienna",
+        ("vienna", "Vienna"),
+        None,
+        "converter",
+        "ac_dc",
+    ),
+    # --- magnetic-only components (not converters; used directly by EMC filter design) ---
+    TopologyEntry(
+        "common_mode_choke",
+        "commonModeChoke",
+        ("commonModeChoke",),
+        None,
+        "magnetic",
+        "filter_magnetic",
+    ),
+    TopologyEntry(
+        "differential_mode_choke",
+        "differentialModeChoke",
+        ("differentialModeChoke",),
+        None,
+        "magnetic",
+        "filter_magnetic",
+    ),
+    TopologyEntry(
+        "current_transformer",
+        "currentTransformer",
+        ("currentTransformer",),
+        "process_current_transformer",
+        "magnetic",
+        "sense_magnetic",
+    ),
+)
+
+
+CONVERTERS: tuple[TopologyEntry, ...] = tuple(t for t in TOPOLOGIES if t.kind == "converter")
+MAGNETICS_ONLY: tuple[TopologyEntry, ...] = tuple(t for t in TOPOLOGIES if t.kind == "magnetic")
+
+_BY_NAME: dict[str, TopologyEntry] = {t.name: t for t in TOPOLOGIES}
+
+
+def get(name: str) -> TopologyEntry:
+    """Look up a topology by canonical Python name (e.g. ``"buck"``).
+
+    Raises ``KeyError`` (loudly, per CLAUDE.md "no fallbacks" rule) if the
+    name is not in the registry.
+    """
+    if name not in _BY_NAME:
+        raise KeyError(f"Unknown topology {name!r}. Known: {', '.join(sorted(_BY_NAME))}.")
+    return _BY_NAME[name]
+
+
+def names() -> tuple[str, ...]:
+    """Canonical Python names of every registered topology (stable order)."""
+    return tuple(t.name for t in TOPOLOGIES)
+
+
+# Compile-time invariant: the registry must cover all 24 MKF converters + 3 magnetics.
+assert len(CONVERTERS) == 24, f"Expected 24 converters, got {len(CONVERTERS)}"
+assert len(MAGNETICS_ONLY) == 3, f"Expected 3 magnetic-only entries, got {len(MAGNETICS_ONLY)}"

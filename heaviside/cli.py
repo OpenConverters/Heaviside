@@ -1,13 +1,11 @@
-"""Heaviside CLI (entry point: `heaviside`).
-
-Minimal v0.1 surface — subcommands grow with each phase.
-"""
+"""Heaviside CLI (entry point: `heaviside`)."""
 
 from __future__ import annotations
 
 import typer
 
 from heaviside import __version__
+from heaviside.topologies import CONVERTERS, MAGNETICS_ONLY, TOPOLOGIES
 
 app = typer.Typer(
     name="heaviside",
@@ -24,9 +22,19 @@ def version() -> None:
 
 
 @app.command()
-def topologies() -> None:
-    """List supported MKF topologies (populated in Phase 1)."""
-    typer.echo("Phase 1 will enumerate the 24 MKF topologies here.")
+def topologies(family: str | None = None) -> None:
+    """List supported topologies. Optionally filter by family."""
+    entries = TOPOLOGIES if family is None else tuple(t for t in TOPOLOGIES if t.family == family)
+    if not entries:
+        typer.echo(f"No topologies match family={family!r}")
+        raise typer.Exit(code=1)
+    typer.echo(
+        f"{len(entries)} topologies "
+        f"({len(CONVERTERS)} converters + {len(MAGNETICS_ONLY)} magnetic-only):\n"
+    )
+    for t in entries:
+        binding = t.per_topology_binding or "—"
+        typer.echo(f"  {t.name:<28} {t.family:<22} {t.kind:<10} binding={binding}")
 
 
 if __name__ == "__main__":

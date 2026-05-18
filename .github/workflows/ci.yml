@@ -74,6 +74,21 @@ jobs:
           source .venv/bin/activate
           pytest -m unit -n auto --cov=heaviside --cov-report=term-missing
 
+      - name: Topology generator is up to date
+        run: |
+          source .venv/bin/activate
+          python scripts/gen_topology_modules.py
+          if ! git diff --quiet -- heaviside/topologies/; then
+            echo "::error::heaviside/topologies/ is out of sync with the registry. Run 'make gen-topologies'."
+            git --no-pager diff -- heaviside/topologies/
+            exit 1
+          fi
+
+      - name: Schema submodules present (gen_types --check)
+        run: |
+          source .venv/bin/activate
+          python scripts/gen_types.py --check
+
   pyopenmagnetics-build:
     name: Build PyOpenMagnetics from submodule (cached by SHA)
     runs-on: ubuntu-latest
@@ -119,6 +134,19 @@ jobs:
         run: |
           pip install vendor/PyOpenMagnetics/dist/*.whl
           python -c "import PyOpenMagnetics as P; print('PyOpenMagnetics OK; functions:', len(dir(P)))"
+
+      - name: Empirical topology probe
+        run: |
+          pip install -e '.[dev]'
+          python scripts/probe_topologies.py
+          # Upload the probe report as a build artefact for visibility.
+          cat docs/probe-report.md
+
+      - name: Probe report committed and up to date
+        run: |
+          git diff --exit-code -- docs/probe-report.md || (
+            echo "::error::docs/probe-report.md is out of sync. Run 'make probe' and commit." && exit 1
+          )
 
   realism-and-regression:
     name: Realism + regression (skipped until Phase 1+)
