@@ -1,0 +1,143 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "heaviside"
+version = "0.1.0.dev0"
+description = "PyOpenMagnetics-first, agent-driven power electronics design system"
+readme = "README.md"
+requires-python = "==3.12.*"
+license = { text = "MIT" }
+authors = [{ name = "OpenConverters" }]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+]
+dependencies = [
+  # Engine (built from vendor/PyOpenMagnetics submodule in CI; PyPI fallback for dev)
+  # 1.3.10 is the current PyPI release; 1.3.11 + later is built from vendor/PyOpenMagnetics in CI.
+  "PyOpenMagnetics>=1.3.10",
+  # Numerics
+  "numpy>=2.0",
+  "scipy>=1.13",
+  # Agent runtime (model-agnostic)
+  "strands-agents>=1.34",
+  # Schema-derived TypedDicts only; one BaseModel for the user DesignSpec
+  "pydantic>=2.8",
+  # CLI + API
+  "typer>=0.12",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  # MCP server
+  "mcp>=1.0",
+  # Datasheets / PDF
+  "pdfplumber>=0.11",
+  "pymupdf>=1.24",
+  # Component scraping (ported from Proteus)
+  "patchright>=1.46",
+  "beautifulsoup4>=4.12",
+  # Misc
+  "httpx>=0.27",
+  "tenacity>=9.0",
+  "orjson>=3.10",
+  "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.7",
+  "mypy>=1.13",
+  "pytest>=8.3",
+  "pytest-xdist>=3.6",
+  "pytest-cov>=5.0",
+  "hypothesis>=6.115",
+  "types-requests",
+]
+types = [
+  # quicktype-driven TypedDict generation lives in scripts/gen_types.py;
+  # quicktype itself is a Node tool, installed via `npx` in `make types`.
+]
+
+[project.scripts]
+heaviside = "heaviside.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["heaviside"]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+# Submodules are foreign code — never lint, never format.
+extend-exclude = [
+  "heaviside/types/_generated",
+  "vendor",
+  "MAS", "PEAS", "SAS", "CAS", "RAS", "TAS",
+  ".venv",
+]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",      # pycodestyle / pyflakes
+  "I",                # isort
+  "B",                # bugbear
+  "UP",               # pyupgrade
+  "RUF",              # ruff-specific
+  "SIM",              # simplify
+  "TID",              # tidy-imports
+]
+ignore = ["E501"]  # line length handled by formatter
+
+# ---------------------------------------------------------------------------
+# Mypy (strict)
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+warn_return_any = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+no_implicit_reexport = true
+show_error_codes = true
+exclude = [
+  "heaviside/types/_generated/",
+  "vendor/",
+  "MAS/", "PEAS/", "SAS/", "CAS/", "RAS/", "TAS/",
+  ".venv/",
+]
+
+[[tool.mypy.overrides]]
+module = ["PyOpenMagnetics.*", "PyMKF.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "unit: fast, no external deps",
+  "property: hypothesis property tests",
+  "realism: realism-gate (physics-bound) tests",
+  "regression: golden regression against TAS converters.ndjson",
+  "integration: requires PyOpenMagnetics + ngspice",
+  "evals: agent eval suite (LLM required)",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["heaviside"]
+omit = ["heaviside/types/_generated/*"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]

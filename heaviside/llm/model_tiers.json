@@ -1,0 +1,115 @@
+{
+  "tier_1_certified": {
+    "description": "Full pipeline validated. Design correctness guaranteed against reference designs. Review roles permitted.",
+    "models": [
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "claude-opus-4-20250514",
+      "claude-sonnet-4-20250514",
+      "claude-opus-4-5",
+      "claude-sonnet-4-5",
+      "gpt-4o",
+      "gpt-4o-2024-11-20",
+      "gpt-4o-2024-08-06",
+      "kimi-k2.5",
+      "us.anthropic.claude-opus-4-6-v1:0",
+      "us.anthropic.claude-sonnet-4-6-v1:0",
+      "us.anthropic.claude-sonnet-4-20250514-v1:0",
+      "anthropic/claude-opus-4-6",
+      "anthropic/claude-sonnet-4-6",
+      "anthropic/claude-sonnet-4-20250514"
+    ],
+    "allowed_roles": ["all"],
+    "min_context_tokens": 128000,
+    "review_roles_allowed": true
+  },
+  "tier_2_supported": {
+    "description": "Basic designs validated. Complex topologies (LLC, DAB, PSFB, ACF) may produce suboptimal results. Review roles allowed with warning.",
+    "models": [
+      "claude-haiku-4-5-20251001",
+      "claude-haiku-4-5",
+      "gpt-4o-mini",
+      "gpt-4o-mini-2024-07-18",
+      "moonshot-v1-128k",
+      "moonshot-v1-32k",
+      "mistral-large-latest",
+      "mistral-large-2407"
+    ],
+    "allowed_roles": ["workhorse", "review_with_warning"],
+    "min_context_tokens": 32000,
+    "review_roles_allowed": true,
+    "review_warning": "Tier 2 model in review role — adversarial analysis may be less thorough. Consider using a Tier 1 model for Ray/Nicola.",
+    "complex_topology_warning": "Tier 2 model may produce suboptimal results for LLC, DAB, PSFB, or ACF topologies."
+  },
+  "tier_3_experimental": {
+    "description": "Pipeline runs but results are not validated. User assumes responsibility. Requires deterministic pipeline mode.",
+    "models": [
+      "llama3:70b",
+      "llama3.1:70b",
+      "llama3.2:70b",
+      "qwen2.5:72b",
+      "qwen2.5:32b",
+      "llama3:latest"
+    ],
+    "allowed_roles": ["workhorse_only"],
+    "min_context_tokens": 16000,
+    "review_roles_allowed": false,
+    "requires_deterministic_pipeline": true
+  },
+  "blocked": {
+    "description": "Context window too small (<16k) and/or tool calling unreliable. Use a Tier 3+ model.",
+    "models": [
+      "llama3:8b",
+      "llama3.1:8b",
+      "llama3.2:3b",
+      "llama3.2:1b",
+      "mistral:7b",
+      "mistral:latest",
+      "phi-3:mini",
+      "phi-3.5:mini",
+      "phi3:mini",
+      "gemma:7b",
+      "gemma2:9b",
+      "qwen2.5:7b",
+      "qwen2.5:3b"
+    ],
+    "reason": "Context window too small (<16k) and/or tool calling unreliable. Use a Tier 3+ model."
+  },
+  "_meta": {
+    "version": "1.1",
+    "context_window_table": {
+      "claude-opus-4-6": 200000,
+      "claude-sonnet-4-6": 200000,
+      "claude-opus-4-20250514": 200000,
+      "claude-sonnet-4-20250514": 200000,
+      "claude-opus-4-5": 200000,
+      "claude-sonnet-4-5": 200000,
+      "claude-haiku-4-5-20251001": 200000,
+      "claude-haiku-4-5": 200000,
+      "gpt-4o": 128000,
+      "gpt-4o-2024-11-20": 128000,
+      "gpt-4o-mini": 128000,
+      "kimi-k2.5": 262144,
+      "moonshot-v1-128k": 131072,
+      "moonshot-v1-32k": 32768,
+      "mistral-large-latest": 131072,
+      "mistral-large-2407": 131072,
+      "us.anthropic.claude-opus-4-6-v1:0": 200000,
+      "us.anthropic.claude-sonnet-4-6-v1:0": 200000,
+      "us.anthropic.claude-sonnet-4-20250514-v1:0": 200000,
+      "anthropic/claude-opus-4-6": 200000,
+      "anthropic/claude-sonnet-4-6": 200000,
+      "anthropic/claude-sonnet-4-20250514": 200000,
+      "llama3:70b": 8192,
+      "llama3.1:70b": 131072,
+      "llama3.2:70b": 131072,
+      "qwen2.5:72b": 131072,
+      "qwen2.5:32b": 32768,
+      "llama3:8b": 8192,
+      "mistral:7b": 32768,
+      "phi-3:mini": 4096
+    },
+    "review_roles": ["ray", "nicola"],
+    "complex_topologies": ["LLC", "DAB", "PSFB", "ACF", "CLLC"]
+  }
+}

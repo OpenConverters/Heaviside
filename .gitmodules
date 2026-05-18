@@ -1,0 +1,28 @@
+[submodule "vendor/PyOpenMagnetics"]
+	path = vendor/PyOpenMagnetics
+	url = git@github.com:OpenMagnetics/PyMKF.git
+	branch = main
+[submodule "MAS"]
+	path = MAS
+	url = git@github.com:OpenMagnetics/MAS.git
+	branch = main
+[submodule "PEAS"]
+	path = PEAS
+	url = git@github.com:Power-Supply-Manufacturers-Association/PEAS.git
+	branch = main
+[submodule "SAS"]
+	path = SAS
+	url = git@github.com:OpenConverters/SAS.git
+	branch = main
+[submodule "CAS"]
+	path = CAS
+	url = git@github.com:OpenConverters/CAS.git
+	branch = main
+[submodule "RAS"]
+	path = RAS
+	url = git@github.com:OpenConverters/RAS.git
+	branch = main
+[submodule "TAS"]
+	path = TAS
+	url = git@github.com:OpenConverters/TAS.git
+	branch = main

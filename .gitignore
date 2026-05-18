@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+
+# Virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+.uv-cache/
+
+# Tooling
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Generated type stubs
+heaviside/types/_generated/*.py
+!heaviside/types/_generated/__init__.py
+!heaviside/types/_generated/.gitkeep
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Heaviside runtime artefacts
+data/runtime/
+data/cache/
+*.ngspice.log
+*.raw
+results/
+.heaviside/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Locks (TAS librarian)
+.locks/
+*.lock
