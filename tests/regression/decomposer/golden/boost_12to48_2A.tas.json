@@ -1,0 +1,135 @@
+{
+  "stages": [
+    {
+      "name": "power_stage",
+      "role": "switchingCell",
+      "inputPort": {
+        "type": "dcBus",
+        "wire": "Vin"
+      },
+      "outputPorts": [
+        {
+          "type": "dcOutput",
+          "wire": "Vout"
+        }
+      ],
+      "circuit": {
+        "components": [
+          {
+            "name": "Q1",
+            "data": "TAS/data/mosfets.ndjson?placeholder=Q1"
+          },
+          {
+            "name": "D1",
+            "data": "TAS/data/diodes.ndjson?placeholder=D1"
+          },
+          {
+            "name": "L1",
+            "data": "TAS/data/magnetics.ndjson?placeholder=L1"
+          },
+          {
+            "name": "C_out",
+            "data": "TAS/data/capacitors.ndjson?placeholder=C_out"
+          }
+        ],
+        "connections": [
+          {
+            "name": "sw_node",
+            "kind": "wire",
+            "endpoints": [
+              {
+                "component": "L1",
+                "pin": "2"
+              },
+              {
+                "component": "Q1",
+                "pin": "D"
+              },
+              {
+                "component": "D1",
+                "pin": "A"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "controller",
+      "role": "control",
+      "circuit": {
+        "components": [
+          {
+            "name": "U1",
+            "data": "TAS/data/controllers.ndjson?placeholder=U1"
+          }
+        ],
+        "connections": []
+      },
+      "senses": [
+        {
+          "wire": "Vout",
+          "signal": "voltage"
+        }
+      ],
+      "drives": [
+        {
+          "component": "Q1",
+          "signal": "gate"
+        }
+      ]
+    }
+  ],
+  "interStageCircuit": [
+    {
+      "name": "Vin",
+      "kind": "externalPort",
+      "direction": "input",
+      "endpoints": [
+        {
+          "component": "L1",
+          "pin": "1"
+        }
+      ]
+    },
+    {
+      "name": "Vout",
+      "kind": "externalPort",
+      "direction": "output",
+      "endpoints": [
+        {
+          "component": "D1",
+          "pin": "K"
+        },
+        {
+          "component": "C_out",
+          "pin": "1"
+        }
+      ]
+    },
+    {
+      "name": "GND",
+      "kind": "wire",
+      "endpoints": [
+        {
+          "component": "Q1",
+          "pin": "S"
+        },
+        {
+          "component": "C_out",
+          "pin": "2"
+        }
+      ]
+    },
+    {
+      "name": "Q1_gate",
+      "kind": "wire",
+      "endpoints": [
+        {
+          "component": "Q1",
+          "pin": "G"
+        }
+      ]
+    }
+  ]
+}

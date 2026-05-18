@@ -1,0 +1,154 @@
+{
+  "stages": [
+    {
+      "name": "primary_switch",
+      "role": "switchingCell",
+      "inputPort": {
+        "type": "dcBus",
+        "wire": "Vin"
+      },
+      "outputPorts": [
+        {
+          "type": "switchNode",
+          "wire": "switch_node"
+        }
+      ],
+      "circuit": {
+        "components": [
+          {
+            "name": "Q1",
+            "data": "TAS/data/mosfets.ndjson?placeholder=Q1"
+          },
+          {
+            "name": "D_demag",
+            "data": "TAS/data/diodes.ndjson?placeholder=D_demag"
+          }
+        ],
+        "connections": []
+      }
+    },
+    {
+      "name": "isolation",
+      "role": "isolation",
+      "inputPort": {
+        "type": "switchNode",
+        "wire": "switch_node"
+      },
+      "outputPorts": [
+        {
+          "type": "winding",
+          "wire": "demag_node"
+        }
+      ],
+      "circuit": {
+        "components": [
+          {
+            "name": "T1",
+            "data": "TAS/data/magnetics.ndjson?placeholder=T1",
+            "pins": [
+              "pri.1",
+              "pri.2",
+              "demag.1",
+              "demag.2"
+            ]
+          }
+        ],
+        "connections": []
+      }
+    },
+    {
+      "name": "controller",
+      "role": "control",
+      "circuit": {
+        "components": [
+          {
+            "name": "U1",
+            "data": "TAS/data/controllers.ndjson?placeholder=U1"
+          }
+        ],
+        "connections": []
+      },
+      "senses": [
+        {
+          "wire": "Vout0",
+          "signal": "voltage"
+        }
+      ],
+      "drives": [
+        {
+          "component": "Q1",
+          "signal": "gate"
+        }
+      ]
+    }
+  ],
+  "interStageCircuit": [
+    {
+      "name": "Vin",
+      "kind": "externalPort",
+      "direction": "input",
+      "endpoints": [
+        {
+          "component": "Q1",
+          "pin": "D"
+        },
+        {
+          "component": "D_demag",
+          "pin": "K"
+        }
+      ]
+    },
+    {
+      "name": "switch_node",
+      "kind": "wire",
+      "endpoints": [
+        {
+          "component": "Q1",
+          "pin": "S"
+        },
+        {
+          "component": "T1",
+          "pin": "pri.1"
+        }
+      ]
+    },
+    {
+      "name": "demag_node",
+      "kind": "wire",
+      "endpoints": [
+        {
+          "component": "T1",
+          "pin": "demag.2"
+        },
+        {
+          "component": "D_demag",
+          "pin": "A"
+        }
+      ]
+    },
+    {
+      "name": "GND",
+      "kind": "wire",
+      "endpoints": [
+        {
+          "component": "T1",
+          "pin": "pri.2"
+        },
+        {
+          "component": "T1",
+          "pin": "demag.1"
+        }
+      ]
+    },
+    {
+      "name": "Q1_gate",
+      "kind": "wire",
+      "endpoints": [
+        {
+          "component": "Q1",
+          "pin": "G"
+        }
+      ]
+    }
+  ]
+}
