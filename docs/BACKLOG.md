@@ -9,24 +9,27 @@ from `Now`, do it, commit, and move on without checking in.
 
 ## Now (do next, in order)
 
-1. **Stencils for the next batch of topologies** (in priority order):
-   `phase_shifted_full_bridge`, `asymmetric_half_bridge`,
-   `weinberg`, `series_resonant`, `dual_active_bridge`. Each needs:
+1. **Stencils for the next batch of topologies.**
+   Done so far (with stencil + golden + registry + drift-test row):
+   `push_pull`, `phase_shifted_full_bridge`, `phase_shifted_half_bridge`,
+   `asymmetric_half_bridge`, `weinberg`, `dual_active_bridge`. SRC blocked
+   on MKF behavioural-bridge limitation (see Upstream bugs).
+
+   Remaining un-stenciled converter topologies (per registry, 24 total):
+   `llc` (BLOCKED — PyOM segfault in `design_magnetics_from_converter`,
+   see Upstream bugs), `cllc`, `clllc`, `series_resonant` (BLOCKED, see
+   above), `power_factor_correction`, `vienna`. CLLC is the natural next
+   target — it's the first topology that exercises the new
+   `capacitor_binding` plumbing (item 3) and avoids the LLC engine bug.
+   Each remaining stencil needs:
    - a stencil function in `heaviside/decomposer/stencils.py`
    - a golden `.spice` + `.tas.json` under `tests/regression/decomposer/golden/`
-     (push-pull turned out to need a TAS-only golden — MKF emits
-     non-deterministic uninitialised memory in `Vpwm` PULSE and `Lmag`
-     header. Other bridges may hit the same; mirror the pattern.)
-   - a `magnetic_binding` entry in the registry — extras roles now empirically
-     confirmed via `docs/extras-probe.json`:
-     - PSFB / PSHB → `outputInductor` + `seriesInductor`
-     - AHB → `outputInductor` (with `rectifierType=fullBridge`)
-     - weinberg → `inputCoupledInductor`
-     - SRC / DAB → `seriesInductor`
+     (bridge topologies → TAS-only goldens; see `weinberg` / `dab` for the
+     pattern)
+   - a `magnetic_binding` entry in the registry (extras roles in
+     `docs/extras-probe.json`)
+   - a `capacitor_binding` entry for CLLC / CLLLC
    - a row in the drift test prefix map
-   - Done: `push_pull`, `phase_shifted_full_bridge`,
-     `asymmetric_half_bridge`, `weinberg`. SRC blocked on MKF behavioural-
-     bridge limitation (see Upstream bugs); next up: `dual_active_bridge`.
 
 2. **End-to-end `heaviside design` CLI command.** ✅ Done. `heaviside design
    TOPOLOGY --spec FILE [--turns ...] [--lm ...] [--bridge-mode auto|switch|
@@ -106,8 +109,9 @@ from `Now`, do it, commit, and move on without checking in.
 
 - LLC `L_r → seriesInductor` is an assumption from MKF source, not a
   verified runtime fact. Item 1 in `Now` fixes this.
-- Capacitor extras (`ExtraCapacitorSpec`) have no TAS-side attachment
-  path yet; waiting on the librarian agent.
+- Capacitor extras (`ExtraCapacitorSpec`) now have a TAS-side attach
+  path via `TopologyEntry.capacitor_binding` + `cas_inputs` on the TAS
+  component (item 3, done). Still need a stencil to consume it (CLLC).
 - `bridge.design_converter_components` REAL mode requires the Magnetic
   JSON (`design.magnetic`), not the MAS envelope (`design.mas`). This
   is locked into the bridge but easy to regress — see the test in
