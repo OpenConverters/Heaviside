@@ -175,10 +175,14 @@ so the gap stays visible from inside Heaviside's planning loop.
   v0.1 explicitly does NOT model reflected secondary load — the
   `secondary_reflected_current_modelled: false` provenance flag
   pins that for regression and a future extension must update the
-  flag in the same commit.  Multi-output flybacks throw (not yet
-  supported).  **Remaining**: isolated_buck_boost (inverting
-  primary — worst-case ripple at Vin_max but avg current at
-  Vin_min, same shape as the boost extractor);
+  flag in the same commit.  Isolated buck-boost extractor handles
+  the inverting primary: D = |Vout_pri|/(Vin+|Vout_pri|), ripple
+  monotone increasing in Vin (worst at Vin_max), avg primary
+  current at Vin_min (D_max), Ipeak combined as pessimistic upper
+  bound across opposite Vin extremes (same Vin-split as the boost
+  extractor); spec carries |Vout_pri| magnitude and a negative
+  value throws.  Multi-output flybacks throw (not yet supported).
+  **Remaining**:
   librarian agent populates `vds_rated` / `vrrm_rated` / `v_rated` on TAS
   components for the voltage derating checks; analyst agent computes Tj
   for thermal_limit; sim agent populates `simulation_results` /

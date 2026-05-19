@@ -1198,6 +1198,118 @@ def _enrich_isolated_buck(tas: dict, spec: Mapping[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Isolated buck-boost extractor
+# ---------------------------------------------------------------------------
+
+
+def _enrich_isolated_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty + T1 Isat / Ipeak for the isolated inverting buck-boost.
+
+    Topology shape (from the stencil): single primary switch Q1 + coupled
+    inductor T1 (pri.2 = GND) + D_pri rectifying the primary inverting
+    output to Vout_pri (negative) + D_out0 rectifying the secondary to
+    Vout0 (isolated, open-loop, follows by turns ratio).  T1 is the
+    binding magnetic — its primary winding carries the inverting
+    buck-boost inductor current, so we stamp Isat / Ipeak on T1.
+
+    Spec convention: ``outputVoltages[0]`` carries the *magnitude*
+    ``|Vout_pri|`` (sign is implied by the topology being inverting),
+    matching the rest of the extractor family.  ``outputCurrents[0]``
+    is the load current drawn from the primary rail.
+
+    Math (CCM, primary side only, inverting buck-boost):
+
+      * ``D = |Vout_pri| / (Vin + |Vout_pri|)`` ⇒ ``D_max`` at
+        ``Vin_min``, ``D_min`` at ``Vin_max``.
+      * Inductor ripple ``ΔI_L = Vin · D / (L_pri · fsw)``.
+        Substituting D gives
+        ``ΔI_L(Vin) = Vin · |Vout_pri| / ((Vin + |Vout_pri|) · L · fsw)``,
+        whose derivative wrt Vin is strictly positive
+        (``|Vout_pri|² / (Vin + |Vout_pri|)² / (L · fsw)``), so the
+        ripple peaks at ``Vin_max``.  Same Vin-extreme split as the
+        boost extractor: worst-case avg current and worst-case
+        ripple do NOT coincide.
+      * Average primary-inductor current
+        ``I_L_avg = Iout / (1 − D)`` ⇒ worst at ``Vin_min`` (D_max).
+      * ``Ipeak_worst = I_L_avg(Vin_min) + ΔI_L(Vin_max) / 2`` with
+        the PROTEUS −20 % L tolerance baked into the ripple term.
+        Honest pessimistic upper bound: the two worst cases occur at
+        opposite Vin extremes — a real cycle does not see both
+        simultaneously, but stamping anything less would let a real
+        cycle exceed the stamped value.
+      * ``Isat = B_sat · N_pri · A_e / L_pri``.
+
+    v0.1 scope limit (same as isolated_buck): reflected secondary
+    load is NOT modelled.  The
+    ``secondary_reflected_current_modelled: false`` provenance flag
+    pins this.
+    """
+    where = "isolated_buck_boost spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    L_pri = _required_inductance(spec, "desiredInductance", where)
+
+    if vout <= 0:
+        raise EnrichmentError(
+            f"isolated_buck_boost enrichment: outputVoltages[0] ({vout}) must be "
+            "the positive magnitude |Vout_pri| (the sign is implied — this "
+            "topology produces a negative primary rail)"
+        )
+
+    d_max = vout / (vmin + vout)
+    d_min = vout / (vmax + vout)
+    L_worst = 0.8 * L_pri
+
+    # Ripple is monotone increasing in Vin → worst at Vin_max.
+    ripple_worst = vmax * d_min / (L_worst * fsw)
+    iL_avg_max = iout / (1.0 - d_max)
+    ipeak_worst = iL_avg_max + ripple_worst / 2.0
+
+    si, ci, t1_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "isolated_buck_boost enrichment (T1)"
+    )
+    mas = _read_mas(t1_comp, "isolated_buck_boost T1 MAS")
+    A_e, _, b_sat = _mas_isat_inputs(mas, "isolated_buck_boost T1 MAS")
+    N_pri = _winding_turns_by_name(mas, "pri", "isolated_buck_boost T1 MAS")
+    isat = b_sat * float(N_pri) * float(A_e) / L_pri
+
+    tas["duty"] = round(d_max, 6)
+    tas["duty_min"] = round(d_min, 6)
+    tas["duty_max"] = round(d_max, 6)
+
+    enriched = dict(t1_comp)
+    enriched["isat"] = round(isat, 6)
+    enriched["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched["isat_provenance"] = {
+        "method": "B_sat * N_pri * A_e / L_pri (isolated_buck_boost v0.1, primary winding)",
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": int(N_pri),
+        "effective_area_m2": float(A_e),
+        "inductance_H": L_pri,
+    }
+    enriched["ipeak_provenance"] = {
+        "method": (
+            "Iout/(1-D_max) + ripple(Vin_max)/2 — pessimistic upper bound: "
+            "worst-case avg current at Vin_min, worst-case ripple at Vin_max "
+            "(they do not coincide in a single cycle)"
+        ),
+        "role": "primary_buck_boost_inductor",
+        "iout_A": iout,
+        "vout_pri_magnitude_V": vout,
+        "d_max": round(d_max, 6),
+        "d_min": round(d_min, 6),
+        "iL_avg_max_A": round(iL_avg_max, 6),
+        "ripple_worst_A_pp": round(ripple_worst, 6),
+        "vin_min_V": vmin,
+        "vin_max_V": vmax,
+        "fsw_Hz": fsw,
+        "L_worst_H": L_worst,
+        "secondary_reflected_current_modelled": False,
+    }
+    tas["topology"]["stages"][si]["circuit"]["components"][ci] = enriched
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -1213,6 +1325,7 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "two_switch_forward": _enrich_two_switch_forward,
     "active_clamp_forward": _enrich_active_clamp_forward,
     "isolated_buck": _enrich_isolated_buck,
+    "isolated_buck_boost": _enrich_isolated_buck_boost,
 }
 
 
