@@ -227,6 +227,12 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         None,
         "converter",
         "resonant",
+        # DAB has the series leakage/external inductor L_r and the main
+        # transformer T1. Both bridges are real MOSFETs (no diode rect).
+        magnetic_binding={
+            "T1":  None,
+            "L_r": "seriesInductor",
+        },
     ),
     # --- AC/DC ---
     TopologyEntry(

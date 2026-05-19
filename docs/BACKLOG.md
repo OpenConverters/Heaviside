@@ -24,8 +24,9 @@ from `Now`, do it, commit, and move on without checking in.
      - weinberg → `inputCoupledInductor`
      - SRC / DAB → `seriesInductor`
    - a row in the drift test prefix map
-   - Done: `push_pull` (4-winding CT/CT, `magnetic_binding={"T1": None,
-     "L_out0": "outputInductor"}`, `Vin=48 Vout=5 N=4` golden).
+   - Done: `push_pull`, `phase_shifted_full_bridge`,
+     `asymmetric_half_bridge`, `weinberg`. SRC blocked on MKF behavioural-
+     bridge limitation (see Upstream bugs); next up: `dual_active_bridge`.
 
 2. **End-to-end `heaviside design` CLI command.** First user-visible surface.
    Pipeline: `DesignSpec` (JSON or flags) → `decompose_from_spec` →
@@ -45,6 +46,15 @@ from `Now`, do it, commit, and move on without checking in.
   integration test in `tests/integration/test_bridge_integration.py` uses a
   subprocess canary and skips with a visible reason; canary will auto-enable
   the test the moment upstream is fixed.
+
+- **MKF SRC (`series_resonant`) does not honour `bridge_simulation_mode="switch"`**
+  — always emits a single behavioural `Vbridge` PULSE source instead of real
+  SHI/SLO (or SA-SD) switches, unlike LLC / DAB / PSFB / AHB. Blocks the
+  SRC stencil because there are no MOSFET refdeses in the deck to anchor
+  Q1/Q2 against. Options: (a) fix upstream MKF to emit switches like LLC
+  does, (b) write a deck-augmenting stencil that synthesises Q1-Q4 in TAS
+  not anchored to spice refdeses — this would be a new pattern affecting
+  any future behavioural-bridge topology. Deferred pending decision.
 
 ## Next (after Now is empty)
 

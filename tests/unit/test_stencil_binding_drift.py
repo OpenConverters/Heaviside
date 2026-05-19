@@ -33,6 +33,7 @@ PREFIX_TO_TOPOLOGY: dict[str, str] = {
     "boost": "boost",
     "buck": "buck",
     "cuk": "cuk",
+    "dab": "dual_active_bridge",
     "flyback": "flyback",
     "isobb": "isolated_buck_boost",
     "isobuck": "isolated_buck",

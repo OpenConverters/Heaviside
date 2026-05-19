@@ -2994,6 +2994,297 @@ def weinberg(deck: SpiceDeck) -> TasTopology:
     }
 
 
+# -----------------------------------------------------------------------------
+# Dual Active Bridge (DAB) stencil
+# -----------------------------------------------------------------------------
+#
+# MKF deck (bridge_simulation_mode="switch", verified empirically; see
+# /tmp/dab.cir). DAB is bidirectional: BOTH primary and secondary are
+# full bridges of real MOSFETs. The secondary bridge IS the rectifier
+# (synchronous, also implements active power-flow control). No diode
+# rectifier; output filter is just Cout.
+#
+#   Vdc1 vin_dc1 0 800
+#   .model SW1 SW; .model DIDEAL D(...)
+#   Vpwm_p_l1/Vpwm_p_l2/Vpwm_p_r1/Vpwm_p_r2          ; primary gate drives (drop)
+#
+#   * Primary bridge — Leg A: S1/S2 @ bridge_a1; Leg B: S3/S4 @ bridge_b1
+#   S1 vin_dc1 bridge_a1 …                            ; Q1.D=Vin Q1.S=bridge_a1
+#   D1 0 bridge_a1 DIDEAL                             ; body diode (drop, _TESTBENCH_EXACT)
+#   S2 bridge_a1 0 …                                  ; Q2.D=bridge_a1 Q2.S=0
+#   D2 bridge_a1 vin_dc1 DIDEAL
+#   S3 vin_dc1 bridge_b1 …                            ; Q3.D=Vin Q3.S=bridge_b1
+#   D3 0 bridge_b1 DIDEAL
+#   S4 bridge_b1 0 …                                  ; Q4.D=bridge_b1 Q4.S=0
+#   D4 bridge_b1 vin_dc1 DIDEAL
+#   Rsnub_q1..q4 / Csnub_q1..q4                       ; snubbers (drop)
+#
+#   * Vpri_sense + Evab probe (drop)
+#   Vpri_sense bridge_a1 pri_out 0
+#   Evab vab 0 pri_out bridge_b1 1
+#
+#   * Series leakage + transformer
+#   L_series pri_out trafo_pri                        ; → L_r (seriesInductor)
+#   L_pri trafo_pri bridge_b1                         ; T1.pri.1=trafo_pri  .2=bridge_b1
+#   L_sec_o1 trafo_sec_a_o1 bridge_sec_b_o1           ; T1.sec0.1=trafo_sec_a  .2=bridge_sec_b
+#   K1 L_pri L_sec_o1 0.9999                          ; → T1 coupling
+#
+#   * Secondary bridge — Leg A: S5/S6 @ sec_a_o1; Leg B: S7/S8 @ sec_b_o1
+#   Vsec1_sense_o1 / Vsec2_sense_o1                   ; ammeters (drop)
+#   Vpwm_s_l1/Vpwm_s_l2/Vpwm_s_r1/Vpwm_s_r2           ; secondary gate drives (drop)
+#   S5_o1 vin_dc2_o1 sec_a_o1 …                       ; Q5.D=Vout Q5.S=sec_a_o1
+#   D5_o1..D8_o1 DIDEAL                               ; body diodes (drop, extra_testbench)
+#   S6_o1 sec_a_o1 0 …                                ; Q6.D=sec_a_o1 Q6.S=0
+#   S7_o1 vin_dc2_o1 sec_b_o1 …                       ; Q7.D=Vout Q7.S=sec_b_o1
+#   S8_o1 sec_b_o1 0 …                                ; Q8.D=sec_b_o1 Q8.S=0
+#   Rsnub_q5_o1..q8_o1 / Csnub_q5_o1..q8_o1           ; snubbers (drop)
+#
+#   * Output filter
+#   Resr_o1 vin_dc2_o1 vout_cap_o1 0.05               ; ESR (drop)
+#   Cout_o1 vout_cap_o1 vout_neg_o1                   ; C_out0
+#   Rload_o1 / Vsec_sense_o1 / Bvsec_o1_diff           ; drop
+#
+# Mapping to TAS:
+#   primary_bridge:   Q1..Q4              dcBus Vin → 2× hfAc (bridge_a1, bridge_b1)
+#   isolation:        L_r + T1            2× hfAc → 2× winding (sec_a, sec_b)
+#                     (L_r lives logically with the inverter but its only
+#                      external endpoints are bridge_a1 and trafo_pri,
+#                      i.e. both inside the inverter→isolation interface;
+#                      we keep it in the isolation stage to mirror PSFB.)
+#   secondary_bridge: Q5..Q8              2× winding → dcOutput Vout0
+#                     (synchronous rectifier; also bidirectional inverter)
+#   outputFilter:     C_out0              dcOutput → external port
+#   control:          U1 drives {Q1..Q8} (8 switches — DAB has 4 phase legs)
+
+
+_DAB_REAL_KINDS = {
+    # Primary bridge
+    "S1":         "switch",
+    "S2":         "switch",
+    "S3":         "switch",
+    "S4":         "switch",
+    # Series resonant/leakage inductor
+    "L_series":   "inductor",      # → L_r (seriesInductor)
+    # Transformer T1
+    "L_pri":      "inductor",      # → T1.pri
+    "L_sec_o1":   "inductor",      # → T1.sec0
+    "K1":         "coupling",      # → T1 coupling
+    # Secondary bridge (synchronous rectifier)
+    "S5_o1":      "switch",
+    "S6_o1":      "switch",
+    "S7_o1":      "switch",
+    "S8_o1":      "switch",
+    # Output cap
+    "Cout_o1":    "capacitor",     # → C_out0
+}
+
+
+def _dab_control_stage() -> dict[str, Any]:
+    """Controller drives all 8 MOSFETs (4 primary legs + 4 secondary
+    sync-rect legs) and senses the output bus."""
+    return {
+        "name": "controller",
+        "role": "control",
+        "circuit": {
+            "components": [_component("controller", "U1")],
+            "connections": [],
+        },
+        "senses": [{"wire": "Vout0", "signal": "voltage"}],
+        "drives": [
+            {"component": q, "signal": "gate"}
+            for q in ("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8")
+        ],
+    }
+
+
+def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
+    """Decompose an MKF DAB deck (switch-mode, both bridges real) into TAS.
+
+    Requires ``bridge_simulation_mode="switch"``. The DAB stencil is
+    bidirectional: both the primary and secondary full bridges are
+    composed of real MOSFETs, and the secondary bridge IS the
+    rectifier (synchronous, also implements phase-shift power control).
+    """
+    _validate_real_set(
+        deck,
+        "dual_active_bridge",
+        _DAB_REAL_KINDS,
+        # Synthetic body diodes for both bridges:
+        # - D1..D4: primary bridge body diodes
+        # - D5_o1..D8_o1: secondary bridge body diodes
+        # Note: D1..D4 collide with real freewheeling diodes in
+        # buck/flyback so they must live here, not in
+        # _TESTBENCH_EXACT (same reasoning as AHB).
+        extra_testbench=frozenset({
+            "D1", "D2", "D3", "D4",
+            "D5_o1", "D6_o1", "D7_o1", "D8_o1",
+        }),
+    )
+
+    primary_bridge = {
+        "name": "primary_bridge",
+        "role": "inverter",
+        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "outputPorts": [
+            {"type": "hfAc", "wire": "bridge_a1", "name": "bridge_a1"},
+            {"type": "hfAc", "wire": "bridge_b1", "name": "bridge_b1"},
+        ],
+        "circuit": {
+            "components": [
+                _component("mosfet", "Q1"),   # ← S1 (Leg A high)
+                _component("mosfet", "Q2"),   # ← S2 (Leg A low)
+                _component("mosfet", "Q3"),   # ← S3 (Leg B high)
+                _component("mosfet", "Q4"),   # ← S4 (Leg B low)
+            ],
+            "connections": [],
+        },
+    }
+
+    isolation = {
+        "name": "isolation",
+        "role": "isolation",
+        "inputPort": {"type": "hfAc", "wire": "bridge_a1"},
+        "outputPorts": [
+            {"type": "winding", "wire": "sec_a_o1", "name": "sec_a"},
+            {"type": "winding", "wire": "sec_b_o1", "name": "sec_b"},
+        ],
+        "circuit": {
+            "components": [
+                _component("magnetic", "L_r"),       # ← L_series (resonant/leakage)
+                _t1_component(("pri", "sec0")),
+            ],
+            "connections": [
+                {
+                    # L_r sits in series between bridge_a1 (Leg A
+                    # midpoint) and T1.pri.1. Its other endpoints stay
+                    # inside the isolation stage.
+                    "name": "lr_to_pri",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "L_r", "pin": "2"},
+                        {"component": "T1",  "pin": "pri.1"},
+                    ],
+                },
+            ],
+        },
+    }
+
+    secondary_bridge = {
+        "name": "secondary_bridge",
+        "role": "outputRectifier",
+        # Two winding inputs feed the secondary full bridge; Vout0 is
+        # the bidirectional DC bus (sourced when DAB is in rectifier
+        # mode, sunk when in inverter mode).
+        "inputPort":  {"type": "winding",  "wire": "sec_a_o1"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
+        "circuit": {
+            "components": [
+                _component("mosfet", "Q5"),   # ← S5_o1 (Sec Leg A high)
+                _component("mosfet", "Q6"),   # ← S6_o1 (Sec Leg A low)
+                _component("mosfet", "Q7"),   # ← S7_o1 (Sec Leg B high)
+                _component("mosfet", "Q8"),   # ← S8_o1 (Sec Leg B low)
+            ],
+            "connections": [],
+        },
+    }
+
+    output_filter = {
+        "name": "output_filter",
+        "role": "outputFilter",
+        "inputPort":  {"type": "dcOutput", "wire": "Vout0"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
+        "circuit": {
+            "components": [
+                _component("capacitor", "C_out0"),   # ← Cout_o1
+            ],
+            "connections": [],
+        },
+    }
+
+    control = _dab_control_stage()
+
+    inter_stage = [
+        {
+            "name": "Vin",
+            "kind": "externalPort",
+            "direction": "input",
+            "endpoints": [
+                {"component": "Q1", "pin": "D"},
+                {"component": "Q3", "pin": "D"},
+            ],
+        },
+        {
+            # Leg A midpoint: Q1.S=Q2.D=L_r.1
+            "name": "bridge_a1",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q1",  "pin": "S"},
+                {"component": "Q2",  "pin": "D"},
+                {"component": "L_r", "pin": "1"},
+            ],
+        },
+        {
+            # Leg B midpoint: Q3.S=Q4.D=T1.pri.2
+            "name": "bridge_b1",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q3", "pin": "S"},
+                {"component": "Q4", "pin": "D"},
+                {"component": "T1", "pin": "pri.2"},
+            ],
+        },
+        {
+            "name": "sec_a_o1",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1", "pin": "sec0.1"},
+                {"component": "Q5", "pin": "S"},
+                {"component": "Q6", "pin": "D"},
+            ],
+        },
+        {
+            "name": "sec_b_o1",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1", "pin": "sec0.2"},
+                {"component": "Q7", "pin": "S"},
+                {"component": "Q8", "pin": "D"},
+            ],
+        },
+        {
+            # Secondary bridge DC bus = Vout. Q5.D = Q7.D = C_out0.1.
+            "name": "Vout0",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q5",     "pin": "D"},
+                {"component": "Q7",     "pin": "D"},
+                {"component": "C_out0", "pin": "1"},
+            ],
+        },
+        {
+            "name": "Vout0_external",
+            "kind": "externalPort",
+            "direction": "output",
+            "endpoints": [
+                {"component": "C_out0", "pin": "1"},
+            ],
+        },
+        _gnd_wire(
+            ("Q2",     "S"),
+            ("Q4",     "S"),
+            ("Q6",     "S"),
+            ("Q8",     "S"),
+            ("C_out0", "2"),
+        ),
+        *_gate_wires("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8"),
+    ]
+
+    return {
+        "stages": [primary_bridge, isolation, secondary_bridge, output_filter, control],
+        "interStageCircuit": inter_stage,
+    }
+
+
 STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "buck": buck,
     "boost": boost,
@@ -3012,6 +3303,9 @@ STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "phase_shifted_full_bridge": phase_shifted_full_bridge,
     "asymmetric_half_bridge": asymmetric_half_bridge,
     "weinberg": weinberg,
+    "dual_active_bridge": dual_active_bridge,
+    # MKF only recognises the short alias "dab" for generate_ngspice_circuit.
+    "dab": dual_active_bridge,
 }
 
 
