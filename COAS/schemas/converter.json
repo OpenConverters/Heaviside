@@ -1,0 +1,158 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "http://openconverters.com/schemas/COAS/converter.json",
+    "$comment": "SPDX-License-Identifier: Apache-2.0",
+    "title": "converter",
+    "description": "A converter product. Two anchor fields sit at the top level: `tas` (the unmodified TAS electrical design) and `manufacturerInfo` (the finished-good identity). All other product-level metadata is grouped into four structured sub-objects: commerce (distribution and substitutes), qualification (certifications already granted and compliance evidence), lifecycle (revision and production status), and documentation (external references). Per the COAS contract, none of these fields are duplicated inside the embedded TAS.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["manufacturerInfo", "tas"],
+    "properties": {
+        "tas": {
+            "$ref": "../../TAS/schemas/TAS.json",
+            "description": "Topology Agnostic Structure document \u2014 the actual electrical design. Unmodified TAS schema. Product-level metadata (manufacturerInfo, certifications, references, revision, etc.) is carried by the enclosing COAS.converter sub-objects and MUST NOT be duplicated inside this TAS."
+        },
+        "manufacturerInfo": {
+            "$ref": "../../PEAS/schemas/utils.json#/$defs/manufacturerInfo",
+            "description": "Manufacturer identity and part number for the finished converter (not its constituent components, which carry their own manufacturerInfo inside TAS)."
+        },
+
+        "commerce": {
+            "description": "Distribution channels, substitutes, and finished-good pricing.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "distributors": {
+                    "type": "array",
+                    "items": { "$ref": "../../PEAS/schemas/utils.json#/$defs/distributorInfo" }
+                },
+                "substitutes": {
+                    "type": "array",
+                    "items": { "$ref": "../../PEAS/schemas/utils.json#/$defs/substituteInfo" }
+                },
+                "listPrice": { "$ref": "../../PEAS/schemas/utils.json#/$defs/currencyAmount" },
+                "leadTimeWeeks": { "type": "number", "minimum": 0 },
+                "minimumOrderQuantity": { "type": "integer", "minimum": 1 }
+            }
+        },
+
+        "qualification": {
+            "description": "Standards qualification: certificates already granted by notified bodies, plus optional declaration-of-conformity / test-report identifiers. Distinct from inputs.designRequirements.compliance, which lists targets the design must satisfy.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "certifications": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["standard"],
+                        "properties": {
+                            "standard":         { "type": "string", "description": "e.g. IEC 62368-1, UL 60950-1, CB Scheme, CE LVD." },
+                            "edition":          { "type": "string" },
+                            "certificateNumber":{ "type": "string" },
+                            "issuer":           { "type": "string", "description": "Notified body / certification authority." },
+                            "issuedDate":       { "type": "string", "format": "date" },
+                            "expiryDate":       { "type": "string", "format": "date" },
+                            "scope":            { "type": "string" }
+                        }
+                    }
+                },
+                "declarationsOfConformity": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["directive", "documentId"],
+                        "properties": {
+                            "directive":   { "type": "string", "description": "Regulatory framework (e.g. EU 2014/35/EU LVD, EU 2014/30/EU EMC, FCC 47 CFR Part 15)." },
+                            "documentId":  { "type": "string", "description": "Identifier of the DoC document." },
+                            "signedDate":  { "type": "string", "format": "date" },
+                            "signatory":   { "type": "string" }
+                        }
+                    }
+                },
+                "testReports": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["standard", "reportId"],
+                        "properties": {
+                            "standard":  { "type": "string" },
+                            "reportId":  { "type": "string" },
+                            "laboratory":{ "type": "string" },
+                            "testDate":  { "type": "string", "format": "date" },
+                            "result":    { "type": "string", "enum": ["pass", "fail", "conditional"] }
+                        }
+                    }
+                }
+            }
+        },
+
+        "lifecycle": {
+            "description": "Production status and revision history of the finished good.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["preview", "prototype", "production", "nrnd", "lastTimeBuy", "obsolete"]
+                },
+                "releaseDate":         { "type": "string", "format": "date" },
+                "lastTimeBuyDate":     { "type": "string", "format": "date" },
+                "endOfProductionDate": { "type": "string", "format": "date" },
+                "revision": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "id":                 { "type": "string", "description": "Revision identifier (semver, hardware rev letter, ECO number)." },
+                        "date":               { "type": "string", "format": "date" },
+                        "changeNotes":        { "type": "string" },
+                        "previousRevisionId": { "type": "string" }
+                    }
+                },
+                "previousRevisions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["id"],
+                        "properties": {
+                            "id":          { "type": "string" },
+                            "date":        { "type": "string", "format": "date" },
+                            "changeNotes": { "type": "string" }
+                        }
+                    }
+                }
+            }
+        },
+
+        "documentation": {
+            "description": "External documentation associated with the finished converter.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "references": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["title"],
+                        "properties": {
+                            "title":         { "type": "string" },
+                            "url":           { "type": "string", "format": "uri" },
+                            "kind": {
+                                "type": "string",
+                                "enum": ["datasheet", "applicationNote", "evaluationBoard", "userManual", "errata", "whitepaper", "standard", "patent", "other"]
+                            },
+                            "publisher":     { "type": "string" },
+                            "publishedDate": { "type": "string", "format": "date" },
+                            "documentId":    { "type": "string" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

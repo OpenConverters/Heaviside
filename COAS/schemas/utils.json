@@ -1,0 +1,9 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "http://openconverters.com/schemas/COAS/utils.json",
+    "$comment": "SPDX-License-Identifier: Apache-2.0",
+    "title": "COAS utils",
+    "description": "Thin shim. All shared primitives live in PEAS/schemas/utils.json. This file exists only as a stable anchor for any future COAS-specific helpers that are not appropriate to lift to PEAS. Currently empty.",
+    "type": "object",
+    "$defs": {}
+}

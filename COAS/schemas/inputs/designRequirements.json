@@ -1,0 +1,267 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "http://openconverters.com/schemas/COAS/inputs/designRequirements.json",
+    "$comment": "SPDX-License-Identifier: Apache-2.0",
+    "title": "designRequirements",
+    "description": "Converter-level design contract. MUST be sufficient on its own to drive a full topology-and-component design: every input/output rail, isolation, efficiency, form factor, environment, compliance, reliability, control interface, protections, and BOM constraints. Reuses PEAS/utils.json primitives so MAS/CAS/SAS/RAS validators see the same definitions.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["inputSource", "outputs", "power"],
+    "properties": {
+        "name": { "type": "string", "description": "Label for this design contract." },
+
+        "inputSource": {
+            "description": "Source feeding the converter.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "voltage"],
+            "properties": {
+                "kind": { "type": "string", "enum": ["dc", "acSinglePhase", "acThreePhase"] },
+                "voltage": {
+                    "description": "Input voltage envelope. For DC: V; for AC: RMS V.",
+                    "$ref": "../../../PEAS/schemas/utils.json#/$defs/dimensionWithTolerance"
+                },
+                "frequency": {
+                    "description": "Line frequency envelope in Hz (AC only).",
+                    "$ref": "../../../PEAS/schemas/utils.json#/$defs/dimensionWithTolerance"
+                },
+                "sourceImpedance": { "type": "number", "minimum": 0, "description": "Equivalent source impedance in ohms (for stability/inrush analysis)." },
+                "holdupTime": { "type": "number", "minimum": 0, "description": "Required holdup time after source loss, in seconds." },
+                "inrushLimit": { "type": "number", "minimum": 0, "description": "Maximum allowed inrush current, in A peak." },
+                "neutralRequired": { "type": "boolean" }
+            }
+        },
+
+        "outputs": {
+            "description": "Per-rail output requirements. Ordering is the canonical rail ordering for the whole COAS document (operatingPoints[i].outputCurrents and outputs[i].componentTemperatures use the same index).",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["voltage", "current"],
+                "properties": {
+                    "name": { "type": "string" },
+                    "voltage": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/dimensionWithTolerance" },
+                    "current": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/dimensionWithTolerance" },
+                    "peakCurrent": { "type": "number", "minimum": 0 },
+                    "peakDuration": { "type": "number", "minimum": 0, "description": "Maximum sustained duration of peakCurrent, in seconds." },
+                    "polarity": { "type": "string", "enum": ["positive", "negative", "bipolar"] },
+                    "isolatedFromInput": { "type": "boolean" },
+                    "groupReturn": { "type": "string", "description": "Identifier of the return rail shared with other outputs; outputs sharing the same groupReturn are referenced to a common node." },
+                    "sequencing": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "rank": { "type": "integer", "minimum": 0, "description": "Power-up order (lower = earlier)." },
+                            "rampRate": { "type": "number", "minimum": 0, "description": "Maximum allowed dV/dt during ramp, in V/s." }
+                        }
+                    },
+                    "regulation": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "line": { "type": "number", "description": "Line regulation, as fraction of nominal (e.g. 0.005 = 0.5%)." },
+                            "load": { "type": "number", "description": "Load regulation, as fraction of nominal." },
+                            "cross": { "type": "number", "description": "Cross regulation, as fraction of nominal (multi-output only)." }
+                        }
+                    },
+                    "ripple": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "p2pMax": { "type": "number", "minimum": 0, "description": "Maximum peak-to-peak ripple, in V." },
+                            "rmsMax": { "type": "number", "minimum": 0, "description": "Maximum RMS ripple, in V." },
+                            "bandwidth": { "type": "number", "minimum": 0, "description": "Measurement bandwidth, in Hz." }
+                        }
+                    },
+                    "transient": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "stepLoad": { "type": "number", "description": "Load step amplitude, as fraction of full load." },
+                            "dIdtMax": { "type": "number", "description": "Maximum load-current slew rate, in A/s." },
+                            "deviationMax": { "type": "number", "description": "Maximum allowed output excursion during the step, in V." },
+                            "recoveryTime": { "type": "number", "description": "Maximum allowed time to return inside the regulation band, in s." }
+                        }
+                    },
+                    "remoteSense": { "type": "boolean" }
+                }
+            }
+        },
+
+        "power": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["continuous"],
+            "properties": {
+                "continuous": { "type": "number", "minimum": 0, "description": "Sum-of-rails continuous output power, in W." },
+                "peak": { "type": "number", "minimum": 0, "description": "Sum-of-rails peak output power, in W." },
+                "peakDuration": { "type": "number", "minimum": 0, "description": "Maximum duration of peak power, in s." }
+            }
+        },
+
+        "isolation": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "required": { "type": "boolean" },
+                "workingVoltage": { "type": "number", "minimum": 0, "description": "Continuous working voltage across the isolation barrier, in V." },
+                "withstandVoltage": { "type": "number", "minimum": 0, "description": "Hipot test voltage (Viso), in V." },
+                "class": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/isolationClass" },
+                "pollutionDegree": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/pollutionDegree" },
+                "overvoltageCategory": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/overvoltageCategory" },
+                "creepage": { "type": "number", "minimum": 0, "description": "Required creepage distance, in metres." },
+                "clearance": { "type": "number", "minimum": 0, "description": "Required clearance distance, in metres." }
+            }
+        },
+
+        "efficiency": {
+            "description": "Efficiency targets at canonical load points (as fractions, e.g. 0.94 = 94%). Bands omitted from the standard mandate may also be supplied.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "fullLoad": { "type": "number", "minimum": 0, "maximum": 1 },
+                "halfLoad": { "type": "number", "minimum": 0, "maximum": 1 },
+                "tenPercentLoad": { "type": "number", "minimum": 0, "maximum": 1 },
+                "noLoadInputPower": { "type": "number", "minimum": 0, "description": "Maximum allowed input power at no load, in W." },
+                "standbyInputPower": { "type": "number", "minimum": 0 },
+                "mandate": {
+                    "type": "string",
+                    "description": "Regulatory efficiency mandate the design targets.",
+                    "enum": ["DoE-VI", "CoC-Tier2", "80PLUS-Bronze", "80PLUS-Silver", "80PLUS-Gold", "80PLUS-Platinum", "80PLUS-Titanium", "ErP-Lot7", "custom"]
+                }
+            }
+        },
+
+        "formFactor": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "maxDimensions": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/maximumDimensions" },
+                "maxMass": { "type": "number", "minimum": 0, "description": "Maximum mass, in kg." },
+                "mounting": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/mountingStyle" },
+                "cooling": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/coolingMethod" }
+            }
+        },
+
+        "environmental": {
+            "$ref": "../../../PEAS/schemas/utils.json#/$defs/environmentalQualification"
+        },
+
+        "compliance": {
+            "description": "List of standards-compliance targets the design must meet (distinct from already-granted certifications on COAS.converter).",
+            "type": "array",
+            "items": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/complianceTarget" }
+        },
+
+        "reliability": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "targetMTBF": { "type": "number", "minimum": 0, "description": "Target mean time between failures, in hours." },
+                "targetFIT": { "type": "number", "minimum": 0, "description": "Target failures per 1e9 device-hours." },
+                "lifeHours": { "type": "number", "minimum": 0, "description": "Required service life, in hours." },
+                "standard": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/reliabilityStandard" },
+                "useEnvironment": {
+                    "type": "string",
+                    "description": "Environment code per the chosen reliability standard (e.g. MIL-HDBK-217F: GB, GM, NS, AIC, ARW, SF).",
+                    "enum": ["GB", "GF", "GM", "NS", "NU", "AIC", "AIF", "AUC", "AUF", "ARW", "SF", "MF", "ML", "CL"]
+                }
+            }
+        },
+
+        "controlInterface": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "enable": { "type": "boolean" },
+                "syncIn": { "type": "boolean" },
+                "syncOut": { "type": "boolean" },
+                "pmbus": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "address": { "type": "integer", "minimum": 0, "maximum": 127 },
+                        "revision": { "type": "string", "description": "PMBus specification revision (e.g. 1.3.1)." }
+                    }
+                },
+                "i2c": { "type": "boolean" },
+                "psi": { "type": "boolean" },
+                "svid": { "type": "boolean" },
+                "margining": { "type": "boolean" },
+                "telemetry": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["voltage", "current", "temperature", "power", "energy"] },
+                    "uniqueItems": true
+                },
+                "trim": { "type": "boolean" },
+                "currentShare": { "type": "boolean" }
+            }
+        },
+
+        "protections": {
+            "description": "Required protection functions. Each has a threshold (in native units of the protected quantity), tolerance, and recovery mode.",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "mode"],
+                "properties": {
+                    "kind": { "type": "string", "enum": ["OVP", "OCP", "OTP", "SCP", "UVLO", "OPP", "UVP", "OVT"] },
+                    "threshold": { "type": "number" },
+                    "tolerance": { "type": "number", "description": "As fraction of threshold (e.g. 0.05 = 5%)." },
+                    "mode": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/protectionMode" },
+                    "appliesToOutputIndex": { "type": "integer", "minimum": 0, "description": "If omitted, applies to the input or to all outputs depending on kind." }
+                }
+            }
+        },
+
+        "bom": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "targetUnitCost": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/currencyAmount" },
+                "maxComponentCount": { "type": "integer", "minimum": 0 },
+                "bannedSubstances": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["RoHS", "REACH", "Prop65", "conflictMinerals", "halogenFree", "leadFree"] },
+                    "uniqueItems": true
+                },
+                "preferredSuppliers": { "type": "array", "items": { "type": "string" } },
+                "secondSourceRequired": { "type": "boolean" },
+                "aecQGrade": { "type": "string", "enum": ["Q100-G0", "Q100-G1", "Q100-G2", "Q100-G3", "Q101", "Q200"], "description": "Required AEC-Q automotive qualification grade." }
+            }
+        },
+
+        "topology": {
+            "description": "Optional topology constraint. If `forced` is present, the design must use that topology; otherwise `allowedFamilies` (if present) constrains the selector.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "forced": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/topology" },
+                "allowedFamilies": {
+                    "type": "array",
+                    "items": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/topology" },
+                    "minItems": 1,
+                    "uniqueItems": true
+                }
+            }
+        },
+
+        "magnetics": {
+            "description": "Optional global magnetics constraints applied on top of any per-component CAS/MAS designRequirements embedded in the converter.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "maxCoreVolume": { "type": "number", "minimum": 0, "description": "Maximum allowed core volume, in cubic metres." },
+                "allowedMaterialFamilies": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+                "maxTempRise": { "type": "number", "minimum": 0, "description": "Maximum allowed winding temperature rise above ambient, in K." },
+                "shieldedRequired": { "type": "boolean" }
+            }
+        },
+
+        "market": { "$ref": "../../../PEAS/schemas/utils.json#/$defs/market" },
+        "application": { "type": "string", "description": "Free-form application descriptor (e.g. server-PSU, EV-OBC, telecom-rectifier). Domain-specific enums may be layered on top by downstream tooling." }
+    }
+}

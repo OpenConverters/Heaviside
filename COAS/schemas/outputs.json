@@ -1,0 +1,98 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "http://openconverters.com/schemas/COAS/outputs.json",
+    "$comment": "SPDX-License-Identifier: Apache-2.0",
+    "title": "outputs",
+    "description": "Measured / simulated performance at one operating point. The COAS document's outputs[] array is index-aligned with inputs.operatingPoints[]. Anything derivable from (inputs, converter) belongs here, not on COAS.converter.",
+    "allOf": [
+        { "$ref": "../../PEAS/schemas/outputs/outputBase.json" },
+        {
+            "type": "object",
+            "properties": {
+                "operatingPointIndex": { "type": "integer", "minimum": 0, "description": "Back-reference into inputs.operatingPoints." },
+
+                "efficiency": { "type": "number", "minimum": 0, "maximum": 1 },
+
+                "lineRegulation": { "type": "number", "description": "Output deviation per unit input change, dimensionless." },
+                "loadRegulation": { "type": "number", "description": "Output deviation per unit load change, dimensionless." },
+                "crossRegulation": {
+                    "type": "array",
+                    "description": "Per-output cross-regulation matrix row for this operating point.",
+                    "items": { "type": "number" }
+                },
+
+                "outputVoltageRipple": {
+                    "type": "array",
+                    "description": "Per-rail ripple measurement; indexing matches inputs.designRequirements.outputs[].",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "p2p": { "type": "number", "minimum": 0 },
+                            "rms": { "type": "number", "minimum": 0 },
+                            "bandwidth": { "type": "number", "minimum": 0 }
+                        }
+                    }
+                },
+
+                "transientResponse": {
+                    "type": "array",
+                    "description": "Per-rail transient response for this operating point.",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "stepLoad": { "type": "number" },
+                            "deviation": { "type": "number" },
+                            "recoveryTime": { "type": "number" }
+                        }
+                    }
+                },
+
+                "inputCurrentTHD": { "type": "number", "minimum": 0, "description": "Total harmonic distortion of input current, as fraction." },
+                "powerFactor": { "type": "number", "minimum": 0, "maximum": 1 },
+
+                "lossBreakdown": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "magnetic": { "type": "number", "minimum": 0 },
+                        "semiconductor": { "type": "number", "minimum": 0 },
+                        "capacitor": { "type": "number", "minimum": 0 },
+                        "resistor": { "type": "number", "minimum": 0 },
+                        "control": { "type": "number", "minimum": 0 },
+                        "snubber": { "type": "number", "minimum": 0 },
+                        "other": { "type": "number", "minimum": 0 },
+                        "total": { "type": "number", "minimum": 0 }
+                    }
+                },
+
+                "componentTemperatures": {
+                    "type": "array",
+                    "description": "Hot-spot temperatures keyed by TAS component name.",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["componentName", "temperature"],
+                        "properties": {
+                            "componentName": { "type": "string" },
+                            "temperature": { "type": "number", "description": "Hot-spot temperature, in degrees Celsius." },
+                            "thermalResistanceUsed": { "type": "number", "description": "Effective junction/winding-to-ambient resistance assumed, in K/W." }
+                        }
+                    }
+                },
+
+                "reliability": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "predictedFIT": { "type": "number", "minimum": 0 },
+                        "predictedMTBF": { "type": "number", "minimum": 0 },
+                        "standardUsed": { "$ref": "../../PEAS/schemas/utils.json#/$defs/reliabilityStandard" },
+                        "useEnvironmentUsed": { "type": "string" }
+                    }
+                }
+            }
+        }
+    ]
+}

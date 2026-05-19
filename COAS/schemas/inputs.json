@@ -1,0 +1,42 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "http://openconverters.com/schemas/COAS/inputs.json",
+    "$comment": "SPDX-License-Identifier: Apache-2.0",
+    "title": "inputs",
+    "description": "The design contract: what the converter must achieve (designRequirements) and the explicit operating points at which it must be evaluated (operatingPoints).",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["designRequirements", "operatingPoints"],
+    "properties": {
+        "designRequirements": {
+            "$ref": "./inputs/designRequirements.json"
+        },
+        "operatingPoints": {
+            "description": "Explicit (Vin, Iout_per_rail, Tamb) tuples at which the converter must be evaluated. Each entry corresponds 1:1 with COAS.outputs[i]. Mirrors MAS/inputs/operatingPoint shape so a TAS simulator can consume them directly.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["inputVoltage", "outputCurrents", "ambientTemperature"],
+                "properties": {
+                    "name": { "type": "string", "description": "Human-readable label for this operating point (e.g. 'nom-line full-load 25C')." },
+                    "inputVoltage": { "type": "number", "description": "DC input voltage in V. For AC inputs, use rmsInputVoltage instead." },
+                    "rmsInputVoltage": { "type": "number", "description": "RMS input voltage in V (AC sources)." },
+                    "inputFrequency": { "type": "number", "description": "Line frequency in Hz (AC sources)." },
+                    "outputCurrents": {
+                        "description": "Per-rail load currents in A; ordering matches designRequirements.outputs[].",
+                        "type": "array",
+                        "items": { "type": "number" },
+                        "minItems": 1
+                    },
+                    "ambientTemperature": { "type": "number", "description": "Ambient temperature in degrees Celsius." },
+                    "dutyProfile": {
+                        "type": "string",
+                        "description": "Optional duty profile name for time-varying loads (e.g. 'mission-A', 'pulse-50pct')."
+                    }
+                }
+            }
+        }
+    }
+}
