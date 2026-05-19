@@ -104,11 +104,11 @@ _TESTBENCH_PREFIXES: tuple[str, ...] = (
     "Rsn", "Csn",                # all snubber networks (Rsnub_, Csnub_,
                                  # Rsn1_o1, Csn1_o1, Rsn2_o1, …)
     "Rdcr_",                     # DCR parasitic resistors on inductors
-    "Rco_esr", "Rcs_esr", "Rcc_esr", "Rc1_esr",  # cap ESR parasitics
+    "Rco_esr", "Rcs_esr", "Rcc_esr", "Rc1_esr", "R_cb_esr", "R_co_esr",  # cap ESR parasitics
     "Resr_",                     # generic ESR (LLC etc.)
     "Rload", "R_load",           # load resistors (Rload, R_load_o1, …)
     "Rsec",                      # secondary winding DCR
-    "Rlout",                     # output choke DCR (two_switch_forward etc.)
+    "Rlout", "R_lo_dcr",         # output choke DCR (two_switch_forward, AHB, …)
     "Rdc_supply_dummy", "Rbus_HV_dummy",
     "Rpri_ret", "Rsec_ret",      # bridge return resistors
     "Rct_",                      # PSFB center-tap return stubs (1µΩ to GND)
@@ -179,6 +179,8 @@ def _validate_real_set(
     deck: SpiceDeck,
     topology: str,
     expected_kinds: dict[str, str],
+    *,
+    extra_testbench: frozenset[str] = frozenset(),
 ) -> None:
     """Assert deck contains exactly ``expected_kinds`` real components and
     that every other element is recognised testbench scaffolding.
@@ -188,6 +190,11 @@ def _validate_real_set(
       * expected refdes with wrong kind
       * stray refdes that is neither expected nor in the testbench classifier
         (signals the stencil drifted from the MKF spice generator).
+
+    ``extra_testbench`` lets a stencil declare topology-local
+    scaffolding refdeses that collide with names used as real
+    components in other topologies (e.g. AHB body diodes ``D1``/``D2``
+    which clash with the real freewheeling diode of buck/flyback).
     """
     for refdes, expected_kind in expected_kinds.items():
         try:
@@ -204,6 +211,8 @@ def _validate_real_set(
     real_set = set(expected_kinds)
     for el in deck.elements:
         if el.refdes in real_set:
+            continue
+        if el.refdes in extra_testbench:
             continue
         if _is_testbench(el):
             continue
@@ -2482,6 +2491,228 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
     }
 
 
+# -----------------------------------------------------------------------------
+# Asymmetric half-bridge (AHB) stencil
+# -----------------------------------------------------------------------------
+#
+# MKF deck (bridge_simulation_mode="switch", rectifierType="fullBridge"):
+#
+#   Vdc vin_dc 0 400
+#   Vpwm_Q1 / Vpwm_Q2                      ; gate drives (drop)
+#   Vq1_sense vin_dc q1_drain 0            ; ammeter (drop)
+#   S1 q1_drain sw …                       ; Q1.D=Vin (via sense) Q1.S=sw
+#   D1 sw vin_dc DIDEAL                    ; synthetic body diode (drop, exact)
+#   Rsnub_Q1/Csnub_Q1                      ; snubbers (drop)
+#   S2 sw 0 …                              ; Q2.D=sw Q2.S=0
+#   D2 0 sw DIDEAL                         ; synthetic body diode (drop)
+#   Rsnub_Q2/Csnub_Q2                      ; snubbers (drop)
+#
+#   Vcb_sense vin_dc cb_lo 0               ; ammeter (drop)
+#   C_b cb_lo pri_top                      ; DC blocking cap (Cb.1=Vin Cb.2=pri_top)
+#   R_cb_esr pri_top pri_top_esr 1m        ; ESR (drop)
+#   L_lk pri_top_esr pri_lk                ; leakage/series inductor
+#   Evab vab 0 sw pri_top 1                ; differential probe (drop)
+#   Vpri_sense pri_lk pri_dot 0            ; ammeter (drop)
+#   L_pri pri_dot sw                       ; T1.pri.1=pri_lk T1.pri.2=sw
+#
+#   L_sec sec_a sec_b                      ; T1.sec0.1=sec_a T1.sec0.2=sec_b
+#   K1 L_pri L_sec
+#   Vsec_a_sense / Vsec_b_sense            ; ammeters (drop)
+#
+#   * Full-bridge rectifier:
+#   D_r1 sec_a_d out_rect                  ; D_r1.A=sec_a D_r1.K=out_rect
+#   D_r2 sec_b_d out_rect                  ; D_r2.A=sec_b D_r2.K=out_rect
+#   D_r3 out_gnd sec_a_d                   ; D_r3.A=GND   D_r3.K=sec_a
+#   D_r4 out_gnd sec_b_d                   ; D_r4.A=GND   D_r4.K=sec_b
+#   L_o out_rect out_node                  ; → L_out0
+#   R_lo_dcr / R_co_esr                    ; parasitics (drop)
+#   C_o co_top out_gnd                     ; → C_out0
+#   R_load / Vout_sense                    ; drop
+#
+# Mapping to TAS:
+#   inverter:        Q1, Q2, C_b, L_lk     dcBus Vin → 2× hfAc (pri_lk, sw)
+#   isolation:       T1 (pri, sec0)        hfAc pri_lk → 2× winding (sec_a, sec_b)
+#   outputRectifier: D_r1..D_r4, L_out0, C_out0   2× winding → dcOutput Vout0
+#   control:         U1 drives {Q1, Q2}, senses Vout0
+
+
+_AHB_REAL_KINDS = {
+    "S1":     "switch",
+    "S2":     "switch",
+    "C_b":    "capacitor",     # DC blocking cap (Imbertson-Mohan)
+    # NOTE: L_lk (primary leakage / ZVS inductor) is intentionally absent
+    # from the real-set. MKF emits it (with a real 1µH value) but does
+    # NOT dispatch a designer for it — there's no extra-component slot,
+    # and the bridge only supports one main + N named extras. Until a
+    # binding strategy lands (e.g. ``seriesInductor`` extras-role or a
+    # T1 leakage-as-winding spec), the stencil drops L_lk and treats it
+    # as transformer leakage absorbed into T1. Tracked in BACKLOG.
+    "L_pri":  "inductor",      # → T1.pri
+    "L_sec":  "inductor",      # → T1.sec0
+    "K1":     "coupling",      # → T1 coupling
+    "D_r1":   "diode",         # full-bridge rectifier
+    "D_r2":   "diode",
+    "D_r3":   "diode",
+    "D_r4":   "diode",
+    "L_o":    "inductor",      # → L_out0
+    "C_o":    "capacitor",     # → C_out0
+}
+
+
+def asymmetric_half_bridge(deck: SpiceDeck) -> TasTopology:
+    """Decompose an MKF asymmetric half-bridge deck (switch-mode) into TAS.
+
+    Requires ``bridge_simulation_mode="switch"`` and
+    ``rectifierType="fullBridge"`` (centerTapped doubles internal turns
+    ratios silently — confirmed against the MKF test fixture).
+    """
+    _validate_real_set(
+        deck,
+        "asymmetric_half_bridge",
+        _AHB_REAL_KINDS,
+        # Topology-local scaffolding:
+        # - D1, D2: synthetic body diodes for S1/S2 (collide with real
+        #   D1 in buck/flyback, so cannot live in global _TESTBENCH_EXACT).
+        # - L_lk: MKF emits a real 1µH leakage inductor but has no
+        #   designer dispatch for it; absorbed into T1 leakage for now
+        #   (see _AHB_REAL_KINDS comment).
+        extra_testbench=frozenset({"D1", "D2", "L_lk"}),
+    )
+
+    inverter = {
+        "name": "inverter",
+        "role": "inverter",
+        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "outputPorts": [
+            {"type": "hfAc", "wire": "pri_top", "name": "pri_top"},
+            {"type": "hfAc", "wire": "sw",      "name": "sw"},
+        ],
+        "circuit": {
+            "components": [
+                _component("mosfet",    "Q1"),    # ← S1 (high-side)
+                _component("mosfet",    "Q2"),    # ← S2 (low-side)
+                _component("capacitor", "C_b"),   # ← C_b (DC blocking)
+            ],
+            "connections": [],
+        },
+    }
+
+    isolation = {
+        "name": "isolation",
+        "role": "isolation",
+        "inputPort": {"type": "hfAc", "wire": "pri_top"},
+        "outputPorts": [
+            {"type": "winding", "wire": "sec_a", "name": "sec_a"},
+            {"type": "winding", "wire": "sec_b", "name": "sec_b"},
+        ],
+        "circuit": {
+            "components": [_t1_component(("pri", "sec0"))],
+            "connections": [],
+        },
+    }
+
+    output_rectifier_0 = {
+        "name": "output_0",
+        "role": "outputRectifier",
+        "inputPort":  {"type": "winding",  "wire": "sec_a"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
+        "circuit": {
+            "components": [
+                _component("diode",     "D1"),       # ← D_r1
+                _component("diode",     "D2"),       # ← D_r2
+                _component("diode",     "D3"),       # ← D_r3
+                _component("diode",     "D4"),       # ← D_r4
+                _component("magnetic",  "L_out0"),   # ← L_o
+                _component("capacitor", "C_out0"),   # ← C_o
+            ],
+            "connections": [
+                {
+                    "name": "out_rect",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "D1",     "pin": "K"},
+                        {"component": "D2",     "pin": "K"},
+                        {"component": "L_out0", "pin": "1"},
+                    ],
+                },
+            ],
+        },
+    }
+
+    control = _isolated_control_stage(("Q1", "Q2"))
+
+    inter_stage = [
+        {
+            "name": "Vin",
+            "kind": "externalPort",
+            "direction": "input",
+            "endpoints": [
+                {"component": "Q1",  "pin": "D"},
+                {"component": "C_b", "pin": "1"},
+            ],
+        },
+        {
+            # T1.pri.1 wires to C_b.2 directly (L_lk leakage absorbed
+            # into T1 model — see _AHB_REAL_KINDS comment).
+            "name": "pri_top",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "C_b", "pin": "2"},
+                {"component": "T1",  "pin": "pri.1"},
+            ],
+        },
+        {
+            # T1.pri.2 returns to the half-bridge midpoint sw.
+            "name": "sw",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q1", "pin": "S"},
+                {"component": "Q2", "pin": "D"},
+                {"component": "T1", "pin": "pri.2"},
+            ],
+        },
+        {
+            "name": "sec_a",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1", "pin": "sec0.1"},
+                {"component": "D1", "pin": "A"},
+                {"component": "D3", "pin": "K"},
+            ],
+        },
+        {
+            "name": "sec_b",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1", "pin": "sec0.2"},
+                {"component": "D2", "pin": "A"},
+                {"component": "D4", "pin": "K"},
+            ],
+        },
+        {
+            "name": "Vout0",
+            "kind": "externalPort",
+            "direction": "output",
+            "endpoints": [
+                {"component": "L_out0", "pin": "2"},
+                {"component": "C_out0", "pin": "1"},
+            ],
+        },
+        _gnd_wire(
+            ("Q2",     "S"),
+            ("D3",     "A"),
+            ("D4",     "A"),
+            ("C_out0", "2"),
+        ),
+        *_gate_wires("Q1", "Q2"),
+    ]
+
+    return {
+        "stages": [inverter, isolation, output_rectifier_0, control],
+        "interStageCircuit": inter_stage,
+    }
+
+
 STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "buck": buck,
     "boost": boost,
@@ -2498,6 +2729,7 @@ STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "llc": llc,
     "push_pull": push_pull,
     "phase_shifted_full_bridge": phase_shifted_full_bridge,
+    "asymmetric_half_bridge": asymmetric_half_bridge,
 }
 
 

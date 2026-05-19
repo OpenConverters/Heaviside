@@ -141,6 +141,13 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_asymmetric_half_bridge",
         "converter",
         "isolated_bridge",
+        # L_lk is part of the inverter (DC-blocking C_b + leakage L_lk);
+        # MKF does NOT emit it as an extra-component, so no binding here.
+        # Only T1 (main) + L_out0 are mapped to MKF outputs.
+        magnetic_binding={
+            "T1": None,
+            "L_out0": "outputInductor",
+        },
     ),
     TopologyEntry(
         "phase_shifted_full_bridge",
