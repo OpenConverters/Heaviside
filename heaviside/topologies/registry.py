@@ -209,6 +209,11 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "converter",
         "resonant",
         magnetic_binding={"T1": None, "L_r": "seriesInductor"},
+        # LLC's resonant cap C_r is one of the PyOM extras-cap roles
+        # (kind="capacitor" / name="resonantCapacitor"). The bridge
+        # routes the CAS::Inputs onto C_r's ``cas_inputs`` field; the
+        # downstream librarian agent picks the MPN.
+        capacitor_binding={"C_r": "resonantCapacitor"},
     ),
     TopologyEntry(
         "cllc",

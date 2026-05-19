@@ -936,3 +936,80 @@ def test_attach_components_cap_role_missing_in_extras_raises() -> None:
     )
     with pytest.raises(bridge.BridgeError, match="resonantCapacitor_secondary"):
         bridge.attach_components_to_tas(tas, components, topology=entry)
+
+
+def test_attach_components_llc_registry_binds_C_r_resonant_cap() -> None:
+    """Real LLC registry entry: capacitor_binding={'C_r': 'resonantCapacitor'}
+    must route a single CAS::Inputs onto the LLC inverter stage's C_r,
+    while leaving the unbound C_bus_hi/lo and C_out0 untouched. This is
+    the first regression test against a real registry entry that
+    consumes the new cap-attach plumbing.
+    """
+    # Hand-crafted minimal LLC-shaped TAS (mirrors the stencil layout).
+    tas = {
+        "stages": [
+            {"name": "inverter", "role": "inverter", "circuit": {"components": [
+                {"name": "T1",       "data": "TAS/data/magnetics.ndjson?p=T1"},
+                {"name": "L_r",      "data": "TAS/data/magnetics.ndjson?p=L_r"},
+                {"name": "C_r",      "data": "TAS/data/capacitors.ndjson?p=C_r"},
+                {"name": "C_bus_hi", "data": "TAS/data/capacitors.ndjson?p=C_bus_hi"},
+                {"name": "C_bus_lo", "data": "TAS/data/capacitors.ndjson?p=C_bus_lo"},
+            ]}},
+            {"name": "out", "role": "outputRectifier", "circuit": {"components": [
+                {"name": "C_out0", "data": "TAS/data/capacitors.ndjson?p=C_out0"},
+            ]}},
+        ],
+        "interStageCircuit": [],
+    }
+    main = bridge.MagneticDesign(
+        scoring=2.0,
+        mas=_mas(scoring=2.0, shape="ETD 39", material="N87", n_windings=3)["mas"],
+        elapsed_s=0.1,
+    )
+    lr = bridge.MagneticDesign(
+        scoring=1.5,
+        mas=_mas(scoring=1.5, shape="RM 8", material="3C97", n_windings=1)["mas"],
+        elapsed_s=0.1,
+    )
+    components = bridge.ConverterComponents(
+        main_magnetic=main,
+        extra_magnetics={"seriesInductor": lr},
+        extra_capacitors=(
+            bridge.ExtraCapacitorSpec(
+                "resonantCapacitor",
+                {
+                    "designRequirements": {
+                        "name": "C_r",
+                        "capacitance": {"nominal": 37.25e-9},
+                    },
+                    "operatingPoints": [],
+                },
+            ),
+        ),
+    )
+    bridge.attach_components_to_tas(tas, components, topology="llc")
+
+    # C_r received the cas_inputs envelope.
+    c_r = tas["stages"][0]["circuit"]["components"][2]
+    assert c_r["name"] == "C_r"
+    assert c_r["category"] == "capacitor"
+    assert "data" not in c_r
+    assert c_r["cas_inputs"]["designRequirements"]["capacitance"]["nominal"] == 37.25e-9
+
+    # Unbound caps stay as untouched placeholders — librarian sizes them.
+    for cap in (
+        tas["stages"][0]["circuit"]["components"][3],  # C_bus_hi
+        tas["stages"][0]["circuit"]["components"][4],  # C_bus_lo
+        tas["stages"][1]["circuit"]["components"][0],  # C_out0
+    ):
+        assert "cas_inputs" not in cap
+        assert "category" not in cap
+        assert cap["data"].startswith("TAS/data/capacitors.ndjson")
+
+    # Sanity: main magnetic and L_r still attached as before.
+    assert tas["stages"][0]["circuit"]["components"][0]["mas"][
+        "core"
+    ]["functionalDescription"]["shape"]["name"] == "ETD 39"
+    assert tas["stages"][0]["circuit"]["components"][1]["mas"][
+        "core"
+    ]["functionalDescription"]["shape"]["name"] == "RM 8"

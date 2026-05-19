@@ -12,15 +12,23 @@ from `Now`, do it, commit, and move on without checking in.
 1. **Stencils for the next batch of topologies.**
    Done so far (with stencil + golden + registry + drift-test row):
    `push_pull`, `phase_shifted_full_bridge`, `phase_shifted_half_bridge`,
-   `asymmetric_half_bridge`, `weinberg`, `dual_active_bridge`. SRC blocked
-   on MKF behavioural-bridge limitation (see Upstream bugs).
+   `asymmetric_half_bridge`, `weinberg`, `dual_active_bridge`, `llc`
+   (LLC has been stenciled since the original push; just now wired
+   `capacitor_binding={"C_r": "resonantCapacitor"}` — first real consumer
+   of item 3's cap-attach plumbing). SRC blocked on MKF behavioural-
+   bridge limitation; CLLC blocked because MKF `generate_ngspice_circuit`
+   doesn't know the topology (see Upstream bugs for both).
 
    Remaining un-stenciled converter topologies (per registry, 24 total):
-   `llc` (BLOCKED — PyOM segfault in `design_magnetics_from_converter`,
-   see Upstream bugs), `cllc`, `clllc`, `series_resonant` (BLOCKED, see
-   above), `power_factor_correction`, `vienna`. CLLC is the natural next
-   target — it's the first topology that exercises the new
-   `capacitor_binding` plumbing (item 3) and avoids the LLC engine bug.
+   `cllc` (BLOCKED, see above), `clllc`, `series_resonant` (BLOCKED),
+   `power_factor_correction`, `vienna`. **CLLLC** is the natural next
+   target — it's the largest of the resonant family (2 bridges × 4
+   switches + 2 resonant tanks + main transformer = ~16 real components,
+   similar scale to DAB but with the additional `capacitor_binding={
+   "Cr1": "Cr1_HV_resonantCapacitor", "Cr2": "Cr2_LV_resonantCapacitor"}`
+   plus matching `magnetic_binding` for Lr1/Lr2 — see
+   `docs/extras-probe.json`). PFC / vienna are non-isolated and don't
+   exercise cap-binding.
    Each remaining stencil needs:
    - a stencil function in `heaviside/decomposer/stencils.py`
    - a golden `.spice` + `.tas.json` under `tests/regression/decomposer/golden/`
@@ -28,7 +36,7 @@ from `Now`, do it, commit, and move on without checking in.
      pattern)
    - a `magnetic_binding` entry in the registry (extras roles in
      `docs/extras-probe.json`)
-   - a `capacitor_binding` entry for CLLC / CLLLC
+   - a `capacitor_binding` entry for CLLLC
    - a row in the drift test prefix map
 
 2. **End-to-end `heaviside design` CLI command.** ✅ Done. `heaviside design
@@ -71,6 +79,16 @@ from `Now`, do it, commit, and move on without checking in.
   does, (b) write a deck-augmenting stencil that synthesises Q1-Q4 in TAS
   not anchored to spice refdeses — this would be a new pattern affecting
   any future behavioural-bridge topology. Deferred pending decision.
+
+- **MKF `generate_ngspice_circuit` does not know `cllc`** — returns
+  `"unknown topology 'cllc'"` for all variants tried (`cllc`, `CLLC`,
+  `cllcConverter`, `CLLCConverter`). CLLC is registered in
+  `get_extra_components_inputs` (extras: `Cr1_resonantCapacitor_primary`
+  + `Cr2_resonantCapacitor_secondary`) but the netlist generator has no
+  dispatch path. Blocks the CLLC stencil entirely — there is no deck to
+  decompose. CLLLC is fine and emits real switches; LLC also works for
+  decompose-only (its `design_magnetics_from_converter` segfault is
+  Phase B only).
 
 ## Next (after Now is empty)
 
