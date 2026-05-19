@@ -143,10 +143,18 @@ def test_design_buck_no_attach_emits_tas_to_stdout(buck_spec: Path) -> None:
     names = {s["name"] for s in tas["stages"]}
     # Buck stencil emits at minimum a power_stage + controller pair.
     assert "power_stage" in names
-    # Decompose-only: components must NOT carry a ``mas`` block yet.
+    # Decompose-only: components must NOT carry an inline PEAS doc yet
+    # (data should still be a placeholder URL string), and the legacy
+    # bridge sibling fields must be absent.
     for stage in tas["stages"]:
         for comp in stage.get("circuit", {}).get("components", []):
             assert "mas" not in comp
+            data = comp.get("data")
+            assert not (isinstance(data, dict) and (
+                "magnetic" in data or "capacitor" in data
+                or "semiconductor" in data or "resistor" in data
+                or "controller" in data
+            )), f"pre-attach component {comp.get('name')!r} unexpectedly carries inline PEAS data"
 
 
 def test_design_buck_no_attach_writes_file(buck_spec: Path, tmp_path: Path) -> None:

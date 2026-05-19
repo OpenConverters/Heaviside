@@ -152,7 +152,12 @@ def _conservative_bsat(saturation_curve: list[Mapping[str, Any]]) -> float:
 def _find_magnetic_component(tas: Mapping[str, Any]) -> tuple[int, int, Mapping[str, Any]]:
     """Return ``(stage_idx, comp_idx, comp)`` for the first magnetic.
 
-    Buck has exactly one inductor (L1).  If the TAS holds more than one
+    Recognises both the new PEAS-shaped emission
+    (``comp["data"]`` is a dict containing a ``magnetic`` key) and the
+    legacy SPICE-reader convention (``comp["category"] == "magnetic"``)
+    so round-trip fixtures and pre-bridge TAS both work.
+
+    Buck has exactly one inductor (L1). If the TAS holds more than one
     magnetic component, we still pick the first — buck's main output
     inductor.
     """
@@ -166,11 +171,17 @@ def _find_magnetic_component(tas: Mapping[str, Any]) -> tuple[int, int, Mapping[
         if not isinstance(comps, list):
             continue
         for ci, c in enumerate(comps):
-            if isinstance(c, Mapping) and c.get("category") == "magnetic":
+            if not isinstance(c, Mapping):
+                continue
+            data = c.get("data")
+            if isinstance(data, Mapping) and "magnetic" in data:
+                return si, ci, c
+            if c.get("category") == "magnetic":
                 return si, ci, c
     raise EnrichmentError(
-        "buck enrichment: no component with category='magnetic' found — "
-        "the bridge attach phase must have populated the inductor MAS first"
+        "buck enrichment: no magnetic component found — "
+        "the bridge attach phase must have populated the inductor PEAS "
+        "data (or the SPICE reader must have stamped category='magnetic') first"
     )
 
 
@@ -211,7 +222,15 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     ipeak_worst = iout + ripple_worst / 2.0
 
     si, ci, comp = _find_magnetic_component(tas)
-    mas = comp.get("mas")
+    # New PEAS-shaped emission: comp["data"] is a MAS envelope whose
+    # "magnetic" sub-document holds core+coil. Legacy SPICE-reader and
+    # round-trip fixtures still stamp the magnetic sub-document directly
+    # as comp["mas"], so accept both.
+    data = comp.get("data")
+    if isinstance(data, Mapping) and isinstance(data.get("magnetic"), Mapping):
+        mas = data["magnetic"]
+    else:
+        mas = comp.get("mas")
     if not isinstance(mas, Mapping):
         raise EnrichmentError(
             f"buck enrichment: TAS magnetic component {comp.get('name')!r} has no MAS "

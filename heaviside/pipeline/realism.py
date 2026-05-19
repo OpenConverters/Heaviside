@@ -423,9 +423,27 @@ def _iter_components(tas: Mapping[str, Any]) -> Iterable[tuple[str, Mapping[str,
 def _categorise(comp: Mapping[str, Any]) -> str:
     """Best-effort category for a TAS component.
 
-    Prefers explicit ``category`` field; falls back to a refdes prefix
-    heuristic for components that are still data-URL placeholders.
+    Priority order:
+
+    1. ``data`` is an inline PEAS document — return the discriminator
+       key (``magnetic``/``capacitor``/``semiconductor``/``resistor``/
+       ``controller``). For ``semiconductor`` we further inspect the
+       SAS body to return the device-type name (``mosfet``/``diode``/
+       ``igbt``/``bjt``) so the per-device checks fire correctly.
+    2. Explicit ``category`` field (SPICE→TAS reader convention).
+    3. Refdes-prefix heuristic for components that are still
+       placeholder URLs pre-bridge-attach.
     """
+    data = comp.get("data")
+    if isinstance(data, Mapping):
+        for key in ("magnetic", "capacitor", "semiconductor", "resistor", "controller"):
+            if key in data:
+                if key == "semiconductor" and isinstance(data[key], Mapping):
+                    sas = data[key]
+                    for dev in ("mosfet", "diode", "igbt", "bjt"):
+                        if dev in sas:
+                            return dev
+                return key
     cat = comp.get("category")
     if isinstance(cat, str) and cat:
         return cat

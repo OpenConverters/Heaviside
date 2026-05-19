@@ -64,20 +64,19 @@ def test_buck_end_to_end_bridge() -> None:
     # 3. Attach into TAS.
     bridge.attach_magnetics_to_tas(tas, designs)
 
-    # 4. The L1 component must now carry the resolved MAS.
+    # 4. The L1 component must now carry the resolved PEAS magnetic doc.
     magnetics = [
         c
         for s in tas["stages"]
         for c in s.get("circuit", {}).get("components", [])
-        if c.get("category") == "magnetic"
+        if isinstance(c.get("data"), dict) and "magnetic" in c["data"]
     ]
     assert len(magnetics) == 1
     l1 = magnetics[0]
     assert l1["name"] == "L1"
-    assert "data" not in l1
-    assert l1["mas"]["core"]["functionalDescription"]["shape"]
-    assert l1["mas"]["coil"]["functionalDescription"]
-    assert l1["mas_scoring"] == top.scoring
+    assert l1["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
+    assert l1["data"]["magnetic"]["coil"]["functionalDescription"]
+    assert l1["scoring"] == top.scoring
 
 
 ACF_SPEC: dict = {
@@ -135,18 +134,18 @@ def test_acf_multi_magnetic_end_to_end_bridge() -> None:
         c
         for s in tas["stages"]
         for c in s.get("circuit", {}).get("components", [])
-        if c.get("category") == "magnetic"
+        if isinstance(c.get("data"), dict) and "magnetic" in c["data"]
     ]
     by_name = {c["name"]: c for c in magnetics}
     assert "T1" in by_name and "L_out0" in by_name
-    assert by_name["T1"]["mas"]["core"]["functionalDescription"]["shape"]
-    assert by_name["L_out0"]["mas"]["core"]["functionalDescription"]["shape"]
+    assert by_name["T1"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
+    assert by_name["L_out0"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
     # Distinct designs.
     assert (
-        by_name["T1"]["mas_scoring"]
-        != by_name["L_out0"]["mas_scoring"]
-        or by_name["T1"]["mas"]["core"]["functionalDescription"]["shape"]
-        != by_name["L_out0"]["mas"]["core"]["functionalDescription"]["shape"]
+        by_name["T1"]["scoring"]
+        != by_name["L_out0"]["scoring"]
+        or by_name["T1"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
+        != by_name["L_out0"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
     )
 
 
@@ -247,18 +246,18 @@ def test_llc_multi_magnetic_end_to_end_bridge() -> None:
         c
         for s in tas["stages"]
         for c in s.get("circuit", {}).get("components", [])
-        if c.get("category") == "magnetic"
+        if isinstance(c.get("data"), dict) and "magnetic" in c["data"]
     ]
     by_name = {c["name"]: c for c in magnetics}
     assert "T1" in by_name and "L_r" in by_name, (
         f"LLC stencil must emit T1 + L_r; got {sorted(by_name)}"
     )
-    assert by_name["T1"]["mas"]["core"]["functionalDescription"]["shape"]
-    assert by_name["L_r"]["mas"]["core"]["functionalDescription"]["shape"]
+    assert by_name["T1"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
+    assert by_name["L_r"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
     # The two designs must be distinct PyOM artefacts.
     assert (
-        by_name["T1"]["mas_scoring"]
-        != by_name["L_r"]["mas_scoring"]
-        or by_name["T1"]["mas"]["core"]["functionalDescription"]["shape"]
-        != by_name["L_r"]["mas"]["core"]["functionalDescription"]["shape"]
+        by_name["T1"]["scoring"]
+        != by_name["L_r"]["scoring"]
+        or by_name["T1"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
+        != by_name["L_r"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
     )

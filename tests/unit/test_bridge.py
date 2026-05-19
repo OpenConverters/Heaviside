@@ -258,10 +258,16 @@ def test_attach_single_magnetic_replaces_placeholder() -> None:
 
     components = tas["stages"][0]["circuit"]["components"]
     l1 = next(c for c in components if c["name"] == "L1")
-    assert "data" not in l1, "placeholder URL must be removed"
-    assert l1["category"] == "magnetic"
-    assert l1["mas_scoring"] == 4.2
-    assert l1["mas"]["core"]["functionalDescription"]["shape"]["name"] == "PQ 20/16"
+    # New PEAS-shaped emission: data is the full MAS envelope (dict),
+    # not the placeholder URL string. Scoring is stashed as a TAS-extra
+    # sibling. Legacy `category`/`mas`/`mas_scoring` fields are gone.
+    assert isinstance(l1["data"], dict), "placeholder URL must be replaced by PEAS doc"
+    assert "magnetic" in l1["data"]
+    assert "category" not in l1
+    assert "mas" not in l1
+    assert "mas_scoring" not in l1
+    assert l1["scoring"] == 4.2
+    assert l1["data"]["magnetic"]["core"]["functionalDescription"]["shape"]["name"] == "PQ 20/16"
 
     # Non-magnetic components untouched.
     q1 = next(c for c in components if c["name"] == "Q1")
@@ -290,10 +296,10 @@ def test_attach_picks_up_inline_category_magnetic() -> None:
     bridge.attach_magnetics_to_tas(tas, designs)
 
     t1 = tas["stages"][0]["circuit"]["components"][0]
-    assert t1["mas"]["core"]["functionalDescription"]["shape"]["name"] == "ETD 29"
-    # Inline numeric inductances are preserved alongside the MAS — both
-    # the round-trip writer (which reads `inductances`) and the agent
-    # layer (which reads `mas`) can coexist.
+    assert t1["data"]["magnetic"]["core"]["functionalDescription"]["shape"]["name"] == "ETD 29"
+    # Inline numeric inductances are preserved alongside the PEAS data —
+    # both the round-trip writer (which reads `inductances`) and the
+    # agent layer (which reads `data.magnetic`) can coexist.
     assert t1["inductances"] == [1e-3, 250e-6]
 
 
@@ -383,8 +389,8 @@ def test_attach_multi_magnetic_with_mapping_succeeds() -> None:
 
     t1 = tas["stages"][0]["circuit"]["components"][0]
     lout = tas["stages"][1]["circuit"]["components"][0]
-    assert t1["mas"]["core"]["functionalDescription"]["shape"]["name"] == "ETD 39"
-    assert lout["mas"]["core"]["functionalDescription"]["shape"]["name"] == "PQ 26/25"
+    assert t1["data"]["magnetic"]["core"]["functionalDescription"]["shape"]["name"] == "ETD 39"
+    assert lout["data"]["magnetic"]["core"]["functionalDescription"]["shape"]["name"] == "PQ 26/25"
 
 
 def test_attach_multi_magnetic_mapping_missing_key_raises() -> None:
@@ -658,8 +664,8 @@ def test_attach_components_acf_binds_main_and_extras() -> None:
 
     t1 = tas["stages"][0]["circuit"]["components"][0]
     lout = tas["stages"][1]["circuit"]["components"][0]
-    assert t1["mas"]["core"]["functionalDescription"]["shape"]["name"] == "ETD 39"
-    assert lout["mas"]["core"]["functionalDescription"]["shape"]["name"] == "RM 8"
+    assert t1["data"]["magnetic"]["core"]["functionalDescription"]["shape"]["name"] == "ETD 39"
+    assert lout["data"]["magnetic"]["core"]["functionalDescription"]["shape"]["name"] == "RM 8"
 
 
 def test_attach_components_unknown_tas_magnetic_raises() -> None:
@@ -812,14 +818,20 @@ def test_attach_components_binds_resonant_capacitors() -> None:
     cr1 = out["stages"][0]["circuit"]["components"][1]
     cr2 = out["stages"][1]["circuit"]["components"][0]
 
-    # Placeholder data URL removed, category stamped, CAS::Inputs attached.
-    assert "data" not in cr1
-    assert cr1["category"] == "capacitor"
-    assert cr1["cas_inputs"]["designRequirements"]["capacitance"]["nominal"] == 22e-9
+    # Placeholder data URL replaced by PEAS capacitor doc:
+    # data = {"capacitor": {}, "inputs": <CAS::Inputs envelope>}.
+    # Legacy `category`/`cas_inputs` siblings are gone.
+    assert isinstance(cr1["data"], dict)
+    assert "capacitor" in cr1["data"]
+    assert "category" not in cr1
+    assert "cas_inputs" not in cr1
+    assert cr1["data"]["inputs"]["designRequirements"]["capacitance"]["nominal"] == 22e-9
 
-    assert "data" not in cr2
-    assert cr2["category"] == "capacitor"
-    assert cr2["cas_inputs"]["designRequirements"]["capacitance"]["nominal"] == 44e-9
+    assert isinstance(cr2["data"], dict)
+    assert "capacitor" in cr2["data"]
+    assert "category" not in cr2
+    assert "cas_inputs" not in cr2
+    assert cr2["data"]["inputs"]["designRequirements"]["capacitance"]["nominal"] == 44e-9
 
 
 def test_attach_components_picks_up_inline_category_capacitor() -> None:
@@ -848,7 +860,7 @@ def test_attach_components_picks_up_inline_category_capacitor() -> None:
     bridge.attach_components_to_tas(tas, components, topology=entry)
 
     cr1 = tas["stages"][0]["circuit"]["components"][1]
-    assert cr1["cas_inputs"]["designRequirements"]["name"] == "Cr1"
+    assert cr1["data"]["inputs"]["designRequirements"]["name"] == "Cr1"
 
 
 def test_attach_components_leaves_unbound_capacitors_alone() -> None:
@@ -989,14 +1001,16 @@ def test_attach_components_llc_registry_binds_C_r_resonant_cap() -> None:
     )
     bridge.attach_components_to_tas(tas, components, topology="llc")
 
-    # C_r received the cas_inputs envelope.
+    # C_r received the PEAS capacitor doc with CAS::Inputs envelope.
     c_r = tas["stages"][0]["circuit"]["components"][2]
     assert c_r["name"] == "C_r"
-    assert c_r["category"] == "capacitor"
-    assert "data" not in c_r
-    assert c_r["cas_inputs"]["designRequirements"]["capacitance"]["nominal"] == 37.25e-9
+    assert isinstance(c_r["data"], dict)
+    assert "capacitor" in c_r["data"]
+    assert "category" not in c_r
+    assert "cas_inputs" not in c_r
+    assert c_r["data"]["inputs"]["designRequirements"]["capacitance"]["nominal"] == 37.25e-9
 
-    # Unbound caps stay as untouched placeholders — librarian sizes them.
+    # Unbound caps stay as untouched placeholder URL strings — librarian sizes them.
     for cap in (
         tas["stages"][0]["circuit"]["components"][3],  # C_bus_hi
         tas["stages"][0]["circuit"]["components"][4],  # C_bus_lo
@@ -1004,12 +1018,13 @@ def test_attach_components_llc_registry_binds_C_r_resonant_cap() -> None:
     ):
         assert "cas_inputs" not in cap
         assert "category" not in cap
+        assert isinstance(cap["data"], str)
         assert cap["data"].startswith("TAS/data/capacitors.ndjson")
 
     # Sanity: main magnetic and L_r still attached as before.
-    assert tas["stages"][0]["circuit"]["components"][0]["mas"][
+    assert tas["stages"][0]["circuit"]["components"][0]["data"]["magnetic"][
         "core"
     ]["functionalDescription"]["shape"]["name"] == "ETD 39"
-    assert tas["stages"][0]["circuit"]["components"][1]["mas"][
+    assert tas["stages"][0]["circuit"]["components"][1]["data"]["magnetic"][
         "core"
     ]["functionalDescription"]["shape"]["name"] == "RM 8"

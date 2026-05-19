@@ -248,19 +248,26 @@ def design_magnetics(
 def _tas_magnetic_components(tas: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Return every TAS component declared as a magnetic.
 
-    Components are classified as magnetic when their ``data`` URL points
-    at ``magnetics.ndjson`` (the placeholder convention used by the
-    stencils) **or** when they carry an explicit ``category == "magnetic"``
-    (the inline convention used by the SPICE→TAS reader and round-trip
-    fixtures).
+    Three recognition paths, in priority order:
+
+    1. ``data`` is an inline PEAS document carrying a ``magnetic`` key
+       (post-attach shape — what the bridge emits).
+    2. ``category == "magnetic"`` — the parallel SPICE→TAS reader
+       convention. Not in the TAS schema but emitted by
+       ``TAS/scripts/spice_to_tas.py``; round-trip fixtures rely on it.
+    3. ``data`` is a URI string pointing at ``magnetics.ndjson`` — the
+       stencil's pre-attach placeholder convention.
     """
     out: list[dict[str, Any]] = []
     for stage in tas.get("stages", []):
         for c in stage.get("circuit", {}).get("components", []):
+            data = c.get("data")
+            if isinstance(data, dict) and "magnetic" in data:
+                out.append(c)
+                continue
             if c.get("category") == "magnetic":
                 out.append(c)
                 continue
-            data = c.get("data", "")
             if isinstance(data, str) and "magnetics.ndjson" in data:
                 out.append(c)
     return out
@@ -340,28 +347,44 @@ def attach_magnetics_to_tas(
 
 
 def _attach_one(component: dict[str, Any], design: MagneticDesign) -> None:
-    """Stamp ``design.magnetic`` onto ``component['mas']`` (mutating)."""
+    """Emit a PEAS magnetic document into ``component['data']`` (mutating).
+
+    ``design.mas`` is already a full MAS envelope
+    (``{inputs: {designRequirements, operatingPoints}, magnetic: {...}, outputs: {...}}``)
+    which is a valid PEAS document for the magnetic discriminator
+    branch. We stamp it verbatim onto ``component['data']`` and stash
+    the PyOM design score as a TAS-extra ``scoring`` sibling so
+    callers retain access to the ranking metadata.
+
+    Legacy ``category`` / ``mas`` / ``mas_scoring`` siblings are no
+    longer written — PEAS-compliant emission lives in ``data``.
+    """
     component.pop("data", None)
-    component["category"] = "magnetic"
-    component["mas"] = design.magnetic
-    component["mas_scoring"] = design.scoring
+    component.pop("category", None)
+    component.pop("mas", None)
+    component.pop("mas_scoring", None)
+    component["data"] = design.mas
+    component["scoring"] = design.scoring
 
 
 def _tas_capacitor_components(tas: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Return every TAS component declared as a capacitor.
 
-    Mirror of :func:`_tas_magnetic_components` for the capacitor
-    category. Recognises both the inline ``category == "capacitor"``
-    convention and the stencil's placeholder ``data`` URL pointing at
-    ``capacitors.ndjson``.
+    Mirror of :func:`_tas_magnetic_components`. Three recognition
+    paths: inline PEAS ``data.capacitor`` (post-attach), the SPICE
+    reader's ``category == "capacitor"`` convention, and the
+    stencil's ``capacitors.ndjson`` placeholder URL.
     """
     out: list[dict[str, Any]] = []
     for stage in tas.get("stages", []):
         for c in stage.get("circuit", {}).get("components", []):
+            data = c.get("data")
+            if isinstance(data, dict) and "capacitor" in data:
+                out.append(c)
+                continue
             if c.get("category") == "capacitor":
                 out.append(c)
                 continue
-            data = c.get("data", "")
             if isinstance(data, str) and "capacitors.ndjson" in data:
                 out.append(c)
     return out
@@ -370,17 +393,23 @@ def _tas_capacitor_components(tas: Mapping[str, Any]) -> list[dict[str, Any]]:
 def _attach_one_capacitor(
     component: dict[str, Any], spec: ExtraCapacitorSpec
 ) -> None:
-    """Stamp ``spec.inputs`` (a CAS::Inputs envelope) onto a TAS cap.
+    """Emit a PEAS capacitor document into ``component['data']`` (mutating).
 
-    The bridge does not pick capacitor MPNs — it only routes PyOM's
-    pre-filled CAS::Inputs (designRequirements + operatingPoints) onto
-    the corresponding TAS component as ``component["cas_inputs"]``.
-    The downstream component-librarian agent reads ``cas_inputs`` and
-    writes the chosen catalog entry back as ``component["cas"]``.
+    Pre-binding the capacitor body is an empty stub ``{}`` (allowed by
+    CAS/capacitor.json which has no required fields); the design
+    intent lives in ``data.inputs`` which carries the full CAS::Inputs
+    envelope (``designRequirements + operatingPoints``) produced by
+    PyOM's ``get_extra_components_inputs``.
+
+    Downstream the component-librarian agent reads ``data.inputs`` and
+    fills in ``data.capacitor`` with the chosen catalog entry.
+
+    Legacy ``category`` / ``cas_inputs`` siblings are no longer written.
     """
     component.pop("data", None)
-    component["category"] = "capacitor"
-    component["cas_inputs"] = spec.inputs
+    component.pop("category", None)
+    component.pop("cas_inputs", None)
+    component["data"] = {"capacitor": {}, "inputs": spec.inputs}
 
 
 def attach_components_to_tas(
