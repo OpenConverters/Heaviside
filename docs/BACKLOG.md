@@ -12,31 +12,32 @@ from `Now`, do it, commit, and move on without checking in.
 1. **Stencils for the next batch of topologies.**
    Done so far (with stencil + golden + registry + drift-test row):
    `push_pull`, `phase_shifted_full_bridge`, `phase_shifted_half_bridge`,
-   `asymmetric_half_bridge`, `weinberg`, `dual_active_bridge`, `llc`
-   (LLC has been stenciled since the original push; just now wired
-   `capacitor_binding={"C_r": "resonantCapacitor"}` — first real consumer
-   of item 3's cap-attach plumbing). SRC blocked on MKF behavioural-
-   bridge limitation; CLLC blocked because MKF `generate_ngspice_circuit`
-   doesn't know the topology (see Upstream bugs for both).
+   `asymmetric_half_bridge`, `weinberg`, `dual_active_bridge`, `llc`,
+   `clllc` (just landed — first multi-cap binding consumer, exercises
+   `capacitor_binding={C_r1: Cr1_HV_resonantCapacitor, C_r2:
+   Cr2_LV_resonantCapacitor}` and `magnetic_binding` with two extras-
+   magnetic roles `Lr1_HV_seriesInductor` + `Lr2_LV_seriesInductor`).
 
    Remaining un-stenciled converter topologies (per registry, 24 total):
-   `cllc` (BLOCKED, see above), `clllc`, `series_resonant` (BLOCKED),
-   `power_factor_correction`, `vienna`. **CLLLC** is the natural next
-   target — it's the largest of the resonant family (2 bridges × 4
-   switches + 2 resonant tanks + main transformer = ~16 real components,
-   similar scale to DAB but with the additional `capacitor_binding={
-   "Cr1": "Cr1_HV_resonantCapacitor", "Cr2": "Cr2_LV_resonantCapacitor"}`
-   plus matching `magnetic_binding` for Lr1/Lr2 — see
-   `docs/extras-probe.json`). PFC / vienna are non-isolated and don't
-   exercise cap-binding.
-   Each remaining stencil needs:
+   `cllc` (BLOCKED — MKF unknown topology), `series_resonant`
+   (BLOCKED — MKF emits behavioural bridge only), `vienna` (PARTIALLY
+   BLOCKED — `process_vienna` errors with `cannot use at() with string`,
+   though `generate_ngspice_circuit` knows the topology), and
+   `power_factor_correction` (BLOCKED — `generate_ngspice_circuit`
+   doesn't know `pfc` / `powerFactorCorrection` / `power_factor_correction`).
+   See Upstream bugs below. Effectively the un-blocked stencil work is
+   complete until upstream MKF lands fixes.
+
+   Each remaining stencil (when unblocked) needs:
    - a stencil function in `heaviside/decomposer/stencils.py`
    - a golden `.spice` + `.tas.json` under `tests/regression/decomposer/golden/`
-     (bridge topologies → TAS-only goldens; see `weinberg` / `dab` for the
-     pattern)
+     (bridge topologies → TAS-only goldens; see `weinberg` / `dab` /
+     `clllc` for the pattern)
    - a `magnetic_binding` entry in the registry (extras roles in
      `docs/extras-probe.json`)
-   - a `capacitor_binding` entry for CLLLC
+   - a `capacitor_binding` entry for any resonant cap exposed via
+     extras-cap (CLLLC was the first multi-cap consumer; SRC / CLLC
+     will follow once they decode)
    - a row in the drift test prefix map
 
 2. **End-to-end `heaviside design` CLI command.** ✅ Done. `heaviside design
@@ -50,18 +51,17 @@ from `Now`, do it, commit, and move on without checking in.
    only by design; FET / diode / cap attach is a future bridge feature.
 
 3. **Resonant cap binding for LLC / SRC / CLLC / CLLLC.** ✅ Bridge
-   plumbing done. `TopologyEntry.capacitor_binding: dict[str, str]` maps
-   TAS cap component name → PyOM extras-cap role name;
+   plumbing done and now exercised end-to-end by both LLC (single cap)
+   and CLLLC (dual cap — first real multi-cap consumer).
+   `TopologyEntry.capacitor_binding: dict[str, str]` maps TAS cap
+   component name → PyOM extras-cap role name;
    `attach_components_to_tas` walks `_tas_capacitor_components`, stamps
    `cas_inputs` onto each bound cap, and raises loudly on stencil/registry
    drift. Buck-class topologies (empty `capacitor_binding`) are untouched —
-   their output caps stay placeholders for the librarian agent. 5 unit
-   tests in `tests/unit/test_bridge.py` against a synthetic CLLC-shaped
-   entry. **Remaining**: the LLC / CLLC / CLLLC *stencils* themselves
-   (none exist yet — blocked on the same MKF behavioural-bridge issue as
-   SRC for LLC, see Upstream bugs) plus filling in `capacitor_binding` on
-   the registry once those stencils land. Bridge no longer blocks
-   librarian agent kickoff.
+   their output caps stay placeholders for the librarian agent.
+   **Remaining**: SRC and CLLC stencils still blocked upstream (see
+   Upstream bugs), but the plumbing is ready for them the moment they
+   land.
 
 ## Upstream bugs (track, can't fix from Heaviside)
 
@@ -89,6 +89,21 @@ from `Now`, do it, commit, and move on without checking in.
   decompose. CLLLC is fine and emits real switches; LLC also works for
   decompose-only (its `design_magnetics_from_converter` segfault is
   Phase B only).
+
+- **MKF `generate_ngspice_circuit` does not know
+  `power_factor_correction`** — returns `"unknown topology"` for `pfc`,
+  `powerFactorCorrection`, and `power_factor_correction`. PFC is
+  registered as a converter in PyOM (and `process_inputs` accepts it),
+  but the ngspice generator has no dispatch path. Blocks the PFC
+  stencil entirely; same shape as the CLLC bug above.
+
+- **MKF `process_vienna` raises `cannot use at() with string`** —
+  `generate_ngspice_circuit("vienna", ...)` knows the topology but the
+  Vienna processor errors out before producing a deck, regardless of
+  spec shape (`lineToLineVoltage` + `outputDcVoltage` set per
+  `dump_all_decks.py` recipe). Partially blocks Vienna: PyOM accepts the
+  variant string but never returns a netlist. Distinct from the
+  PFC/CLLC "unknown topology" path.
 
 ## Next (after Now is empty)
 
@@ -135,10 +150,10 @@ from `Now`, do it, commit, and move on without checking in.
 
 ## Later (deferred, but tracked so we don't forget)
 
-- **Remaining 11 stencils** to reach 24/24: `cllc`, `clllc`, `vienna`,
-  `power_factor_correction`, plus whatever survives from the Now/Next
-  stencil batch. Each needs the same 4-part bring-up (stencil, golden,
-  binding, drift-test row).
+- **Remaining stencils** (all upstream-blocked, see Upstream bugs):
+  `cllc`, `vienna`, `power_factor_correction`, `series_resonant`.
+  Each will need the same 4-part bring-up (stencil, golden, binding,
+  drift-test row) the moment MKF unblocks it.
 - **K-statement recovery in `spice_to_tas`.** MVP collapses to one
   multi-winding magnetic with inline `inductances`+`coupling`; would be
   nice to recover separate windings from K-statement coupling matrices.
@@ -154,7 +169,8 @@ from `Now`, do it, commit, and move on without checking in.
   verified runtime fact. Item 1 in `Now` fixes this.
 - Capacitor extras (`ExtraCapacitorSpec`) now have a TAS-side attach
   path via `TopologyEntry.capacitor_binding` + `cas_inputs` on the TAS
-  component (item 3, done). Still need a stencil to consume it (CLLC).
+  component (item 3, done). First multi-cap consumer (CLLLC) has
+  landed; CLLC will follow once upstream unblocks the topology.
 - `bridge.design_converter_components` REAL mode requires the Magnetic
   JSON (`design.magnetic`), not the MAS envelope (`design.mas`). This
   is locked into the bridge but easy to regress — see the test in
