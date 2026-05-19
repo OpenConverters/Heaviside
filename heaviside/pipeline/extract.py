@@ -1101,6 +1101,103 @@ def _enrich_active_clamp_forward(tas: dict, spec: Mapping[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Isolated buck (flybuck) extractor
+# ---------------------------------------------------------------------------
+
+
+def _enrich_isolated_buck(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty + T1 Isat / Ipeak for the isolated buck (flybuck).
+
+    Flybuck = synchronous buck on the *primary* winding of a coupled
+    inductor T1; the secondary winding is rectified through D_out0 / C_out0
+    to a magnetically-isolated output that follows by turns ratio
+    (open-loop).  The controller regulates the primary rail (``Vout_pri``).
+
+    Topology shape (from the stencil): one magnetic ``T1`` lives in the
+    ``isolation``-role stage with windings named ``pri`` and ``sec0``;
+    the primary winding is the binding magnetic, so unlike the forward
+    family we **do** stamp Isat / Ipeak on T1 (it carries the buck
+    inductor current).
+
+    Math (CCM, primary side only):
+
+      * ``D = Vout_pri / Vin``  (standard buck)
+      * ``D_max`` at ``Vin_min``, ``D_min`` at ``Vin_max``.
+      * Primary ripple ``ΔI_pri = Vout_pri · (1−D) / (L_pri · fsw)``,
+        monotone decreasing in D ⇒ worst at ``D_min`` (Vin_max),
+        with the PROTEUS −20 % L tolerance applied.
+      * ``Ipeak_worst = Iout_pri + ΔI_pri_worst / 2``.
+      * ``Isat = B_sat · N_pri · A_e / L_pri``.
+
+    v0.1 scope limit: secondary load reflected back through T1's
+    coupling adds to primary current, raising ``Ipeak_worst``.  This
+    extractor does NOT model reflected secondary load — the
+    `secondary_reflected_current_modelled: false` flag in
+    ``ipeak_provenance`` makes that explicit so a future extension can
+    add it without silent drift.  Today the realism gate's Ipeak
+    margin will be optimistic by the reflected-load amount; for a
+    flybuck where the secondary rail draws a small fraction of total
+    power that is acceptable, but for heavily secondary-loaded
+    designs the gate will under-report risk until the extension lands.
+    """
+    where = "isolated_buck spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    L_pri = _required_inductance(spec, "desiredInductance", where)
+
+    if vout >= vmin:
+        raise EnrichmentError(
+            f"isolated_buck enrichment: Vout_pri ({vout}) must be less than "
+            f"Vin_min ({vmin}) — the primary loop is a buck and cannot step up"
+        )
+
+    # T1 lives in the isolation stage; read its primary winding turns
+    # and core data.  Unlike the forward family, T1 IS the binding
+    # magnetic here.
+    si, ci, t1_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "isolated_buck enrichment (T1)"
+    )
+    mas = _read_mas(t1_comp, "isolated_buck T1 MAS")
+    A_e, _, b_sat = _mas_isat_inputs(mas, "isolated_buck T1 MAS")
+    N_pri = _winding_turns_by_name(mas, "pri", "isolated_buck T1 MAS")
+
+    d_max = vout / vmin
+    d_min = vout / vmax
+    L_worst = 0.8 * L_pri
+    ripple_worst = vout * (1.0 - d_min) / (L_worst * fsw)
+    ipeak_worst = iout + ripple_worst / 2.0
+    isat = b_sat * float(N_pri) * float(A_e) / L_pri
+
+    tas["duty"] = round(d_max, 6)
+    tas["duty_min"] = round(d_min, 6)
+    tas["duty_max"] = round(d_max, 6)
+
+    enriched = dict(t1_comp)
+    enriched["isat"] = round(isat, 6)
+    enriched["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched["isat_provenance"] = {
+        "method": "B_sat * N_pri * A_e / L_pri (isolated_buck v0.1, primary winding)",
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": int(N_pri),
+        "effective_area_m2": float(A_e),
+        "inductance_H": L_pri,
+    }
+    enriched["ipeak_provenance"] = {
+        "method": "Iout_pri + ripple_worst/2 (buck-shaped on primary at D_min, L*0.8)",
+        "role": "primary_buck_inductor",
+        "iout_A": iout,
+        "vout_pri_V": vout,
+        "d_min": round(d_min, 6),
+        "ripple_worst_A_pp": round(ripple_worst, 6),
+        "vin_max_V": vmax,
+        "fsw_Hz": fsw,
+        "L_worst_H": L_worst,
+        "secondary_reflected_current_modelled": False,
+    }
+    tas["topology"]["stages"][si]["circuit"]["components"][ci] = enriched
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -1115,6 +1212,7 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "single_switch_forward": _enrich_single_switch_forward,
     "two_switch_forward": _enrich_two_switch_forward,
     "active_clamp_forward": _enrich_active_clamp_forward,
+    "isolated_buck": _enrich_isolated_buck,
 }
 
 

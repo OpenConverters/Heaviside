@@ -167,9 +167,18 @@ so the gap stays visible from inside Heaviside's planning loop.
   since the output-side analytics are identical — the clamp cap +
   auxiliary FET absorb the reset volt-seconds so D may exceed 0.5;
   the realism gate's generic 0.05 < D < 0.95 CCM bound still
-  applies and fail-closes any over-ceiling design.  Multi-output
-  flybacks throw (not yet supported).  **Remaining**: isolated_buck
-  / isolated_buck_boost (multi-output);
+  applies and fail-closes any over-ceiling design.  Isolated buck
+  (flybuck) extractor stamps T1 itself as the binding magnetic
+  (unlike the forward family where T1 is intentionally skipped): the
+  primary winding *is* the buck inductor, so D = Vout_pri/Vin,
+  ripple worst at Vin_max with L*0.8, Isat = B_sat·N_pri·A_e/L_pri.
+  v0.1 explicitly does NOT model reflected secondary load — the
+  `secondary_reflected_current_modelled: false` provenance flag
+  pins that for regression and a future extension must update the
+  flag in the same commit.  Multi-output flybacks throw (not yet
+  supported).  **Remaining**: isolated_buck_boost (inverting
+  primary — worst-case ripple at Vin_max but avg current at
+  Vin_min, same shape as the boost extractor);
   librarian agent populates `vds_rated` / `vrrm_rated` / `v_rated` on TAS
   components for the voltage derating checks; analyst agent computes Tj
   for thermal_limit; sim agent populates `simulation_results` /
