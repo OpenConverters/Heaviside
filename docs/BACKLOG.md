@@ -28,10 +28,15 @@ from `Now`, do it, commit, and move on without checking in.
      `asymmetric_half_bridge`, `weinberg`. SRC blocked on MKF behavioural-
      bridge limitation (see Upstream bugs); next up: `dual_active_bridge`.
 
-2. **End-to-end `heaviside design` CLI command.** First user-visible surface.
-   Pipeline: `DesignSpec` (JSON or flags) → `decompose_from_spec` →
-   `design_converter_components` → `attach_components_to_tas` → print/save
-   the populated TAS. No agent layer yet — just the bridge driven from argv.
+2. **End-to-end `heaviside design` CLI command.** ✅ Done. `heaviside design
+   TOPOLOGY --spec FILE [--turns ...] [--lm ...] [--bridge-mode auto|switch|
+   pulse] [--no-attach] [--out FILE] [--compact]`. Auto-detects switch-mode
+   for bridge families, lazy-imports PyOM so `version`/`topologies` stay
+   instant, accepts PyOM aliases (`dab` → `dual_active_bridge`), distinct
+   exit codes (2 spec/arg, 3 decompose, 4 attach, 5 other PyOM). Smoke-tested
+   end-to-end on buck (48→12 V / 5 A); 12 unit tests in
+   `tests/unit/test_cli.py`. Note: `attach_components_to_tas` is magnetics-
+   only by design; FET / diode / cap attach is a future bridge feature.
 
 3. **Resonant cap binding for LLC / SRC / CLLC / CLLLC.** Probe shows CLLC
    exposes `Cr1_resonantCapacitor_primary` + `Cr2_resonantCapacitor_secondary`

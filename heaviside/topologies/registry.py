@@ -284,16 +284,42 @@ MAGNETICS_ONLY: tuple[TopologyEntry, ...] = tuple(t for t in TOPOLOGIES if t.kin
 
 _BY_NAME: dict[str, TopologyEntry] = {t.name: t for t in TOPOLOGIES}
 
+# Secondary lookup: PyOM / camelCase aliases (e.g. ``"dab"`` →
+# ``dual_active_bridge``). The canonical Python name still wins if the same
+# string appears in both dicts.
+_BY_ALIAS: dict[str, TopologyEntry] = {}
+for _t in TOPOLOGIES:
+    for _alias in _t.pyom_names:
+        if _alias in _BY_NAME:
+            continue  # alias collides with a canonical name — canonical wins
+        existing = _BY_ALIAS.get(_alias)
+        if existing is not None and existing is not _t:
+            raise RuntimeError(
+                f"Topology alias {_alias!r} is claimed by both "
+                f"{existing.name!r} and {_t.name!r}; aliases must be unique."
+            )
+        _BY_ALIAS[_alias] = _t
+del _t
+
 
 def get(name: str) -> TopologyEntry:
-    """Look up a topology by canonical Python name (e.g. ``"buck"``).
+    """Look up a topology by canonical Python name or PyOM alias.
 
-    Raises ``KeyError`` (loudly, per CLAUDE.md "no fallbacks" rule) if the
-    name is not in the registry.
+    Accepts the canonical Python name (e.g. ``"buck"``,
+    ``"dual_active_bridge"``) as well as any of the PyOM-side aliases
+    declared in :attr:`TopologyEntry.pyom_names` (e.g. ``"dab"``,
+    ``"cukConverter"``).
+
+    Raises ``KeyError`` (loudly, per CLAUDE.md "no fallbacks" rule) if
+    the name is not in the registry.
     """
-    if name not in _BY_NAME:
-        raise KeyError(f"Unknown topology {name!r}. Known: {', '.join(sorted(_BY_NAME))}.")
-    return _BY_NAME[name]
+    if name in _BY_NAME:
+        return _BY_NAME[name]
+    if name in _BY_ALIAS:
+        return _BY_ALIAS[name]
+    raise KeyError(
+        f"Unknown topology {name!r}. Known: {', '.join(sorted(_BY_NAME))}."
+    )
 
 
 def names() -> tuple[str, ...]:

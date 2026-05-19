@@ -2,16 +2,29 @@
 
 from __future__ import annotations
 
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
 import typer
 
 from heaviside import __version__
-from heaviside.topologies import CONVERTERS, MAGNETICS_ONLY, TOPOLOGIES
+from heaviside.topologies import CONVERTERS, MAGNETICS_ONLY, TOPOLOGIES, get
 
 app = typer.Typer(
     name="heaviside",
     help="PyOpenMagnetics-first power electronics design system.",
     no_args_is_help=True,
     add_completion=False,
+)
+
+
+# Families whose MKF decks need ``bridge_simulation_mode="switch"`` so that
+# real MOSFET refdeses appear in the netlist (otherwise the stencils refuse
+# the deck because the bridge collapses to a single ``Vbridge`` source).
+_BRIDGE_FAMILIES = frozenset(
+    {"isolated_bridge", "isolated_push_pull", "resonant", "series_resonant"}
 )
 
 
@@ -35,6 +48,137 @@ def topologies(family: str | None = None) -> None:
     for t in entries:
         binding = t.per_topology_binding or "—"
         typer.echo(f"  {t.name:<28} {t.family:<22} {t.kind:<10} binding={binding}")
+
+
+def _load_spec(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        typer.echo(f"error: spec file not found: {path}", err=True)
+        raise typer.Exit(code=2)
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        typer.echo(f"error: spec file is not valid JSON: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+
+def _parse_turns(raw: str | None, spec: dict[str, Any]) -> list[float]:
+    """Resolve turns ratios from --turns flag or fall back to spec fields."""
+    if raw is not None:
+        try:
+            return [float(t.strip()) for t in raw.split(",") if t.strip()]
+        except ValueError as exc:
+            typer.echo(f"error: --turns must be a comma-separated list of floats: {exc}", err=True)
+            raise typer.Exit(code=2) from None
+    # Common MAS field names — accept the first one we find.
+    for key in ("desiredTurnsRatios", "turnsRatios"):
+        if key in spec:
+            value = spec[key]
+            if isinstance(value, list) and all(isinstance(v, (int, float)) for v in value):
+                return [float(v) for v in value]
+    # Many non-isolated topologies legitimately have zero turns ratios.
+    return []
+
+
+def _parse_lm(raw: float | None, spec: dict[str, Any]) -> float:
+    if raw is not None:
+        return float(raw)
+    for key in ("desiredInductance", "magnetizingInductance"):
+        if key in spec and isinstance(spec[key], (int, float)):
+            return float(spec[key])
+    typer.echo(
+        "error: magnetizing inductance not provided (--lm) and not found in spec "
+        "(looked for 'desiredInductance', 'magnetizingInductance').",
+        err=True,
+    )
+    raise typer.Exit(code=2)
+
+
+def _resolve_bridge_mode(bridge_mode: str, topology: str) -> str:
+    if bridge_mode != "auto":
+        return bridge_mode
+    entry = get(topology)
+    return "switch" if entry.family in _BRIDGE_FAMILIES else ""
+
+
+@app.command()
+def design(
+    topology: str = typer.Argument(..., help="Canonical topology name (e.g. 'buck', 'dab')."),
+    spec: Path = typer.Option(..., "--spec", "-s", help="JSON file with MAS converter spec."),
+    out: Path | None = typer.Option(None, "--out", "-o", help="Write populated TAS to FILE (default: stdout)."),
+    turns: str | None = typer.Option(None, "--turns", help="Comma-separated turns ratios; overrides spec."),
+    lm: float | None = typer.Option(None, "--lm", help="Magnetizing inductance in henries; overrides spec."),
+    bridge_mode: str = typer.Option(
+        "auto",
+        "--bridge-mode",
+        help="MKF bridge simulation mode: 'auto' (default), '', 'switch', or 'pulse'.",
+    ),
+    no_attach: bool = typer.Option(
+        False,
+        "--no-attach",
+        help="Skip Phase B (component design + attachment). Emit decomposed TAS only.",
+    ),
+    compact: bool = typer.Option(False, "--compact", help="Emit JSON without indentation."),
+) -> None:
+    """Run the end-to-end pipeline: spec → MKF deck → TAS → designed components → populated TAS.
+
+    Examples:
+
+        # Buck — non-isolated, no turns ratios:
+        heaviside design buck --spec buck_48to12.json
+
+        # DAB — bidirectional bridge (auto switch-mode):
+        heaviside design dab --spec dab_800to500.json --turns 1.6 --out dab.tas.json
+
+        # Just decompose; skip component design:
+        heaviside design flyback --spec fly.json --no-attach
+    """
+    # Lazy imports so that ``heaviside version`` / ``heaviside topologies``
+    # do not pay for PyOpenMagnetics' large native module load.
+    from heaviside import bridge as _bridge
+    from heaviside.decomposer import decompose_from_spec
+    from heaviside.decomposer.api import DecomposerError
+    from heaviside.bridge import BridgeError
+
+    spec_json = _load_spec(spec)
+    turns_ratios = _parse_turns(turns, spec_json)
+    magnetizing_inductance = _parse_lm(lm, spec_json)
+    mode = _resolve_bridge_mode(bridge_mode, topology)
+
+    try:
+        _, tas = decompose_from_spec(
+            topology,
+            spec_json,
+            turns_ratios=turns_ratios,
+            magnetizing_inductance=magnetizing_inductance,
+            bridge_simulation_mode=mode,
+        )
+    except DecomposerError as exc:
+        typer.echo(f"error: decompose failed: {exc}", err=True)
+        raise typer.Exit(code=3) from None
+
+    if not no_attach:
+        try:
+            components = _bridge.design_converter_components(
+                topology, spec_json, max_results=1, use_ngspice=False,
+            )
+            _bridge.attach_components_to_tas(tas, components, topology=topology)
+        except BridgeError as exc:
+            typer.echo(f"error: bridge attach failed: {exc}", err=True)
+            raise typer.Exit(code=4) from None
+        except Exception as exc:  # noqa: BLE001 — surface PyOM errors verbatim
+            typer.echo(
+                f"error: component design failed ({type(exc).__name__}): {exc}",
+                err=True,
+            )
+            raise typer.Exit(code=5) from None
+
+    payload = json.dumps(tas, indent=None if compact else 2)
+    if out is None:
+        typer.echo(payload)
+    else:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(payload + ("" if compact else "\n"))
+        typer.echo(f"wrote {out}", err=True)
 
 
 if __name__ == "__main__":
