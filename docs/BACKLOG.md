@@ -140,12 +140,21 @@ so the gap stays visible from inside Heaviside's planning loop.
   INCOMPLETE until the librarian / sim / analyst agents enrich them or
   a per-topology extractor is added.  108 unit tests in
   `tests/unit/test_realism.py` + `tests/unit/test_extract.py` + 2 CLI
-  tests.  **Remaining**: extractors for boost / buck-boost / flyback
-  / forward (same MAS-driven Isat math); librarian agent populates
-  `vds_rated` / `vrrm_rated` / `v_rated` on TAS components for the
-  voltage derating checks; analyst agent computes Tj for thermal_limit;
-  sim agent populates `simulation_results` / `loss_budget` for the
-  remaining 4 checks.
+  tests.  **Boost** and **flyback** extractors landed
+  (`tests/unit/test_extract_boost_flyback.py`, 23 new tests): boost uses
+  `D = 1 − Vin/Vout` with ripple maximised over Vin (closed-form interior
+  peak at `Vout/2`), I_L_avg at Vin_min, same `B_sat·N·A_e/L` Isat math;
+  flyback uses `D = Vout·n/(Vin + Vout·n)` with `n = N_p/N_s` read from
+  MAS, primary-referred `Ipeak = I_in/D + Δi/2` at Vin_min, Isat on the
+  magnetising inductance.  Multi-output flybacks throw (not yet
+  supported).  **Remaining**: extractors for cuk / sepic / zeta (similar
+  non-isolated single-magnetic family), single-switch / two-switch
+  forward (two magnetics: T1 + L_out, needs winding-role disambiguation),
+  isolated_buck / isolated_buck_boost (multi-output);
+  librarian agent populates `vds_rated` / `vrrm_rated` / `v_rated` on TAS
+  components for the voltage derating checks; analyst agent computes Tj
+  for thermal_limit; sim agent populates `simulation_results` /
+  `loss_budget` for the remaining 4 checks.
 - **Analytical regression suite** against the 47 designs in
   `TAS/data/converters.ndjson`. CI gate per AGENTS.md rule 7.
 - **Component-librarian agent port from Proteus.** First real consumer of

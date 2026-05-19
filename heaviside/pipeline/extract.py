@@ -20,6 +20,14 @@ Topologies covered today
   * ``buck`` — duty cycle from Vin range / Vout, scalar Isat from MAS
     saturation curve + core effective area + primary turns, worst-case
     Ipeak from spec (Vin_max, L·0.8 tolerance, Iout_max).
+  * ``boost`` — duty cycle ``D = 1 - Vin/Vout`` (worst case Vin_min),
+    ripple maximised over Vin (closed form: peaks at Vin = Vout/2 when
+    interior), I_L_avg = Iout·Vout/Vin (input-side, worst at Vin_min),
+    Isat as for buck (primary turns of the single inductor).
+  * ``flyback`` — CCM duty ``D = Vout·n / (Vin + Vout·n)`` with
+    ``n = N_p/N_s`` read from MAS, primary peak from ``I_in/D + Δi/2``
+    at Vin_min, Isat on the primary magnetising inductance
+    ``L_m = spec.desiredMagnetizingInductance``.
 
 Everything else passes through unchanged.  Adding a new topology is a
 matter of writing a ``_enrich_<topology>(tas, spec) -> None`` function
@@ -56,67 +64,95 @@ def _require(d: Mapping[str, Any], path: tuple[str, ...], where: str) -> Any:
 
 
 def _buck_vin_extremes(spec: Mapping[str, Any]) -> tuple[float, float]:
-    vin = _require(spec, ("inputVoltage",), "buck spec")
+    return _vin_extremes(spec, "buck spec")
+
+
+def _vin_extremes(spec: Mapping[str, Any], where: str) -> tuple[float, float]:
+    """Shared Vin min/max extractor used by buck/boost/flyback.
+
+    Every worst-case derivation in this module needs the full Vin range
+    (duty, ripple, peak current all vary across it), so we require both
+    ``minimum`` and ``maximum`` — never silently substitute ``nominal``.
+    """
+    vin = _require(spec, ("inputVoltage",), where)
     if not isinstance(vin, Mapping):
         raise EnrichmentError(
-            f"buck spec.inputVoltage: expected mapping, got {type(vin).__name__}"
+            f"{where}.inputVoltage: expected mapping, got {type(vin).__name__}"
         )
     vmin = vin.get("minimum")
     vmax = vin.get("maximum")
     if not isinstance(vmin, (int, float)) or not isinstance(vmax, (int, float)):
         raise EnrichmentError(
-            "buck spec.inputVoltage: requires numeric 'minimum' and 'maximum' "
+            f"{where}.inputVoltage: requires numeric 'minimum' and 'maximum' "
             "(needed to bound duty cycle across the input range)"
         )
     if vmin <= 0 or vmax <= 0:
         raise EnrichmentError(
-            f"buck spec.inputVoltage: must be positive, got min={vmin} max={vmax}"
+            f"{where}.inputVoltage: must be positive, got min={vmin} max={vmax}"
         )
     if vmin > vmax:
         raise EnrichmentError(
-            f"buck spec.inputVoltage: min={vmin} > max={vmax} (inverted)"
+            f"{where}.inputVoltage: min={vmin} > max={vmax} (inverted)"
         )
     return float(vmin), float(vmax)
 
 
 def _buck_operating_point(spec: Mapping[str, Any]) -> tuple[float, float, float]:
-    """Return ``(Vout, Iout, fsw)`` from the first operating point."""
-    ops = _require(spec, ("operatingPoints",), "buck spec")
+    return _operating_point(spec, "buck spec")
+
+
+def _operating_point(
+    spec: Mapping[str, Any], where: str
+) -> tuple[float, float, float]:
+    """Return ``(Vout, Iout, fsw)`` from the first operating point.
+
+    Shared across single-output topologies (buck/boost/flyback).
+    Multi-output topologies (forward with bias winding, isolated_buck, …)
+    must implement their own extractor — the realism gate's worst-case
+    check only needs the main output rail today.
+    """
+    ops = _require(spec, ("operatingPoints",), where)
     if not isinstance(ops, list) or not ops:
         raise EnrichmentError(
-            "buck spec.operatingPoints: must be a non-empty list"
+            f"{where}.operatingPoints: must be a non-empty list"
         )
     op = ops[0]
     if not isinstance(op, Mapping):
         raise EnrichmentError(
-            f"buck spec.operatingPoints[0]: expected mapping, got {type(op).__name__}"
+            f"{where}.operatingPoints[0]: expected mapping, got {type(op).__name__}"
         )
     vouts = op.get("outputVoltages")
     iouts = op.get("outputCurrents")
     fsw = op.get("switchingFrequency")
     if not (isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))):
         raise EnrichmentError(
-            "buck spec.operatingPoints[0].outputVoltages[0]: required numeric"
+            f"{where}.operatingPoints[0].outputVoltages[0]: required numeric"
         )
     if not (isinstance(iouts, list) and iouts and isinstance(iouts[0], (int, float))):
         raise EnrichmentError(
-            "buck spec.operatingPoints[0].outputCurrents[0]: required numeric"
+            f"{where}.operatingPoints[0].outputCurrents[0]: required numeric"
         )
     if not isinstance(fsw, (int, float)) or fsw <= 0:
         raise EnrichmentError(
-            "buck spec.operatingPoints[0].switchingFrequency: required positive number"
+            f"{where}.operatingPoints[0].switchingFrequency: required positive number"
         )
     return float(vouts[0]), float(iouts[0]), float(fsw)
 
 
-def _buck_inductance(spec: Mapping[str, Any]) -> float:
-    L = spec.get("desiredInductance")
+def _required_inductance(
+    spec: Mapping[str, Any], field: str, where: str
+) -> float:
+    L = spec.get(field)
     if not isinstance(L, (int, float)) or L <= 0:
         raise EnrichmentError(
-            "buck spec.desiredInductance: required positive number (henries) — "
+            f"{where}.{field}: required positive number (henries) — "
             "needed to compute inductor ripple and worst-case peak current"
         )
     return float(L)
+
+
+def _buck_inductance(spec: Mapping[str, Any]) -> float:
+    return _required_inductance(spec, "desiredInductance", "buck spec")
 
 
 def _conservative_bsat(saturation_curve: list[Mapping[str, Any]]) -> float:
@@ -298,12 +334,296 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Boost extractor
+# ---------------------------------------------------------------------------
+
+
+def _enrich_boost(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp ``duty`` on TAS root and ``isat`` / ``ipeak_worst`` on L1.
+
+    CCM boost, ideal duty-cycle relation:
+
+      * ``D = 1 − Vin / Vout`` ⇒ ``D_max`` at ``Vin_min``,
+        ``D_min`` at ``Vin_max``.
+      * Inductor ripple ``ΔI_L = Vin · D / (L · fsw)``.  Substituting D
+        gives ``ΔI_L(Vin) = (Vin − Vin² / Vout) / (L · fsw)`` which
+        peaks at ``Vin = Vout / 2`` (interior maximum, parabolic in
+        Vin).  We evaluate at ``Vin_min``, ``Vin_max``, and
+        ``Vout/2`` (only if it lies inside the input range) and pick
+        the largest — that is the honest worst case across the spec.
+      * Average inductor current = input current
+        ``I_L_avg = Iout · Vout / Vin``, worst at ``Vin_min``.
+      * ``Ipeak_worst = I_L_avg(Vin_min) + ΔI_L_worst / 2`` with the
+        PROTEUS −20 % inductance tolerance baked into the ripple term.
+      * ``Isat = B_sat · N · A_e / L`` — same closed form as buck
+        because it is just ``L · I = N · B · A_e`` solved for I, which
+        does not care about topology.
+
+    Boost cannot step Vin above Vout; we reject that as a spec error.
+    """
+    vmin, vmax = _vin_extremes(spec, "boost spec")
+    vout, iout, fsw = _operating_point(spec, "boost spec")
+    L = _required_inductance(spec, "desiredInductance", "boost spec")
+
+    if vout <= vmax:
+        raise EnrichmentError(
+            f"boost enrichment: Vout ({vout}) must be greater than Vin_max "
+            f"({vmax}) — boost cannot step down"
+        )
+
+    d_max = 1.0 - vmin / vout
+    d_min = 1.0 - vmax / vout
+    L_worst = 0.8 * L
+
+    def _ripple_at(vin: float) -> float:
+        d = 1.0 - vin / vout
+        return vin * d / (L_worst * fsw)
+
+    candidates = [vmin, vmax]
+    if vmin < vout / 2.0 < vmax:
+        candidates.append(vout / 2.0)
+    ripple_worst = max(_ripple_at(v) for v in candidates)
+
+    iL_avg_max = iout * vout / vmin
+    ipeak_worst = iL_avg_max + ripple_worst / 2.0
+
+    si, ci, comp = _find_magnetic_component(tas)
+    data = comp.get("data")
+    if isinstance(data, Mapping) and isinstance(data.get("magnetic"), Mapping):
+        mas = data["magnetic"]
+    else:
+        mas = comp.get("mas")
+    if not isinstance(mas, Mapping):
+        raise EnrichmentError(
+            f"boost enrichment: TAS magnetic component {comp.get('name')!r} has no MAS "
+            "payload — bridge attach phase must run before enrichment"
+        )
+    A_e = _require(
+        mas, ("core", "processedDescription", "effectiveParameters", "effectiveArea"),
+        "boost inductor MAS",
+    )
+    if not isinstance(A_e, (int, float)) or A_e <= 0:
+        raise EnrichmentError(
+            f"boost inductor MAS: effectiveArea must be positive, got {A_e!r}"
+        )
+    fd = _require(mas, ("coil", "functionalDescription"), "boost inductor MAS")
+    if not isinstance(fd, list) or not fd:
+        raise EnrichmentError(
+            "boost inductor MAS: coil.functionalDescription must be a non-empty list"
+        )
+    primary = fd[0]
+    N = primary.get("numberTurns") if isinstance(primary, Mapping) else None
+    if not isinstance(N, (int, float)) or N <= 0:
+        raise EnrichmentError(
+            f"boost inductor MAS: primary numberTurns must be positive, got {N!r}"
+        )
+    sat = _require(
+        mas, ("core", "functionalDescription", "material", "saturation"),
+        "boost inductor MAS",
+    )
+    b_sat = _conservative_bsat(sat)
+    isat = b_sat * float(N) * float(A_e) / L
+
+    tas["duty"] = round(d_max, 6)
+    tas["duty_min"] = round(d_min, 6)
+    tas["duty_max"] = round(d_max, 6)
+
+    enriched_comp = dict(comp)
+    enriched_comp["isat"] = round(isat, 6)
+    enriched_comp["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched_comp["isat_provenance"] = {
+        "method": "B_sat * N * A_e / L (boost v0.1 extractor)",
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": int(N),
+        "effective_area_m2": float(A_e),
+        "inductance_H": L,
+    }
+    enriched_comp["ipeak_provenance"] = {
+        "method": "Iout*Vout/Vin_min + ripple_worst/2 (worst-case Vin over range)",
+        "iout_A": iout,
+        "iL_avg_max_A": round(iL_avg_max, 6),
+        "ripple_worst_A_pp": round(ripple_worst, 6),
+        "vin_min_V": vmin,
+        "vin_max_V": vmax,
+        "vout_V": vout,
+        "fsw_Hz": fsw,
+        "L_worst_H": L_worst,
+    }
+    tas["topology"]["stages"][si]["circuit"]["components"][ci] = enriched_comp
+
+
+# ---------------------------------------------------------------------------
+# Flyback extractor
+# ---------------------------------------------------------------------------
+
+
+def _flyback_turns_ratio(mas: Mapping[str, Any]) -> tuple[float, int, int]:
+    """Return ``(n, N_p, N_s)`` from the MAS coil windings.
+
+    Flyback transformers always have at least two windings; we treat the
+    first as primary and the second as secondary.  Auxiliary windings
+    (third onward) are ignored for Isat / Ipeak purposes — they handle
+    bias rails whose current is negligible compared to the main power
+    path.  If the MAS has only one winding (single-inductor flyback?
+    impossible by definition) we raise.
+    """
+    fd = _require(mas, ("coil", "functionalDescription"), "flyback transformer MAS")
+    if not isinstance(fd, list) or len(fd) < 2:
+        raise EnrichmentError(
+            "flyback transformer MAS: coil.functionalDescription must list at "
+            f"least primary + secondary windings (got {len(fd) if isinstance(fd, list) else 0})"
+        )
+    p = fd[0] if isinstance(fd[0], Mapping) else {}
+    s = fd[1] if isinstance(fd[1], Mapping) else {}
+    Np = p.get("numberTurns")
+    Ns = s.get("numberTurns")
+    if not isinstance(Np, (int, float)) or Np <= 0:
+        raise EnrichmentError(
+            f"flyback MAS: primary numberTurns must be positive, got {Np!r}"
+        )
+    if not isinstance(Ns, (int, float)) or Ns <= 0:
+        raise EnrichmentError(
+            f"flyback MAS: secondary numberTurns must be positive, got {Ns!r}"
+        )
+    return float(Np) / float(Ns), int(Np), int(Ns)
+
+
+def _enrich_flyback(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty and primary-side Isat/Ipeak for a single-output flyback.
+
+    CCM flyback ideal relations (primary referred, ignoring diode drop
+    and snubber):
+
+      * Turns ratio ``n = N_p / N_s`` read from MAS coil windings.
+      * ``D = Vout · n / (Vin + Vout · n)`` ⇒ ``D_max`` at ``Vin_min``.
+      * Average input current ``I_in = Pout / (η · Vin)`` with
+        ``Pout = Vout · Iout`` and η from spec (defaults to 1 only if
+        the user explicitly omits ``efficiency`` — we throw here so
+        the caller knows we are not silently assuming lossless).
+      * Primary current during the on-time has DC component ``I_in / D``
+        plus magnetising ripple ``Δi_p = Vin · D / (L_m · fsw)`` with
+        ``L_m = spec.desiredMagnetizingInductance`` and the −20 %
+        tolerance baked in.  Worst case is at ``Vin_min`` (D maximum,
+        I_in maximum simultaneously).
+      * ``Ipeak_worst = I_in_max / D_max + Δi_p_worst / 2``.
+      * ``Isat = B_sat · N_p · A_e / L_m`` — primary-referred, same
+        Faraday derivation as the buck/boost inductor.
+
+    Multi-output flybacks (Iout has > 1 entry) are not supported yet;
+    we throw rather than silently averaging.
+    """
+    vmin, vmax = _vin_extremes(spec, "flyback spec")
+    ops = _require(spec, ("operatingPoints",), "flyback spec")
+    if not isinstance(ops, list) or not ops:
+        raise EnrichmentError("flyback spec.operatingPoints: must be non-empty list")
+    op = ops[0]
+    if not isinstance(op, Mapping):
+        raise EnrichmentError("flyback spec.operatingPoints[0]: expected mapping")
+    vouts = op.get("outputVoltages")
+    iouts = op.get("outputCurrents")
+    fsw = op.get("switchingFrequency")
+    if not (isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))):
+        raise EnrichmentError("flyback spec.operatingPoints[0].outputVoltages[0]: required numeric")
+    if not (isinstance(iouts, list) and iouts and isinstance(iouts[0], (int, float))):
+        raise EnrichmentError("flyback spec.operatingPoints[0].outputCurrents[0]: required numeric")
+    if not isinstance(fsw, (int, float)) or fsw <= 0:
+        raise EnrichmentError("flyback spec.operatingPoints[0].switchingFrequency: required positive number")
+    if len(vouts) > 1 or len(iouts) > 1:
+        raise EnrichmentError(
+            "flyback enrichment: multi-output flyback (more than one rail) not "
+            "yet supported — extractor would have to weight currents by turns "
+            "ratios per secondary, which is not implemented"
+        )
+    vout, iout = float(vouts[0]), float(iouts[0])
+    fsw = float(fsw)
+
+    Lm = _required_inductance(spec, "desiredMagnetizingInductance", "flyback spec")
+    efficiency = spec.get("efficiency")
+    if not isinstance(efficiency, (int, float)) or not (0.0 < efficiency <= 1.0):
+        raise EnrichmentError(
+            "flyback spec.efficiency: required number in (0, 1] — needed to "
+            "size primary current honestly; refusing to assume lossless"
+        )
+
+    si, ci, comp = _find_magnetic_component(tas)
+    data = comp.get("data")
+    if isinstance(data, Mapping) and isinstance(data.get("magnetic"), Mapping):
+        mas = data["magnetic"]
+    else:
+        mas = comp.get("mas")
+    if not isinstance(mas, Mapping):
+        raise EnrichmentError(
+            f"flyback enrichment: TAS magnetic component {comp.get('name')!r} has no MAS "
+            "payload — bridge attach phase must run before enrichment"
+        )
+
+    n, Np, _Ns = _flyback_turns_ratio(mas)
+
+    A_e = _require(
+        mas, ("core", "processedDescription", "effectiveParameters", "effectiveArea"),
+        "flyback transformer MAS",
+    )
+    if not isinstance(A_e, (int, float)) or A_e <= 0:
+        raise EnrichmentError(
+            f"flyback transformer MAS: effectiveArea must be positive, got {A_e!r}"
+        )
+    sat = _require(
+        mas, ("core", "functionalDescription", "material", "saturation"),
+        "flyback transformer MAS",
+    )
+    b_sat = _conservative_bsat(sat)
+
+    d_max = (vout * n) / (vmin + vout * n)
+    d_min = (vout * n) / (vmax + vout * n)
+
+    Pout = vout * iout
+    I_in_max = Pout / (efficiency * vmin)
+    Lm_worst = 0.8 * Lm
+    ripple_worst = vmin * d_max / (Lm_worst * fsw)
+    ipeak_worst = I_in_max / d_max + ripple_worst / 2.0
+
+    isat = b_sat * float(Np) * float(A_e) / Lm
+
+    tas["duty"] = round(d_max, 6)
+    tas["duty_min"] = round(d_min, 6)
+    tas["duty_max"] = round(d_max, 6)
+
+    enriched_comp = dict(comp)
+    enriched_comp["isat"] = round(isat, 6)
+    enriched_comp["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched_comp["isat_provenance"] = {
+        "method": "B_sat * N_p * A_e / L_m (flyback v0.1, primary-referred)",
+        "b_sat_T": round(b_sat, 6),
+        "n_turns_primary": Np,
+        "effective_area_m2": float(A_e),
+        "magnetizing_inductance_H": Lm,
+    }
+    enriched_comp["ipeak_provenance"] = {
+        "method": "I_in_max/D_max + ripple_worst/2 at Vin_min, L_m*0.8",
+        "iout_A": iout,
+        "vout_V": vout,
+        "pout_W": Pout,
+        "efficiency": efficiency,
+        "turns_ratio_n": round(n, 6),
+        "i_in_max_A": round(I_in_max, 6),
+        "d_max": round(d_max, 6),
+        "ripple_worst_A_pp": round(ripple_worst, 6),
+        "vin_min_V": vmin,
+        "fsw_Hz": fsw,
+        "Lm_worst_H": Lm_worst,
+    }
+    tas["topology"]["stages"][si]["circuit"]["components"][ci] = enriched_comp
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
 
 _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "buck": _enrich_buck,
+    "boost": _enrich_boost,
+    "flyback": _enrich_flyback,
 }
 
 
