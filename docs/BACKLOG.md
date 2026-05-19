@@ -203,6 +203,28 @@ so the gap stays visible from inside Heaviside's planning loop.
   reviewed commit.  Unknown component fingerprints fail loudly (no
   silent skip); corpus size pinned to 48 in
   `test_corpus_size_matches_agents_rule_7`.
+- **Semiconductor-wrap invariant test** ⚠️ landed as red CI gate
+  (`tests/regression/tas/test_semiconductor_wrap.py`, 4 tests, 1
+  failing today by design).  Mirrors TAS commit 44f7716 ("data:
+  wrap SAS device rows in `{semiconductor: {}}` envelope (Finding
+  B)") by asserting every row in
+  `TAS/data/{mosfets,diodes,igbts}.ndjson` is in the PEAS
+  discriminator shape `{"semiconductor": {<inner>: {...}}}`.
+  Cross-category leakage and unresolved git merge-conflict
+  markers are also flagged with line-numbered samples.
+  **Current state**: diodes.ndjson and igbts.ndjson pass cleanly
+  (fully wrapped); mosfets.ndjson FAILS — every one of 7603 rows
+  is in the legacy flat `{"mosfet": {...}}` shape AND there are 3
+  unresolved merge-conflict markers at lines 2802/2806/2810.  The
+  realism gate accepts both shapes for backwards compat so the
+  pipeline still runs, but the schema invariant is the wrapped
+  form.  Repair path: invoke the `component-librarian` agent — do
+  NOT edit `TAS/data/*.ndjson` directly (Proteus AGENTS.md
+  guardrails).  The agent's
+  `TAS/scripts/wrap_semiconductor_data.py` script is idempotent
+  and creates `.pre_semiconductor_wrap.bak` backups.  When the
+  repair lands the test must go green in the same reviewed
+  commit.
 - **Component-librarian agent port from Proteus.** First real consumer of
   the `kind="capacitor"` `CAS::Inputs` from `extra_components`.
 - **Integration-test caching strategy.** End-to-end PyOM runs are 1–2 min
