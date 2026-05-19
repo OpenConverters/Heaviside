@@ -163,6 +163,21 @@ def _parse_element(line: str, section: str | None) -> SpiceElement:
             section=section,
         )
 
+    # Linear controlled sources (E=VCVS, F=CCCS, G=VCCS, H=CCVS). MKF
+    # only emits these as testbench probes (e.g. Evab observing the
+    # full-bridge midpoint differential); we classify them as
+    # behavioural_source so the generic _is_testbench rule drops them.
+    if first in {"E", "F", "G", "H"}:
+        if len(tokens) < 4:
+            raise ValueError(f"Malformed {first} line: {line!r}")
+        return SpiceElement(
+            refdes,
+            "behavioural_source",
+            (tokens[1], tokens[2]),
+            value=" ".join(tokens[3:]),
+            section=section,
+        )
+
     # Switch: S refdes nd ns nc+ nc- modelname
     if first in {"S", "W"}:
         if len(tokens) < 6:

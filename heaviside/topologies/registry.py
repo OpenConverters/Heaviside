@@ -149,6 +149,11 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         None,
         "converter",
         "isolated_bridge",
+        magnetic_binding={
+            "T1": None,
+            "L_r": "seriesInductor",
+            "L_out0": "outputInductor",
+        },
     ),
     TopologyEntry(
         "phase_shifted_half_bridge",

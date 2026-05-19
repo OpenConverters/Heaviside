@@ -36,6 +36,7 @@ PREFIX_TO_TOPOLOGY: dict[str, str] = {
     "isobb": "isolated_buck_boost",
     "isobuck": "isolated_buck",
     "llc": "llc",
+    "psfb": "phase_shifted_full_bridge",
     "pushpull": "push_pull",
     "sepic": "sepic",
     "ssforward": "single_switch_forward",

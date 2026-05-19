@@ -722,5 +722,5 @@ def test_attach_components_topology_without_binding_raises() -> None:
     components = bridge.ConverterComponents(main_magnetic=main)
     with pytest.raises(bridge.BridgeError, match="no magnetic_binding"):
         bridge.attach_components_to_tas(
-            tas, components, topology="phase_shifted_full_bridge"
+            tas, components, topology="phase_shifted_half_bridge"
         )

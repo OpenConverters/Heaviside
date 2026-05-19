@@ -92,6 +92,9 @@ _TESTBENCH_EXACT: frozenset[str] = frozenset({
     # bridge the body diode is intrinsic to the MOSFET and is NOT a
     # separate BOM line. Drop them.
     "DHI", "DLO",
+    # Phase-shifted full bridge: same story, one synthetic body diode
+    # per switch (DA pairs with SA, DB with SB, DC with SC, DD with SD).
+    "DA", "DB", "DC", "DD",
 })
 
 # Refdeses dropped if they match any of these case-sensitive prefixes.
@@ -103,10 +106,12 @@ _TESTBENCH_PREFIXES: tuple[str, ...] = (
     "Rdcr_",                     # DCR parasitic resistors on inductors
     "Rco_esr", "Rcs_esr", "Rcc_esr", "Rc1_esr",  # cap ESR parasitics
     "Resr_",                     # generic ESR (LLC etc.)
-    "Rload", "Rsec",             # load + secondary winding DCR
+    "Rload", "R_load",           # load resistors (Rload, R_load_o1, …)
+    "Rsec",                      # secondary winding DCR
     "Rlout",                     # output choke DCR (two_switch_forward etc.)
     "Rdc_supply_dummy", "Rbus_HV_dummy",
     "Rpri_ret", "Rsec_ret",      # bridge return resistors
+    "Rct_",                      # PSFB center-tap return stubs (1µΩ to GND)
 )
 
 
@@ -2264,6 +2269,219 @@ def push_pull(deck: SpiceDeck) -> TasTopology:
     }
 
 
+# -----------------------------------------------------------------------------
+# Phase-shifted full bridge stencil
+# -----------------------------------------------------------------------------
+#
+# MKF deck (bridge_simulation_mode="switch", center-tapped rectifier):
+#
+#   Vdc vin_dc 0 400
+#   * Leg A: SA hi-side, SB lo-side, midpoint mid_A
+#   SA vin_dc mid_A …            ; Q_A.D=Vin Q_A.S=mid_A
+#   DA 0 mid_A DIDEAL             ; synthetic body diode (drop, _TESTBENCH_EXACT)
+#   SB mid_A 0 …                  ; Q_B.D=mid_A Q_B.S=0
+#   DB mid_A vin_dc DIDEAL        ; synthetic body diode (drop)
+#   Rsnub_QA/Csnub_QA/Rsnub_QB/Csnub_QB   ; snubbers (drop via Rsn/Csn prefix)
+#   * Leg C: SC hi-side, SD lo-side, midpoint mid_C
+#   SC vin_dc mid_C …             ; Q_C.D=Vin Q_C.S=mid_C
+#   DC 0 mid_C DIDEAL             ; synthetic body diode (drop)
+#   SD mid_C 0 …                  ; Q_D.D=mid_C Q_D.S=0
+#   DD mid_C vin_dc DIDEAL        ; synthetic body diode (drop)
+#   Rsnub_QC/Csnub_QC/Rsnub_QD/Csnub_QD   ; snubbers (drop)
+#   Vpri_sense mid_A pri_lr 0     ; ammeter (drop)
+#   Evab vab 0 mid_A mid_C 1      ; differential probe (drop via E-as-behavioural)
+#   L_series pri_lr trafo_pri     ; → L_r (seriesInductor)
+#   L_pri trafo_pri mid_C         ; T1.pri.1=trafo_pri T1.pri.2=mid_C
+#   L_sec_o1 sec_a_o1 sec_b_o1    ; T1.sec0.1=sec_a T1.sec0.2=sec_b
+#   K1 L_pri L_sec_o1             ; T1 coupling
+#   Vsec1_sense_o1, Vsec2_sense_o1, Vct_o1, Vout_sense_o1   ; ammeters (drop)
+#   * Center-tapped rectifier (output 1)
+#   D_r1_o1 rec_a_o1 out_rect_o1  ; D1.A=sec_a (post-sense) D1.K=out_rect
+#   D_r2_o1 rec_b_o1 out_rect_o1  ; D2.A=sec_b (post-sense) D2.K=out_rect
+#   Rct_o1 sec_ct_o1 sec_b_o1 1u  ; 1µΩ CT stub to GND (drop via Rct_ prefix)
+#   L_out_o1 out_rect_o1 out_node_o1   ; L_out0
+#   C_out_o1 out_node_o1 out_gnd_o1    ; C_out0
+#   R_load_o1 out_node_o1 out_gnd_o1   ; load (drop via R_load prefix)
+#
+# Mapping to TAS:
+#   inverter:        Q_A,Q_B,Q_C,Q_D,L_r       dcBus Vin → 2× hfAc (mid_A, mid_C)
+#   isolation:       T1 (pri, sec0)            hfAc mid_A → 2× winding (sec_a, sec_b)
+#   outputRectifier: D1, D2, L_out0, C_out0    2× winding → dcOutput Vout0
+#   control:         U1 drives {Q_A,Q_B,Q_C,Q_D}, senses Vout0
+#
+# out_gnd_o1 = GND (Vout_sense_o1 grounds it via a 0V source). The MKF
+# "center tap" of the secondary is modelled as a 1µΩ stub (Rct_o1) from
+# sec_b to GND — drop the stub; D2.A terminates on sec_b which is
+# rectified via the GND-relative loop.
+
+
+_PSFB_REAL_KINDS = {
+    "SA":        "switch",
+    "SB":        "switch",
+    "SC":        "switch",
+    "SD":        "switch",
+    "L_series":  "inductor",     # → L_r (seriesInductor)
+    "L_pri":     "inductor",     # → T1.pri
+    "L_sec_o1":  "inductor",     # → T1.sec0
+    "K1":        "coupling",
+    "D_r1_o1":   "diode",
+    "D_r2_o1":   "diode",
+    "L_out_o1":  "inductor",     # → L_out0
+    "C_out_o1":  "capacitor",    # → C_out0
+}
+
+
+def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
+    """Decompose an MKF phase-shifted full bridge deck (switch-mode) into TAS.
+
+    Requires ``bridge_simulation_mode="switch"`` so SA/SB/SC/SD are real
+    switches and not collapsed into a single behavioural source.
+    """
+    _validate_real_set(deck, "phase_shifted_full_bridge", _PSFB_REAL_KINDS)
+
+    inverter = {
+        "name": "inverter",
+        "role": "inverter",
+        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "outputPorts": [
+            {"type": "hfAc", "wire": "mid_A", "name": "leg_a"},
+            {"type": "hfAc", "wire": "mid_C", "name": "leg_c"},
+        ],
+        "circuit": {
+            "components": [
+                _component("mosfet",   "Q_A"),   # ← SA (leg A high-side)
+                _component("mosfet",   "Q_B"),   # ← SB (leg A low-side)
+                _component("mosfet",   "Q_C"),   # ← SC (leg C high-side)
+                _component("mosfet",   "Q_D"),   # ← SD (leg C low-side)
+                _component("magnetic", "L_r"),   # ← L_series (resonant/leakage)
+            ],
+            "connections": [
+                {
+                    "name": "leg_a_mid",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "Q_A", "pin": "S"},
+                        {"component": "Q_B", "pin": "D"},
+                        {"component": "L_r", "pin": "1"},
+                    ],
+                },
+            ],
+        },
+    }
+
+    isolation = {
+        "name": "isolation",
+        "role": "isolation",
+        "inputPort": {"type": "hfAc", "wire": "pri_top"},
+        "outputPorts": [
+            {"type": "winding", "wire": "sec_a", "name": "sec_a"},
+            {"type": "winding", "wire": "sec_b", "name": "sec_b"},
+        ],
+        "circuit": {
+            "components": [_t1_component(("pri", "sec0"))],
+            "connections": [],
+        },
+    }
+
+    output_rectifier_0 = {
+        "name": "output_0",
+        "role": "outputRectifier",
+        "inputPort":  {"type": "winding",  "wire": "sec_a"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
+        "circuit": {
+            "components": [
+                _component("diode",     "D1"),       # ← D_r1_o1
+                _component("diode",     "D2"),       # ← D_r2_o1
+                _component("magnetic",  "L_out0"),   # ← L_out_o1
+                _component("capacitor", "C_out0"),   # ← C_out_o1
+            ],
+            "connections": [
+                {
+                    "name": "out_rect",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "D1",     "pin": "K"},
+                        {"component": "D2",     "pin": "K"},
+                        {"component": "L_out0", "pin": "1"},
+                    ],
+                },
+            ],
+        },
+    }
+
+    control = _isolated_control_stage(("Q_A", "Q_B", "Q_C", "Q_D"))
+
+    inter_stage = [
+        {
+            "name": "Vin",
+            "kind": "externalPort",
+            "direction": "input",
+            "endpoints": [
+                {"component": "Q_A", "pin": "D"},
+                {"component": "Q_C", "pin": "D"},
+            ],
+        },
+        {
+            # L_r feeds T1.pri.1; mkf names this node trafo_pri.
+            "name": "pri_top",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "L_r", "pin": "2"},
+                {"component": "T1",  "pin": "pri.1"},
+            ],
+        },
+        {
+            # Leg C midpoint = primary winding return + Q_C.S + Q_D.D.
+            "name": "mid_C",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q_C", "pin": "S"},
+                {"component": "Q_D", "pin": "D"},
+                {"component": "T1",  "pin": "pri.2"},
+            ],
+        },
+        {
+            "name": "sec_a",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1", "pin": "sec0.1"},
+                {"component": "D1", "pin": "A"},
+            ],
+        },
+        {
+            # MKF center-tap stub Rct_o1 ties sec_b to GND via 1µΩ;
+            # the stencil drops the stub and places D2.A on sec_b
+            # which then naturally reaches the output rectifier.
+            "name": "sec_b",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1", "pin": "sec0.2"},
+                {"component": "D2", "pin": "A"},
+            ],
+        },
+        {
+            "name": "Vout0",
+            "kind": "externalPort",
+            "direction": "output",
+            "endpoints": [
+                {"component": "L_out0", "pin": "2"},
+                {"component": "C_out0", "pin": "1"},
+            ],
+        },
+        _gnd_wire(
+            ("Q_B",     "S"),
+            ("Q_D",     "S"),
+            ("C_out0",  "2"),
+        ),
+        *_gate_wires("Q_A", "Q_B", "Q_C", "Q_D"),
+    ]
+
+    return {
+        "stages": [inverter, isolation, output_rectifier_0, control],
+        "interStageCircuit": inter_stage,
+    }
+
+
 STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "buck": buck,
     "boost": boost,
@@ -2279,6 +2497,7 @@ STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "isolated_buck_boost": isolated_buck_boost,
     "llc": llc,
     "push_pull": push_pull,
+    "phase_shifted_full_bridge": phase_shifted_full_bridge,
 }
 
 
