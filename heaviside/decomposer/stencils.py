@@ -3364,6 +3364,347 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
     }
 
 
+# -----------------------------------------------------------------------------
+# CLLLC stencil (bidirectional symmetric resonant — dual full bridges + dual tanks)
+# -----------------------------------------------------------------------------
+#
+# MKF deck (verified empirically against /tmp/clllc_switch.cir):
+#
+#   * HV side
+#   Vdc_HV vdc_HV 0 400              ; testbench source (V kind, dropped)
+#   Cbus_HV vdc_HV 0 100u IC=400     ; HV bus bulk cap → C_bus_HV (REAL)
+#   Rbus_HV_dummy vdc_HV 0 1Meg      ; testbench bleeder (Rbus prefix, dropped)
+#
+#   * LV side
+#   Cbus_LV vdc_LV 0 100u IC=12      ; LV bus bulk cap → C_bus_LV (REAL)
+#   Rload_LV vdc_LV 0 2.4            ; testbench load (Rload prefix, dropped)
+#
+#   * HV bridge (4 switches + 4 synthetic body diodes + 4 RC snubbers)
+#   Vpwm_HV1..4 …                    ; testbench gate drives
+#   SHV1 vdc_HV bridge_a_hv pwm_HV1 0 SW1    ; Q1 high A (D=vdc_HV, S=bridge_a_hv)
+#   DHV1 0 bridge_a_hv DIDEAL                ; SHV1 body diode (extra_testbench)
+#   SHV2 bridge_a_hv 0 pwm_HV2 0 SW1         ; Q2 low A  (D=bridge_a_hv, S=0)
+#   DHV2 bridge_a_hv vdc_HV DIDEAL           ; SHV2 body diode
+#   SHV3 vdc_HV bridge_b_hv pwm_HV3 0 SW1    ; Q3 high B (D=vdc_HV, S=bridge_b_hv)
+#   DHV3 0 bridge_b_hv DIDEAL                ; SHV3 body diode
+#   SHV4 bridge_b_hv 0 pwm_HV4 0 SW1         ; Q4 low B  (D=bridge_b_hv, S=0)
+#   DHV4 bridge_b_hv vdc_HV DIDEAL           ; SHV4 body diode
+#   Rsnub_HV*/Csnub_HV*                      ; testbench (Rsn/Csn prefixes)
+#
+#   * LV bridge (mirror of HV)
+#   SLV1..SLV4 / DLV1..DLV4 / Rsnub_LV*/Csnub_LV*
+#
+#   * HV-side tank (Cr1 + Lr1 in series, then Lpri)
+#   V_pri_bridge_sense bridge_a_hv tank_hv_a 0  ; ammeter (drop)
+#   Cr1 tank_hv_a cr1_lr1 17n IC=0              ; C_r1: pin 1=bridge_a_hv, 2=mid1
+#   V_Cr1_sense cr1_lr1 cr1_lr1_s 0             ; ammeter (drop)
+#   Lr1 cr1_lr1_s lpri_top 49.6u                ; L_r1: pin 1=mid1, 2=lpri_top
+#   V_Lr1_sense lpri_top lpri_top_s 0           ; ammeter (drop)
+#   Lpri lpri_top_s lpri_bot 1m                 ; T1.pri.1=lpri_top, 2=lpri_bot
+#   Rpri_ret lpri_bot bridge_b_hv 0.001         ; Rpri_ret prefix, dropped
+#
+#   * LV-side tank (mirror)
+#   Cr2 tank_lv_a cr2_lr2 1.18u IC=0            ; C_r2
+#   Lr2 cr2_lr2_s lsec_top 715n                 ; L_r2
+#   Lsec lsec_top_s lsec_bot 14.4u              ; T1.sec0
+#   K_pri_sec Lpri Lsec 0.999                   ; T1 coupling
+#
+# Real BOM:
+#   {SHV1..4, SLV1..4}     8 switches → Q1..Q4 (HV), Q5..Q8 (LV)
+#   {Cbus_HV, Cbus_LV}     bus bulk caps → C_bus_HV, C_bus_LV
+#   {Cr1, Cr2}             resonant caps → C_r1, C_r2 (extras-cap bound)
+#   {Lr1, Lr2}             resonant inductors → L_r1, L_r2 (extras-magnetic)
+#   {Lpri, Lsec, K_pri_sec} transformer → T1 (2 windings)
+#
+# Synthetic body diodes DHV1..4 / DLV1..4 go in extra_testbench (collide
+# with D1..D4 used as real diodes in single-switch families — same logic
+# as DAB and AHB).
+#
+# Mapping to TAS:
+#   primary_bridge:   Q1..Q4, C_bus_HV     Vin (dcBus) → bridge_a_hv/bridge_b_hv (hfAc)
+#   isolation:        C_r1, L_r1, T1, L_r2, C_r2
+#                                          bridge_a_hv/bridge_b_hv → bridge_a_lv/bridge_b_lv
+#   secondary_bridge: Q5..Q8 (sync rect)   bridge_a_lv/bridge_b_lv → Vout0 (dcOutput)
+#   output_filter:    C_bus_LV
+#   control:          U1 drives Q1..Q8, senses Vout0
+
+
+_CLLLC_REAL_KINDS = {
+    # HV (primary) bridge
+    "SHV1":      "switch",
+    "SHV2":      "switch",
+    "SHV3":      "switch",
+    "SHV4":      "switch",
+    # LV (secondary, synchronous rectifier) bridge
+    "SLV1":      "switch",
+    "SLV2":      "switch",
+    "SLV3":      "switch",
+    "SLV4":      "switch",
+    # Bus bulk caps (input + output)
+    "Cbus_HV":   "capacitor",      # → C_bus_HV
+    "Cbus_LV":   "capacitor",      # → C_bus_LV (output bulk)
+    # HV-side resonant tank
+    "Cr1":       "capacitor",      # → C_r1 (Cr1_HV_resonantCapacitor)
+    "Lr1":       "inductor",       # → L_r1 (Lr1_HV_seriesInductor)
+    # LV-side resonant tank
+    "Cr2":       "capacitor",      # → C_r2 (Cr2_LV_resonantCapacitor)
+    "Lr2":       "inductor",       # → L_r2 (Lr2_LV_seriesInductor)
+    # Main transformer
+    "Lpri":      "inductor",       # → T1.pri
+    "Lsec":      "inductor",       # → T1.sec0
+    "K_pri_sec": "coupling",       # → T1 coupling
+}
+
+
+def _clllc_control_stage() -> dict[str, Any]:
+    """Controller drives all 8 MOSFETs (4 HV + 4 LV synchronous-rect)
+    and senses the LV (output) bus."""
+    return {
+        "name": "controller",
+        "role": "control",
+        "circuit": {
+            "components": [_component("controller", "U1")],
+            "connections": [],
+        },
+        "senses": [{"wire": "Vout0", "signal": "voltage"}],
+        "drives": [
+            {"component": q, "signal": "gate"}
+            for q in ("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8")
+        ],
+    }
+
+
+def clllc(deck: SpiceDeck) -> TasTopology:
+    """Decompose an MKF CLLLC deck (bidirectional symmetric resonant) into TAS.
+
+    CLLLC has dual full bridges (HV + LV) with a resonant tank on each side
+    of the main transformer (Cr1+Lr1 on HV, Cr2+Lr2 on LV). The LV bridge IS
+    the synchronous rectifier; power flow direction is controlled by phase
+    shift, but the deck shape itself is the same in both directions (MKF
+    emits real ``SW1`` switches on both bridges regardless of
+    ``bridge_simulation_mode``).
+    """
+    _validate_real_set(
+        deck,
+        "clllc",
+        _CLLLC_REAL_KINDS,
+        # Synthetic body diodes for both bridges:
+        # - DHV1..DHV4: HV bridge body diodes
+        # - DLV1..DLV4: LV bridge body diodes
+        # These collide with the real freewheeling diode D1..D4 used by
+        # single-switch families (buck/flyback), so they must live in
+        # extra_testbench rather than _TESTBENCH_EXACT.
+        extra_testbench=frozenset({
+            "DHV1", "DHV2", "DHV3", "DHV4",
+            "DLV1", "DLV2", "DLV3", "DLV4",
+        }),
+    )
+
+    primary_bridge = {
+        "name": "primary_bridge",
+        "role": "inverter",
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
+        "outputPorts": [
+            {"type": "hfAc", "wire": "bridge_a_hv", "name": "bridge_a_hv"},
+            {"type": "hfAc", "wire": "bridge_b_hv", "name": "bridge_b_hv"},
+        ],
+        "circuit": {
+            "components": [
+                _component("mosfet",    "Q1"),         # ← SHV1 (Leg A high)
+                _component("mosfet",    "Q2"),         # ← SHV2 (Leg A low)
+                _component("mosfet",    "Q3"),         # ← SHV3 (Leg B high)
+                _component("mosfet",    "Q4"),         # ← SHV4 (Leg B low)
+                _component("capacitor", "C_bus_HV"),   # ← Cbus_HV (input bulk)
+            ],
+            "connections": [],
+        },
+    }
+
+    isolation = {
+        "name": "isolation",
+        "role": "isolation",
+        # The HV tank's bridge-side endpoint sits on bridge_a_hv (Leg A
+        # midpoint of the HV bridge). Symmetrically, the LV tank's
+        # bridge-side endpoint sits on bridge_a_lv. The bridge B
+        # midpoints touch T1.pri.2 (HV) and T1.sec0.2 (LV) directly
+        # (Rpri_ret/Rsec_ret are testbench).
+        "inputPort": {"type": "hfAc", "wire": "bridge_a_hv"},
+        "outputPorts": [
+            {"type": "hfAc", "wire": "bridge_a_lv", "name": "bridge_a_lv"},
+            {"type": "hfAc", "wire": "bridge_b_lv", "name": "bridge_b_lv"},
+        ],
+        "circuit": {
+            "components": [
+                _component("capacitor", "C_r1"),   # ← Cr1 (resonant cap, HV side)
+                _component("magnetic",  "L_r1"),   # ← Lr1 (resonant inductor, HV)
+                _t1_component(("pri", "sec0")),    # ← Lpri/Lsec + K_pri_sec
+                _component("magnetic",  "L_r2"),   # ← Lr2 (resonant inductor, LV)
+                _component("capacitor", "C_r2"),   # ← Cr2 (resonant cap, LV side)
+            ],
+            "connections": [
+                {
+                    # HV tank midpoint between Cr1 and Lr1.
+                    # Cr1.2 — Lr1.1 (V_Cr1_sense dropped).
+                    "name": "cr1_lr1_mid",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "C_r1", "pin": "2"},
+                        {"component": "L_r1", "pin": "1"},
+                    ],
+                },
+                {
+                    # Lr1.2 — T1.pri.1 (V_Lr1_sense dropped).
+                    "name": "lr1_to_pri",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "L_r1", "pin": "2"},
+                        {"component": "T1",   "pin": "pri.1"},
+                    ],
+                },
+                {
+                    # LV tank midpoint between Cr2 and Lr2.
+                    "name": "cr2_lr2_mid",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "C_r2", "pin": "2"},
+                        {"component": "L_r2", "pin": "1"},
+                    ],
+                },
+                {
+                    # Lr2.2 — T1.sec0.1 (V_Lr2_sense dropped).
+                    "name": "lr2_to_sec",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "L_r2", "pin": "2"},
+                        {"component": "T1",   "pin": "sec0.1"},
+                    ],
+                },
+            ],
+        },
+    }
+
+    secondary_bridge = {
+        "name": "secondary_bridge",
+        "role": "outputRectifier",
+        # Two winding inputs feed the LV full bridge; Vout0 is the
+        # bidirectional DC bus (sourced in forward mode, sunk in reverse).
+        "inputPort":  {"type": "hfAc",  "wire": "bridge_a_lv"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
+        "circuit": {
+            "components": [
+                _component("mosfet", "Q5"),   # ← SLV1 (LV Leg A high)
+                _component("mosfet", "Q6"),   # ← SLV2 (LV Leg A low)
+                _component("mosfet", "Q7"),   # ← SLV3 (LV Leg B high)
+                _component("mosfet", "Q8"),   # ← SLV4 (LV Leg B low)
+            ],
+            "connections": [],
+        },
+    }
+
+    output_filter = {
+        "name": "output_filter",
+        "role": "outputFilter",
+        "inputPort":  {"type": "dcOutput", "wire": "Vout0"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
+        "circuit": {
+            "components": [
+                _component("capacitor", "C_bus_LV"),   # ← Cbus_LV (output bulk)
+            ],
+            "connections": [],
+        },
+    }
+
+    control = _clllc_control_stage()
+
+    inter_stage = [
+        {
+            "name": "Vin",
+            "kind": "externalPort",
+            "direction": "input",
+            "endpoints": [
+                {"component": "Q1",       "pin": "D"},
+                {"component": "Q3",       "pin": "D"},
+                {"component": "C_bus_HV", "pin": "1"},
+            ],
+        },
+        {
+            # HV Leg A midpoint: Q1.S = Q2.D = C_r1.1
+            "name": "bridge_a_hv",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q1",   "pin": "S"},
+                {"component": "Q2",   "pin": "D"},
+                {"component": "C_r1", "pin": "1"},
+            ],
+        },
+        {
+            # HV Leg B midpoint: Q3.S = Q4.D = T1.pri.2
+            # (Rpri_ret 1mΩ stub between Lpri.2 and bridge_b_hv is
+            # testbench scaffolding — dropped via Rpri_ret prefix.)
+            "name": "bridge_b_hv",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q3", "pin": "S"},
+                {"component": "Q4", "pin": "D"},
+                {"component": "T1", "pin": "pri.2"},
+            ],
+        },
+        {
+            # LV Leg A midpoint: Q5.S = Q6.D = C_r2.1
+            "name": "bridge_a_lv",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q5",   "pin": "S"},
+                {"component": "Q6",   "pin": "D"},
+                {"component": "C_r2", "pin": "1"},
+            ],
+        },
+        {
+            # LV Leg B midpoint: Q7.S = Q8.D = T1.sec0.2
+            # (Rsec_ret testbench between Lsec.2 and bridge_b_lv.)
+            "name": "bridge_b_lv",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q7", "pin": "S"},
+                {"component": "Q8", "pin": "D"},
+                {"component": "T1", "pin": "sec0.2"},
+            ],
+        },
+        {
+            # Vout = LV bridge DC bus. Q5.D = Q7.D = C_bus_LV.1.
+            "name": "Vout0",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q5",       "pin": "D"},
+                {"component": "Q7",       "pin": "D"},
+                {"component": "C_bus_LV", "pin": "1"},
+            ],
+        },
+        {
+            "name": "Vout0_external",
+            "kind": "externalPort",
+            "direction": "output",
+            "endpoints": [
+                {"component": "C_bus_LV", "pin": "1"},
+            ],
+        },
+        _gnd_wire(
+            ("Q2",       "S"),
+            ("Q4",       "S"),
+            ("Q6",       "S"),
+            ("Q8",       "S"),
+            ("C_bus_HV", "2"),
+            ("C_bus_LV", "2"),
+        ),
+        *_gate_wires("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8"),
+    ]
+
+    return {
+        "stages": [primary_bridge, isolation, secondary_bridge, output_filter, control],
+        "interStageCircuit": inter_stage,
+    }
+
+
 STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "buck": buck,
     "boost": boost,
@@ -3385,6 +3726,7 @@ STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "dual_active_bridge": dual_active_bridge,
     # MKF only recognises the short alias "dab" for generate_ngspice_circuit.
     "dab": dual_active_bridge,
+    "clllc": clllc,
 }
 
 

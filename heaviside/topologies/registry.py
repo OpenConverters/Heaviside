@@ -230,6 +230,21 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_clllc",
         "converter",
         "resonant",
+        # CLLLC has dual resonant tanks (one each side of T1) plus the
+        # main transformer. Both Lr1 (HV) and Lr2 (LV) are PyOM extras-
+        # magnetic roles; T1 is the "main magnetic" (value=None).
+        magnetic_binding={
+            "T1":   None,
+            "L_r1": "Lr1_HV_seriesInductor",
+            "L_r2": "Lr2_LV_seriesInductor",
+        },
+        # Both resonant caps are extras-cap roles. The bridge stamps
+        # cas_inputs onto C_r1 / C_r2 so the librarian picks an MPN per
+        # tank.
+        capacitor_binding={
+            "C_r1": "Cr1_HV_resonantCapacitor",
+            "C_r2": "Cr2_LV_resonantCapacitor",
+        },
     ),
     TopologyEntry(
         "series_resonant",
