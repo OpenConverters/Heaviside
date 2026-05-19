@@ -248,11 +248,11 @@ class TestDispatcher:
 
     def test_unknown_topology_passes_through_unchanged(self):
         tas = _buck_tas()
-        # ``cuk`` has no extractor registered yet, so the dispatcher must
-        # leave the TAS structurally untouched (deep-copied) rather than
-        # raising or silently stamping bogus fields.
-        out = enrich_tas_for_realism(tas, topology="cuk", spec=_buck_spec())
-        # No enrichment for cuk yet — should be a structural deep copy
+        # ``push_pull`` has no extractor registered yet, so the dispatcher
+        # must leave the TAS structurally untouched (deep-copied) rather
+        # than raising or silently stamping bogus fields.
+        out = enrich_tas_for_realism(tas, topology="push_pull", spec=_buck_spec())
+        # No enrichment for push_pull yet — should be a structural deep copy
         # of the input (no ``duty`` stamped, no ``isat`` on L1).
         assert "duty" not in out
         assert "isat" not in out["topology"]["stages"][0]["circuit"]["components"][2]

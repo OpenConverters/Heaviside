@@ -28,6 +28,14 @@ Topologies covered today
     ``n = N_p/N_s`` read from MAS, primary peak from ``I_in/D + Δi/2``
     at Vin_min, Isat on the primary magnetising inductance
     ``L_m = spec.desiredMagnetizingInductance``.
+  * ``cuk`` / ``sepic`` / ``zeta`` — shared non-isolated buck-boost
+    family extractor: ``D = Vout/(Vin+Vout)``, both inductors see
+    ``ΔI_L = Vin·D/(L·fsw)`` (volt-second balance), L1 carries
+    ``I_in = Pout/(η·Vin)`` worst-case at Vin_min, L2 carries ``Iout``
+    independent of Vin.  Each inductor's Isat is stamped from its own
+    MAS (no shared-core assumption); ``spec.desiredOutputInductance``
+    is consulted for L2, falling back to L1 only when explicitly
+    omitted (provenance records the source).
 
 Everything else passes through unchanged.  Adding a new topology is a
 matter of writing a ``_enrich_<topology>(tas, spec) -> None`` function
@@ -222,6 +230,95 @@ def _find_magnetic_component(tas: Mapping[str, Any]) -> tuple[int, int, Mapping[
         "the bridge attach phase must have populated the inductor PEAS "
         "data (or the SPICE reader must have stamped category='magnetic') first"
     )
+
+
+def _iter_magnetic_components(
+    tas: Mapping[str, Any],
+) -> list[tuple[int, int, Mapping[str, Any]]]:
+    """Return every ``(stage_idx, comp_idx, comp)`` whose component is
+    magnetic.  Used by multi-inductor topologies (cuk/sepic/zeta have
+    L1 + L2) where we want to stamp Isat/Ipeak on each in declaration
+    order.  Empty list if there are none — caller decides whether that
+    is an error.
+    """
+    out: list[tuple[int, int, Mapping[str, Any]]] = []
+    topology = tas.get("topology")
+    if not isinstance(topology, Mapping):
+        raise EnrichmentError("tas.topology: must be a mapping")
+    stages = topology.get("stages")
+    if not isinstance(stages, list):
+        raise EnrichmentError("tas.topology.stages: must be a list")
+    for si, stage in enumerate(stages):
+        if not isinstance(stage, Mapping):
+            continue
+        circuit = stage.get("circuit") if isinstance(stage.get("circuit"), Mapping) else None
+        comps = circuit.get("components") if isinstance(circuit, Mapping) else None
+        if not isinstance(comps, list):
+            continue
+        for ci, c in enumerate(comps):
+            if not isinstance(c, Mapping):
+                continue
+            data = c.get("data")
+            if isinstance(data, Mapping) and "magnetic" in data:
+                out.append((si, ci, c))
+                continue
+            if c.get("category") == "magnetic":
+                out.append((si, ci, c))
+    return out
+
+
+def _read_mas(comp: Mapping[str, Any], where: str) -> Mapping[str, Any]:
+    """Return the MAS sub-document for a magnetic ``comp``.
+
+    Accepts both PEAS-shaped (``comp.data.magnetic``) and legacy
+    (``comp.mas``) emissions, the same dual convention as
+    :func:`_find_magnetic_component`.
+    """
+    data = comp.get("data")
+    if isinstance(data, Mapping) and isinstance(data.get("magnetic"), Mapping):
+        return data["magnetic"]
+    mas = comp.get("mas")
+    if isinstance(mas, Mapping):
+        return mas
+    raise EnrichmentError(
+        f"{where}: magnetic component {comp.get('name')!r} has no MAS payload — "
+        "bridge attach phase must run before enrichment"
+    )
+
+
+def _mas_isat_inputs(
+    mas: Mapping[str, Any], where: str, *, winding_index: int = 0,
+) -> tuple[float, int, float]:
+    """Return ``(A_e, N, B_sat)`` from a MAS document for the Faraday
+    Isat closed form ``Isat = B_sat · N · A_e / L``.
+
+    ``winding_index`` lets multi-winding transformers point at the
+    correct primary turns (default 0 = first winding, the convention
+    for inductors and primary-referred transformers).
+    """
+    A_e = _require(
+        mas, ("core", "processedDescription", "effectiveParameters", "effectiveArea"),
+        where,
+    )
+    if not isinstance(A_e, (int, float)) or A_e <= 0:
+        raise EnrichmentError(f"{where}: effectiveArea must be positive, got {A_e!r}")
+    fd = _require(mas, ("coil", "functionalDescription"), where)
+    if not isinstance(fd, list) or len(fd) <= winding_index:
+        raise EnrichmentError(
+            f"{where}: coil.functionalDescription must list at least "
+            f"{winding_index + 1} winding(s)"
+        )
+    w = fd[winding_index]
+    N = w.get("numberTurns") if isinstance(w, Mapping) else None
+    if not isinstance(N, (int, float)) or N <= 0:
+        raise EnrichmentError(
+            f"{where}: winding[{winding_index}].numberTurns must be positive, got {N!r}"
+        )
+    sat = _require(
+        mas, ("core", "functionalDescription", "material", "saturation"), where,
+    )
+    b_sat = _conservative_bsat(sat)
+    return float(A_e), int(N), b_sat
 
 
 def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
@@ -616,6 +713,183 @@ def _enrich_flyback(tas: dict, spec: Mapping[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# cuk / sepic / zeta — non-isolated buck-boost family (two inductors)
+# ---------------------------------------------------------------------------
+
+
+def _enrich_non_isolated_buckboost(
+    tas: dict, spec: Mapping[str, Any], *, topology_name: str,
+) -> None:
+    """Shared extractor for cuk / SEPIC / zeta.
+
+    All three topologies share the ideal CCM relations:
+
+      * ``D = Vout / (Vin + Vout)`` (treating Vout as the regulated
+        magnitude; cuk inverts polarity but the duty-cycle math is the
+        same).  ``D_max`` at ``Vin_min``, ``D_min`` at ``Vin_max``.
+      * Inductor volt-second balance gives ``V_L1 = V_L2 = Vin·D =
+        Vout·(1−D)`` during steady state, so both inductors see the
+        same applied volt-seconds per switching cycle, hence
+        ``ΔI_L = Vin · D / (L · fsw)`` for each.  Substituting
+        ``D = Vout/(Vin+Vout)`` shows the ripple is monotone increasing
+        in ``Vin`` ⇒ worst case at ``Vin_max``.
+      * L1 (input inductor) carries the *input* current
+        ``I_L1_avg = Pout / (η · Vin) = Iout · Vout / (η · Vin)``,
+        worst case at ``Vin_min``.
+      * L2 (output inductor) carries the *output* current
+        ``I_L2_avg = Iout``, independent of Vin.
+      * Worst-case peaks combine the two boundary cases conservatively
+        (the ripple worst-case Vin and the average-current worst-case
+        Vin do not coincide in operation; sizing must cover both):
+        ``Ipeak_L1 = I_L1_avg(Vin_min) + ΔI_L1(Vin_max) / 2``,
+        ``Ipeak_L2 = Iout + ΔI_L2(Vin_max) / 2``.
+      * Each inductor's Isat is its own ``B_sat · N · A_e / L`` from
+        its own MAS — no shared core assumption (uncoupled variants).
+
+    The realism gate's ``inductor_isat_margin`` check picks the first
+    magnetic with stamped fields; both are stamped so a future
+    "weakest magnetic" extension can pick whichever has the smaller
+    Isat/Ipeak ratio.
+    """
+    where = f"{topology_name} spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    if vout <= 0:
+        raise EnrichmentError(
+            f"{topology_name} enrichment: Vout magnitude must be positive, got {vout}"
+        )
+
+    efficiency = spec.get("efficiency")
+    if not isinstance(efficiency, (int, float)) or not (0.0 < efficiency <= 1.0):
+        raise EnrichmentError(
+            f"{where}.efficiency: required number in (0, 1] — needed to size "
+            "L1 (input inductor) current honestly; refusing to assume lossless"
+        )
+
+    L1_H = spec.get("desiredInductance")
+    L2_H = spec.get("desiredOutputInductance")
+    if not isinstance(L1_H, (int, float)) or L1_H <= 0:
+        raise EnrichmentError(
+            f"{where}.desiredInductance: required positive number (henries) — "
+            "L1 (input inductor) value"
+        )
+    # SEPIC/cuk/zeta uncoupled variants take a second inductor value;
+    # accept either an explicit ``desiredOutputInductance`` or fall back
+    # to L1 (the common identical-inductor design choice).  If neither
+    # is set we throw — there is no honest default.
+    if L2_H is None:
+        L2_H = L1_H
+        l2_source = "defaulted_to_L1 (spec omitted desiredOutputInductance)"
+    elif not isinstance(L2_H, (int, float)) or L2_H <= 0:
+        raise EnrichmentError(
+            f"{where}.desiredOutputInductance: must be positive if provided, got {L2_H!r}"
+        )
+    else:
+        l2_source = "spec.desiredOutputInductance"
+    L1_H = float(L1_H)
+    L2_H = float(L2_H)
+
+    mags = _iter_magnetic_components(tas)
+    if len(mags) < 2:
+        raise EnrichmentError(
+            f"{topology_name} enrichment: expected 2 magnetic components "
+            f"(L1 input + L2 output), found {len(mags)}"
+        )
+
+    d_max = vout / (vmin + vout)
+    d_min = vout / (vmax + vout)
+    # Ripple monotone-increases in Vin → use Vin_max with the −20% L
+    # tolerance from PROTEUS rules.
+    L1_worst = 0.8 * L1_H
+    L2_worst = 0.8 * L2_H
+    d_at_vmax = vout / (vmax + vout)
+    ripple_L1_worst = vmax * d_at_vmax / (L1_worst * fsw)
+    ripple_L2_worst = vmax * d_at_vmax / (L2_worst * fsw)
+
+    Pout = vout * iout
+    I_L1_avg_max = Pout / (efficiency * vmin)
+    I_L2_avg = iout
+    ipeak_L1 = I_L1_avg_max + ripple_L1_worst / 2.0
+    ipeak_L2 = I_L2_avg + ripple_L2_worst / 2.0
+
+    tas["duty"] = round(d_max, 6)
+    tas["duty_min"] = round(d_min, 6)
+    tas["duty_max"] = round(d_max, 6)
+
+    # Stamp L1 (first magnetic, input-side).
+    si1, ci1, c1 = mags[0]
+    mas1 = _read_mas(c1, f"{topology_name} L1 MAS")
+    A_e1, N1, b_sat1 = _mas_isat_inputs(mas1, f"{topology_name} L1 MAS")
+    isat_L1 = b_sat1 * N1 * A_e1 / L1_H
+
+    enriched1 = dict(c1)
+    enriched1["isat"] = round(isat_L1, 6)
+    enriched1["ipeak_worst"] = round(ipeak_L1, 6)
+    enriched1["isat_provenance"] = {
+        "method": f"B_sat * N * A_e / L1 ({topology_name} v0.1, L1 input inductor)",
+        "b_sat_T": round(b_sat1, 6),
+        "n_turns": N1,
+        "effective_area_m2": A_e1,
+        "inductance_H": L1_H,
+    }
+    enriched1["ipeak_provenance"] = {
+        "method": "I_in_max + ripple_worst/2 (Vin_min avg current + Vin_max ripple, L*0.8)",
+        "role": "input_inductor",
+        "iout_A": iout,
+        "vout_V": vout,
+        "pout_W": Pout,
+        "efficiency": efficiency,
+        "iL1_avg_max_A": round(I_L1_avg_max, 6),
+        "ripple_worst_A_pp": round(ripple_L1_worst, 6),
+        "vin_min_V": vmin,
+        "vin_max_V": vmax,
+        "fsw_Hz": fsw,
+        "L_worst_H": L1_worst,
+    }
+    tas["topology"]["stages"][si1]["circuit"]["components"][ci1] = enriched1
+
+    # Stamp L2 (second magnetic, output-side).
+    si2, ci2, c2 = mags[1]
+    mas2 = _read_mas(c2, f"{topology_name} L2 MAS")
+    A_e2, N2, b_sat2 = _mas_isat_inputs(mas2, f"{topology_name} L2 MAS")
+    isat_L2 = b_sat2 * N2 * A_e2 / L2_H
+
+    enriched2 = dict(c2)
+    enriched2["isat"] = round(isat_L2, 6)
+    enriched2["ipeak_worst"] = round(ipeak_L2, 6)
+    enriched2["isat_provenance"] = {
+        "method": f"B_sat * N * A_e / L2 ({topology_name} v0.1, L2 output inductor)",
+        "b_sat_T": round(b_sat2, 6),
+        "n_turns": N2,
+        "effective_area_m2": A_e2,
+        "inductance_H": L2_H,
+        "inductance_source": l2_source,
+    }
+    enriched2["ipeak_provenance"] = {
+        "method": "Iout + ripple_worst/2 (Vin_max ripple, L*0.8)",
+        "role": "output_inductor",
+        "iout_A": iout,
+        "ripple_worst_A_pp": round(ripple_L2_worst, 6),
+        "vin_max_V": vmax,
+        "fsw_Hz": fsw,
+        "L_worst_H": L2_worst,
+    }
+    tas["topology"]["stages"][si2]["circuit"]["components"][ci2] = enriched2
+
+
+def _enrich_cuk(tas: dict, spec: Mapping[str, Any]) -> None:
+    _enrich_non_isolated_buckboost(tas, spec, topology_name="cuk")
+
+
+def _enrich_sepic(tas: dict, spec: Mapping[str, Any]) -> None:
+    _enrich_non_isolated_buckboost(tas, spec, topology_name="sepic")
+
+
+def _enrich_zeta(tas: dict, spec: Mapping[str, Any]) -> None:
+    _enrich_non_isolated_buckboost(tas, spec, topology_name="zeta")
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -624,6 +898,9 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "buck": _enrich_buck,
     "boost": _enrich_boost,
     "flyback": _enrich_flyback,
+    "cuk": _enrich_cuk,
+    "sepic": _enrich_sepic,
+    "zeta": _enrich_zeta,
 }
 
 
