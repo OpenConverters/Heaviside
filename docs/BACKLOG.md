@@ -170,8 +170,22 @@ so the gap stays visible from inside Heaviside's planning loop.
   components for the voltage derating checks; analyst agent computes Tj
   for thermal_limit; sim agent populates `simulation_results` /
   `loss_budget` for the remaining 4 checks.
-- **Analytical regression suite** against the 47 designs in
-  `TAS/data/converters.ndjson`. CI gate per AGENTS.md rule 7.
+- **Analytical regression suite** ✅ landed
+  (`tests/regression/converters/test_converter_corpus.py`, 51 new
+  tests).  CI gate per AGENTS.md rule 7.  Loads every entry in
+  `TAS/data/converters.ndjson` (48 today: 34 buck-shaped, 10
+  single-switch forward, 3 flyback, 1 intentionally-empty placeholder),
+  classifies by component fingerprint, runs `evaluate_tas` and snapshots
+  `{verdict, summary, per-check status}` into a committed
+  `golden_baseline.json`.  Today's honest verdict is INCOMPLETE on every
+  populated entry (no real component data attached → every check
+  UNAVAILABLE).  When the librarian agent populates real components, the
+  guard test `test_entry_is_evaluable_or_explicitly_empty` will trip and
+  the golden must be regenerated via
+  `python -m tests.regression.converters.regen_golden` in the same
+  reviewed commit.  Unknown component fingerprints fail loudly (no
+  silent skip); corpus size pinned to 48 in
+  `test_corpus_size_matches_agents_rule_7`.
 - **Component-librarian agent port from Proteus.** First real consumer of
   the `kind="capacitor"` `CAS::Inputs` from `extra_components`.
 - **Integration-test caching strategy.** End-to-end PyOM runs are 1–2 min
