@@ -182,6 +182,18 @@ so the gap stays visible from inside Heaviside's planning loop.
   bound across opposite Vin extremes (same Vin-split as the boost
   extractor); spec carries |Vout_pri| magnitude and a negative
   value throws.  Multi-output flybacks throw (not yet supported).
+  Push-pull extractor (`_enrich_push_pull`, 17 new tests in
+  `tests/unit/test_extract_push_pull.py`) handles the
+  4-winding (pri_top/pri_bot/sec_top/sec_bot) T1 and works in
+  effective-duty form: `D_eff = Vout·n/Vin = 2·D_q` at
+  `fsw_eff = 2·fsw` because the output choke sees one ramp per
+  primary half-cycle.  Under that substitution the output-side
+  math is identical to the forward family, with the hard
+  overlap limit at `D_eff ≥ 1.0` (per-switch `D_q ≥ 0.5` shorts
+  the transformer) replacing the SSF/2SF 0.5 reset window.
+  L_out0 binds the gate; T1 is intentionally NOT Isat-stamped
+  because the alternating-polarity drive resets its core every
+  cycle.  Twelfth PASS-capable topology.
   **Remaining**:
   librarian agent populates `vds_rated` / `vrrm_rated` / `v_rated` on TAS
   components for the voltage derating checks; analyst agent computes Tj

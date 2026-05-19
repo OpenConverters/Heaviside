@@ -1310,6 +1310,134 @@ def _enrich_isolated_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Push-pull extractor
+# ---------------------------------------------------------------------------
+
+
+def _enrich_push_pull(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty + L_out0 Isat / Ipeak for the push-pull converter.
+
+    Push-pull = two primary switches Q1/Q2 driven 180° out of phase
+    feeding the two halves of a center-tapped primary winding; the
+    secondary is also center-tapped and rectified through two diodes
+    (D1, D2) into a buck-style L_out + C_out filter.
+
+    Topology shape (from stencil at stencils.py:2218): T1 has FOUR
+    windings (``pri_top``, ``pri_bot``, ``sec_top``, ``sec_bot``)
+    inside an ``isolation``-role stage; L_out0 is a single-winding
+    inductor inside an ``outputRectifier``-role stage.
+
+    Key observation: the output choke sees TWO ramps per switching
+    period — one from each primary half — so the effective output
+    frequency is ``2·fsw`` and the effective duty is ``D_eff = 2·D_q``
+    where ``D_q`` is the per-switch duty.  In ``D_eff`` form the
+    output-side math is identical to the forward family.
+
+    Math (CCM, ignoring rectifier drop, primary-to-secondary turns
+    ratio ``n = N_pri_top / N_sec_top``):
+
+      * Per-switch duty ``D_q = Vout·n / (2·Vin)`` ⇒ effective duty
+        ``D_eff = Vout·n / Vin`` (same as a single-switch forward).
+      * No-overlap hard limit: ``D_q < 0.5`` ⇒ ``D_eff < 1.0``.
+        If ``D_eff_max ≥ 1.0`` we throw (both switches simultaneously
+        ON shorts the transformer).  The realism gate's CCM 0.95
+        ceiling still applies and fail-closes practical overlap-risk
+        designs before the hard limit is reached.
+      * Output choke ripple at the effective ``2·fsw``:
+        ``ΔI_L = Vout · (1 − D_eff) / (L_out · 2·fsw)``.  Same
+        D-shape as forward-family output choke (monotone decreasing
+        in D ⇒ worst at ``D_eff_min`` i.e. ``Vin_max``), with the
+        PROTEUS −20 % L tolerance applied.
+      * ``Ipeak_worst = Iout + ΔI_L_worst / 2``.
+      * ``Isat = B_sat · N_L_out · A_e / L_out`` from L_out0's own
+        MAS — T1 is intentionally NOT Isat-stamped because the
+        alternating-polarity drive resets its core every cycle (same
+        rationale as the forward family).
+
+    Spec ``switchingFrequency`` is the per-switch fsw matching the
+    controller; the extractor computes the effective output
+    frequency internally and pins ``fsw_effective_Hz`` in the
+    provenance so any downstream consumer can see the doubling.
+    """
+    where = "push_pull spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    L_out = _required_inductance(spec, "desiredInductance", where)
+
+    # T1 lives in the isolation stage; read the dominant turns ratio.
+    # n = N_pri_top / N_sec_top — assume the two primary halves and
+    # the two secondary halves are matched (symmetric center taps),
+    # which is the defining structural property of push-pull.
+    _, _, t1_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "push_pull enrichment (T1)"
+    )
+    t1_mas = _read_mas(t1_comp, "push_pull T1 MAS")
+    N_pri = _winding_turns_by_name(t1_mas, "pri_top", "push_pull T1 MAS")
+    N_sec = _winding_turns_by_name(t1_mas, "sec_top", "push_pull T1 MAS")
+    n = float(N_pri) / float(N_sec)
+
+    # Effective duty (forward-family shape).  Per-switch D_q = D_eff/2.
+    d_eff_max = vout * n / vmin
+    d_eff_min = vout * n / vmax
+    if d_eff_max >= 1.0:
+        raise EnrichmentError(
+            f"push_pull enrichment: D_eff_max = {d_eff_max:.3f} ≥ 1.0 — "
+            "per-switch duty would exceed 0.5, shorting the transformer "
+            "(both Q1 and Q2 simultaneously ON).  Raise the turns ratio "
+            "(more primary turns) or raise Vin_min."
+        )
+
+    # L_out lives in the outputRectifier stage.
+    so, co, lout_comp = _find_magnetic_in_stage_role(
+        tas, "outputRectifier", "push_pull enrichment (L_out)"
+    )
+    lout_mas = _read_mas(lout_comp, "push_pull L_out MAS")
+    A_e, N_lout, b_sat = _mas_isat_inputs(lout_mas, "push_pull L_out MAS")
+
+    fsw_eff = 2.0 * fsw
+    L_worst = 0.8 * L_out
+    ripple_worst = vout * (1.0 - d_eff_min) / (L_worst * fsw_eff)
+    ipeak_worst = iout + ripple_worst / 2.0
+    isat = b_sat * float(N_lout) * float(A_e) / L_out
+
+    tas["duty"] = round(d_eff_max, 6)
+    tas["duty_min"] = round(d_eff_min, 6)
+    tas["duty_max"] = round(d_eff_max, 6)
+
+    enriched = dict(lout_comp)
+    enriched["isat"] = round(isat, 6)
+    enriched["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched["isat_provenance"] = {
+        "method": "B_sat * N * A_e / L_out (push_pull v0.1, output choke)",
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": int(N_lout),
+        "effective_area_m2": float(A_e),
+        "inductance_H": L_out,
+    }
+    enriched["ipeak_provenance"] = {
+        "method": (
+            "Iout + ripple_worst/2 (buck-shaped on secondary at D_eff_min, "
+            "L*0.8, fsw_eff = 2*fsw because the output choke sees one ramp "
+            "per primary half-cycle)"
+        ),
+        "role": "output_choke",
+        "iout_A": iout,
+        "vout_V": vout,
+        "turns_ratio_n_pri_top_over_n_sec_top": round(n, 6),
+        "n_primary_half": N_pri,
+        "n_secondary_half": N_sec,
+        "d_eff_min": round(d_eff_min, 6),
+        "d_per_switch_max": round(d_eff_max / 2.0, 6),
+        "ripple_worst_A_pp": round(ripple_worst, 6),
+        "vin_max_V": vmax,
+        "fsw_per_switch_Hz": fsw,
+        "fsw_effective_Hz": fsw_eff,
+        "L_worst_H": L_worst,
+    }
+    tas["topology"]["stages"][so]["circuit"]["components"][co] = enriched
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -1326,6 +1454,7 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "active_clamp_forward": _enrich_active_clamp_forward,
     "isolated_buck": _enrich_isolated_buck,
     "isolated_buck_boost": _enrich_isolated_buck_boost,
+    "push_pull": _enrich_push_pull,
 }
 
 

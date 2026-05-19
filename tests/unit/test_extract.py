@@ -248,12 +248,19 @@ class TestDispatcher:
 
     def test_unknown_topology_passes_through_unchanged(self):
         tas = _buck_tas()
-        # ``push_pull`` has no extractor registered yet, so the dispatcher
-        # must leave the TAS structurally untouched (deep-copied) rather
-        # than raising or silently stamping bogus fields.
-        out = enrich_tas_for_realism(tas, topology="push_pull", spec=_buck_spec())
-        # No enrichment for push_pull yet — should be a structural deep copy
-        # of the input (no ``duty`` stamped, no ``isat`` on L1).
+        # A synthetic topology name with no extractor registered.  We
+        # used to use real topology names here (``push_pull`` etc.)
+        # but every time an extractor was added, this test had to be
+        # updated to a different unregistered name.  A clearly-synthetic
+        # name pins the contract permanently: the dispatcher must leave
+        # the TAS structurally untouched (deep-copied) rather than
+        # raising or silently stamping bogus fields.
+        out = enrich_tas_for_realism(
+            tas, topology="__synthetic_unregistered_topology__",
+            spec=_buck_spec(),
+        )
+        # No enrichment — should be a structural deep copy of the input
+        # (no ``duty`` stamped, no ``isat`` on L1).
         assert "duty" not in out
         assert "isat" not in out["topology"]["stages"][0]["circuit"]["components"][2]
 
