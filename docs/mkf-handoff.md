@@ -1,0 +1,372 @@
+# Handoff: MKF blockers for Heaviside stencil coverage
+
+**From:** Heaviside (Proteus-successor TAS/PEAS pipeline)
+**To:** MKF / PyOpenMagnetics upstream
+**Date:** 2026-05-19
+**Status of Heaviside side:** stencil + golden + registry + drift-test ready
+for any topology the moment its MKF bug below is fixed. No Heaviside-side
+work is blocking; everything blocked here is **strictly upstream**.
+
+## Context
+
+Heaviside's MKF→TAS decomposer pipeline takes the output of
+`PyOpenMagnetics.generate_ngspice_circuit(topology, spec, ...)` and walks
+it through a per-topology stencil to produce a fully-wrapped TAS
+document (real ngspice deck + structural decomposition into stages
+with role-typed components and inter-stage wiring).
+
+Out of the 24 converter topologies registered in
+`heaviside/topologies/registry.py`, **20 are stenciled end-to-end** and
+**4 are blocked upstream in MKF**. Each blocker below has a concrete
+repro you can run from a fresh PyOpenMagnetics checkout (no Heaviside
+dependency required).
+
+## Blocker matrix
+
+| Topology | MKF symptom | Severity | Fix sketch |
+|---|---|---|---|
+| `power_factor_correction` | dispatch missing in `converter.cpp` | trivial | add 1 `else if` branch |
+| `cllc` | dispatch intentionally skipped (sig mismatch) | small | new dispatch path |
+| `vienna` | runtime JSON type error in `process_vienna` | medium | repro + fix bad type assumption |
+| `series_resonant` (`src`) | emits behavioural Vbridge only, ignores `bridgeMode` | medium | mirror LLC's switch-mode branch |
+
+The full ngspice generator dispatch table is at
+`PyOpenMagnetics/src/converter.cpp:1272-1330` (`json generate_ngspice_circuit(
+const std::string& topologyName, ...)`). All four bugs sit either inside
+that function or in the per-topology `generate_ngspice_circuit` method it
+forwards to.
+
+---
+
+## 1. PFC — dispatch branch missing
+
+### Symptom
+
+```python
+import PyOpenMagnetics as p
+r = p.generate_ngspice_circuit("power_factor_correction", {...}, [1.0], 1e-3, 0, 0, "")
+# → {"error": "generate_ngspice_circuit: unknown topology 'power_factor_correction'"}
+# Same for "pfc", "PFC", "powerFactorCorrection".
+```
+
+### Root cause
+
+`PyOpenMagnetics/src/converter.cpp:1272-1325` lists 20 topology branches
+but **no** branch matches PFC. Topology aliases at line 72 list
+`"powerFactorCorrection"` as a canonical name, and at line 104 the alias
+map normalises `"powerFactorCorrection"` → `"power_factor_correction"`,
+but the ngspice dispatch never tests for it.
+
+### Status of underlying generator
+
+`PowerFactorCorrection::generate_ngspice_circuit(double inductance, ...)`
+already exists at
+`_mkf_local/src/converter_models/PowerFactorCorrection.cpp:443`. It uses
+the single-inductor signature (same shape as `Buck`/`Boost`/`Cuk`), so
+the wiring is one branch using the existing template:
+
+```cpp
+else if (topologyName == "power_factor_correction"
+      || topologyName == "advanced_power_factor_correction"
+      || topologyName == "pfc")
+    spice = generate_spice_inductor<OpenMagnetics::PowerFactorCorrection>(
+        converterJson, magnetizingInductance, vinIdx, opIdx, bridgeMode);
+```
+
+Insert anywhere between the existing `four_switch_buck_boost` branch
+(~line 1311) and the isolated-vector branches (~line 1313).
+
+### Heaviside side, ready to go
+
+`heaviside/topologies/registry.py` already has a `power_factor_correction`
+entry. As soon as MKF dispatches it, Heaviside can:
+
+1. Probe `docs/extras-probe.json` for the PFC extras-role names
+   (presumably `Lpfc_inputInductor` + `Cbus_outputCapacitor`).
+2. Add `magnetic_binding` / `capacitor_binding` to the registry entry.
+3. Write the stencil + golden + regression test.
+
+PFC is non-isolated so the stencil pattern follows Cuk/Sepic/Zeta, not
+the bridge family. ETA on Heaviside side: ~1 hour once dispatched.
+
+---
+
+## 2. CLLC — dispatch intentionally not wired
+
+### Symptom
+
+```python
+r = p.generate_ngspice_circuit("cllc", {...}, [1.0], 1e-3, 0, 0, "")
+# → {"error": "generate_ngspice_circuit: unknown topology 'cllc'"}
+# Same for "CLLC", "cllcResonant", "cllcResonantConverter", "advanced_cllc".
+```
+
+### Root cause
+
+`PyOpenMagnetics/src/converter.cpp:1294-1298` has an explicit comment:
+
+```cpp
+// CLLC is intentionally not wired here yet — its
+// generate_ngspice_circuit signature takes (double turnsRatio,
+// CllcResonantParameters&, ...), which doesn't fit the uniform
+// (vector<double> turnsRatios, double Lm, ...) shape used by every
+// other topology. Add a separate dispatch path when we need it.
+```
+
+`Cllc::generate_ngspice_circuit` at
+`_mkf_local/src/converter_models/Cllc.h:389` takes a
+`CllcResonantParameters&` (computed via
+`CllcConverter::calculate_resonant_parameters()` at `Cllc.cpp:136`)
+rather than a magnetizing inductance scalar.
+
+### Fix sketch
+
+Two options:
+
+**Option A (preferred — minimal churn):** Have the dispatch compute the
+resonant parameters internally and pass them through:
+
+```cpp
+else if (topologyName == "cllc" || topologyName == "advanced_cllc") {
+    OpenMagnetics::CllcConverter conv;
+    from_json(converterJson, conv);
+    auto params = conv.calculate_resonant_parameters();
+    // Cllc takes a scalar turnsRatio, not a vector
+    double turnsRatio = turnsRatios.empty() ? 1.0 : turnsRatios.at(0);
+    spice = conv.generate_ngspice_circuit(turnsRatio, params, vinIdx, opIdx, bridgeMode);
+}
+```
+
+**Option B:** Extend the existing `generate_spice_isolated` template
+with a CLLC overload that handles the alternate signature transparently.
+
+### Status of underlying generator
+
+`Cllc::generate_ngspice_circuit` itself works (verified to compile and
+emit a deck when called directly from C++). Whether it honors
+`bridgeMode="switch"` like LLC does, or emits only a behavioural Vbridge
+like SRC currently does (#4 below), is unknown — please verify and, if
+behavioural-only, add the switch-mode branch in the same pass.
+
+### Heaviside side, ready to go
+
+`heaviside/topologies/registry.py` has a `cllc` entry. Extras roles per
+`get_extra_components_inputs("cllc")` are
+`Cr1_resonantCapacitor_primary` + `Cr2_resonantCapacitor_secondary`
+(verified — see `docs/extras-probe.json`). The CLLLC stencil that just
+landed (commit `0b72655`) is the natural template: same dual-bridge
+shape, same multi-cap binding pattern. ETA on Heaviside side once
+dispatched: ~2 hours.
+
+---
+
+## 3. Vienna — JSON type error inside processor
+
+### Symptom
+
+```python
+r = p.process_vienna({
+    "lineToLineVoltage": {"nominal": 400.0},
+    "outputDcVoltage": {"nominal": 800.0},
+    "efficiency": 0.95,
+    "switchingFrequency": 100000.0,
+    "ambientTemperature": 25.0,
+    "outputPower": 1000.0,
+    "desiredInductance": 1e-3,
+    "operatingPoints": [{
+        "outputVoltages": [800.0], "outputCurrents": [1.25],
+        "switchingFrequency": 100000.0, "ambientTemperature": 25.0,
+    }],
+})
+# → {"error": "Exception: [json.exception.type_error.302] type must be number, but is object"}
+
+# Same error from generate_ngspice_circuit (which calls process internally):
+r = p.generate_ngspice_circuit("vienna", spec, [1.0, 1.0], 1e-3, 0, 0, "switch")
+# → {"error": "generate_ngspice_circuit: [json.exception.type_error.302] type must be number, but is object"}
+```
+
+### Root cause (suspected)
+
+`nlohmann::json::type_error.302` "type must be number, but is object"
+indicates a `.get<double>()` (or equivalent implicit conversion) being
+called on a JSON value that is actually an object — typically a
+`{"nominal": X}` wrapper where the code expected a bare scalar.
+
+Earlier Heaviside notes recorded the message as `cannot use at() with
+string`; current PyOM (build SHA in
+`vendor/PyOpenMagnetics/build/cp312-cp312-linux_x86_64/`) reports
+type_error.302. Either way the failure is in `process_vienna_internal`
+at `PyOpenMagnetics/src/converter.cpp:662-…` or in `Vienna.cpp`.
+
+### Repro / investigation pointers
+
+- The above spec is the same shape that `process_buck`, `process_cuk`,
+  etc. accept. If Vienna requires a different shape (e.g. scalar
+  `inputVoltage` instead of `lineToLineVoltage`, or a scalar
+  `outputDcVoltage`), the schema should document that and
+  `process_vienna_internal` should validate up-front with a useful
+  error message rather than letting the type error escape from deep in
+  the converter.
+- See `Heaviside/scripts/dump_all_decks.py:96-100` for the spec recipe
+  that we've been trying (matches what other Vienna documentation
+  shows).
+- A schema mismatch in `MAS/schemas/inputs/topologies/vienna.json` vs.
+  what `Vienna::from_json` actually reads is also possible.
+
+### Status of dispatch
+
+Dispatch IS wired (`converter.cpp:1320`) — the topology string is
+recognised; the error fires when execution reaches `Vienna.cpp`.
+
+### Heaviside side, ready to go
+
+`heaviside/topologies/registry.py` has a `vienna` entry. As soon as PyOM
+returns a netlist, Heaviside can probe extras, write the stencil
+(non-isolated three-level rectifier — distinct topology family from
+everything else, will need its own stage roles), and lock a golden.
+ETA on Heaviside side: ~3 hours (new stage-role pattern).
+
+---
+
+## 4. SRC — emits behavioural bridge only, ignores `bridgeMode`
+
+### Symptom
+
+```python
+raw = p.generate_ngspice_circuit("src", spec, [2.0], 1e-3, 0, 0, "switch")
+# Deck contains: Vbridge pri 0 PULSE(...)
+# Deck does NOT contain: SHI / SLO / SA / SB / SC / SD (no real switches)
+```
+
+Compared with LLC same spec / `bridgeMode="switch"`: LLC emits real
+`SW1` switches, body diodes, snubbers. SRC does not, no matter what
+`bridgeMode` is passed.
+
+### Root cause
+
+`_mkf_local/src/converter_models/Src.cpp:655-659`:
+
+```cpp
+std::string Src::generate_ngspice_circuit(
+    const std::vector<double>& turnsRatios,
+    double magnetizingInductance,
+    size_t inputVoltageIndex,
+    size_t operatingPointIndex)
+```
+
+The signature has **no `bridgeMode` parameter** — and the comment at
+`Src.cpp:643-647` is explicit:
+
+> Bridge model: behavioural Vbridge PULSE source (no SW1, no body
+> diodes, no snubber) — matches Llc's BEHAVIORAL_PULSE branch and is
+> adequate for FHA/PtP regression where we are interested in the tank
+> shape rather than switching detail.
+
+That is fine for FHA/PtP but means the deck has **zero MOSFETs** for the
+decomposer to anchor `Q1..Q4` against. Without a real-switch deck,
+there is no honest TAS BOM for SRC.
+
+### Fix sketch
+
+Mirror LLC's pattern:
+
+1. Add `std::string bridgeMode = ""` parameter to
+   `Src::generate_ngspice_circuit` (header + impl).
+2. Inside, branch on `bridgeMode`:
+   - `""` or `"pulse"` → keep current behavioural Vbridge (back-compat).
+   - `"switch"` → emit a real HB (SHI/SLO + DIDEAL body diodes +
+     Rsnub/Csnub + Vpwm sources), same shape as
+     `Llc.cpp` 's switch-mode branch around the
+     `BridgeSimMode::SWITCH` discriminator.
+3. Update the dispatch at `converter.cpp:1318` to forward `bridgeMode`
+   (the `generate_spice_isolated<>` template already does this for the
+   topologies that accept it; SRC will inherit the same plumbing once
+   its signature matches).
+
+### Status of dispatch
+
+Dispatch IS wired (`converter.cpp:1318`). The dispatch template
+`generate_spice_isolated<Src>` already passes `bridgeMode` through but
+SRC's method signature drops it on the floor — no compile error
+because the template instantiates against whatever signature SRC
+happens to declare.
+
+### Heaviside side, ready to go
+
+`heaviside/topologies/registry.py` has a `series_resonant` entry. The
+LLC stencil is the direct template (HB topology, single resonant tank,
+diode rectifier). The capacitor-binding plumbing is already done (LLC
+exercises it). ETA on Heaviside side once switch-mode lands: ~1 hour.
+
+---
+
+## Cross-cutting wishes (low-priority, nice-to-have)
+
+These do not block Heaviside but would meaningfully reduce friction:
+
+- **Stable extras-role names.** `docs/extras-probe.json` snapshots the
+  extras-cap / extras-magnetic role names per topology. Heaviside's
+  registry bindings hard-code these as strings (e.g.
+  `"Lr1_HV_seriesInductor"`, `"Cr1_HV_resonantCapacitor"`). Any rename
+  upstream silently breaks bindings; a stability guarantee or a
+  CHANGELOG entry for any rename would be helpful.
+
+- **Wire-naming convention for sense V-sources.** Every MKF deck wraps
+  every measurable current in a 0-V `V*_sense` voltage source. The
+  stencil treats these as pure wires (it merges the two endpoints).
+  If MKF ever emits a `V*_sense` that has additional behaviour
+  (non-zero value, embedded series resistance, etc.), the stencil's
+  drop-as-wire assumption breaks silently. A documented invariant
+  "V*_sense elements are always 0 V" or a different prefix for
+  non-trivial probes would let Heaviside fail loudly on regression.
+
+- **Behavioural-vs-switch flag for ALL bridges.** LLC, DAB, PSFB,
+  PSHB, AHB, CLLLC all honor `bridgeMode`. SRC (above) does not.
+  Push-pull / Weinberg / 2-switch-forward / Active-Clamp-Forward
+  use real switches always (no behavioural option). The uniform
+  contract would be: every isolated bridge topology accepts
+  `bridgeMode ∈ {"", "pulse", "switch"}` and the dispatch refuses
+  unknown values. This is partially in place (`converter.cpp:1225`
+  validates the mode string) but per-topology adoption is uneven.
+
+## How to verify a fix from Heaviside's side
+
+Once any of the above is fixed in MKF and a new wheel is rebuilt in
+`vendor/PyOpenMagnetics/build/`, Heaviside verifies with:
+
+```bash
+# 1. Re-probe the extras roles for the unblocked topology
+.venv/bin/python scripts/probe_extras.py    # rewrites docs/extras-probe.json
+
+# 2. Dump the deck and inspect
+.venv/bin/python scripts/dump_all_decks.py  # writes /tmp/all_decks.json
+
+# 3. If the deck looks right, add the stencil + golden + registry binding,
+#    then run the full suite (currently 295/295 passing):
+.venv/bin/python -m pytest tests/ --ignore=tests/integration -q
+```
+
+The only Heaviside files that need touching per newly-unblocked topology
+are:
+
+- `heaviside/decomposer/stencils.py` (new stencil function + registry
+  table entry)
+- `heaviside/topologies/registry.py` (fill in `magnetic_binding` /
+  `capacitor_binding`)
+- `tests/regression/decomposer/test_<topology>.py` (4 tests, copy from
+  `test_clllc.py` as template)
+- `tests/regression/decomposer/golden/<prefix>_<spec>.tas.json`
+  (auto-generated with `HEAVISIDE_UPDATE_GOLDENS=1 pytest`)
+- `tests/unit/test_stencil_binding_drift.py` (one row in
+  `PREFIX_TO_TOPOLOGY`)
+
+CLLLC (commit `0b72655`) is the most recent worked example and covers
+every pattern on the Heaviside side; it landed in under 2 hours of
+effort once the deck was available.
+
+## Single point of contact
+
+Heaviside repo: `/home/alf/OpenConverters/Heaviside/` (no remote yet).
+Relevant Heaviside scratchpad lives in `docs/BACKLOG.md` under the
+"Upstream bugs" section — that section will be updated to point at this
+handoff doc.

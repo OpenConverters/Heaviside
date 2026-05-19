@@ -65,6 +65,12 @@ from `Now`, do it, commit, and move on without checking in.
 
 ## Upstream bugs (track, can't fix from Heaviside)
 
+**See `docs/mkf-handoff.md`** for a full per-bug writeup (symptom +
+repro + root cause + concrete fix sketch + file:line pointers in
+`PyOpenMagnetics/src/converter.cpp` and the per-topology MKF sources)
+written for the upstream MKF agent. The summaries below are kept here
+so the gap stays visible from inside Heaviside's planning loop.
+
 - **PyOpenMagnetics segfault in `design_magnetics_from_converter('llc', ...)`**
   — reproduces standalone at 48V and 400V, all spec variants tried. The LLC
   integration test in `tests/integration/test_bridge_integration.py` uses a
