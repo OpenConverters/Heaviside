@@ -194,6 +194,20 @@ so the gap stays visible from inside Heaviside's planning loop.
   L_out0 binds the gate; T1 is intentionally NOT Isat-stamped
   because the alternating-polarity drive resets its core every
   cycle.  Twelfth PASS-capable topology.
+  Four-switch buck-boost (`_enrich_four_switch_buck_boost`, 15 new
+  tests in `tests/unit/test_extract_four_switch_buck_boost.py`)
+  classifies operating mode from the spec: pure **buck** when
+  `Vin_min > Vout`, pure **boost** when `Vin_max < Vout`, and
+  **mixed** when the range straddles Vout (controller transitions
+  between sub-modes as Vin crosses Vout).  Each sub-mode uses the
+  same closed-form analytics as the standalone buck / boost
+  extractors over its actual clamped Vin sub-range; mixed mode
+  takes the pessimistic upper bound on stress (max ripple, boost-
+  side avg I_L worst case).  Degenerate boundaries (`Vin_extreme
+  == Vout`) throw to prevent D = 1.0 sub-modes.  Pure buck-boost
+  overlap mode (all four switches modulating) is not modelled in
+  v0.1 — the mixed-mode pessimistic combination is the conservative
+  envelope.  Thirteenth PASS-capable topology.
   **Remaining**:
   librarian agent populates `vds_rated` / `vrrm_rated` / `v_rated` on TAS
   components for the voltage derating checks; analyst agent computes Tj

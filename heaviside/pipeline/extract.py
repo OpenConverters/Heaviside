@@ -1437,6 +1437,144 @@ def _enrich_push_pull(tas: dict, spec: Mapping[str, Any]) -> None:
     tas["topology"]["stages"][so]["circuit"]["components"][co] = enriched
 
 
+    tas["topology"]["stages"][so]["circuit"]["components"][co] = enriched
+
+
+# ---------------------------------------------------------------------------
+# Four-switch buck-boost (4SBB)
+# ---------------------------------------------------------------------------
+
+
+def _enrich_four_switch_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty + L1 Isat / Ipeak for the four-switch buck-boost.
+
+    4SBB = a buck half-bridge (Q1/Q2) cascaded with a boost
+    half-bridge (Q3/Q4) sharing one inductor L1.  Stencil at
+    stencils.py:794 — L1 lives inside the single ``switchingCell``
+    stage (no separate output rectifier).
+
+    Operating modes (controller-dependent, classified from spec):
+
+      * **Buck mode** when ``Vin_min > Vout``: Q3 ON, Q4 OFF, Q1/Q2
+        switch.  ``D_buck = Vout / Vin``, ``I_L_avg = Iout``,
+        ``ΔI_L = Vout · (1 − D) / (L · fsw)`` — same shape as a
+        plain buck (worst at Vin_max ⇒ D_min).
+      * **Boost mode** when ``Vin_max < Vout``: Q1 ON, Q2 OFF, Q3/Q4
+        switch.  ``D_boost = 1 − Vin / Vout``, ``I_L_avg = Iout · Vout
+        / Vin`` (peaks at Vin_min), ``ΔI_L = Vin · (1 − Vin/Vout) /
+        (L · fsw)`` — same shape as a plain boost with interior peak
+        at ``Vin = Vout/2``.
+      * **Mixed (straddle)** when ``Vin_min < Vout < Vin_max``: the
+        controller transitions between modes as Vin crosses Vout.
+        We evaluate stresses in BOTH sub-regions over the actual
+        clamped Vin sub-range and pick the pessimistic worst case.
+        Pure buck-boost overlap mode (all four switches actively
+        modulating) is a narrow band; v0.1 does NOT model it
+        explicitly — the mixed combination is the conservative
+        upper bound on stress.
+
+    Throws if ``Vin_min == Vout`` or ``Vin_max == Vout`` exactly
+    (degenerate boundary, D would land at 1.0 in one sub-mode).
+
+    PROTEUS −20 % L tolerance is applied to every ripple computation.
+    """
+    where = "four_switch_buck_boost spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    L = _required_inductance(spec, "desiredInductance", where)
+
+    if vmin == vout or vmax == vout:
+        raise EnrichmentError(
+            f"four_switch_buck_boost enrichment: Vin extreme exactly equals Vout "
+            f"({vout}) — degenerate mode boundary (D would land at 1.0 in one "
+            "sub-mode).  Widen the input voltage range so it strictly straddles, "
+            "is strictly above, or is strictly below Vout."
+        )
+
+    L_worst = 0.8 * L
+
+    if vmin > vout:
+        mode = "buck"
+        d_max = vout / vmin
+        d_min = vout / vmax
+        ripple_worst = vout * (1.0 - d_min) / (L_worst * fsw)
+        iL_avg_max = iout
+    elif vmax < vout:
+        mode = "boost"
+        d_max = 1.0 - vmin / vout
+        d_min = 1.0 - vmax / vout
+        candidates = [vmin, vmax]
+        if vmin < vout / 2.0 < vmax:
+            candidates.append(vout / 2.0)
+        ripple_worst = max(
+            v * (1.0 - v / vout) / (L_worst * fsw) for v in candidates
+        )
+        iL_avg_max = iout * vout / vmin
+    else:
+        mode = "mixed"
+        # Buck sub-region: Vin in (vout, vmax].  Smallest Vin > vout
+        # would push D_buck → 1, but the controller is in boost mode
+        # there, not buck — so we evaluate the buck sub-extractor
+        # over [vout, vmax] only, where vmax is the buck operating
+        # point with the LOWEST D and HIGHEST ripple (same monotone
+        # shape as a pure buck).
+        d_buck_min = vout / vmax
+        ripple_buck = vout * (1.0 - d_buck_min) / (L_worst * fsw)
+
+        # Boost sub-region: Vin in [vmin, vout).  Standard boost
+        # parabolic ripple with interior peak at vout/2 if in range.
+        d_boost_max = 1.0 - vmin / vout
+        boost_candidates = [vmin]
+        if vmin < vout / 2.0 < vout:
+            boost_candidates.append(vout / 2.0)
+        ripple_boost = max(
+            v * (1.0 - v / vout) / (L_worst * fsw) for v in boost_candidates
+        )
+
+        ripple_worst = max(ripple_buck, ripple_boost)
+        iL_avg_max = iout * vout / vmin
+        d_max = d_boost_max
+        d_min = d_buck_min
+
+    ipeak_worst = iL_avg_max + ripple_worst / 2.0
+
+    si, ci, comp = _find_magnetic_component(tas)
+    mas = _read_mas(comp, "four_switch_buck_boost L1 MAS")
+    A_e, N, b_sat = _mas_isat_inputs(mas, "four_switch_buck_boost L1 MAS")
+    isat = b_sat * float(N) * float(A_e) / L
+
+    tas["duty"] = round(d_max, 6)
+    tas["duty_min"] = round(d_min, 6)
+    tas["duty_max"] = round(d_max, 6)
+
+    enriched = dict(comp)
+    enriched["isat"] = round(isat, 6)
+    enriched["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched["isat_provenance"] = {
+        "method": "B_sat * N * A_e / L (four_switch_buck_boost v0.1)",
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": int(N),
+        "effective_area_m2": float(A_e),
+        "inductance_H": L,
+    }
+    enriched["ipeak_provenance"] = {
+        "method": (
+            "I_L_avg(worst Vin) + ripple_worst/2; mode-aware (buck / boost "
+            "/ mixed) with L*0.8 tolerance"
+        ),
+        "mode": mode,
+        "iout_A": iout,
+        "vout_V": vout,
+        "vin_min_V": vmin,
+        "vin_max_V": vmax,
+        "iL_avg_max_A": round(iL_avg_max, 6),
+        "ripple_worst_A_pp": round(ripple_worst, 6),
+        "fsw_Hz": fsw,
+        "L_worst_H": L_worst,
+    }
+    tas["topology"]["stages"][si]["circuit"]["components"][ci] = enriched
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -1455,6 +1593,7 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "isolated_buck": _enrich_isolated_buck,
     "isolated_buck_boost": _enrich_isolated_buck_boost,
     "push_pull": _enrich_push_pull,
+    "four_switch_buck_boost": _enrich_four_switch_buck_boost,
 }
 
 
