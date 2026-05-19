@@ -9,17 +9,7 @@ from `Now`, do it, commit, and move on without checking in.
 
 ## Now (do next, in order)
 
-1. **LLC end-to-end bridge integration test.** Verify the assumed
-   `L_r → seriesInductor` magnetic_binding. Mirrors the ACF test in
-   `tests/integration/test_bridge_integration.py`. Expected ~2 min wall-clock.
-   Largest unverified claim in the current bridge.
-
-2. **Wire `isobuck` + `isobb` magnetic_binding.** Both goldens emit only `T1`;
-   add `magnetic_binding={"T1": None}` to their registry entries. Drift test
-   currently skips them with a visible reason — should pass cleanly after.
-   ~5 min.
-
-3. **Fix the 8 spec-blocked topologies in `scripts/probe_extras.py`.** From
+1. **Fix the 8 spec-blocked topologies in `scripts/probe_extras.py`.** From
    `docs/extras-probe-report.md`:
    - `boost` (NaN result)
    - `flyback` (duty cycle constraint)
@@ -34,7 +24,7 @@ from `Now`, do it, commit, and move on without checking in.
    headers. Goal: every converter in the probe lands in `OK` or
    `EXPECTED_EMPTY`, exit code 0. Unblocks stencils for these topologies.
 
-4. **Stencils for the next batch of topologies** (in priority order):
+2. **Stencils for the next batch of topologies** (in priority order):
    `phase_shifted_full_bridge`, `asymmetric_half_bridge`, `push_pull`,
    `weinberg`, `series_resonant`, `dual_active_bridge`. Each needs:
    - a stencil function in `heaviside/decomposer/stencils.py`
@@ -42,10 +32,18 @@ from `Now`, do it, commit, and move on without checking in.
    - a `magnetic_binding` entry in the registry
    - a row in the drift test prefix map
 
-5. **End-to-end `heaviside design` CLI command.** First user-visible surface.
+3. **End-to-end `heaviside design` CLI command.** First user-visible surface.
    Pipeline: `DesignSpec` (JSON or flags) → `decompose_from_spec` →
    `design_converter_components` → `attach_components_to_tas` → print/save
    the populated TAS. No agent layer yet — just the bridge driven from argv.
+
+## Upstream bugs (track, can't fix from Heaviside)
+
+- **PyOpenMagnetics segfault in `design_magnetics_from_converter('llc', ...)`**
+  — reproduces standalone at 48V and 400V, all spec variants tried. The LLC
+  integration test in `tests/integration/test_bridge_integration.py` uses a
+  subprocess canary and skips with a visible reason; canary will auto-enable
+  the test the moment upstream is fixed.
 
 ## Next (after Now is empty)
 

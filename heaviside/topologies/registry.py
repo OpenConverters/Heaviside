@@ -77,6 +77,7 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_isolated_buck",
         "converter",
         "isolated_single_switch",
+        magnetic_binding={"T1": None},
     ),
     TopologyEntry(
         "isolated_buck_boost",
@@ -85,6 +86,7 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_isolated_buck_boost",
         "converter",
         "isolated_single_switch",
+        magnetic_binding={"T1": None},
     ),
     TopologyEntry(
         "flyback",
