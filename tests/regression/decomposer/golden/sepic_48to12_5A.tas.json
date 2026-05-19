@@ -144,6 +144,10 @@
         {
           "component": "L2",
           "pin": "1"
+        },
+        {
+          "component": "C_out",
+          "pin": "2"
         }
       ]
     },

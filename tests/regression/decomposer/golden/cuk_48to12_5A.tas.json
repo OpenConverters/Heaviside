@@ -140,6 +140,14 @@
         {
           "component": "Q1",
           "pin": "S"
+        },
+        {
+          "component": "D1",
+          "pin": "K"
+        },
+        {
+          "component": "C_out",
+          "pin": "2"
         }
       ]
     },

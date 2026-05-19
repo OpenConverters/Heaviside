@@ -149,26 +149,7 @@
             "data": "TAS/data/capacitors.ndjson?placeholder=C_out0"
           }
         ],
-        "connections": [
-          {
-            "name": "vout_pos",
-            "kind": "wire",
-            "endpoints": [
-              {
-                "component": "D1",
-                "pin": "K"
-              },
-              {
-                "component": "D2",
-                "pin": "K"
-              },
-              {
-                "component": "C_out0",
-                "pin": "1"
-              }
-            ]
-          }
-        ]
+        "connections": []
       }
     },
     {
@@ -312,6 +293,14 @@
       "kind": "externalPort",
       "direction": "output",
       "endpoints": [
+        {
+          "component": "D1",
+          "pin": "K"
+        },
+        {
+          "component": "D2",
+          "pin": "K"
+        },
         {
           "component": "C_out0",
           "pin": "1"

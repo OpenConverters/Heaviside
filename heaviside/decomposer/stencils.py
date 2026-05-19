@@ -494,7 +494,7 @@ def cuk(deck: SpiceDeck) -> TasTopology:
                 {"component": "C_out", "pin": "1"},
             ],
         },
-        _gnd_wire(("Q1", "S")),
+        _gnd_wire(("Q1", "S"), ("D1", "K"), ("C_out", "2")),
         *_gate_wires("Q1"),
     ]
     return {"stages": [switching_cell, control], "interStageCircuit": inter_stage}
@@ -592,7 +592,7 @@ def sepic(deck: SpiceDeck) -> TasTopology:
                 {"component": "C_out", "pin": "1"},
             ],
         },
-        _gnd_wire(("Q1", "S"), ("L2", "1")),
+        _gnd_wire(("Q1", "S"), ("L2", "1"), ("C_out", "2")),
         *_gate_wires("Q1"),
     ]
 
@@ -689,7 +689,7 @@ def zeta(deck: SpiceDeck) -> TasTopology:
                 {"component": "C_out", "pin": "1"},
             ],
         },
-        _gnd_wire(("D1", "A")),
+        _gnd_wire(("D1", "A"), ("L1", "2"), ("C_out", "2")),
         *_gate_wires("Q1"),
     ]
 
@@ -1057,12 +1057,30 @@ _SSF_REAL_KINDS = {
 
 
 def single_switch_forward(deck: SpiceDeck) -> TasTopology:
-    """Decompose an MKF single-switch forward deck into TAS.
+    """Decompose an MKF single-switch forward deck into TAS, with synthetic
+    output-stage augmentation.
 
-    Note: MKF emits primary excitation only (no secondary rectifier).
-    The returned TAS reflects that — no outputRectifier stage, no Vout
-    port. Downstream BOM-augmentation is required to complete the
-    converter.
+    MKF's single-switch forward emission contains only the primary
+    excitation half (S1 + Lpri + Ldemag + Kpri_demag + Ddemag): no
+    secondary winding, no forward / freewheel rectifier, no output choke,
+    no output cap, and therefore no Vout port. A converter without an
+    output is not simulatable end-to-end and cannot round-trip through
+    the SPICE↔TAS pipeline.
+
+    To make the topology useful, the stencil augments the MKF skeleton
+    with the canonical single-switch-forward output stage:
+
+      * A third winding ``sec0`` added to T1 (so T1 becomes 3-winding:
+        pri + demag + sec0, all mutually coupled).
+      * An ``output_0`` outputRectifier stage containing the forward
+        rectifier diode ``D_fwd``, freewheel diode ``D_fw``, output
+        choke ``L_out0``, and output cap ``C_out0``.
+      * A ``Vout0`` external port across the LC filter.
+
+    The injected components are not present in the MKF deck — they
+    extend the validated primary skeleton into a complete converter
+    topology. ``_validate_real_set`` continues to check only what MKF
+    actually emits.
     """
     _validate_real_set(deck, "single_switch_forward", _SSF_REAL_KINDS)
 
@@ -1080,11 +1098,40 @@ def single_switch_forward(deck: SpiceDeck) -> TasTopology:
         },
     }
 
+    # 3-winding T1 (pri+demag from MKF, sec0 injected for output stage).
     isolation = _isolation_stage(
-        ("pri", "demag"),
+        ("pri", "demag", "sec0"),
         input_wire="switch_node",
-        output_wires=("demag_node",),
+        output_wires=("demag_node", "sec0_node"),
     )
+
+    # Injected output stage — identical pattern to active_clamp_forward
+    # and two_switch_forward (forward diode + freewheel diode + LC filter).
+    output_rectifier_0 = {
+        "name": "output_0",
+        "role": "outputRectifier",
+        "inputPort":  {"type": "winding",  "wire": "sec0_node"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
+        "circuit": {
+            "components": [
+                _component("diode",     "D_fwd"),    # forward rectifier
+                _component("diode",     "D_fw"),     # freewheel
+                _component("magnetic",  "L_out0"),   # output choke
+                _component("capacitor", "C_out0"),
+            ],
+            "connections": [
+                {
+                    "name": "sec0_rect_node",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "D_fwd",  "pin": "K"},
+                        {"component": "D_fw",   "pin": "K"},
+                        {"component": "L_out0", "pin": "1"},
+                    ],
+                },
+            ],
+        },
+    }
 
     control = _isolated_control_stage(("Q1",))
 
@@ -1116,15 +1163,35 @@ def single_switch_forward(deck: SpiceDeck) -> TasTopology:
                 {"component": "D_demag", "pin": "A"},
             ],
         },
+        {
+            "name": "sec0_node",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1",    "pin": "sec0.1"},
+                {"component": "D_fwd", "pin": "A"},
+            ],
+        },
+        {
+            "name": "Vout0",
+            "kind": "externalPort",
+            "direction": "output",
+            "endpoints": [
+                {"component": "L_out0", "pin": "2"},
+                {"component": "C_out0", "pin": "1"},
+            ],
+        },
         _gnd_wire(
-            ("T1", "pri.2"),
-            ("T1", "demag.1"),
+            ("T1",     "pri.2"),
+            ("T1",     "demag.1"),
+            ("T1",     "sec0.2"),
+            ("D_fw",   "A"),
+            ("C_out0", "2"),
         ),
         *_gate_wires("Q1"),
     ]
 
     return {
-        "stages": [switching_cell, isolation, control],
+        "stages": [switching_cell, isolation, output_rectifier_0, control],
         "interStageCircuit": inter_stage,
     }
 
@@ -1885,17 +1952,12 @@ def llc(deck: SpiceDeck) -> TasTopology:
                 _component("diode",     "D2"),       # ← D2_o1
                 _component("capacitor", "C_out0"),   # ← Cout_o1
             ],
-            "connections": [
-                {
-                    "name": "vout_pos",
-                    "kind": "wire",
-                    "endpoints": [
-                        {"component": "D1",     "pin": "K"},
-                        {"component": "D2",     "pin": "K"},
-                        {"component": "C_out0", "pin": "1"},
-                    ],
-                },
-            ],
+            # D1.K / D2.K / C_out0.1 all sit on the Vout0 externalPort
+            # node — see interStageCircuit below. No stage-internal
+            # wires are needed; an intra-stage ``vout_pos`` that also
+            # listed C_out0.1 would put the pin on two wires at once and
+            # the writer would reject it as a duplicate net.
+            "connections": [],
         },
     }
 
@@ -1969,6 +2031,8 @@ def llc(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
+                {"component": "D1",     "pin": "K"},
+                {"component": "D2",     "pin": "K"},
                 {"component": "C_out0", "pin": "1"},
             ],
         },

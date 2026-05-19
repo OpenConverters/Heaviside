@@ -140,6 +140,14 @@
         {
           "component": "D1",
           "pin": "A"
+        },
+        {
+          "component": "L1",
+          "pin": "2"
+        },
+        {
+          "component": "C_out",
+          "pin": "2"
         }
       ]
     },

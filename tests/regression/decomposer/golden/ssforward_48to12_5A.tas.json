@@ -38,6 +38,10 @@
         {
           "type": "winding",
           "wire": "demag_node"
+        },
+        {
+          "type": "winding",
+          "wire": "sec0_node"
         }
       ],
       "circuit": {
@@ -49,11 +53,67 @@
               "pri.1",
               "pri.2",
               "demag.1",
-              "demag.2"
+              "demag.2",
+              "sec0.1",
+              "sec0.2"
             ]
           }
         ],
         "connections": []
+      }
+    },
+    {
+      "name": "output_0",
+      "role": "outputRectifier",
+      "inputPort": {
+        "type": "winding",
+        "wire": "sec0_node"
+      },
+      "outputPorts": [
+        {
+          "type": "dcOutput",
+          "wire": "Vout0"
+        }
+      ],
+      "circuit": {
+        "components": [
+          {
+            "name": "D_fwd",
+            "data": "TAS/data/diodes.ndjson?placeholder=D_fwd"
+          },
+          {
+            "name": "D_fw",
+            "data": "TAS/data/diodes.ndjson?placeholder=D_fw"
+          },
+          {
+            "name": "L_out0",
+            "data": "TAS/data/magnetics.ndjson?placeholder=L_out0"
+          },
+          {
+            "name": "C_out0",
+            "data": "TAS/data/capacitors.ndjson?placeholder=C_out0"
+          }
+        ],
+        "connections": [
+          {
+            "name": "sec0_rect_node",
+            "kind": "wire",
+            "endpoints": [
+              {
+                "component": "D_fwd",
+                "pin": "K"
+              },
+              {
+                "component": "D_fw",
+                "pin": "K"
+              },
+              {
+                "component": "L_out0",
+                "pin": "1"
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -127,6 +187,35 @@
       ]
     },
     {
+      "name": "sec0_node",
+      "kind": "wire",
+      "endpoints": [
+        {
+          "component": "T1",
+          "pin": "sec0.1"
+        },
+        {
+          "component": "D_fwd",
+          "pin": "A"
+        }
+      ]
+    },
+    {
+      "name": "Vout0",
+      "kind": "externalPort",
+      "direction": "output",
+      "endpoints": [
+        {
+          "component": "L_out0",
+          "pin": "2"
+        },
+        {
+          "component": "C_out0",
+          "pin": "1"
+        }
+      ]
+    },
+    {
       "name": "GND",
       "kind": "wire",
       "endpoints": [
@@ -137,6 +226,18 @@
         {
           "component": "T1",
           "pin": "demag.1"
+        },
+        {
+          "component": "T1",
+          "pin": "sec0.2"
+        },
+        {
+          "component": "D_fw",
+          "pin": "A"
+        },
+        {
+          "component": "C_out0",
+          "pin": "2"
         }
       ]
     },
