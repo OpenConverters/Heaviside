@@ -132,6 +132,7 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_push_pull",
         "converter",
         "isolated_push_pull",
+        magnetic_binding={"T1": None, "L_out0": "outputInductor"},
     ),
     TopologyEntry(
         "asymmetric_half_bridge",

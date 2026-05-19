@@ -10,18 +10,22 @@ from `Now`, do it, commit, and move on without checking in.
 ## Now (do next, in order)
 
 1. **Stencils for the next batch of topologies** (in priority order):
-   `phase_shifted_full_bridge`, `asymmetric_half_bridge`, `push_pull`,
+   `phase_shifted_full_bridge`, `asymmetric_half_bridge`,
    `weinberg`, `series_resonant`, `dual_active_bridge`. Each needs:
    - a stencil function in `heaviside/decomposer/stencils.py`
    - a golden `.spice` + `.tas.json` under `tests/regression/decomposer/golden/`
+     (push-pull turned out to need a TAS-only golden — MKF emits
+     non-deterministic uninitialised memory in `Vpwm` PULSE and `Lmag`
+     header. Other bridges may hit the same; mirror the pattern.)
    - a `magnetic_binding` entry in the registry — extras roles now empirically
      confirmed via `docs/extras-probe.json`:
      - PSFB / PSHB → `outputInductor` + `seriesInductor`
      - AHB → `outputInductor` (with `rectifierType=fullBridge`)
-     - push_pull → `outputInductor`
      - weinberg → `inputCoupledInductor`
      - SRC / DAB → `seriesInductor`
    - a row in the drift test prefix map
+   - Done: `push_pull` (4-winding CT/CT, `magnetic_binding={"T1": None,
+     "L_out0": "outputInductor"}`, `Vin=48 Vout=5 N=4` golden).
 
 2. **End-to-end `heaviside design` CLI command.** First user-visible surface.
    Pipeline: `DesignSpec` (JSON or flags) → `decompose_from_spec` →

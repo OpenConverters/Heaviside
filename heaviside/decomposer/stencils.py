@@ -2050,6 +2050,220 @@ def llc(deck: SpiceDeck) -> TasTopology:
     }
 
 
+# -----------------------------------------------------------------------------
+# Push-pull stencil (center-tapped primary + center-tapped secondary)
+# -----------------------------------------------------------------------------
+#
+# MKF deck (verified empirically against PyOpenMagnetics, see /tmp/pushpull.cir):
+#
+#   Vin vin_dc 0 48
+#   Vpwm1/Vpwm2                                ; non-overlapping gate drives
+#   .model SW1 SW VT=2.5 …
+#
+#   * Center-tapped PRIMARY (CT = vin_dc, switches pull each end to 0)
+#   Lpri_top pri_top vin_dc 1m                 ; T1.pri_top.1=pri_top  .2=vin_dc
+#   Vpri_top_sense pri_top sw1_node 0          ; testbench ammeter (drop)
+#   S1 sw1_node 0 pwm_ctrl1 0 SW1              ; Q1.D=sw1_node Q1.S=0
+#   Lpri_bot vin_dc pri_bot 1m                 ; T1.pri_bot.1=vin_dc  .2=pri_bot
+#   Vpri_bot_sense pri_bot sw2_node 0          ; testbench ammeter (drop)
+#   S2 sw2_node 0 pwm_ctrl2 0 SW1              ; Q2.D=sw2_node Q2.S=0
+#
+#   Bvpri_top_diff/Bvpri_bot_diff              ; behavioural probes (drop)
+#
+#   * Center-tapped SECONDARY (CT = GND)
+#   Lsec_top sec_top 0 inf                     ; T1.sec_top.1=sec_top  .2=0
+#   Lsec_bot 0 sec_bot inf                     ; T1.sec_bot.1=0  .2=sec_bot
+#   K1..K6 (pairwise)                          ; → T1 coupling
+#
+#   Rsnub_top/bot/sec_top/sec_bot              ; 1MEG convergence (drop via Rsn prefix)
+#
+#   * Rectifier + output filter
+#   Vsec_top_sense sec_top sec_top_d 0         ; ammeter (drop)
+#   Dsec_top sec_top_d sec_rect DIDEAL         ; D1.A=sec_top  D1.K=sec_rect
+#   Vsec_bot_sense sec_bot sec_bot_d 0         ; ammeter (drop)
+#   Dsec_bot sec_bot_d sec_rect DIDEAL         ; D2.A=sec_bot  D2.K=sec_rect
+#   Rsnub_d1/Csnub_d1/Rsnub_d2/Csnub_d2        ; rectifier snubbers (drop)
+#   Vsec_sense sec_rect sec_l_in 0             ; ammeter (drop)
+#   Lout sec_l_in vout 10u                     ; L_out0.1=sec_rect  .2=vout
+#   Cout vout 0 100u IC=12                     ; C_out0.1=vout  .2=GND
+#   Rload vout 0 2.4                           ; testbench load (drop)
+#
+# Mapping to TAS:
+#   switchingCell:   Q1, Q2          dcBus Vin → 2× switchNode (sw_top, sw_bot)
+#   isolation:       T1 (4 windings) — dcBus Vin (CT) + 2× switchNode →
+#                                       2× winding (sec_top_node, sec_bot_node)
+#   outputRectifier: D1, D2, L_out0, C_out0   2× winding → dcOutput Vout0
+#   control:         U1 drives {Q1, Q2}, senses Vout0
+#
+# Note: Vin externalPort endpoints live on the isolation stage (T1 center
+# tap), not on the switching cell — neither Q1 nor Q2 touches Vin
+# directly. This is the first stencil where the switching cell's
+# ``inputPort`` is purely metadata; the writer matches by wire name.
+
+
+_PUSH_PULL_REAL_KINDS = {
+    "S1":       "switch",
+    "S2":       "switch",
+    "Lpri_top": "inductor",      # → T1.pri_top
+    "Lpri_bot": "inductor",      # → T1.pri_bot
+    "Lsec_top": "inductor",      # → T1.sec_top
+    "Lsec_bot": "inductor",      # → T1.sec_bot
+    "K1":       "coupling",      # → T1 coupling (6 pairwise Ks)
+    "K2":       "coupling",
+    "K3":       "coupling",
+    "K4":       "coupling",
+    "K5":       "coupling",
+    "K6":       "coupling",
+    "Dsec_top": "diode",
+    "Dsec_bot": "diode",
+    "Lout":     "inductor",
+    "Cout":     "capacitor",
+}
+
+
+def push_pull(deck: SpiceDeck) -> TasTopology:
+    """Decompose an MKF push-pull deck into TAS."""
+    _validate_real_set(deck, "push_pull", _PUSH_PULL_REAL_KINDS)
+
+    switching_cell = {
+        "name": "primary_switch",
+        "role": "switchingCell",
+        # Vin port is metadata only — Q1/Q2 drains do NOT touch Vin;
+        # Vin enters via T1 center tap (see isolation stage).
+        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "outputPorts": [
+            {"type": "switchNode", "wire": "sw_top_node"},
+            {"type": "switchNode", "wire": "sw_bot_node"},
+        ],
+        "circuit": {
+            "components": [
+                _component("mosfet", "Q1"),   # ← S1 (drives upper primary)
+                _component("mosfet", "Q2"),   # ← S2 (drives lower primary)
+            ],
+            "connections": [],
+        },
+    }
+
+    isolation = {
+        "name": "isolation",
+        "role": "isolation",
+        # Push-pull's isolation stage has 3 inputs: Vin at the center tap
+        # and one switchNode per primary half. Model the dominant power
+        # path (Vin) as inputPort and the two switch returns as auxiliary
+        # input-side wires expressed in interStage. Output ports are the
+        # two secondary winding ends.
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
+        "outputPorts": [
+            {"type": "winding", "wire": "sec_top_node", "name": "sec_top"},
+            {"type": "winding", "wire": "sec_bot_node", "name": "sec_bot"},
+        ],
+        "circuit": {
+            "components": [
+                _t1_component(("pri_top", "pri_bot", "sec_top", "sec_bot")),
+            ],
+            "connections": [],
+        },
+    }
+
+    output_rectifier_0 = {
+        "name": "output_0",
+        "role": "outputRectifier",
+        # Two winding inputs feed the diode-OR at sec_rect.
+        "inputPort":  {"type": "winding",  "wire": "sec_top_node"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
+        "circuit": {
+            "components": [
+                _component("diode",     "D1"),       # ← Dsec_top
+                _component("diode",     "D2"),       # ← Dsec_bot
+                _component("magnetic",  "L_out0"),   # ← Lout
+                _component("capacitor", "C_out0"),   # ← Cout
+            ],
+            "connections": [
+                {
+                    "name": "sec_rect",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "D1",     "pin": "K"},
+                        {"component": "D2",     "pin": "K"},
+                        {"component": "L_out0", "pin": "1"},
+                    ],
+                },
+            ],
+        },
+    }
+
+    control = _isolated_control_stage(("Q1", "Q2"))
+
+    inter_stage = [
+        {
+            # Vin enters at the primary center tap — endpoints on
+            # T1.pri_top.2 and T1.pri_bot.1. Q1/Q2 drains do NOT touch
+            # Vin; this is the distinguishing feature of push-pull.
+            "name": "Vin",
+            "kind": "externalPort",
+            "direction": "input",
+            "endpoints": [
+                {"component": "T1", "pin": "pri_top.2"},
+                {"component": "T1", "pin": "pri_bot.1"},
+            ],
+        },
+        {
+            "name": "sw_top_node",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q1", "pin": "D"},
+                {"component": "T1", "pin": "pri_top.1"},
+            ],
+        },
+        {
+            "name": "sw_bot_node",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q2", "pin": "D"},
+                {"component": "T1", "pin": "pri_bot.2"},
+            ],
+        },
+        {
+            "name": "sec_top_node",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1", "pin": "sec_top.1"},
+                {"component": "D1", "pin": "A"},
+            ],
+        },
+        {
+            "name": "sec_bot_node",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1", "pin": "sec_bot.2"},
+                {"component": "D2", "pin": "A"},
+            ],
+        },
+        {
+            "name": "Vout0",
+            "kind": "externalPort",
+            "direction": "output",
+            "endpoints": [
+                {"component": "L_out0", "pin": "2"},
+                {"component": "C_out0", "pin": "1"},
+            ],
+        },
+        _gnd_wire(
+            ("Q1",     "S"),
+            ("Q2",     "S"),
+            ("T1",     "sec_top.2"),  # secondary center tap = GND
+            ("T1",     "sec_bot.1"),  # secondary center tap = GND
+            ("C_out0", "2"),
+        ),
+        *_gate_wires("Q1", "Q2"),
+    ]
+
+    return {
+        "stages": [switching_cell, isolation, output_rectifier_0, control],
+        "interStageCircuit": inter_stage,
+    }
+
+
 STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "buck": buck,
     "boost": boost,
@@ -2064,6 +2278,7 @@ STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "isolated_buck": isolated_buck,
     "isolated_buck_boost": isolated_buck_boost,
     "llc": llc,
+    "push_pull": push_pull,
 }
 
 
