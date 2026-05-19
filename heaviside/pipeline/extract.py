@@ -36,6 +36,14 @@ Topologies covered today
     MAS (no shared-core assumption); ``spec.desiredOutputInductance``
     is consulted for L2, falling back to L1 only when explicitly
     omitted (provenance records the source).
+  * ``single_switch_forward`` / ``two_switch_forward`` — shared
+    forward-family extractor: turns ratio ``n = N_pri/N_sec0`` read
+    from T1 by winding name (handles SSF's 3-winding vs 2SF's
+    2-winding shape uniformly), buck-shaped output choke
+    ``ΔI_L = Vout·(1−D)/(L_out·fsw)`` worst at D_min (Vin_max), Isat
+    stamped on L_out0 only — T1 is intentionally skipped because the
+    demag winding clamps its core every cycle.  D_max ≥ 0.5 throws
+    (reset window violated).
 
 Everything else passes through unchanged.  Adding a new topology is a
 matter of writing a ``_enrich_<topology>(tas, spec) -> None`` function
@@ -890,6 +898,186 @@ def _enrich_zeta(tas: dict, spec: Mapping[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Forward family (single-switch / two-switch) — T1 + L_out, two stages
+# ---------------------------------------------------------------------------
+
+
+def _find_magnetic_in_stage_role(
+    tas: Mapping[str, Any], role: str, where: str,
+) -> tuple[int, int, Mapping[str, Any]]:
+    """Return ``(stage_idx, comp_idx, comp)`` for the first magnetic
+    component inside the first stage whose ``role`` matches.
+
+    Forward-family extractors use this to disambiguate the two
+    magnetics: T1 (transformer) lives in the ``isolation`` stage and
+    must NOT be Isat-checked because demag clamps reset its core every
+    cycle; L_out (output choke) lives in the ``outputRectifier`` stage
+    and is the binding saturation constraint.
+    """
+    topology = tas.get("topology")
+    if not isinstance(topology, Mapping):
+        raise EnrichmentError("tas.topology: must be a mapping")
+    stages = topology.get("stages")
+    if not isinstance(stages, list):
+        raise EnrichmentError("tas.topology.stages: must be a list")
+    for si, stage in enumerate(stages):
+        if not isinstance(stage, Mapping) or stage.get("role") != role:
+            continue
+        circuit = stage.get("circuit") if isinstance(stage.get("circuit"), Mapping) else None
+        comps = circuit.get("components") if isinstance(circuit, Mapping) else None
+        if not isinstance(comps, list):
+            continue
+        for ci, c in enumerate(comps):
+            if not isinstance(c, Mapping):
+                continue
+            data = c.get("data")
+            if isinstance(data, Mapping) and "magnetic" in data:
+                return si, ci, c
+            if c.get("category") == "magnetic":
+                return si, ci, c
+    raise EnrichmentError(
+        f"{where}: no magnetic component found in stage with role={role!r} — "
+        "stencil emission contract violated (forward-family TAS must have an "
+        "outputRectifier stage holding the output choke)"
+    )
+
+
+def _winding_turns_by_name(
+    mas: Mapping[str, Any], winding_name: str, where: str,
+) -> int:
+    """Return ``numberTurns`` for the winding whose ``name`` matches.
+
+    Transformers list windings in declaration order — for forward
+    variants the primary is always called ``"pri"`` and the (first)
+    secondary ``"sec0"``.  Index-based lookup is fragile across
+    single-switch (pri, demag, sec0 → index 2) vs two-switch (pri,
+    sec0 → index 1) variants, so we look up by name instead.
+    """
+    fd = _require(mas, ("coil", "functionalDescription"), where)
+    if not isinstance(fd, list) or not fd:
+        raise EnrichmentError(
+            f"{where}: coil.functionalDescription must be a non-empty list"
+        )
+    for w in fd:
+        if isinstance(w, Mapping) and w.get("name") == winding_name:
+            N = w.get("numberTurns")
+            if not isinstance(N, (int, float)) or N <= 0:
+                raise EnrichmentError(
+                    f"{where}: winding {winding_name!r} numberTurns must be positive, "
+                    f"got {N!r}"
+                )
+            return int(N)
+    names = [w.get("name") for w in fd if isinstance(w, Mapping)]
+    raise EnrichmentError(
+        f"{where}: no winding named {winding_name!r} (have: {names})"
+    )
+
+
+def _enrich_forward_family(
+    tas: dict, spec: Mapping[str, Any], *, topology_name: str,
+) -> None:
+    """Shared extractor for single-switch and two-switch forward.
+
+    Both variants emit the same two-magnetic shape: a multi-winding T1
+    inside an ``isolation``-role stage and a single output choke L_out0
+    inside an ``outputRectifier``-role stage.  Active-clamp forward
+    uses a different reset mechanism (clamp cap + auxiliary FET) and
+    needs its own extractor, so it is intentionally NOT covered here.
+
+    Math (CCM, ignoring rectifier drop):
+
+      * Turns ratio ``n = N_pri / N_sec0`` read from T1 by winding name.
+      * Secondary square-wave voltage during the on-time = ``Vin / n``.
+      * Duty ``D = Vout · n / Vin`` ⇒ ``D_max`` at ``Vin_min``,
+        ``D_min`` at ``Vin_max``.  Single-switch / standard
+        two-switch forward are bounded above by ``D = 0.5`` by the
+        reset window; if ``D_max ≥ 0.5`` we throw (the design will
+        not reset).
+      * Output choke ripple is buck-shaped on the secondary side:
+        ``V_L_on = Vin/n − Vout = Vout · (1−D)/D``,
+        ``ΔI_L = Vout · (1−D) / (L_out · fsw)``.  Monotone decreasing
+        in D ⇒ worst case at ``D_min`` (i.e. ``Vin_max``), mirroring
+        the buck extractor's −20 % L tolerance.
+      * ``Ipeak_worst = Iout + ΔI_L_worst / 2``.
+      * ``Isat = B_sat · N_L_out · A_e / L_out`` from the output
+        choke's own MAS — T1 is intentionally not Isat-checked
+        because the demag winding clamps its core every cycle.
+    """
+    where = f"{topology_name} spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    L_out = _required_inductance(spec, "desiredInductance", where)
+
+    # T1 lives in the isolation stage; read its turns ratio.
+    _, _, t1_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", f"{topology_name} enrichment (T1)"
+    )
+    t1_mas = _read_mas(t1_comp, f"{topology_name} T1 MAS")
+    N_pri = _winding_turns_by_name(t1_mas, "pri", f"{topology_name} T1 MAS")
+    N_sec = _winding_turns_by_name(t1_mas, "sec0", f"{topology_name} T1 MAS")
+    n = float(N_pri) / float(N_sec)
+
+    d_max = vout * n / vmin
+    d_min = vout * n / vmax
+    if d_max >= 0.5:
+        raise EnrichmentError(
+            f"{topology_name} enrichment: D_max = {d_max:.3f} ≥ 0.5 — single/two-"
+            "switch forward cannot reset within its half-period window. Either "
+            "raise the turns ratio (more primary turns) or raise Vin_min."
+        )
+
+    # L_out lives in the outputRectifier stage.
+    so, co, lout_comp = _find_magnetic_in_stage_role(
+        tas, "outputRectifier", f"{topology_name} enrichment (L_out)"
+    )
+    lout_mas = _read_mas(lout_comp, f"{topology_name} L_out MAS")
+    A_e, N_lout, b_sat = _mas_isat_inputs(lout_mas, f"{topology_name} L_out MAS")
+
+    L_worst = 0.8 * L_out
+    ripple_worst = vout * (1.0 - d_min) / (L_worst * fsw)
+    ipeak_worst = iout + ripple_worst / 2.0
+    isat = b_sat * N_lout * A_e / L_out
+
+    tas["duty"] = round(d_max, 6)
+    tas["duty_min"] = round(d_min, 6)
+    tas["duty_max"] = round(d_max, 6)
+
+    enriched = dict(lout_comp)
+    enriched["isat"] = round(isat, 6)
+    enriched["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched["isat_provenance"] = {
+        "method": f"B_sat * N * A_e / L_out ({topology_name} v0.1, output choke)",
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": N_lout,
+        "effective_area_m2": A_e,
+        "inductance_H": L_out,
+    }
+    enriched["ipeak_provenance"] = {
+        "method": "Iout + ripple_worst/2 (buck-shaped on secondary at D_min, L*0.8)",
+        "role": "output_choke",
+        "iout_A": iout,
+        "vout_V": vout,
+        "turns_ratio_n": round(n, 6),
+        "n_primary": N_pri,
+        "n_secondary": N_sec,
+        "d_min": round(d_min, 6),
+        "ripple_worst_A_pp": round(ripple_worst, 6),
+        "vin_max_V": vmax,
+        "fsw_Hz": fsw,
+        "L_worst_H": L_worst,
+    }
+    tas["topology"]["stages"][so]["circuit"]["components"][co] = enriched
+
+
+def _enrich_single_switch_forward(tas: dict, spec: Mapping[str, Any]) -> None:
+    _enrich_forward_family(tas, spec, topology_name="single_switch_forward")
+
+
+def _enrich_two_switch_forward(tas: dict, spec: Mapping[str, Any]) -> None:
+    _enrich_forward_family(tas, spec, topology_name="two_switch_forward")
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -901,6 +1089,8 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "cuk": _enrich_cuk,
     "sepic": _enrich_sepic,
     "zeta": _enrich_zeta,
+    "single_switch_forward": _enrich_single_switch_forward,
+    "two_switch_forward": _enrich_two_switch_forward,
 }
 
 

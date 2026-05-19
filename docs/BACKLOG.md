@@ -140,10 +140,12 @@ so the gap stays visible from inside Heaviside's planning loop.
   INCOMPLETE until the librarian / sim / analyst agents enrich them or
   a per-topology extractor is added.  108 unit tests in
   `tests/unit/test_realism.py` + `tests/unit/test_extract.py` + 2 CLI
-  tests.  **Boost**, **flyback**, **cuk**, **SEPIC**, and **zeta**
-  extractors landed (`tests/unit/test_extract_boost_flyback.py`,
-  `tests/unit/test_extract_cuk_sepic_zeta.py`, 58 new tests): boost
-  uses `D = 1 − Vin/Vout` with ripple maximised over Vin (closed-form
+  tests.  **Boost**, **flyback**, **cuk**, **SEPIC**, **zeta**,
+  **single_switch_forward**, and **two_switch_forward** extractors
+  landed (`tests/unit/test_extract_boost_flyback.py`,
+  `tests/unit/test_extract_cuk_sepic_zeta.py`,
+  `tests/unit/test_extract_forward.py`, 79 new tests): boost uses
+  `D = 1 − Vin/Vout` with ripple maximised over Vin (closed-form
   interior peak at `Vout/2`), I_L_avg at Vin_min, same `B_sat·N·A_e/L`
   Isat math; flyback uses `D = Vout·n/(Vin + Vout·n)` with `n = N_p/N_s`
   read from MAS, primary-referred `Ipeak = I_in/D + Δi/2` at Vin_min,
@@ -153,10 +155,17 @@ so the gap stays visible from inside Heaviside's planning loop.
   in Vin), L1 carries `I_in = Pout/(η·Vin)` worst at Vin_min, L2
   carries Iout independent of Vin, each inductor stamped with its
   own Isat from its own MAS; `spec.desiredOutputInductance` consulted
-  for L2 (provenance records source).  Multi-output flybacks throw
-  (not yet supported).  **Remaining**: single-switch / two-switch
-  forward (two magnetics: T1 + L_out, needs winding-role
-  disambiguation), isolated_buck / isolated_buck_boost (multi-output);
+  for L2 (provenance records source).  Single/two-switch forward
+  share a stage-role-aware extractor: turns ratio
+  `n = N_pri/N_sec0` read from T1 by winding name (handles SSF's
+  3-winding vs 2SF's 2-winding shape uniformly), buck-shaped output
+  choke `ΔI_L = Vout·(1−D)/(L_out·fsw)` worst at D_min (Vin_max),
+  Isat stamped on L_out0 only — T1 is intentionally skipped because
+  the demag winding clamps its core every cycle.  `D_max ≥ 0.5`
+  throws (reset-window violation).  Multi-output flybacks throw (not
+  yet supported).  **Remaining**: active_clamp_forward (different
+  reset mechanism, clamp-cap sizing), isolated_buck /
+  isolated_buck_boost (multi-output);
   librarian agent populates `vds_rated` / `vrrm_rated` / `v_rated` on TAS
   components for the voltage derating checks; analyst agent computes Tj
   for thermal_limit; sim agent populates `simulation_results` /
