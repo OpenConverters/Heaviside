@@ -38,11 +38,19 @@ from `Now`, do it, commit, and move on without checking in.
    `tests/unit/test_cli.py`. Note: `attach_components_to_tas` is magnetics-
    only by design; FET / diode / cap attach is a future bridge feature.
 
-3. **Resonant cap binding for LLC / SRC / CLLC / CLLLC.** Probe shows CLLC
-   exposes `Cr1_resonantCapacitor_primary` + `Cr2_resonantCapacitor_secondary`
-   and CLLLC exposes 2 caps + 2 inductors. The current bridge only attaches
-   *magnetic* extras; need an `extra_capacitors` attach path before stencils
-   for these can land. Blocks: librarian agent.
+3. **Resonant cap binding for LLC / SRC / CLLC / CLLLC.** ✅ Bridge
+   plumbing done. `TopologyEntry.capacitor_binding: dict[str, str]` maps
+   TAS cap component name → PyOM extras-cap role name;
+   `attach_components_to_tas` walks `_tas_capacitor_components`, stamps
+   `cas_inputs` onto each bound cap, and raises loudly on stencil/registry
+   drift. Buck-class topologies (empty `capacitor_binding`) are untouched —
+   their output caps stay placeholders for the librarian agent. 5 unit
+   tests in `tests/unit/test_bridge.py` against a synthetic CLLC-shaped
+   entry. **Remaining**: the LLC / CLLC / CLLLC *stencils* themselves
+   (none exist yet — blocked on the same MKF behavioural-bridge issue as
+   SRC for LLC, see Upstream bugs) plus filling in `capacitor_binding` on
+   the registry once those stencils land. Bridge no longer blocks
+   librarian agent kickoff.
 
 ## Upstream bugs (track, can't fix from Heaviside)
 

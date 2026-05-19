@@ -724,3 +724,215 @@ def test_attach_components_topology_without_binding_raises() -> None:
         bridge.attach_components_to_tas(
             tas, components, topology="phase_shifted_half_bridge"
         )
+
+
+# -----------------------------------------------------------------------------
+# attach_components_to_tas — capacitor extras (resonant topologies)
+# -----------------------------------------------------------------------------
+#
+# Built against a synthetic ``TopologyEntry`` because no registry entry
+# currently sets ``capacitor_binding`` (the LLC / CLLC / CLLLC stencils
+# that consume it are scheduled for follow-up work). The bridge plumbing
+# itself is tested here so the stencils can land without re-doing this
+# work.
+
+
+from heaviside.topologies.registry import TopologyEntry  # noqa: E402
+
+
+def _cllc_like_entry(
+    cap_binding: dict[str, str] | None = None,
+) -> TopologyEntry:
+    """A CLLC-shaped synthetic entry: 1 transformer + 2 resonant caps."""
+    return TopologyEntry(
+        name="_test_cllc",
+        mas_schema="cllc",
+        pyom_names=("cllc",),
+        per_topology_binding=None,
+        kind="converter",
+        family="resonant",
+        magnetic_binding={"T1": None},
+        capacitor_binding=(
+            cap_binding
+            if cap_binding is not None
+            else {
+                "Cr1": "resonantCapacitor_primary",
+                "Cr2": "resonantCapacitor_secondary",
+            }
+        ),
+    )
+
+
+def _cas_inputs(name: str, capacitance: float) -> dict[str, Any]:
+    """Minimal CAS::Inputs envelope shape — only the fields the bridge
+    forwards. The librarian agent will read whatever else the stencil
+    puts in here."""
+    return {
+        "designRequirements": {
+            "name": name,
+            "capacitance": {"nominal": capacitance},
+        },
+        "operatingPoints": [],
+    }
+
+
+def test_attach_components_binds_resonant_capacitors() -> None:
+    """Stencil emits Cr1/Cr2 placeholder caps; bridge attaches CAS::Inputs."""
+    entry = _cllc_like_entry()
+    tas = {
+        "stages": [
+            {"name": "iso", "role": "isolation", "circuit": {"components": [
+                {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
+                {"name": "Cr1", "data": "TAS/data/capacitors.ndjson?p=Cr1"},
+            ]}},
+            {"name": "rect", "role": "outputRectifier", "circuit": {"components": [
+                {"name": "Cr2", "data": "TAS/data/capacitors.ndjson?p=Cr2"},
+            ]}},
+        ],
+        "interStageCircuit": [],
+    }
+    main = bridge.MagneticDesign(
+        scoring=1.0,
+        mas=_mas(scoring=1.0, shape="x", material="y", n_windings=2)["mas"],
+        elapsed_s=0.1,
+    )
+    components = bridge.ConverterComponents(
+        main_magnetic=main,
+        extra_capacitors=(
+            bridge.ExtraCapacitorSpec(
+                "resonantCapacitor_primary", _cas_inputs("Cr1", 22e-9)
+            ),
+            bridge.ExtraCapacitorSpec(
+                "resonantCapacitor_secondary", _cas_inputs("Cr2", 44e-9)
+            ),
+        ),
+    )
+    out = bridge.attach_components_to_tas(tas, components, topology=entry)
+
+    cr1 = out["stages"][0]["circuit"]["components"][1]
+    cr2 = out["stages"][1]["circuit"]["components"][0]
+
+    # Placeholder data URL removed, category stamped, CAS::Inputs attached.
+    assert "data" not in cr1
+    assert cr1["category"] == "capacitor"
+    assert cr1["cas_inputs"]["designRequirements"]["capacitance"]["nominal"] == 22e-9
+
+    assert "data" not in cr2
+    assert cr2["category"] == "capacitor"
+    assert cr2["cas_inputs"]["designRequirements"]["capacitance"]["nominal"] == 44e-9
+
+
+def test_attach_components_picks_up_inline_category_capacitor() -> None:
+    """Stencil that emits ``category="capacitor"`` directly is also recognised."""
+    entry = _cllc_like_entry(cap_binding={"Cr1": "resonantCapacitor_primary"})
+    tas = {
+        "stages": [{"name": "iso", "role": "isolation", "circuit": {"components": [
+            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
+            {"name": "Cr1", "category": "capacitor"},
+        ]}}],
+        "interStageCircuit": [],
+    }
+    main = bridge.MagneticDesign(
+        scoring=1.0,
+        mas=_mas(scoring=1.0, shape="x", material="y", n_windings=2)["mas"],
+        elapsed_s=0.1,
+    )
+    components = bridge.ConverterComponents(
+        main_magnetic=main,
+        extra_capacitors=(
+            bridge.ExtraCapacitorSpec(
+                "resonantCapacitor_primary", _cas_inputs("Cr1", 10e-9)
+            ),
+        ),
+    )
+    bridge.attach_components_to_tas(tas, components, topology=entry)
+
+    cr1 = tas["stages"][0]["circuit"]["components"][1]
+    assert cr1["cas_inputs"]["designRequirements"]["name"] == "Cr1"
+
+
+def test_attach_components_leaves_unbound_capacitors_alone() -> None:
+    """Output filter caps must NOT be touched when not in capacitor_binding.
+
+    The buck stencil emits ``C_out`` as a placeholder cap. ``buck`` has
+    no ``capacitor_binding`` in the registry, so the existing bridge
+    behaviour (cap left untouched, librarian sizes it later) must be
+    preserved verbatim.
+    """
+    tas = {
+        "stages": [{"name": "ps", "role": "power_stage", "circuit": {"components": [
+            {"name": "L1", "data": "TAS/data/magnetics.ndjson?p=L1"},
+            {"name": "C_out", "data": "TAS/data/capacitors.ndjson?p=C_out"},
+        ]}}],
+        "interStageCircuit": [],
+    }
+    main = bridge.MagneticDesign(
+        scoring=1.0,
+        mas=_mas(scoring=1.0, shape="x", material="y", n_windings=1)["mas"],
+        elapsed_s=0.1,
+    )
+    components = bridge.ConverterComponents(main_magnetic=main)
+    bridge.attach_components_to_tas(tas, components, topology="buck")
+
+    cout = tas["stages"][0]["circuit"]["components"][1]
+    assert cout == {"name": "C_out", "data": "TAS/data/capacitors.ndjson?p=C_out"}
+
+
+def test_attach_components_cap_binding_missing_in_tas_raises() -> None:
+    """Registry binds Cr2 but stencil never emitted it — drift detected."""
+    entry = _cllc_like_entry()
+    tas = {
+        "stages": [{"name": "iso", "role": "isolation", "circuit": {"components": [
+            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
+            {"name": "Cr1", "data": "TAS/data/capacitors.ndjson?p=Cr1"},
+            # Cr2 missing
+        ]}}],
+        "interStageCircuit": [],
+    }
+    main = bridge.MagneticDesign(
+        scoring=1.0,
+        mas=_mas(scoring=1.0, shape="x", material="y", n_windings=2)["mas"],
+        elapsed_s=0.1,
+    )
+    components = bridge.ConverterComponents(
+        main_magnetic=main,
+        extra_capacitors=(
+            bridge.ExtraCapacitorSpec(
+                "resonantCapacitor_primary", _cas_inputs("Cr1", 22e-9)
+            ),
+            bridge.ExtraCapacitorSpec(
+                "resonantCapacitor_secondary", _cas_inputs("Cr2", 44e-9)
+            ),
+        ),
+    )
+    with pytest.raises(bridge.BridgeError, match="Cr2"):
+        bridge.attach_components_to_tas(tas, components, topology=entry)
+
+
+def test_attach_components_cap_role_missing_in_extras_raises() -> None:
+    """Stencil emits Cr1/Cr2 but Phase B only returned one cap envelope."""
+    entry = _cllc_like_entry()
+    tas = {
+        "stages": [{"name": "iso", "role": "isolation", "circuit": {"components": [
+            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
+            {"name": "Cr1", "data": "TAS/data/capacitors.ndjson?p=Cr1"},
+            {"name": "Cr2", "data": "TAS/data/capacitors.ndjson?p=Cr2"},
+        ]}}],
+        "interStageCircuit": [],
+    }
+    main = bridge.MagneticDesign(
+        scoring=1.0,
+        mas=_mas(scoring=1.0, shape="x", material="y", n_windings=2)["mas"],
+        elapsed_s=0.1,
+    )
+    components = bridge.ConverterComponents(
+        main_magnetic=main,
+        extra_capacitors=(
+            bridge.ExtraCapacitorSpec(
+                "resonantCapacitor_primary", _cas_inputs("Cr1", 22e-9)
+            ),
+            # secondary missing
+        ),
+    )
+    with pytest.raises(bridge.BridgeError, match="resonantCapacitor_secondary"):
+        bridge.attach_components_to_tas(tas, components, topology=entry)

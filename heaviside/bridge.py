@@ -347,6 +347,42 @@ def _attach_one(component: dict[str, Any], design: MagneticDesign) -> None:
     component["mas_scoring"] = design.scoring
 
 
+def _tas_capacitor_components(tas: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return every TAS component declared as a capacitor.
+
+    Mirror of :func:`_tas_magnetic_components` for the capacitor
+    category. Recognises both the inline ``category == "capacitor"``
+    convention and the stencil's placeholder ``data`` URL pointing at
+    ``capacitors.ndjson``.
+    """
+    out: list[dict[str, Any]] = []
+    for stage in tas.get("stages", []):
+        for c in stage.get("circuit", {}).get("components", []):
+            if c.get("category") == "capacitor":
+                out.append(c)
+                continue
+            data = c.get("data", "")
+            if isinstance(data, str) and "capacitors.ndjson" in data:
+                out.append(c)
+    return out
+
+
+def _attach_one_capacitor(
+    component: dict[str, Any], spec: ExtraCapacitorSpec
+) -> None:
+    """Stamp ``spec.inputs`` (a CAS::Inputs envelope) onto a TAS cap.
+
+    The bridge does not pick capacitor MPNs — it only routes PyOM's
+    pre-filled CAS::Inputs (designRequirements + operatingPoints) onto
+    the corresponding TAS component as ``component["cas_inputs"]``.
+    The downstream component-librarian agent reads ``cas_inputs`` and
+    writes the chosen catalog entry back as ``component["cas"]``.
+    """
+    component.pop("data", None)
+    component["category"] = "capacitor"
+    component["cas_inputs"] = spec.inputs
+
+
 def attach_components_to_tas(
     tas: dict[str, Any],
     components: ConverterComponents,
@@ -359,17 +395,24 @@ def attach_components_to_tas(
     component to either ``components.main_magnetic`` (binding value
     ``None``) or ``components.extra_magnetics[<pyom_name>]``.
 
-    Capacitor extras (``components.extra_capacitors``) are **not**
-    attached — bridge does not pick capacitor MPNs. They are left in
-    place on the returned ``ConverterComponents`` for the downstream
-    component-librarian agent.
+    If ``entry.capacitor_binding`` is non-empty (resonant topologies
+    only — LLC / CLLC / CLLLC), each TAS capacitor named in the
+    binding is annotated with the matching
+    ``components.extra_capacitors[role].inputs`` envelope as
+    ``component["cas_inputs"]``. The bridge does not pick capacitor
+    MPNs; the downstream component-librarian agent reads
+    ``cas_inputs`` and writes back ``component["cas"]``.
+
+    Capacitors not listed in ``capacitor_binding`` (output filter
+    caps in non-resonant topologies) are left as untouched
+    placeholders — they are sized later from operating-point ripple.
 
     Raises
     ------
     BridgeError
         If the topology has no ``magnetic_binding`` configured, if a
-        TAS magnetic has no entry in the binding, or if a binding
-        points at a missing extras-role name.
+        TAS magnetic / capacitor has no entry in the binding, or if
+        a binding points at a missing extras-role name.
     """
     entry = topology if isinstance(topology, TopologyEntry) else get(topology)
     binding = entry.magnetic_binding
@@ -420,6 +463,43 @@ def attach_components_to_tas(
                     f"complete?"
                 )
             _attach_one(component, components.extra_magnetics[target])
+
+    # ---- Capacitor extras (resonant topologies) ------------------------
+    #
+    # ``capacitor_binding`` is empty for most topologies — their caps
+    # (output filter, bulk bus) are sized by the librarian from the
+    # operating-point ripple, not from a PyOM CAS::Inputs envelope. For
+    # resonant topologies (LLC / CLLC / CLLLC), MKF emits one or two
+    # ``resonantCapacitor_*`` extras describing the tuned-tank cap; the
+    # stencil's ``Cr*`` TAS components must be bound to those.
+    cap_binding = entry.capacitor_binding
+    if cap_binding:
+        capacitors = _tas_capacitor_components(tas)
+        tas_cap_names = {c.get("name"): c for c in capacitors}
+        spec_by_name = {s.name: s for s in components.extra_capacitors}
+
+        # Every name in the binding must exist in TAS — otherwise the
+        # stencil and registry disagree.
+        binding_missing_in_tas = sorted(set(cap_binding) - set(tas_cap_names))
+        if binding_missing_in_tas:
+            raise BridgeError(
+                f"attach_components_to_tas: {entry.name!r}.capacitor_binding "
+                f"references TAS capacitors {binding_missing_in_tas} that "
+                f"are not present in the decomposed TAS (have "
+                f"{sorted(n for n in tas_cap_names if n)}). Stencil / "
+                f"registry drift."
+            )
+
+        for tas_name, role in cap_binding.items():
+            if role not in spec_by_name:
+                raise BridgeError(
+                    f"attach_components_to_tas: TAS capacitor {tas_name!r} "
+                    f"is bound to PyOM extras role {role!r}, but "
+                    f"ConverterComponents.extra_capacitors has roles "
+                    f"{sorted(spec_by_name)}. Phase B did not emit the "
+                    f"expected cap envelope."
+                )
+            _attach_one_capacitor(tas_cap_names[tas_name], spec_by_name[role])
 
     return tas
 

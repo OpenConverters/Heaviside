@@ -45,6 +45,20 @@ class TopologyEntry:
     # will refuse to auto-bind multi-magnetic outputs for this
     # topology and require the caller to supply an explicit mapping.
     magnetic_binding: dict[str, str | None] = field(default_factory=dict)
+    # Mapping from TAS capacitor component name (as emitted by the
+    # stencil) to its PyOM extras-cap role name (matches
+    # ``inputs.designRequirements.name`` from
+    # ``get_extra_components_inputs(kind="capacitor")``).
+    #
+    # Empty dict ``{}`` (the default) means "this topology does not use
+    # the extras-capacitor attach path" — typical for non-isolated and
+    # forward-class topologies whose only caps are bulk output / input
+    # filter caps that the librarian sizes from operating-point
+    # ripple, not from a PyOM-side CAS::Inputs envelope. Required for
+    # resonant topologies (LLC, CLLC, CLLLC) whose stencils emit
+    # ``Cr*`` resonant caps that MKF describes via
+    # ``resonantCapacitor_primary`` / ``_secondary`` extras roles.
+    capacitor_binding: dict[str, str] = field(default_factory=dict)
 
 
 # Ordered by family for readability; iteration order is stable.
