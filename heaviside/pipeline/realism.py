@@ -403,7 +403,10 @@ ALL_CHECKS: tuple[str, ...] = (
 
 def _iter_components(tas: Mapping[str, Any]) -> Iterable[tuple[str, Mapping[str, Any]]]:
     """Yield ``(stage_name, component)`` for every component in every stage."""
-    stages = tas.get("stages")
+    topology = tas.get("topology")
+    if not isinstance(topology, Mapping):
+        return
+    stages = topology.get("stages")
     if not isinstance(stages, list):
         return
     for stage in stages:

@@ -75,7 +75,7 @@ INPUTS_BOOST = {
 
 
 def _bind(tas: dict, bindings: dict[str, str]) -> dict:
-    for stage in tas["stages"]:
+    for stage in tas["topology"]["stages"]:
         for c in stage["circuit"]["components"]:
             if c["name"] in bindings:
                 c["data"] = bindings[c["name"]]
@@ -113,7 +113,7 @@ def test_buck_writer_end_to_end():
     """Bound buck TAS → SPICE → ngspice parses cleanly + simulation runs."""
     tas = json.loads((GOLDEN_DIR / "buck_48to12_5A.tas.json").read_text())
     _bind(tas, BIND_BUCK)
-    deck = tas_to_spice(tas, INPUTS_BUCK, op_index=0)
+    deck = tas_to_spice(tas["topology"], INPUTS_BUCK, op_index=0)
 
     # Structural sanity on the deck itself.
     assert "V_input Vin 0 48.0" in deck
@@ -145,7 +145,7 @@ def test_boost_writer_end_to_end():
     """
     tas = json.loads((GOLDEN_DIR / "boost_12to48_2A.tas.json").read_text())
     _bind(tas, BIND_BOOST)
-    deck = tas_to_spice(tas, INPUTS_BOOST, op_index=0)
+    deck = tas_to_spice(tas["topology"], INPUTS_BOOST, op_index=0)
 
     # GND wire must have collapsed Q1.S onto node 0.
     assert "SQ1 sw_node 0 Q1_gate 0 SW1" in deck, deck

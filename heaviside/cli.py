@@ -225,5 +225,66 @@ def design(
             raise typer.Exit(code=6)
 
 
+@app.command()
+def validate(
+    tas_file: Path = typer.Argument(
+        ...,
+        help="Path to a TAS JSON file. Use '-' to read from stdin.",
+    ),
+    tas_only: bool = typer.Option(
+        False,
+        "--tas-only",
+        help=(
+            "Skip per-component PEAS + URI-shape checks. Useful while "
+            "stencils still emit placeholder URIs."
+        ),
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the report as JSON instead of human-readable text.",
+    ),
+) -> None:
+    """Validate a TAS document against the TAS + PEAS schema stack.
+
+    Exit codes:
+      0 — document conforms
+      1 — one or more violations
+      2 — tooling error (cannot read input, malformed JSON, schema load fail)
+    """
+    from heaviside.validate import ValidatorError, validate_tas, validate_tas_file
+
+    try:
+        if str(tas_file) == "-":
+            try:
+                doc = json.loads(sys.stdin.read())
+            except json.JSONDecodeError as exc:
+                typer.echo(f"error: stdin is not valid JSON: {exc}", err=True)
+                raise typer.Exit(code=2) from None
+            report = validate_tas(doc, strict=not tas_only)
+        else:
+            report = validate_tas_file(tas_file, strict=not tas_only)
+    except ValidatorError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+    if as_json:
+        typer.echo(json.dumps(report.as_dict(), indent=2))
+    else:
+        if report.ok:
+            mode = "tas-only" if tas_only else "strict"
+            typer.echo(f"OK ({mode}): {tas_file}")
+        else:
+            typer.echo(
+                f"FAIL: {len(report.violations)} violation(s) "
+                f"({'tas-only' if tas_only else 'strict'} mode)",
+                err=True,
+            )
+            for v in report.violations:
+                typer.echo(f"  [{v.code}] {v.path}: {v.message}", err=True)
+
+    raise typer.Exit(code=0 if report.ok else 1)
+
+
 if __name__ == "__main__":
     app()

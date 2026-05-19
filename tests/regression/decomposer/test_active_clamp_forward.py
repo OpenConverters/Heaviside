@@ -74,16 +74,16 @@ def test_acf_tas_round_trip_shape() -> None:
         turns_ratios=TURNS_RATIOS,
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == ["switchingCell", "isolation", "outputRectifier", "control"], roles
 
-    sw_names = {c["name"] for c in tas["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
     assert sw_names == {"Q1", "Q_clamp", "C_clamp"}, sw_names
 
-    rect_names = {c["name"] for c in tas["stages"][2]["circuit"]["components"]}
+    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
     assert rect_names == {"D_fwd", "D_fw", "L_out0", "C_out0"}, rect_names
 
-    ports = {p["name"]: p for p in tas["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {"Vin", "switch_node", "sec0_node", "Vout0",
                           "GND", "Q1_gate", "Q_clamp_gate"}, set(ports)
 
@@ -96,5 +96,5 @@ def test_acf_tas_round_trip_shape() -> None:
     assert vout_eps == {("L_out0", "2"), ("C_out0", "1")}, vout_eps
 
     # Controller drives both primary switches.
-    drives = {d["component"] for d in tas["stages"][3]["drives"]}
+    drives = {d["component"] for d in tas["topology"]["stages"][3]["drives"]}
     assert drives == {"Q1", "Q_clamp"}, drives

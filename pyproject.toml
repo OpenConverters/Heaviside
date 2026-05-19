@@ -27,6 +27,8 @@ dependencies = [
   "strands-agents>=1.34",
   # Schema-derived TypedDicts only; one BaseModel for the user DesignSpec
   "pydantic>=2.8",
+  # TAS-conformance gate (Phase B): JSON Schema validation against TAS+PEAS+MAS
+  "jsonschema>=4.18",
   # CLI + API
   "typer>=0.12",
   "fastapi>=0.115",

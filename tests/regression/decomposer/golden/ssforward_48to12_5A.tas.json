@@ -1,255 +1,289 @@
 {
-  "stages": [
-    {
-      "name": "primary_switch",
-      "role": "switchingCell",
-      "inputPort": {
-        "type": "dcBus",
-        "wire": "Vin"
+  "inputs": {
+    "designRequirements": {
+      "efficiency": 0.95,
+      "inputType": "dc",
+      "inputVoltage": {
+        "nominal": 48.0
       },
-      "outputPorts": [
+      "outputs": [
         {
-          "type": "switchNode",
-          "wire": "switch_node"
-        }
-      ],
-      "circuit": {
-        "components": [
-          {
-            "name": "Q1",
-            "data": "TAS/data/mosfets.ndjson?placeholder=Q1"
+          "name": "out0",
+          "voltage": {
+            "nominal": 12.0
           },
-          {
-            "name": "D_demag",
-            "data": "TAS/data/diodes.ndjson?placeholder=D_demag"
-          }
-        ],
-        "connections": []
-      }
+          "regulation": "voltage"
+        }
+      ]
     },
-    {
-      "name": "isolation",
-      "role": "isolation",
-      "inputPort": {
-        "type": "switchNode",
-        "wire": "switch_node"
-      },
-      "outputPorts": [
-        {
-          "type": "winding",
-          "wire": "demag_node"
-        },
-        {
-          "type": "winding",
-          "wire": "sec0_node"
-        }
-      ],
-      "circuit": {
-        "components": [
+    "operatingPoints": [
+      {
+        "name": "op0",
+        "inputVoltage": 48.0,
+        "ambientTemperature": 25.0,
+        "outputs": [
           {
-            "name": "T1",
-            "data": "TAS/data/magnetics.ndjson?placeholder=T1",
-            "pins": [
-              "pri.1",
-              "pri.2",
-              "demag.1",
-              "demag.2",
-              "sec0.1",
-              "sec0.2"
-            ]
-          }
-        ],
-        "connections": []
-      }
-    },
-    {
-      "name": "output_0",
-      "role": "outputRectifier",
-      "inputPort": {
-        "type": "winding",
-        "wire": "sec0_node"
-      },
-      "outputPorts": [
-        {
-          "type": "dcOutput",
-          "wire": "Vout0"
-        }
-      ],
-      "circuit": {
-        "components": [
-          {
-            "name": "D_fwd",
-            "data": "TAS/data/diodes.ndjson?placeholder=D_fwd"
-          },
-          {
-            "name": "D_fw",
-            "data": "TAS/data/diodes.ndjson?placeholder=D_fw"
-          },
-          {
-            "name": "L_out0",
-            "data": "TAS/data/magnetics.ndjson?placeholder=L_out0"
-          },
-          {
-            "name": "C_out0",
-            "data": "TAS/data/capacitors.ndjson?placeholder=C_out0"
-          }
-        ],
-        "connections": [
-          {
-            "name": "sec0_rect_node",
-            "kind": "wire",
-            "endpoints": [
-              {
-                "component": "D_fwd",
-                "pin": "K"
-              },
-              {
-                "component": "D_fw",
-                "pin": "K"
-              },
-              {
-                "component": "L_out0",
-                "pin": "1"
-              }
-            ]
+            "name": "out0",
+            "voltage": 12.0,
+            "current": 5.0
           }
         ]
       }
-    },
-    {
-      "name": "controller",
-      "role": "control",
-      "circuit": {
-        "components": [
+    ]
+  },
+  "topology": {
+    "stages": [
+      {
+        "name": "primary_switch",
+        "role": "switchingCell",
+        "inputPort": {
+          "type": "dcBus",
+          "wire": "Vin"
+        },
+        "outputPorts": [
           {
-            "name": "U1",
-            "data": "TAS/data/controllers.ndjson?placeholder=U1"
+            "type": "switchNode",
+            "wire": "switch_node"
           }
         ],
-        "connections": []
+        "circuit": {
+          "components": [
+            {
+              "name": "Q1",
+              "data": "TAS/data/mosfets.ndjson?placeholder=Q1"
+            },
+            {
+              "name": "D_demag",
+              "data": "TAS/data/diodes.ndjson?placeholder=D_demag"
+            }
+          ],
+          "connections": []
+        }
       },
-      "senses": [
-        {
-          "wire": "Vout0",
-          "signal": "voltage"
-        }
-      ],
-      "drives": [
-        {
-          "component": "Q1",
-          "signal": "gate"
-        }
-      ]
-    }
-  ],
-  "interStageCircuit": [
-    {
-      "name": "Vin",
-      "kind": "externalPort",
-      "direction": "input",
-      "endpoints": [
-        {
-          "component": "Q1",
-          "pin": "D"
+      {
+        "name": "isolation",
+        "role": "isolation",
+        "inputPort": {
+          "type": "switchNode",
+          "wire": "switch_node"
         },
-        {
-          "component": "D_demag",
-          "pin": "K"
+        "outputPorts": [
+          {
+            "type": "winding",
+            "wire": "demag_node"
+          },
+          {
+            "type": "winding",
+            "wire": "sec0_node"
+          }
+        ],
+        "circuit": {
+          "components": [
+            {
+              "name": "T1",
+              "data": "TAS/data/magnetics.ndjson?placeholder=T1",
+              "pins": [
+                "pri.1",
+                "pri.2",
+                "demag.1",
+                "demag.2",
+                "sec0.1",
+                "sec0.2"
+              ]
+            }
+          ],
+          "connections": []
         }
-      ]
-    },
-    {
-      "name": "switch_node",
-      "kind": "wire",
-      "endpoints": [
-        {
-          "component": "Q1",
-          "pin": "S"
+      },
+      {
+        "name": "output_0",
+        "role": "outputRectifier",
+        "inputPort": {
+          "type": "winding",
+          "wire": "sec0_node"
         },
-        {
-          "component": "T1",
-          "pin": "pri.1"
+        "outputPorts": [
+          {
+            "type": "dcOutput",
+            "wire": "Vout0"
+          }
+        ],
+        "circuit": {
+          "components": [
+            {
+              "name": "D_fwd",
+              "data": "TAS/data/diodes.ndjson?placeholder=D_fwd"
+            },
+            {
+              "name": "D_fw",
+              "data": "TAS/data/diodes.ndjson?placeholder=D_fw"
+            },
+            {
+              "name": "L_out0",
+              "data": "TAS/data/magnetics.ndjson?placeholder=L_out0"
+            },
+            {
+              "name": "C_out0",
+              "data": "TAS/data/capacitors.ndjson?placeholder=C_out0"
+            }
+          ],
+          "connections": [
+            {
+              "name": "sec0_rect_node",
+              "kind": "wire",
+              "endpoints": [
+                {
+                  "component": "D_fwd",
+                  "pin": "K"
+                },
+                {
+                  "component": "D_fw",
+                  "pin": "K"
+                },
+                {
+                  "component": "L_out0",
+                  "pin": "1"
+                }
+              ]
+            }
+          ]
         }
-      ]
-    },
-    {
-      "name": "demag_node",
-      "kind": "wire",
-      "endpoints": [
-        {
-          "component": "T1",
-          "pin": "demag.2"
+      },
+      {
+        "name": "controller",
+        "role": "control",
+        "circuit": {
+          "components": [
+            {
+              "name": "U1",
+              "data": "TAS/data/controllers.ndjson?placeholder=U1"
+            }
+          ],
+          "connections": []
         },
-        {
-          "component": "D_demag",
-          "pin": "A"
-        }
-      ]
-    },
-    {
-      "name": "sec0_node",
-      "kind": "wire",
-      "endpoints": [
-        {
-          "component": "T1",
-          "pin": "sec0.1"
-        },
-        {
-          "component": "D_fwd",
-          "pin": "A"
-        }
-      ]
-    },
-    {
-      "name": "Vout0",
-      "kind": "externalPort",
-      "direction": "output",
-      "endpoints": [
-        {
-          "component": "L_out0",
-          "pin": "2"
-        },
-        {
-          "component": "C_out0",
-          "pin": "1"
-        }
-      ]
-    },
-    {
-      "name": "GND",
-      "kind": "wire",
-      "endpoints": [
-        {
-          "component": "T1",
-          "pin": "pri.2"
-        },
-        {
-          "component": "T1",
-          "pin": "demag.1"
-        },
-        {
-          "component": "T1",
-          "pin": "sec0.2"
-        },
-        {
-          "component": "D_fw",
-          "pin": "A"
-        },
-        {
-          "component": "C_out0",
-          "pin": "2"
-        }
-      ]
-    },
-    {
-      "name": "Q1_gate",
-      "kind": "wire",
-      "endpoints": [
-        {
-          "component": "Q1",
-          "pin": "G"
-        }
-      ]
-    }
-  ]
+        "senses": [
+          {
+            "wire": "Vout0",
+            "signal": "voltage"
+          }
+        ],
+        "drives": [
+          {
+            "component": "Q1",
+            "signal": "gate"
+          }
+        ]
+      }
+    ],
+    "interStageCircuit": [
+      {
+        "name": "Vin",
+        "kind": "externalPort",
+        "direction": "input",
+        "endpoints": [
+          {
+            "component": "Q1",
+            "pin": "D"
+          },
+          {
+            "component": "D_demag",
+            "pin": "K"
+          }
+        ]
+      },
+      {
+        "name": "switch_node",
+        "kind": "wire",
+        "endpoints": [
+          {
+            "component": "Q1",
+            "pin": "S"
+          },
+          {
+            "component": "T1",
+            "pin": "pri.1"
+          }
+        ]
+      },
+      {
+        "name": "demag_node",
+        "kind": "wire",
+        "endpoints": [
+          {
+            "component": "T1",
+            "pin": "demag.2"
+          },
+          {
+            "component": "D_demag",
+            "pin": "A"
+          }
+        ]
+      },
+      {
+        "name": "sec0_node",
+        "kind": "wire",
+        "endpoints": [
+          {
+            "component": "T1",
+            "pin": "sec0.1"
+          },
+          {
+            "component": "D_fwd",
+            "pin": "A"
+          }
+        ]
+      },
+      {
+        "name": "Vout0",
+        "kind": "externalPort",
+        "direction": "output",
+        "endpoints": [
+          {
+            "component": "L_out0",
+            "pin": "2"
+          },
+          {
+            "component": "C_out0",
+            "pin": "1"
+          }
+        ]
+      },
+      {
+        "name": "GND",
+        "kind": "wire",
+        "endpoints": [
+          {
+            "component": "T1",
+            "pin": "pri.2"
+          },
+          {
+            "component": "T1",
+            "pin": "demag.1"
+          },
+          {
+            "component": "T1",
+            "pin": "sec0.2"
+          },
+          {
+            "component": "D_fw",
+            "pin": "A"
+          },
+          {
+            "component": "C_out0",
+            "pin": "2"
+          }
+        ]
+      },
+      {
+        "name": "Q1_gate",
+        "kind": "wire",
+        "endpoints": [
+          {
+            "component": "Q1",
+            "pin": "G"
+          }
+        ]
+      }
+    ]
+  }
 }

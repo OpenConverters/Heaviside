@@ -75,16 +75,16 @@ def test_ssforward_tas_round_trip_shape() -> None:
         turns_ratios=TURNS_RATIOS,
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == [
         "switchingCell", "isolation", "outputRectifier", "control",
     ], roles
 
-    sw_names = {c["name"] for c in tas["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
     assert sw_names == {"Q1", "D_demag"}, sw_names
 
     # T1 is 3-winding: pri (excitation) + demag (reset) + sec0 (forward).
-    t1 = tas["stages"][1]["circuit"]["components"][0]
+    t1 = tas["topology"]["stages"][1]["circuit"]["components"][0]
     assert t1["name"] == "T1"
     assert set(t1["pins"]) == {
         "pri.1", "pri.2", "demag.1", "demag.2", "sec0.1", "sec0.2",
@@ -92,11 +92,11 @@ def test_ssforward_tas_round_trip_shape() -> None:
 
     # Injected output stage: 2 diodes (D_fwd, D_fw) + L_out0 + C_out0.
     rect_names = {
-        c["name"] for c in tas["stages"][2]["circuit"]["components"]
+        c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]
     }
     assert rect_names == {"D_fwd", "D_fw", "L_out0", "C_out0"}, rect_names
 
-    ports = {p["name"]: p for p in tas["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {
         "Vin", "switch_node", "demag_node", "sec0_node",
         "Vout0", "GND", "Q1_gate",

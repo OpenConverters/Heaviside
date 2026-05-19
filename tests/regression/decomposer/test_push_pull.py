@@ -106,7 +106,7 @@ def test_pushpull_tas_shape() -> None:
         turns_ratios=TURNS_RATIOS,
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == [
         "switchingCell",
         "isolation",
@@ -114,10 +114,10 @@ def test_pushpull_tas_shape() -> None:
         "control",
     ], roles
 
-    sw_names = {c["name"] for c in tas["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
     assert sw_names == {"Q1", "Q2"}, sw_names
 
-    t1 = tas["stages"][1]["circuit"]["components"][0]
+    t1 = tas["topology"]["stages"][1]["circuit"]["components"][0]
     assert t1["name"] == "T1"
     assert set(t1["pins"]) == {
         "pri_top.1", "pri_top.2",
@@ -126,10 +126,10 @@ def test_pushpull_tas_shape() -> None:
         "sec_bot.1", "sec_bot.2",
     }, t1["pins"]
 
-    rect_names = {c["name"] for c in tas["stages"][2]["circuit"]["components"]}
+    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
     assert rect_names == {"D1", "D2", "L_out0", "C_out0"}, rect_names
 
-    ports = {p["name"]: p for p in tas["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {
         "Vin",
         "sw_top_node",
@@ -161,5 +161,5 @@ def test_pushpull_tas_shape() -> None:
     assert ("Q1", "S") in gnd and ("Q2", "S") in gnd
 
     # Controller drives both Q1 and Q2.
-    drives = {d["component"] for d in tas["stages"][3]["drives"]}
+    drives = {d["component"] for d in tas["topology"]["stages"][3]["drives"]}
     assert drives == {"Q1", "Q2"}, drives

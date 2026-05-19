@@ -80,17 +80,17 @@ def test_4sbb_tas_round_trip_shape() -> None:
         turns_ratios=[],
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == ["switchingCell", "control"], roles
 
-    sc = tas["stages"][0]
+    sc = tas["topology"]["stages"][0]
     names = {c["name"] for c in sc["circuit"]["components"]}
     assert names == {"Q1", "Q2", "Q3", "Q4", "L1", "C_in", "C_out"}, names
 
     conn_names = {c["name"] for c in sc["circuit"]["connections"]}
     assert conn_names == {"sw1", "sw2"}, conn_names
 
-    ports = {p["name"]: p for p in tas["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {"Vin", "Vout", "GND",
                           "Q1_gate", "Q2_gate", "Q3_gate", "Q4_gate"}
     vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"]}
@@ -99,5 +99,5 @@ def test_4sbb_tas_round_trip_shape() -> None:
     assert vout_eps == {("Q3", "S"), ("C_out", "1")}, vout_eps
 
     # Controller must drive all four switches.
-    drives = {d["component"] for d in tas["stages"][1]["drives"]}
+    drives = {d["component"] for d in tas["topology"]["stages"][1]["drives"]}
     assert drives == {"Q1", "Q2", "Q3", "Q4"}, drives

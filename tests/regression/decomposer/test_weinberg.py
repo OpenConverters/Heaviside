@@ -95,7 +95,7 @@ def test_weinberg_tas_shape() -> None:
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
         bridge_simulation_mode="switch",
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == [
         "inputFilter",
         "switchingCell",
@@ -104,22 +104,22 @@ def test_weinberg_tas_shape() -> None:
         "control",
     ], roles
 
-    input_names = {c["name"] for c in tas["stages"][0]["circuit"]["components"]}
+    input_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
     assert input_names == {"L1"}, input_names
 
-    sc_names = {c["name"] for c in tas["stages"][1]["circuit"]["components"]}
+    sc_names = {c["name"] for c in tas["topology"]["stages"][1]["circuit"]["components"]}
     assert sc_names == {"Q1", "Q2"}, sc_names
 
-    iso_names = {c["name"] for c in tas["stages"][2]["circuit"]["components"]}
+    iso_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
     assert iso_names == {"T1"}, iso_names
 
-    rect_names = {c["name"] for c in tas["stages"][3]["circuit"]["components"]}
+    rect_names = {c["name"] for c in tas["topology"]["stages"][3]["circuit"]["components"]}
     assert rect_names == {"D1", "D2", "C_out0"}, rect_names
 
-    drives = {d["component"] for d in tas["stages"][4]["drives"]}
+    drives = {d["component"] for d in tas["topology"]["stages"][4]["drives"]}
     assert drives == {"Q1", "Q2"}, drives
 
     # Vin enters at L1.a.1 and L1.b.1 (NOT at any switch drain).
-    ports = {p["name"]: p for p in tas["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"]}
     assert vin_eps == {("L1", "a.1"), ("L1", "b.1")}, vin_eps

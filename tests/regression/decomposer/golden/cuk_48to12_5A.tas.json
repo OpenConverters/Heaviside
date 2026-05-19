@@ -1,165 +1,199 @@
 {
-  "stages": [
-    {
-      "name": "power_stage",
-      "role": "switchingCell",
-      "inputPort": {
-        "type": "dcBus",
-        "wire": "Vin"
+  "inputs": {
+    "designRequirements": {
+      "efficiency": 0.95,
+      "inputType": "dc",
+      "inputVoltage": {
+        "nominal": 48.0
       },
-      "outputPorts": [
+      "outputs": [
         {
-          "type": "dcOutput",
-          "wire": "Vout"
+          "name": "out0",
+          "voltage": {
+            "nominal": 12.0
+          },
+          "regulation": "voltage"
         }
-      ],
-      "circuit": {
-        "components": [
+      ]
+    },
+    "operatingPoints": [
+      {
+        "name": "op0",
+        "inputVoltage": 48.0,
+        "ambientTemperature": 25.0,
+        "outputs": [
           {
-            "name": "Q1",
-            "data": "TAS/data/mosfets.ndjson?placeholder=Q1"
-          },
-          {
-            "name": "D1",
-            "data": "TAS/data/diodes.ndjson?placeholder=D1"
-          },
-          {
-            "name": "L1",
-            "data": "TAS/data/magnetics.ndjson?placeholder=L1"
-          },
-          {
-            "name": "L2",
-            "data": "TAS/data/magnetics.ndjson?placeholder=L2"
-          },
-          {
-            "name": "C_flying",
-            "data": "TAS/data/capacitors.ndjson?placeholder=C_flying"
-          },
-          {
-            "name": "C_out",
-            "data": "TAS/data/capacitors.ndjson?placeholder=C_out"
-          }
-        ],
-        "connections": [
-          {
-            "name": "node_A",
-            "kind": "wire",
-            "endpoints": [
-              {
-                "component": "L1",
-                "pin": "2"
-              },
-              {
-                "component": "Q1",
-                "pin": "D"
-              },
-              {
-                "component": "C_flying",
-                "pin": "1"
-              }
-            ]
-          },
-          {
-            "name": "node_B",
-            "kind": "wire",
-            "endpoints": [
-              {
-                "component": "C_flying",
-                "pin": "2"
-              },
-              {
-                "component": "D1",
-                "pin": "A"
-              },
-              {
-                "component": "L2",
-                "pin": "1"
-              }
-            ]
+            "name": "out0",
+            "voltage": 12.0,
+            "current": 5.0
           }
         ]
       }
-    },
-    {
-      "name": "controller",
-      "role": "control",
-      "circuit": {
-        "components": [
+    ]
+  },
+  "topology": {
+    "stages": [
+      {
+        "name": "power_stage",
+        "role": "switchingCell",
+        "inputPort": {
+          "type": "dcBus",
+          "wire": "Vin"
+        },
+        "outputPorts": [
           {
-            "name": "U1",
-            "data": "TAS/data/controllers.ndjson?placeholder=U1"
+            "type": "dcOutput",
+            "wire": "Vout"
           }
         ],
-        "connections": []
+        "circuit": {
+          "components": [
+            {
+              "name": "Q1",
+              "data": "TAS/data/mosfets.ndjson?placeholder=Q1"
+            },
+            {
+              "name": "D1",
+              "data": "TAS/data/diodes.ndjson?placeholder=D1"
+            },
+            {
+              "name": "L1",
+              "data": "TAS/data/magnetics.ndjson?placeholder=L1"
+            },
+            {
+              "name": "L2",
+              "data": "TAS/data/magnetics.ndjson?placeholder=L2"
+            },
+            {
+              "name": "C_flying",
+              "data": "TAS/data/capacitors.ndjson?placeholder=C_flying"
+            },
+            {
+              "name": "C_out",
+              "data": "TAS/data/capacitors.ndjson?placeholder=C_out"
+            }
+          ],
+          "connections": [
+            {
+              "name": "node_A",
+              "kind": "wire",
+              "endpoints": [
+                {
+                  "component": "L1",
+                  "pin": "2"
+                },
+                {
+                  "component": "Q1",
+                  "pin": "D"
+                },
+                {
+                  "component": "C_flying",
+                  "pin": "1"
+                }
+              ]
+            },
+            {
+              "name": "node_B",
+              "kind": "wire",
+              "endpoints": [
+                {
+                  "component": "C_flying",
+                  "pin": "2"
+                },
+                {
+                  "component": "D1",
+                  "pin": "A"
+                },
+                {
+                  "component": "L2",
+                  "pin": "1"
+                }
+              ]
+            }
+          ]
+        }
       },
-      "senses": [
-        {
-          "wire": "Vout",
-          "signal": "voltage"
-        }
-      ],
-      "drives": [
-        {
-          "component": "Q1",
-          "signal": "gate"
-        }
-      ]
-    }
-  ],
-  "interStageCircuit": [
-    {
-      "name": "Vin",
-      "kind": "externalPort",
-      "direction": "input",
-      "endpoints": [
-        {
-          "component": "L1",
-          "pin": "1"
-        }
-      ]
-    },
-    {
-      "name": "Vout",
-      "kind": "externalPort",
-      "direction": "output",
-      "endpoints": [
-        {
-          "component": "L2",
-          "pin": "2"
+      {
+        "name": "controller",
+        "role": "control",
+        "circuit": {
+          "components": [
+            {
+              "name": "U1",
+              "data": "TAS/data/controllers.ndjson?placeholder=U1"
+            }
+          ],
+          "connections": []
         },
-        {
-          "component": "C_out",
-          "pin": "1"
-        }
-      ]
-    },
-    {
-      "name": "GND",
-      "kind": "wire",
-      "endpoints": [
-        {
-          "component": "Q1",
-          "pin": "S"
-        },
-        {
-          "component": "D1",
-          "pin": "K"
-        },
-        {
-          "component": "C_out",
-          "pin": "2"
-        }
-      ]
-    },
-    {
-      "name": "Q1_gate",
-      "kind": "wire",
-      "endpoints": [
-        {
-          "component": "Q1",
-          "pin": "G"
-        }
-      ]
-    }
-  ]
+        "senses": [
+          {
+            "wire": "Vout",
+            "signal": "voltage"
+          }
+        ],
+        "drives": [
+          {
+            "component": "Q1",
+            "signal": "gate"
+          }
+        ]
+      }
+    ],
+    "interStageCircuit": [
+      {
+        "name": "Vin",
+        "kind": "externalPort",
+        "direction": "input",
+        "endpoints": [
+          {
+            "component": "L1",
+            "pin": "1"
+          }
+        ]
+      },
+      {
+        "name": "Vout",
+        "kind": "externalPort",
+        "direction": "output",
+        "endpoints": [
+          {
+            "component": "L2",
+            "pin": "2"
+          },
+          {
+            "component": "C_out",
+            "pin": "1"
+          }
+        ]
+      },
+      {
+        "name": "GND",
+        "kind": "wire",
+        "endpoints": [
+          {
+            "component": "Q1",
+            "pin": "S"
+          },
+          {
+            "component": "D1",
+            "pin": "K"
+          },
+          {
+            "component": "C_out",
+            "pin": "2"
+          }
+        ]
+      },
+      {
+        "name": "Q1_gate",
+        "kind": "wire",
+        "endpoints": [
+          {
+            "component": "Q1",
+            "pin": "G"
+          }
+        ]
+      }
+    ]
+  }
 }

@@ -92,13 +92,13 @@ def test_buck_tas_round_trip_shape() -> None:
         turns_ratios=[],
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == ["switchingCell", "control"], roles
 
-    sc = tas["stages"][0]
+    sc = tas["topology"]["stages"][0]
     names = {c["name"] for c in sc["circuit"]["components"]}
     assert names == {"Q1", "D1", "L1", "C_out"}, names
 
-    port_names = {p["name"] for p in tas["interStageCircuit"]}
+    port_names = {p["name"] for p in tas["topology"]["interStageCircuit"]}
     # Power-flow wires + GND (all grounded pins) + per-switch gate net.
     assert port_names == {"Vin", "Vout", "GND", "Q1_gate"}, port_names

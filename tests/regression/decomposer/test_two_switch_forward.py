@@ -78,7 +78,7 @@ def test_2sforward_tas_round_trip_shape() -> None:
         turns_ratios=TURNS_RATIOS,
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == [
         "switchingCell",
         "isolation",
@@ -86,17 +86,17 @@ def test_2sforward_tas_round_trip_shape() -> None:
         "control",
     ], roles
 
-    sw_names = {c["name"] for c in tas["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
     assert sw_names == {"Q1", "Q2", "D1", "D2"}, sw_names
 
-    t1 = tas["stages"][1]["circuit"]["components"][0]
+    t1 = tas["topology"]["stages"][1]["circuit"]["components"][0]
     assert t1["name"] == "T1"
     assert set(t1["pins"]) == {"pri.1", "pri.2", "sec0.1", "sec0.2"}, t1["pins"]
 
-    rect_names = {c["name"] for c in tas["stages"][2]["circuit"]["components"]}
+    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
     assert rect_names == {"D_fwd", "D_fw", "L_out0", "C_out0"}, rect_names
 
-    ports = {p["name"]: p for p in tas["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {
         "Vin",
         "switch_node",
@@ -121,5 +121,5 @@ def test_2sforward_tas_round_trip_shape() -> None:
     assert swn_eps == {("Q1", "S"), ("D1", "K"), ("T1", "pri.1")}, swn_eps
 
     # Controller drives both Q1 and Q2.
-    drives = {d["component"] for d in tas["stages"][3]["drives"]}
+    drives = {d["component"] for d in tas["topology"]["stages"][3]["drives"]}
     assert drives == {"Q1", "Q2"}, drives

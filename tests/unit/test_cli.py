@@ -139,14 +139,14 @@ def test_design_buck_no_attach_emits_tas_to_stdout(buck_spec: Path) -> None:
     )
     assert result.exit_code == 0, result.stderr
     tas = json.loads(result.stdout)
-    assert "stages" in tas
-    names = {s["name"] for s in tas["stages"]}
+    assert "topology" in tas
+    names = {s["name"] for s in tas["topology"]["stages"]}
     # Buck stencil emits at minimum a power_stage + controller pair.
     assert "power_stage" in names
     # Decompose-only: components must NOT carry an inline PEAS doc yet
     # (data should still be a placeholder URL string), and the legacy
     # bridge sibling fields must be absent.
-    for stage in tas["stages"]:
+    for stage in tas["topology"]["stages"]:
         for comp in stage.get("circuit", {}).get("components", []):
             assert "mas" not in comp
             data = comp.get("data")
@@ -168,7 +168,7 @@ def test_design_buck_no_attach_writes_file(buck_spec: Path, tmp_path: Path) -> N
     assert out.is_file()
     assert f"wrote {out}" in result.stderr
     tas = json.loads(out.read_text())
-    assert "stages" in tas
+    assert "topology" in tas
 
 
 def test_design_dab_alias_resolves_to_dual_active_bridge(buck_spec: Path) -> None:
@@ -183,7 +183,7 @@ def test_design_dab_alias_resolves_to_dual_active_bridge(buck_spec: Path) -> Non
     # DAB stencil emits 5 stages (inverter / isolation / outputRectifier /
     # outputFilter / control). Use a loose lower bound to stay robust to
     # future stencil cosmetics.
-    assert len(tas["stages"]) >= 4
+    assert len(tas["topology"]["stages"]) >= 4
 
 
 def test_design_unknown_topology_exits_3(buck_spec: Path) -> None:

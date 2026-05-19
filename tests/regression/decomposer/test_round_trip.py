@@ -96,7 +96,7 @@ INPUTS_BOOST = {
 
 
 def _bind(tas: dict, bindings: dict[str, str]) -> dict:
-    for stage in tas["stages"]:
+    for stage in tas["topology"]["stages"]:
         for c in stage["circuit"]["components"]:
             if c["name"] in bindings:
                 c["data"] = bindings[c["name"]]
@@ -165,7 +165,7 @@ needs_ngspice = pytest.mark.skipif(
 def test_round_trip(golden: str, bindings: dict[str, str], inputs: dict):
     """TAS → SPICE → TAS → SPICE: both decks simulate + fingerprints match."""
     tas_a = _bind(json.loads((GOLDEN_DIR / golden).read_text()), bindings)
-    spice_a = tas_to_spice(tas_a, inputs, op_index=0)
+    spice_a = tas_to_spice(tas_a["topology"], inputs, op_index=0)
 
     tas_b = spice_to_tas(spice_a)
     # Reader must emit a single switchingCell stage with no controller.
@@ -227,7 +227,7 @@ def _bind_flyback_inline(tas: dict) -> dict:
         "D_out0": "TAS/data/diodes.ndjson?mpn=STPS30L60CT",
         "C_out0": "TAS/data/capacitors.ndjson?mpn=UPW1H102MHD",
     }
-    for stage in tas["stages"]:
+    for stage in tas["topology"]["stages"]:
         for c in stage["circuit"]["components"]:
             if c["name"] in bindings:
                 c["data"] = bindings[c["name"]]
@@ -248,7 +248,7 @@ def test_round_trip_isolated_flyback():
     tas_a = _bind_flyback_inline(
         json.loads((GOLDEN_DIR / "flyback_48to12_2A.tas.json").read_text())
     )
-    spice_a = tas_to_spice(tas_a, INPUTS_FLYBACK, op_index=0)
+    spice_a = tas_to_spice(tas_a["topology"], INPUTS_FLYBACK, op_index=0)
 
     # SPICE_A must contain the transformer pair and one K.
     assert "LT1_pri " in spice_a, spice_a
@@ -325,7 +325,7 @@ _LLC_INLINE = {
 
 def _bind_llc_inline(tas: dict) -> dict:
     """Strip ``data:`` URLs; replace with inline values + T1 transformer."""
-    for stage in tas["stages"]:
+    for stage in tas["topology"]["stages"]:
         for c in stage["circuit"]["components"]:
             if c["name"] in _LLC_INLINE:
                 cat, val = _LLC_INLINE[c["name"]]
@@ -347,7 +347,7 @@ def test_round_trip_isolated_llc():
     tas_a = _bind_llc_inline(
         json.loads((GOLDEN_DIR / "llc_48to12_5A.tas.json").read_text())
     )
-    spice_a = tas_to_spice(tas_a, INPUTS_LLC, op_index=0)
+    spice_a = tas_to_spice(tas_a["topology"], INPUTS_LLC, op_index=0)
 
     # 3 windings → 3 L-elements + 3 K-pairs.
     for w in ("LT1_pri ", "LT1_sec1 ", "LT1_sec2 "):
@@ -458,7 +458,7 @@ INPUTS_DUAL_ISO = {
 
 def _bind_generic_inline(tas: dict, t1_windings: dict[str, float]) -> dict:
     """Replace placeholder URLs with inline values for a single-T1 stencil."""
-    for stage in tas["stages"]:
+    for stage in tas["topology"]["stages"]:
         for c in stage["circuit"]["components"]:
             if c["name"] in _GENERIC_INLINE:
                 cat, val = _GENERIC_INLINE[c["name"]]
@@ -523,7 +523,7 @@ def test_round_trip_isolated_generic(
         json.loads((GOLDEN_DIR / golden).read_text()),
         t1_windings,
     )
-    spice_a = tas_to_spice(tas_a, inputs, op_index=0)
+    spice_a = tas_to_spice(tas_a["topology"], inputs, op_index=0)
     tas_b = spice_to_tas(spice_a)
     spice_b = tas_to_spice(tas_b, inputs, op_index=0)
 

@@ -259,7 +259,7 @@ def _tas_magnetic_components(tas: Mapping[str, Any]) -> list[dict[str, Any]]:
        stencil's pre-attach placeholder convention.
     """
     out: list[dict[str, Any]] = []
-    for stage in tas.get("stages", []):
+    for stage in tas.get("topology", {}).get("stages", []):
         for c in stage.get("circuit", {}).get("components", []):
             data = c.get("data")
             if isinstance(data, dict) and "magnetic" in data:
@@ -376,7 +376,7 @@ def _tas_capacitor_components(tas: Mapping[str, Any]) -> list[dict[str, Any]]:
     stencil's ``capacitors.ndjson`` placeholder URL.
     """
     out: list[dict[str, Any]] = []
-    for stage in tas.get("stages", []):
+    for stage in tas.get("topology", {}).get("stages", []):
         for c in stage.get("circuit", {}).get("components", []):
             data = c.get("data")
             if isinstance(data, dict) and "capacitor" in data:

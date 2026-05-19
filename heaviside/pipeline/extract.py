@@ -161,9 +161,12 @@ def _find_magnetic_component(tas: Mapping[str, Any]) -> tuple[int, int, Mapping[
     magnetic component, we still pick the first — buck's main output
     inductor.
     """
-    stages = tas.get("stages")
+    topology = tas.get("topology")
+    if not isinstance(topology, Mapping):
+        raise EnrichmentError("tas.topology: must be a mapping")
+    stages = topology.get("stages")
     if not isinstance(stages, list):
-        raise EnrichmentError("tas.stages: must be a list")
+        raise EnrichmentError("tas.topology.stages: must be a list")
     for si, stage in enumerate(stages):
         if not isinstance(stage, Mapping):
             continue
@@ -291,7 +294,7 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
         "fsw_Hz": fsw,
         "L_worst_H": L_worst,
     }
-    tas["stages"][si]["circuit"]["components"][ci] = enriched_comp
+    tas["topology"]["stages"][si]["circuit"]["components"][ci] = enriched_comp
 
 
 # ---------------------------------------------------------------------------

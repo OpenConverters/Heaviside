@@ -228,11 +228,11 @@ class TestThermalLimit:
 
 
 def _empty_tas() -> dict:
-    return {"stages": [], "interStageCircuit": []}
+    return {"topology": {"stages": [], "interStageCircuit": []}}
 
 
 def _buck_shaped_tas() -> dict:
-    return {
+    return {"topology": {
         "stages": [{
             "name": "power_stage",
             "role": "switchingCell",
@@ -244,7 +244,7 @@ def _buck_shaped_tas() -> dict:
             ]},
         }],
         "interStageCircuit": [],
-    }
+    }}
 
 
 class TestOrchestratorContract:
@@ -300,7 +300,7 @@ class TestOrchestratorVerdict:
 
     def test_fet_rating_drives_pass(self):
         tas = _buck_shaped_tas()
-        tas["stages"][0]["circuit"]["components"][0].update({
+        tas["topology"]["stages"][0]["circuit"]["components"][0].update({
             "vds_rated": 150.0,
             "vds_stress": 60.0,
         })

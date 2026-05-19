@@ -67,7 +67,7 @@ def _buck_mas() -> dict:
 
 
 def _buck_tas() -> dict:
-    return {
+    return {"topology": {
         "stages": [{
             "name": "power_stage",
             "role": "switchingCell",
@@ -79,7 +79,7 @@ def _buck_tas() -> dict:
             ]},
         }],
         "interStageCircuit": [],
-    }
+    }}
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ class TestBuckEnrichmentMath:
 
     def test_ipeak_worst_uses_vin_max_and_minus20_inductance(self):
         out = enrich_tas_for_realism(_buck_tas(), topology="buck", spec=_buck_spec())
-        l1 = out["stages"][0]["circuit"]["components"][2]
+        l1 = out["topology"]["stages"][0]["circuit"]["components"][2]
         # ΔIL_worst = Vout · (1 − D_min) / (0.8·L · fsw)
         #           = 12 · 0.8 / (0.8 · 22e-6 · 200_000)
         #           = 9.6 / 3.52  = 2.7272…  A_pp
@@ -117,7 +117,7 @@ class TestBuckEnrichmentMath:
         """Material has 0.4 T at 100°C and 0.473 T at 25°C; the
         conservative pick is 0.4 T."""
         out = enrich_tas_for_realism(_buck_tas(), topology="buck", spec=_buck_spec())
-        l1 = out["stages"][0]["circuit"]["components"][2]
+        l1 = out["topology"]["stages"][0]["circuit"]["components"][2]
         # Isat = B_sat · N · A_e / L = 0.4 · 9 · 8.0327e-5 / 22e-6
         expected = 0.4 * 9 * 8.0327e-5 / 22e-6
         assert l1["isat"] == pytest.approx(expected, rel=1e-4)
@@ -136,7 +136,7 @@ class TestBuckEnrichmentMath:
         """A reviewer must be able to reproduce the Isat number from the
         provenance dict alone — no implicit inputs."""
         out = enrich_tas_for_realism(_buck_tas(), topology="buck", spec=_buck_spec())
-        l1 = out["stages"][0]["circuit"]["components"][2]
+        l1 = out["topology"]["stages"][0]["circuit"]["components"][2]
         p = l1["isat_provenance"]
         recomputed = p["b_sat_T"] * p["n_turns"] * p["effective_area_m2"] / p["inductance_H"]
         assert recomputed == pytest.approx(l1["isat"], rel=1e-4)
@@ -189,7 +189,7 @@ class TestBuckEnrichmentFailureModes:
 
     def test_no_magnetic_component_throws(self):
         tas = _buck_tas()
-        tas["stages"][0]["circuit"]["components"] = [
+        tas["topology"]["stages"][0]["circuit"]["components"] = [
             {"name": "Q1", "data": "placeholder"},
         ]
         with pytest.raises(EnrichmentError, match="magnetic"):
@@ -197,7 +197,7 @@ class TestBuckEnrichmentFailureModes:
 
     def test_magnetic_without_mas_throws(self):
         tas = _buck_tas()
-        tas["stages"][0]["circuit"]["components"][2] = {
+        tas["topology"]["stages"][0]["circuit"]["components"][2] = {
             "name": "L1", "category": "magnetic",
         }
         with pytest.raises(EnrichmentError, match="no MAS"):
@@ -209,7 +209,7 @@ class TestBuckEnrichmentFailureModes:
     ])
     def test_invalid_mas_fields_throw(self, path, value):
         tas = _buck_tas()
-        mas = tas["stages"][0]["circuit"]["components"][2]["mas"]
+        mas = tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"]
         cur = mas
         for k in path[:-1]:
             cur = cur[k]
@@ -219,14 +219,14 @@ class TestBuckEnrichmentFailureModes:
 
     def test_empty_saturation_curve_throws(self):
         tas = _buck_tas()
-        tas["stages"][0]["circuit"]["components"][2]["mas"]["core"]["functionalDescription"][
+        tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"]["core"]["functionalDescription"][
             "material"]["saturation"] = []
         with pytest.raises(EnrichmentError, match="saturation"):
             enrich_tas_for_realism(tas, topology="buck", spec=_buck_spec())
 
     def test_negative_bsat_throws(self):
         tas = _buck_tas()
-        tas["stages"][0]["circuit"]["components"][2]["mas"]["core"]["functionalDescription"][
+        tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"]["core"]["functionalDescription"][
             "material"]["saturation"][0]["magneticFluxDensity"] = -0.1
         with pytest.raises(EnrichmentError, match="magneticFluxDensity"):
             enrich_tas_for_realism(tas, topology="buck", spec=_buck_spec())
@@ -243,8 +243,8 @@ class TestDispatcher:
         out = enrich_tas_for_realism(tas, topology="buck", spec=_buck_spec())
         assert out is not tas
         # Mutating ``out`` must not touch ``tas``.
-        out["stages"][0]["name"] = "MUTATED"
-        assert tas["stages"][0]["name"] == "power_stage"
+        out["topology"]["stages"][0]["name"] = "MUTATED"
+        assert tas["topology"]["stages"][0]["name"] == "power_stage"
 
     def test_unknown_topology_passes_through_unchanged(self):
         tas = _buck_tas()
@@ -252,7 +252,7 @@ class TestDispatcher:
         # No enrichment for boost yet — should be a structural deep copy
         # of the input (no ``duty`` stamped, no ``isat`` on L1).
         assert "duty" not in out
-        assert "isat" not in out["stages"][0]["circuit"]["components"][2]
+        assert "isat" not in out["topology"]["stages"][0]["circuit"]["components"][2]
 
     def test_topology_is_case_insensitive(self):
         tas = _buck_tas()

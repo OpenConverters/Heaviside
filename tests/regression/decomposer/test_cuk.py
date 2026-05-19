@@ -80,10 +80,10 @@ def test_cuk_tas_round_trip_shape() -> None:
         turns_ratios=[],
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == ["switchingCell", "control"], roles
 
-    sc = tas["stages"][0]
+    sc = tas["topology"]["stages"][0]
     names = {c["name"] for c in sc["circuit"]["components"]}
     assert names == {"Q1", "D1", "L1", "L2", "C_flying", "C_out"}, names
 
@@ -91,7 +91,7 @@ def test_cuk_tas_round_trip_shape() -> None:
     conn_names = {c["name"] for c in sc["circuit"]["connections"]}
     assert conn_names == {"node_A", "node_B"}, conn_names
 
-    ports = {p["name"]: p for p in tas["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {"Vin", "Vout", "GND", "Q1_gate"}
     vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"]}
     assert vin_eps == {("L1", "1")}, vin_eps

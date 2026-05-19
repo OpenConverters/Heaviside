@@ -74,21 +74,21 @@ def test_isobb_tas_round_trip_shape() -> None:
         turns_ratios=TURNS_RATIOS,
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == [
         "switchingCell", "isolation", "outputRectifier",
         "outputRectifier", "control"
     ], roles
 
     # 1 switch (no synch rectifier).
-    sw_names = {c["name"] for c in tas["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
     assert sw_names == {"Q1"}, sw_names
 
     # Primary output rectifier has D_pri + C_pri.
-    pri_names = {c["name"] for c in tas["stages"][2]["circuit"]["components"]}
+    pri_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
     assert pri_names == {"D_pri", "C_pri"}, pri_names
 
-    ports = {p["name"]: p for p in tas["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {"Vin", "switch_node", "Vout_pri",
                           "sec0_node", "Vout0",
                           "GND", "Q1_gate"}, set(ports)
@@ -98,5 +98,5 @@ def test_isobb_tas_round_trip_shape() -> None:
     assert sw_eps == {("Q1", "S"), ("T1", "pri.1"), ("D_pri", "K")}, sw_eps
 
     # Controller regulates Vout_pri.
-    sense = tas["stages"][4]["senses"][0]["wire"]
+    sense = tas["topology"]["stages"][4]["senses"][0]["wire"]
     assert sense == "Vout_pri", sense

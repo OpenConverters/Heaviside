@@ -67,7 +67,7 @@ def test_buck_end_to_end_bridge() -> None:
     # 4. The L1 component must now carry the resolved PEAS magnetic doc.
     magnetics = [
         c
-        for s in tas["stages"]
+        for s in tas["topology"]["stages"]
         for c in s.get("circuit", {}).get("components", [])
         if isinstance(c.get("data"), dict) and "magnetic" in c["data"]
     ]
@@ -132,7 +132,7 @@ def test_acf_multi_magnetic_end_to_end_bridge() -> None:
 
     magnetics = [
         c
-        for s in tas["stages"]
+        for s in tas["topology"]["stages"]
         for c in s.get("circuit", {}).get("components", [])
         if isinstance(c.get("data"), dict) and "magnetic" in c["data"]
     ]
@@ -244,7 +244,7 @@ def test_llc_multi_magnetic_end_to_end_bridge() -> None:
 
     magnetics = [
         c
-        for s in tas["stages"]
+        for s in tas["topology"]["stages"]
         for c in s.get("circuit", {}).get("components", [])
         if isinstance(c.get("data"), dict) and "magnetic" in c["data"]
     ]

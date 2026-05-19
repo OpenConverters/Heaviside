@@ -82,26 +82,26 @@ def test_flyback_tas_round_trip_shape() -> None:
         turns_ratios=TURNS_RATIOS,
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == ["switchingCell", "isolation", "outputRectifier", "control"], roles
 
     # Primary switch stage holds Q1 only.
-    sw_names = {c["name"] for c in tas["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
     assert sw_names == {"Q1"}, sw_names
 
     # Isolation stage holds T1 only, with pri+sec0 pins.
-    iso = tas["stages"][1]
+    iso = tas["topology"]["stages"][1]
     iso_names = {c["name"] for c in iso["circuit"]["components"]}
     assert iso_names == {"T1"}, iso_names
     t1 = iso["circuit"]["components"][0]
     assert set(t1["pins"]) == {"pri.1", "pri.2", "sec0.1", "sec0.2"}, t1["pins"]
 
     # Output rectifier stage holds D_out0 and C_out0.
-    rect_names = {c["name"] for c in tas["stages"][2]["circuit"]["components"]}
+    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
     assert rect_names == {"D_out0", "C_out0"}, rect_names
 
     # interStageCircuit must wire switch_node and sec0_node, plus Vin/Vout0.
-    ports = {p["name"]: p for p in tas["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {"Vin", "switch_node", "sec0_node", "Vout0",
                           "GND", "Q1_gate"}
 
@@ -118,5 +118,5 @@ def test_flyback_tas_round_trip_shape() -> None:
     assert vout_eps == {("D_out0", "K"), ("C_out0", "1")}, vout_eps
 
     # Controller drives Q1.
-    drives = {d["component"] for d in tas["stages"][3]["drives"]}
+    drives = {d["component"] for d in tas["topology"]["stages"][3]["drives"]}
     assert drives == {"Q1"}, drives

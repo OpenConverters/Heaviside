@@ -77,14 +77,14 @@ def test_boost_tas_round_trip_shape() -> None:
         turns_ratios=[],
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == ["switchingCell", "control"], roles
 
-    sc = tas["stages"][0]
+    sc = tas["topology"]["stages"][0]
     names = {c["name"] for c in sc["circuit"]["components"]}
     assert names == {"Q1", "D1", "L1", "C_out"}, names
 
-    ports = {p["name"]: p for p in tas["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {"Vin", "Vout", "GND", "Q1_gate"}
     # Vin must land on the inductor (boost signature)
     vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"]}

@@ -73,16 +73,16 @@ def test_isobuck_tas_round_trip_shape() -> None:
         turns_ratios=TURNS_RATIOS,
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
-    roles = [s["role"] for s in tas["stages"]]
+    roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == [
         "switchingCell", "isolation", "outputFilter",
         "outputRectifier", "control"
     ], roles
 
-    sw_names = {c["name"] for c in tas["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
     assert sw_names == {"Q1", "Q2"}, sw_names
 
-    ports = {p["name"]: p for p in tas["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {"Vin", "switch_node", "Vout_pri",
                           "sec0_node", "Vout0",
                           "GND", "Q1_gate", "Q2_gate"}, set(ports)
@@ -96,5 +96,5 @@ def test_isobuck_tas_round_trip_shape() -> None:
     assert vp_eps == {("T1", "pri.2"), ("C_pri", "1")}, vp_eps
 
     # Controller regulates around Vout_pri (NOT Vout0) — flybuck signature.
-    sense = tas["stages"][4]["senses"][0]["wire"]
+    sense = tas["topology"]["stages"][4]["senses"][0]["wire"]
     assert sense == "Vout_pri", sense
