@@ -1,6 +1,6 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "http://openconverters.com/schemas/COAS/inputs.json",
+    "$id": "https://psma.com/coas/inputs.json",
     "$comment": "SPDX-License-Identifier: Apache-2.0",
     "title": "inputs",
     "description": "The design contract: what the converter must achieve (designRequirements) and the explicit operating points at which it must be evaluated (operatingPoints).",

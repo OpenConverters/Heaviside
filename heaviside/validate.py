@@ -61,8 +61,8 @@ _SCHEMA_ROOTS: tuple[str, ...] = (
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # TAS root + PEAS root $ids — looked up once at module load.
-_TAS_ROOT_ID = "http://openconverters.com/schemas/TAS/TAS.json"
-_PEAS_ROOT_ID = "http://openconverters.com/schemas/PEAS/peas.json"
+_TAS_ROOT_ID = "https://psma.com/tas/TAS.json"
+_PEAS_ROOT_ID = "https://psma.com/peas/peas.json"
 
 # URI shape for component.data string form, e.g.
 # ``TAS/data/mosfets.ndjson?partNumber=C3M0032120K``.

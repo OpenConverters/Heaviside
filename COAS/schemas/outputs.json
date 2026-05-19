@@ -1,6 +1,6 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "http://openconverters.com/schemas/COAS/outputs.json",
+    "$id": "https://psma.com/coas/outputs.json",
     "$comment": "SPDX-License-Identifier: Apache-2.0",
     "title": "outputs",
     "description": "Measured / simulated performance at one operating point. The COAS document's outputs[] array is index-aligned with inputs.operatingPoints[]. Anything derivable from (inputs, converter) belongs here, not on COAS.converter.",

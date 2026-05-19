@@ -1,6 +1,6 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "http://openconverters.com/schemas/COAS/COAS.json",
+    "$id": "https://psma.com/coas/COAS.json",
     "$comment": "SPDX-License-Identifier: Apache-2.0",
     "title": "COAS",
     "description": "Converter Agnostic Structure (COAS). Wraps a TAS converter design with product-level identity, commerce, qualification, and per-operating-point measured results. Mirrors the MAS/CAS/SAS/RAS pattern of inputs + payload + outputs. The TAS document embedded in `converter.tas` is the unmodified contract (no TAS schema changes); converter-level product metadata (manufacturerInfo, certifications, compliance, references, revision) lives only on COAS.converter and is intentionally absent from TAS.",

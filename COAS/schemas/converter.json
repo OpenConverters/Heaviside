@@ -1,6 +1,6 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "http://openconverters.com/schemas/COAS/converter.json",
+    "$id": "https://psma.com/coas/converter.json",
     "$comment": "SPDX-License-Identifier: Apache-2.0",
     "title": "converter",
     "description": "A converter product. Two anchor fields sit at the top level: `tas` (the unmodified TAS electrical design) and `manufacturerInfo` (the finished-good identity). All other product-level metadata is grouped into four structured sub-objects: commerce (distribution and substitutes), qualification (certifications already granted and compliance evidence), lifecycle (revision and production status), and documentation (external references). Per the COAS contract, none of these fields are duplicated inside the embedded TAS.",

@@ -40,8 +40,8 @@ def _codes(report: Report) -> list[str]:
 def test_registry_builds_with_tas_and_peas_roots() -> None:
     """The schema discovery walk must find both TAS and PEAS roots."""
     registry, tas_root, peas_root = _build_registry()
-    assert tas_root["$id"] == "http://openconverters.com/schemas/TAS/TAS.json"
-    assert peas_root["$id"] == "http://openconverters.com/schemas/PEAS/peas.json"
+    assert tas_root["$id"] == "https://psma.com/tas/TAS.json"
+    assert peas_root["$id"] == "https://psma.com/peas/peas.json"
     # Registry must hold a reasonable number of schemas (TAS + PEAS + MAS
     # + CAS + SAS + RAS + COAS, all with $id). 50 is a safe floor.
     assert sum(1 for _ in registry) > 50

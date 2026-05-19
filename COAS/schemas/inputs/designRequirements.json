@@ -1,6 +1,6 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "http://openconverters.com/schemas/COAS/inputs/designRequirements.json",
+    "$id": "https://psma.com/coas/inputs/designRequirements.json",
     "$comment": "SPDX-License-Identifier: Apache-2.0",
     "title": "designRequirements",
     "description": "Converter-level design contract. MUST be sufficient on its own to drive a full topology-and-component design: every input/output rail, isolation, efficiency, form factor, environment, compliance, reliability, control interface, protections, and BOM constraints. Reuses PEAS/utils.json primitives so MAS/CAS/SAS/RAS validators see the same definitions.",
