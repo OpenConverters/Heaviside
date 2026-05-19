@@ -2,6 +2,35 @@
 
 **Read this before touching the repo. It encodes the design rules that make Heaviside different from Proteus.**
 
+## Autonomy (per-repo override of global CLAUDE.md)
+
+Default mode for this repo is **autonomous execution**. Do not ask the user
+to confirm every next step.
+
+- After finishing a task, pick the next highest-value item from
+  `docs/BACKLOG.md` (or the current in-flight plan) and start it.
+- **Commit approval is pre-granted** for this repo. Commit in logical
+  chunks as work completes, using `feat(scope): summary` style matching
+  the existing git log. Keep commits bisectable.
+- **Push approval is still required per-push.** Never `git push` without
+  an explicit ask in the current turn.
+- When `docs/BACKLOG.md` is empty or the next step is genuinely
+  ambiguous, then ask — otherwise, proceed.
+
+**Stop and ask only when:**
+1. A decision is irreversible (force push, history rewrite, schema
+   break, mass deletion of `TAS/data/` entries, dropping a submodule).
+2. The requirement is genuinely ambiguous and the wrong guess would
+   waste >30 min of work.
+3. A CLAUDE.md guardrail would be violated (no fallbacks/defaults, no
+   bypassing librarian for TAS writes, no headed Playwright, no
+   OpenMagnetics push without the `hephaestus_om` key).
+4. The user has explicitly paused autonomy in the current session.
+
+Honest progress reporting beats checking in. At the end of a chunk,
+summarise what was done, what was skipped and why, and what the next
+item from the backlog is — then start it.
+
 ## What Heaviside is
 
 A PyOpenMagnetics-first, agent-driven design system for power converters. It takes a `DesignSpec`, picks a topology (or accepts one), designs the magnetics through `PyOpenMagnetics`, selects the rest of the BOM against `TAS/data/`, runs `ngspice` with real frequency-dependent magnetic subcircuits, and emits a stress-checked, realism-gated report.
