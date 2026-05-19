@@ -117,6 +117,16 @@ def design(
         "--no-attach",
         help="Skip Phase B (component design + attachment). Emit decomposed TAS only.",
     ),
+    realism: bool = typer.Option(
+        False,
+        "--realism",
+        help=(
+            "Run the realism gate on the populated TAS. Fail-closed: exits 6 "
+            "if any check FAILS or every applicable check is UNAVAILABLE "
+            "(INCOMPLETE). v0.1 typically returns INCOMPLETE until the "
+            "librarian / sim agents enrich the pipeline."
+        ),
+    ),
     compact: bool = typer.Option(False, "--compact", help="Emit JSON without indentation."),
 ) -> None:
     """Run the end-to-end pipeline: spec → MKF deck → TAS → designed components → populated TAS.
@@ -179,6 +189,24 @@ def design(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(payload + ("" if compact else "\n"))
         typer.echo(f"wrote {out}", err=True)
+
+    if realism:
+        from heaviside.pipeline import RealismVerdict, evaluate_tas
+
+        report = evaluate_tas(tas, topology=topology, spec=spec_json)
+        summary = report.summary
+        typer.echo(
+            f"realism: verdict={report.verdict.value} "
+            f"pass={summary['pass']} fail={summary['fail']} "
+            f"unavailable={summary['unavailable']} "
+            f"not_applicable={summary['not_applicable']}",
+            err=True,
+        )
+        for c in report.checks:
+            if c.status.value in ("fail", "unavailable"):
+                typer.echo(f"  [{c.status.value}] {c.name}: {c.detail}", err=True)
+        if report.verdict is not RealismVerdict.PASS:
+            raise typer.Exit(code=6)
 
 
 if __name__ == "__main__":

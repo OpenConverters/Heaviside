@@ -97,9 +97,23 @@ from `Now`, do it, commit, and move on without checking in.
   reviewer agent (`ray` or `nicola`). Defer the full Proteus-style fleet.
 - **MCP server surface.** Same pipeline as the CLI, exposed as MCP tools.
 - **FastAPI surface.** Same pipeline, JSON over HTTP.
-- **Realism gate** (`heaviside/pipeline/realism.py`). Fail-closed; see
-  AGENTS.md rule 5. Inputs: populated TAS from the bridge. Outputs:
-  pass/fail + per-check report. No `--force`.
+- **Realism gate** ✅ v0.1 done. `heaviside/pipeline/realism.py` ports all
+  10 Proteus physics primitives (power balance, voltage derating ×3,
+  Isat margin, duty cycle bounds, no-negative-losses, thermal, efficiency,
+  Vout regulation) with strict "throw on bad input" semantics per CLAUDE.md.
+  Orchestrator `evaluate_tas(tas, *, topology, spec)` classifies every check
+  as PASS / FAIL / NOT_APPLICABLE / UNAVAILABLE — nothing silently skipped.
+  Verdict: PASS / FAIL / INCOMPLETE. CLI `heaviside design ... --realism`
+  is opt-in and exits 6 on FAIL or INCOMPLETE (fail-closed, no `--force`).
+  Today every check on a real buck output is UNAVAILABLE because the
+  current pipeline produces neither sim_results, loss_budget, junction
+  temps, nor scalar Isat / component ratings — INCOMPLETE is the honest
+  verdict until the librarian / sim agents land. 63 unit tests in
+  `tests/unit/test_realism.py` + 2 CLI tests pin the contract.
+  **Remaining**: librarian agent populates `vds_rated` / `vrrm_rated` /
+  `v_rated` / scalar `isat` on TAS components; analyst agent computes
+  worst-case stresses + Tj; sim agent populates `simulation_results` and
+  `loss_budget`. Each of these flips a subset of UNAVAILABLE → PASS/FAIL.
 - **Analytical regression suite** against the 47 designs in
   `TAS/data/converters.ndjson`. CI gate per AGENTS.md rule 7.
 - **Component-librarian agent port from Proteus.** First real consumer of

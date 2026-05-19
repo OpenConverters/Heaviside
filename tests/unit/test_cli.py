@@ -187,3 +187,32 @@ def test_design_unknown_topology_exits_3(buck_spec: Path) -> None:
     # the decompose pipeline (DecomposerError → exit 3). Either is
     # acceptable as long as it fails loudly.
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# ``design --realism`` — fail-closed gate
+# ---------------------------------------------------------------------------
+
+
+def test_design_realism_on_decompose_only_is_incomplete_exit_6(buck_spec: Path) -> None:
+    """Decompose-only TAS has no MAS, no sim, no ratings — every check is
+    UNAVAILABLE → INCOMPLETE → exit 6 (fail-closed).
+    """
+    result = runner.invoke(
+        app, ["design", "buck", "--spec", str(buck_spec), "--no-attach", "--realism"]
+    )
+    assert result.exit_code == 6, result.stderr
+    assert "verdict=incomplete" in result.stderr
+    # Per-check diagnostics for UNAVAILABLE must be present so the user
+    # knows exactly which pipeline input is missing.
+    assert "[unavailable] efficiency_sanity" in result.stderr
+
+
+def test_design_realism_without_flag_exits_0(buck_spec: Path) -> None:
+    """Without ``--realism`` the gate must not run; exit 0 even though
+    the TAS is sparse."""
+    result = runner.invoke(
+        app, ["design", "buck", "--spec", str(buck_spec), "--no-attach"]
+    )
+    assert result.exit_code == 0, result.stderr
+    assert "realism:" not in result.stderr
