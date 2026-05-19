@@ -177,6 +177,14 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_weinberg",
         "converter",
         "isolated_bridge",
+        # L1 is the input coupled inductor (2 windings); T1 is the
+        # main 4-winding push-pull transformer. Cout is an extras
+        # capacitor (`outputCapacitor`) but the bridge doesn't attach
+        # capacitor extras yet — that's tracked in BACKLOG item 3.
+        magnetic_binding={
+            "T1": None,
+            "L1": "inputCoupledInductor",
+        },
     ),
     # --- resonant ---
     TopologyEntry(

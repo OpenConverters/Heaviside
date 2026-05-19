@@ -2713,6 +2713,287 @@ def asymmetric_half_bridge(deck: SpiceDeck) -> TasTopology:
     }
 
 
+# -----------------------------------------------------------------------------
+# Weinberg stencil
+# -----------------------------------------------------------------------------
+#
+# MKF deck (bridge_simulation_mode="switch", V1 classic push-pull, CT-FW
+# diode rectifier — verified empirically; see /tmp/weinberg.cir):
+#
+#   Vin vin_dc 0 48
+#   Vin_sense vin_dc vin_p 0                  ; ammeter (drop)
+#   Vpwm1/Vpwm2                                ; non-overlapping gate drives
+#   .model SW1 SW VT=2.5 …
+#
+#   * Input coupled inductor L1 (2 windings, k=0.999)
+#   L1a vin_p l1a_dcr_mid 100u                 ; L1.a.1=vin_p
+#   Rdcr_l1a l1a_dcr_mid priCT_a 0.05          ; DCR (drop via Rdcr_ prefix)
+#   L1b vin_p l1b_dcr_mid 100u                 ; L1.b.1=vin_p
+#   Rdcr_l1b l1b_dcr_mid priCT_b 0.05
+#   K_in L1a L1b 0.999                         ; → L1 inter-winding coupling
+#
+#   * Main transformer (CT push-pull primary, CT-FW secondary,
+#   * opposite-dot pairs on each side; 6 pairwise couplings)
+#   Vpri_sense_a priCT_a pri_a_sense_mid 0     ; ammeter (drop)
+#   Llk_pa pri_a_sense_mid pri_a_top 100n      ; leakage (drop via extra_testbench)
+#   Lpri_a drainQ1 pri_a_top                   ; T1.pri_a.1=drainQ1
+#   Vpri_sense_b priCT_b pri_b_sense_mid 0
+#   Llk_pb pri_b_sense_mid pri_b_top 100n
+#   Lpri_b pri_b_top drainQ2                   ; T1.pri_b.2=drainQ2
+#   Lsec_a secCT secCT_a_mid                   ; T1.sec_a.1=secCT (=GND)
+#   Llk_sa secCT_a_mid diodePos 900n
+#   Lsec_b secCT_b_mid secCT                   ; T1.sec_b.2=secCT (=GND)
+#   Llk_sb secCT_b_mid diodeNeg 900n
+#   K_pa_pb / K_pa_sa / K_pa_sb / K_pb_sa / K_pb_sb / K_sa_sb 0.9999
+#
+#   * Push-pull switches + snubbers
+#   S1 drainQ1 0 pwm1 0 SW1                    ; Q1.D=drainQ1 Q1.S=0
+#   S2 drainQ2 0 pwm2 0 SW1                    ; Q2.D=drainQ2 Q2.S=0
+#   Rsnub_s1/Csnub_s1/Rsnub_s2/Csnub_s2        ; snubbers (drop)
+#
+#   * Probes (drop)
+#   Bvab/Bvpri_diff/Vsec_ct_sense              ; behavioural sources + V0 sense
+#
+#   * CT-FW rectifier + output filter (no output choke — L1 already provides
+#   * the boost/output inductance via the coupled-inductor topology)
+#   Vsec_pos_sense diodePos sec_pos_in 0       ; ammeter (drop)
+#   D_pos sec_pos_in out_node DIDEAL           ; D1.A=diodePos (post-sense) D1.K=out_node
+#   Vsec_neg_sense diodeNeg sec_neg_in 0
+#   D_neg sec_neg_in out_node DIDEAL           ; D2.A=diodeNeg D2.K=out_node
+#   Rsnub_dp/Csnub_dp/Rsnub_dn/Csnub_dn        ; rectifier snubbers (drop)
+#   Vout_sense out_node out_load 0             ; ammeter (drop)
+#   Cout out_node co_esr 40u IC=150            ; C_out0.1=out_node .2=GND (via ESR)
+#   Rco_esr co_esr 0 0.005                     ; ESR (drop via Rco_esr prefix)
+#   Rload out_load 0 30                        ; load (drop)
+#
+# Mapping to TAS:
+#   inputFilter:     L1 (2 windings)        dcBus Vin → 2× hfAc (priCT_a, priCT_b)
+#   switchingCell:   Q1, Q2                 dcBus Vin (metadata) → 2× switchNode
+#   isolation:       T1 (4 windings)        2× switchNode → 2× winding
+#   outputRectifier: D1, D2, C_out0         2× winding → dcOutput Vout0
+#   control:         U1 drives {Q1, Q2}, senses Vout0
+#
+# Weinberg is the FIRST stencil with TWO coupled-magnetic systems (L1 + T1),
+# and the FIRST that exposes an extras-role magnetic on the INPUT side
+# (`inputCoupledInductor`). The bridge resolves L1 → extras, T1 → main.
+
+
+_WEINBERG_REAL_KINDS = {
+    "S1":       "switch",
+    "S2":       "switch",
+    # Input coupled inductor L1 (2 windings + 1 coupling)
+    "L1a":      "inductor",      # → L1.a
+    "L1b":      "inductor",      # → L1.b
+    "K_in":     "coupling",      # → L1 inter-winding coupling
+    # Main transformer T1 (4 windings + 6 pairwise couplings)
+    "Lpri_a":   "inductor",      # → T1.pri_a
+    "Lpri_b":   "inductor",      # → T1.pri_b
+    "Lsec_a":   "inductor",      # → T1.sec_a
+    "Lsec_b":   "inductor",      # → T1.sec_b
+    "K_pa_pb":  "coupling",
+    "K_pa_sa":  "coupling",
+    "K_pa_sb":  "coupling",
+    "K_pb_sa":  "coupling",
+    "K_pb_sb":  "coupling",
+    "K_sa_sb":  "coupling",
+    # Rectifier + output filter (no output choke — see header)
+    "D_pos":    "diode",         # → D1
+    "D_neg":    "diode",         # → D2
+    "Cout":     "capacitor",     # → C_out0
+}
+
+
+def weinberg(deck: SpiceDeck) -> TasTopology:
+    """Decompose an MKF Weinberg V1 deck (switch-mode) into TAS.
+
+    Requires ``bridge_simulation_mode="switch"`` and the V1 (classic
+    push-pull / CT-FW diode) variant — the default for the ``weinberg``
+    topology name.
+    """
+    _validate_real_set(
+        deck,
+        "weinberg",
+        _WEINBERG_REAL_KINDS,
+        # MKF emits four real leakage inductors (Llk_pa/pb/sa/sb) that
+        # are part of the T1 transformer model but have no separate
+        # designer dispatch. Absorbed into T1 leakage — analogous to
+        # AHB's L_lk treatment.
+        extra_testbench=frozenset({"Llk_pa", "Llk_pb", "Llk_sa", "Llk_sb"}),
+    )
+
+    input_filter = {
+        "name": "input_coupled_inductor",
+        "role": "inputFilter",
+        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "outputPorts": [
+            {"type": "hfAc", "wire": "priCT_a", "name": "priCT_a"},
+            {"type": "hfAc", "wire": "priCT_b", "name": "priCT_b"},
+        ],
+        "circuit": {
+            "components": [
+                {
+                    "name": "L1",
+                    "data": _DATA_URL["magnetic"].format(name="L1"),
+                    "pins": ["a.1", "a.2", "b.1", "b.2"],
+                },
+            ],
+            "connections": [],
+        },
+    }
+
+    switching_cell = {
+        "name": "primary_switch",
+        "role": "switchingCell",
+        # Q1/Q2 drains do NOT touch Vin directly; the input current
+        # arrives through L1 and the T1 primary CT taps. Vin port is
+        # metadata only — see push_pull stencil for the same pattern.
+        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "outputPorts": [
+            {"type": "switchNode", "wire": "drainQ1"},
+            {"type": "switchNode", "wire": "drainQ2"},
+        ],
+        "circuit": {
+            "components": [
+                _component("mosfet", "Q1"),   # ← S1
+                _component("mosfet", "Q2"),   # ← S2
+            ],
+            "connections": [],
+        },
+    }
+
+    isolation = {
+        "name": "isolation",
+        "role": "isolation",
+        # CT-CT transformer: primary CT enters at priCT_a/priCT_b
+        # (driven from L1), switch drains pull the outer ends to 0.
+        # Secondary CT = GND, diode anodes at outer ends.
+        "inputPort": {"type": "switchNode", "wire": "drainQ1"},
+        "outputPorts": [
+            {"type": "winding", "wire": "diodePos", "name": "sec_a"},
+            {"type": "winding", "wire": "diodeNeg", "name": "sec_b"},
+        ],
+        "circuit": {
+            "components": [
+                _t1_component(("pri_a", "pri_b", "sec_a", "sec_b")),
+            ],
+            "connections": [],
+        },
+    }
+
+    output_rectifier = {
+        "name": "output_0",
+        "role": "outputRectifier",
+        "inputPort":  {"type": "winding",  "wire": "diodePos"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
+        "circuit": {
+            "components": [
+                _component("diode",     "D1"),       # ← D_pos
+                _component("diode",     "D2"),       # ← D_neg
+                _component("capacitor", "C_out0"),   # ← Cout
+            ],
+            "connections": [
+                {
+                    "name": "out_node",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "D1",     "pin": "K"},
+                        {"component": "D2",     "pin": "K"},
+                        {"component": "C_out0", "pin": "1"},
+                    ],
+                },
+            ],
+        },
+    }
+
+    control = _isolated_control_stage(("Q1", "Q2"))
+
+    inter_stage = [
+        {
+            "name": "Vin",
+            "kind": "externalPort",
+            "direction": "input",
+            "endpoints": [
+                {"component": "L1", "pin": "a.1"},
+                {"component": "L1", "pin": "b.1"},
+            ],
+        },
+        {
+            # L1 winding-a feeds T1.pri_a outer end (drainQ1 side via
+            # the primary winding). Bridge wire from L1.a.2 to T1.pri_a.2.
+            "name": "priCT_a",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "L1", "pin": "a.2"},
+                {"component": "T1", "pin": "pri_a.2"},
+            ],
+        },
+        {
+            "name": "priCT_b",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "L1", "pin": "b.2"},
+                {"component": "T1", "pin": "pri_b.1"},
+            ],
+        },
+        {
+            "name": "drainQ1",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q1", "pin": "D"},
+                {"component": "T1", "pin": "pri_a.1"},
+            ],
+        },
+        {
+            "name": "drainQ2",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q2", "pin": "D"},
+                {"component": "T1", "pin": "pri_b.2"},
+            ],
+        },
+        {
+            "name": "diodePos",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1", "pin": "sec_a.2"},
+                {"component": "D1", "pin": "A"},
+            ],
+        },
+        {
+            "name": "diodeNeg",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1", "pin": "sec_b.1"},
+                {"component": "D2", "pin": "A"},
+            ],
+        },
+        {
+            "name": "Vout0",
+            "kind": "externalPort",
+            "direction": "output",
+            "endpoints": [
+                # D1.K and D2.K are joined to C_out0.1 via the out_node
+                # connection inside the rectifier stage; the external
+                # output port collapses to C_out0.1.
+                {"component": "C_out0", "pin": "1"},
+            ],
+        },
+        _gnd_wire(
+            ("Q1",     "S"),
+            ("Q2",     "S"),
+            ("T1",     "sec_a.1"),  # secondary CT = GND
+            ("T1",     "sec_b.2"),  # secondary CT = GND
+            ("C_out0", "2"),
+        ),
+        *_gate_wires("Q1", "Q2"),
+    ]
+
+    return {
+        "stages": [input_filter, switching_cell, isolation, output_rectifier, control],
+        "interStageCircuit": inter_stage,
+    }
+
+
 STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "buck": buck,
     "boost": boost,
@@ -2730,6 +3011,7 @@ STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "push_pull": push_pull,
     "phase_shifted_full_bridge": phase_shifted_full_bridge,
     "asymmetric_half_bridge": asymmetric_half_bridge,
+    "weinberg": weinberg,
 }
 
 
