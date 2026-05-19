@@ -191,9 +191,20 @@ def design(
         typer.echo(f"wrote {out}", err=True)
 
     if realism:
-        from heaviside.pipeline import RealismVerdict, evaluate_tas
+        from heaviside.pipeline import (
+            EnrichmentError,
+            RealismVerdict,
+            enrich_tas_for_realism,
+            evaluate_tas,
+        )
 
-        report = evaluate_tas(tas, topology=topology, spec=spec_json)
+        try:
+            tas_for_gate = enrich_tas_for_realism(tas, topology=topology, spec=spec_json)
+        except EnrichmentError as exc:
+            typer.echo(f"error: realism enrichment failed: {exc}", err=True)
+            raise typer.Exit(code=6) from None
+
+        report = evaluate_tas(tas_for_gate, topology=topology, spec=spec_json)
         summary = report.summary
         typer.echo(
             f"realism: verdict={report.verdict.value} "
@@ -203,8 +214,13 @@ def design(
             err=True,
         )
         for c in report.checks:
-            if c.status.value in ("fail", "unavailable"):
-                typer.echo(f"  [{c.status.value}] {c.name}: {c.detail}", err=True)
+            if c.status.value == "pass":
+                typer.echo(
+                    f"  [pass] {c.name}: value={c.value} margin={c.margin}",
+                    err=True,
+                )
+            elif c.status.value in ("fail", "unavailable"):
+                typer.echo(f"  [{c.status.value}] {c.name}: {c.detail or ''}".rstrip(": "), err=True)
         if report.verdict is not RealismVerdict.PASS:
             raise typer.Exit(code=6)
 

@@ -97,23 +97,34 @@ from `Now`, do it, commit, and move on without checking in.
   reviewer agent (`ray` or `nicola`). Defer the full Proteus-style fleet.
 - **MCP server surface.** Same pipeline as the CLI, exposed as MCP tools.
 - **FastAPI surface.** Same pipeline, JSON over HTTP.
-- **Realism gate** ✅ v0.1 done. `heaviside/pipeline/realism.py` ports all
-  10 Proteus physics primitives (power balance, voltage derating ×3,
-  Isat margin, duty cycle bounds, no-negative-losses, thermal, efficiency,
-  Vout regulation) with strict "throw on bad input" semantics per CLAUDE.md.
-  Orchestrator `evaluate_tas(tas, *, topology, spec)` classifies every check
-  as PASS / FAIL / NOT_APPLICABLE / UNAVAILABLE — nothing silently skipped.
-  Verdict: PASS / FAIL / INCOMPLETE. CLI `heaviside design ... --realism`
+- **Realism gate** ✅ v0.1 done + buck enrichment landed.
+  `heaviside/pipeline/realism.py` ports all 10 Proteus physics primitives
+  (power balance, voltage derating ×3, Isat margin, duty cycle bounds,
+  no-negative-losses, thermal, efficiency, Vout regulation) with strict
+  "throw on bad input" semantics per CLAUDE.md.  Orchestrator
+  `evaluate_tas(tas, *, topology, spec)` classifies every check as
+  PASS / FAIL / NOT_APPLICABLE / UNAVAILABLE — nothing silently skipped.
+  Verdict: PASS / FAIL / INCOMPLETE.  CLI `heaviside design ... --realism`
   is opt-in and exits 6 on FAIL or INCOMPLETE (fail-closed, no `--force`).
-  Today every check on a real buck output is UNAVAILABLE because the
-  current pipeline produces neither sim_results, loss_budget, junction
-  temps, nor scalar Isat / component ratings — INCOMPLETE is the honest
-  verdict until the librarian / sim agents land. 63 unit tests in
-  `tests/unit/test_realism.py` + 2 CLI tests pin the contract.
-  **Remaining**: librarian agent populates `vds_rated` / `vrrm_rated` /
-  `v_rated` / scalar `isat` on TAS components; analyst agent computes
-  worst-case stresses + Tj; sim agent populates `simulation_results` and
-  `loss_budget`. Each of these flips a subset of UNAVAILABLE → PASS/FAIL.
+  `heaviside/pipeline/extract.py` adds a topology-aware enrichment step
+  that stamps derived stresses onto the TAS before the gate runs.  Buck
+  extractor computes `D = Vout/Vin`, `Ipeak_worst = Iout + Vout·(1−D_min)
+  /(0.8·L·fsw)/2` (Vin_max + −20% inductance tolerance per PROTEUS.md
+  rules), and `Isat = B_sat·N·A_e/L` (B_sat = conservative minimum
+  across the MAS saturation curve's temperature samples).  Every
+  computed value carries a `*_provenance` dict tracing each input.
+  **Real buck now reaches PASS** (duty 0.333, margin 0.28; Isat ratio
+  2.07, margin 0.87 — Vin 36-60V, Vout 12V, Iout 5A, 200 kHz, 22 µH).
+  Other topologies pass through enrichment unchanged → still honestly
+  INCOMPLETE until the librarian / sim / analyst agents enrich them or
+  a per-topology extractor is added.  108 unit tests in
+  `tests/unit/test_realism.py` + `tests/unit/test_extract.py` + 2 CLI
+  tests.  **Remaining**: extractors for boost / buck-boost / flyback
+  / forward (same MAS-driven Isat math); librarian agent populates
+  `vds_rated` / `vrrm_rated` / `v_rated` on TAS components for the
+  voltage derating checks; analyst agent computes Tj for thermal_limit;
+  sim agent populates `simulation_results` / `loss_budget` for the
+  remaining 4 checks.
 - **Analytical regression suite** against the 47 designs in
   `TAS/data/converters.ndjson`. CI gate per AGENTS.md rule 7.
 - **Component-librarian agent port from Proteus.** First real consumer of

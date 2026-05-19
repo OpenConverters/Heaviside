@@ -195,17 +195,17 @@ def test_design_unknown_topology_exits_3(buck_spec: Path) -> None:
 
 
 def test_design_realism_on_decompose_only_is_incomplete_exit_6(buck_spec: Path) -> None:
-    """Decompose-only TAS has no MAS, no sim, no ratings — every check is
-    UNAVAILABLE → INCOMPLETE → exit 6 (fail-closed).
+    """Decompose-only TAS has no MAS at all — buck extractor cannot run,
+    so enrichment raises EnrichmentError → CLI exits 6 (fail-closed).
     """
     result = runner.invoke(
         app, ["design", "buck", "--spec", str(buck_spec), "--no-attach", "--realism"]
     )
     assert result.exit_code == 6, result.stderr
-    assert "verdict=incomplete" in result.stderr
-    # Per-check diagnostics for UNAVAILABLE must be present so the user
-    # knows exactly which pipeline input is missing.
-    assert "[unavailable] efficiency_sanity" in result.stderr
+    # Decompose-only path: extractor cannot find a MAS on L1, so we get
+    # an enrichment failure rather than INCOMPLETE.
+    assert "realism enrichment failed" in result.stderr
+    assert "no MAS" in result.stderr or "magnetic" in result.stderr
 
 
 def test_design_realism_without_flag_exits_0(buck_spec: Path) -> None:
