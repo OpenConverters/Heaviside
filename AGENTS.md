@@ -89,6 +89,55 @@ The maintainer (alf) owns both. When Heaviside needs a new PyOpenMagnetics bindi
 2. Rebuild locally: `cd vendor/PyOpenMagnetics && python -m build --wheel && pip install --force-reinstall dist/*.whl`.
 3. Push upstream, bump the Heaviside submodule, open the PR. CI re-builds + caches the new wheel by SHA.
 
+## Bridge: TAS ↔ PyOpenMagnetics design loop
+
+`heaviside/bridge.py` is the **only** module that talks to PyOpenMagnetics. Everything else (CLI, agents, MCP, FastAPI) goes through it.
+
+### Pipeline
+
+```
+DesignSpec ─┬─► decompose_from_spec(topology, spec)        ► (netlist, tas)
+            │     (heaviside/decomposer/api.py)
+            │
+            └─► design_converter_components(topology, spec) ► ConverterComponents
+                  ├─ Phase A: design_magnetics_from_converter      ► main MagneticDesign
+                  ├─ Phase B: get_extra_components_inputs(REAL)    ► extra magnetic + capacitor specs
+                  └─ Phase C: calculate_advised_magnetics per extra ► extra MagneticDesigns
+
+attach_components_to_tas(tas, components, topology=...) ► populated tas
+```
+
+### Public surface (`heaviside.bridge`)
+
+- `MagneticDesign` — frozen dataclass `(mas, scoring, scoring_per_filter)`.
+- `ExtraMagneticSpec`, `ExtraCapacitorSpec` — frozen dataclasses `(name, inputs)`.
+- `ConverterComponents` — `(main_magnetic, extra_magnetics: dict[str, MagneticDesign], extra_capacitors: tuple[ExtraCapacitorSpec, ...])`.
+- `design_magnetics(topology, spec, *, max_results, core_mode, use_ngspice=False)` — Phase A only.
+- `extra_components(topology, spec, *, mode, main_magnetic_mas=None)` — wraps PyOM's `get_extra_components_inputs`. **REAL mode requires the Magnetic JSON (`design.magnetic`), NOT the MAS envelope (`design.mas`)** — passing `mas` raises `key 'coil' not found`.
+- `design_extra_magnetic(spec, *, max_results, core_mode)` — wraps `calculate_advised_magnetics`.
+- `design_converter_components(topology, spec, ...)` — orchestrator for the full A+B+C loop.
+- `attach_components_to_tas(tas, components, *, topology)` — registry-driven auto-binding using `TopologyEntry.magnetic_binding`.
+
+### `magnetic_binding` semantics (registry)
+
+Each `TopologyEntry` in `heaviside/topologies/registry.py` carries a `magnetic_binding: dict[str, str | None]` mapping **TAS magnetic component name** (as emitted by the stencil) → **PyOM source**:
+
+- `None` value → the main magnetic from `design_magnetics_from_converter`.
+- `str` value → an extras-role name returned by `get_extra_components_inputs` (e.g. `"outputInductor"`, `"seriesInductor"`, `"inputCoupledInductor"`).
+- Empty dict `{}` → "no bindings yet"; `attach_components_to_tas` refuses to auto-bind. Caller must supply an explicit mapping.
+
+Exactly one entry per topology must have `value=None`. Enforced at runtime by `attach_components_to_tas` and at unit-test time by `tests/unit/test_stencil_binding_drift.py`, which iterates every golden TAS and asserts the stencil-emitted magnetic set equals the binding keys.
+
+### Coverage snapshot (May 2026)
+
+- **Registry**: 24 converters + 3 magnetics (all 27 entries present).
+- **Stencils + golden TAS**: 13 topologies (buck, boost, cuk, sepic, zeta, 4sbb, flyback, ssforward, 2sf, ACF, LLC, isobuck, isobb).
+- **`magnetic_binding` wired**: 11 of those 13 (isobuck + isobb skipped — single-magnetic, easy add).
+- **End-to-end bridge tested** (`tests/integration/test_bridge_integration.py`): buck (single magnetic, ~92 s), ACF (multi-magnetic T1 + L_out0, ~134 s). LLC end-to-end **not yet verified** — the `L_r → seriesInductor` binding is assumed correct from MKF source but not exercised.
+- **Extras probe** (`scripts/probe_extras.py`, `docs/extras-probe.json`): 13/21 topologies return clean extras-spec lists in IDEAL mode; 8 are blocked on spec-construction (nested duty cycle / phase shift / AC input). Vienna + PFC are intentionally extras-free.
+
+When you add a stencil, you **must** also add the corresponding `magnetic_binding` to the registry entry — the drift test will skip silently otherwise, but the topology will not be bridge-usable.
+
 ## Adding agents
 
 `agents/prompts/<name>.md` with YAML frontmatter `--- name: ... description: ... allowed_tools: [...] ---`. Target: 10–12 consolidated agents (Proteus had 30, mostly overlapping).

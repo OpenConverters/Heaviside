@@ -22,7 +22,7 @@ Heaviside ships regardless; the missing binding is upstream work.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
@@ -34,16 +34,32 @@ class TopologyEntry:
     per_topology_binding: str | None
     kind: Literal["converter", "magnetic"]
     family: str
+    # Mapping from TAS magnetic component name (as emitted by the
+    # stencil) to its PyOM source. ``None`` means "main magnetic"
+    # (the design returned by ``design_magnetics_from_converter``).
+    # Any other string is the PyOM extras-role name (e.g.
+    # ``"outputInductor"``, ``"seriesInductor"``) as emitted by
+    # ``get_extra_components_inputs`` in ``designRequirements.name``.
+    #
+    # Empty dict ``{}`` means "no stencil bindings yet" — Heaviside
+    # will refuse to auto-bind multi-magnetic outputs for this
+    # topology and require the caller to supply an explicit mapping.
+    magnetic_binding: dict[str, str | None] = field(default_factory=dict)
 
 
 # Ordered by family for readability; iteration order is stable.
 TOPOLOGIES: tuple[TopologyEntry, ...] = (
     # --- non-isolated DC/DC ---
-    TopologyEntry("buck", "buck", ("buck",), "process_buck", "converter", "non_isolated"),
-    TopologyEntry("boost", "boost", ("boost",), "process_boost", "converter", "non_isolated"),
-    TopologyEntry("cuk", "cuk", ("cuk", "cukConverter"), "process_cuk", "converter", "non_isolated"),
-    TopologyEntry("sepic", "sepic", ("sepic", "sepicConverter"), "process_sepic", "converter", "non_isolated"),
-    TopologyEntry("zeta", "zeta", ("zeta", "zetaConverter"), "process_zeta", "converter", "non_isolated"),
+    TopologyEntry("buck", "buck", ("buck",), "process_buck", "converter", "non_isolated",
+                  magnetic_binding={"L1": None}),
+    TopologyEntry("boost", "boost", ("boost",), "process_boost", "converter", "non_isolated",
+                  magnetic_binding={"L1": None}),
+    TopologyEntry("cuk", "cuk", ("cuk", "cukConverter"), "process_cuk", "converter", "non_isolated",
+                  magnetic_binding={"L1": None, "L2": "outputInductor"}),
+    TopologyEntry("sepic", "sepic", ("sepic", "sepicConverter"), "process_sepic", "converter", "non_isolated",
+                  magnetic_binding={"L1": None, "L2": "outputInductor"}),
+    TopologyEntry("zeta", "zeta", ("zeta", "zetaConverter"), "process_zeta", "converter", "non_isolated",
+                  magnetic_binding={"L1": None, "L2": "outputInductor"}),
     TopologyEntry(
         "four_switch_buck_boost",
         "fourSwitchBuckBoost",
@@ -51,6 +67,7 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_four_switch_buck_boost",
         "converter",
         "non_isolated",
+        magnetic_binding={"L1": None},
     ),
     # --- isolated single-switch ---
     TopologyEntry(
@@ -76,6 +93,7 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_flyback",
         "converter",
         "isolated_single_switch",
+        magnetic_binding={"T1": None},
     ),
     TopologyEntry(
         "single_switch_forward",
@@ -84,6 +102,7 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_single_switch_forward",
         "converter",
         "isolated_single_switch",
+        magnetic_binding={"T1": None, "L_out0": "outputInductor"},
     ),
     TopologyEntry(
         "two_switch_forward",
@@ -92,6 +111,7 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_two_switch_forward",
         "converter",
         "isolated_two_switch",
+        magnetic_binding={"T1": None, "L_out0": "outputInductor"},
     ),
     TopologyEntry(
         "active_clamp_forward",
@@ -100,6 +120,7 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_active_clamp_forward",
         "converter",
         "isolated_two_switch",
+        magnetic_binding={"T1": None, "L_out0": "outputInductor"},
     ),
     # --- isolated push-pull / bridge ---
     TopologyEntry(
@@ -150,6 +171,7 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         None,
         "converter",
         "resonant",
+        magnetic_binding={"T1": None, "L_r": "seriesInductor"},
     ),
     TopologyEntry(
         "cllc",

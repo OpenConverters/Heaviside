@@ -1,0 +1,357 @@
+{
+  "buck": {
+    "status": "OK",
+    "variant": "buck",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [],
+    "last_error": null
+  },
+  "boost": {
+    "status": "PROBE_FAILED",
+    "variant": "boost",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [],
+    "last_error": "get_extra_components_inputs: Waveform data contains NaN"
+  },
+  "cuk": {
+    "status": "OK",
+    "variant": "cuk",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "magnetic",
+        "name": "outputInductor",
+        "isolationSides": [
+          "primary"
+        ]
+      },
+      {
+        "kind": "capacitor",
+        "name": "couplingCapacitor",
+        "isolationSides": null
+      },
+      {
+        "kind": "capacitor",
+        "name": "outputCapacitor",
+        "isolationSides": null
+      }
+    ],
+    "last_error": null
+  },
+  "sepic": {
+    "status": "OK",
+    "variant": "sepic",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "magnetic",
+        "name": "outputInductor",
+        "isolationSides": [
+          "primary"
+        ]
+      },
+      {
+        "kind": "capacitor",
+        "name": "couplingCapacitor",
+        "isolationSides": null
+      },
+      {
+        "kind": "capacitor",
+        "name": "outputCapacitor",
+        "isolationSides": null
+      }
+    ],
+    "last_error": null
+  },
+  "zeta": {
+    "status": "OK",
+    "variant": "zeta",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "magnetic",
+        "name": "outputInductor",
+        "isolationSides": [
+          "primary"
+        ]
+      },
+      {
+        "kind": "capacitor",
+        "name": "couplingCapacitor",
+        "isolationSides": null
+      },
+      {
+        "kind": "capacitor",
+        "name": "outputCapacitor",
+        "isolationSides": null
+      }
+    ],
+    "last_error": null
+  },
+  "four_switch_buck_boost": {
+    "status": "OK",
+    "variant": "four_switch_buck_boost",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "magnetic",
+        "name": "inductor",
+        "isolationSides": [
+          "primary"
+        ]
+      },
+      {
+        "kind": "capacitor",
+        "name": "inputCapacitor",
+        "isolationSides": null
+      },
+      {
+        "kind": "capacitor",
+        "name": "outputCapacitor",
+        "isolationSides": null
+      }
+    ],
+    "last_error": null
+  },
+  "isolated_buck": {
+    "status": "PROBE_FAILED",
+    "variant": "isolated_buck",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [],
+    "last_error": "get_extra_components_inputs: [INVALID_DESIGN_REQUIREMENTS] IsolatedBuck requires at least 2 output voltages (primary + secondary)"
+  },
+  "isolated_buck_boost": {
+    "status": "PROBE_FAILED",
+    "variant": "isolated_buck_boost",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [],
+    "last_error": "get_extra_components_inputs: [INVALID_DESIGN_REQUIREMENTS] IsolatedBuckBoost requires at least 2 output voltages (primary + secondary)"
+  },
+  "flyback": {
+    "status": "PROBE_FAILED",
+    "variant": "flyback",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [],
+    "last_error": "get_extra_components_inputs: [INVALID_INPUT] Required dutyCycle 0.450102 exceeds maximumDutyCycle 0.450000 at Vin=36.000000V (mode=CCM). Increase magnetizingInductance, lower switchingFrequency, or relax maximumDutyCycle."
+  },
+  "single_switch_forward": {
+    "status": "OK",
+    "variant": "single_switch_forward",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "magnetic",
+        "name": "outputInductor",
+        "isolationSides": [
+          "secondary"
+        ]
+      }
+    ],
+    "last_error": null
+  },
+  "two_switch_forward": {
+    "status": "OK",
+    "variant": "two_switch_forward",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "magnetic",
+        "name": "outputInductor",
+        "isolationSides": [
+          "secondary"
+        ]
+      }
+    ],
+    "last_error": null
+  },
+  "active_clamp_forward": {
+    "status": "OK",
+    "variant": "active_clamp_forward",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "magnetic",
+        "name": "outputInductor",
+        "isolationSides": [
+          "secondary"
+        ]
+      },
+      {
+        "kind": "capacitor",
+        "name": "clampCapacitor",
+        "isolationSides": null
+      }
+    ],
+    "last_error": null
+  },
+  "push_pull": {
+    "status": "OK",
+    "variant": "push_pull",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "magnetic",
+        "name": "outputInductor",
+        "isolationSides": [
+          "secondary"
+        ]
+      }
+    ],
+    "last_error": null
+  },
+  "asymmetric_half_bridge": {
+    "status": "PROBE_FAILED",
+    "variant": "asymmetric_half_bridge",
+    "rounds": 2,
+    "fields_added": [
+      "dutyCycle"
+    ],
+    "extras": [],
+    "last_error": "get_extra_components_inputs: [json.exception.out_of_range.403] key 'dutyCycle' not found"
+  },
+  "phase_shifted_full_bridge": {
+    "status": "PROBE_FAILED",
+    "variant": "phase_shifted_full_bridge",
+    "rounds": 2,
+    "fields_added": [
+      "phaseShift"
+    ],
+    "extras": [],
+    "last_error": "get_extra_components_inputs: [json.exception.out_of_range.403] key 'phaseShift' not found"
+  },
+  "phase_shifted_half_bridge": {
+    "status": "PROBE_FAILED",
+    "variant": "phase_shifted_half_bridge",
+    "rounds": 2,
+    "fields_added": [
+      "phaseShift"
+    ],
+    "extras": [],
+    "last_error": "get_extra_components_inputs: [json.exception.out_of_range.403] key 'phaseShift' not found"
+  },
+  "weinberg": {
+    "status": "OK",
+    "variant": "weinberg",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "magnetic",
+        "name": "inputCoupledInductor",
+        "isolationSides": [
+          "primary",
+          "primary"
+        ]
+      },
+      {
+        "kind": "capacitor",
+        "name": "outputCapacitor",
+        "isolationSides": null
+      }
+    ],
+    "last_error": null
+  },
+  "llc": {
+    "status": "OK",
+    "variant": "llc",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "capacitor",
+        "name": "resonantCapacitor",
+        "isolationSides": null
+      },
+      {
+        "kind": "magnetic",
+        "name": "seriesInductor",
+        "isolationSides": [
+          "primary"
+        ]
+      }
+    ],
+    "last_error": null
+  },
+  "cllc": {
+    "status": "PROBE_FAILED",
+    "variant": "cllc",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [],
+    "last_error": "get_extra_components_inputs: [json.exception.out_of_range.403] key 'powerFlow' not found"
+  },
+  "clllc": {
+    "status": "PROBE_FAILED",
+    "variant": "clllc",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [],
+    "last_error": "get_extra_components_inputs: [json.exception.out_of_range.403] key 'highVoltageBusVoltage' not found"
+  },
+  "series_resonant": {
+    "status": "OK",
+    "variant": "src",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "capacitor",
+        "name": "resonantCapacitor",
+        "isolationSides": null
+      },
+      {
+        "kind": "magnetic",
+        "name": "seriesInductor",
+        "isolationSides": [
+          "primary"
+        ]
+      }
+    ],
+    "last_error": null
+  },
+  "dual_active_bridge": {
+    "status": "OK",
+    "variant": "dab",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [
+      {
+        "kind": "magnetic",
+        "name": "seriesInductor",
+        "isolationSides": [
+          "primary"
+        ]
+      }
+    ],
+    "last_error": null
+  },
+  "power_factor_correction": {
+    "status": "PROBE_FAILED",
+    "variant": "power_factor_correction",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [],
+    "last_error": "get_extra_components_inputs: get_extra_components_inputs: topology 'power_factor_correction' has no extra-components dispatch (or hasn't been wired in PyMKF)."
+  },
+  "vienna": {
+    "status": "PROBE_FAILED",
+    "variant": "vienna",
+    "rounds": 1,
+    "fields_added": [],
+    "extras": [],
+    "last_error": "get_extra_components_inputs: get_extra_components_inputs: topology 'vienna' has no extra-components dispatch (or hasn't been wired in PyMKF)."
+  }
+}
