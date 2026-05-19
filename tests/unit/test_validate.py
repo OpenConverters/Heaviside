@@ -266,3 +266,87 @@ def test_report_as_dict_is_json_serialisable() -> None:
     assert payload["strict"] is True
     assert payload["violation_count"] == len(report.violations)
     assert payload["violations"]
+
+
+# ---------------------------------------------------------------------------
+# Cross-schema $ref resolution (PEAS → MAS / CAS / SAS / RAS)
+# ---------------------------------------------------------------------------
+
+
+def _first_real_entry(ndjson_path: Path) -> dict:
+    """Return the first JSON line of an NDJSON file as a dict.
+
+    Used to pull a real MAS/CAS/SAS/RAS payload out of the TAS data
+    directory so the PEAS validator gets exercised against actual
+    librarian-provided artefacts rather than synthetic fixtures.
+    """
+    with ndjson_path.open() as f:
+        line = f.readline()
+    if not line:
+        raise RuntimeError(f"NDJSON file is empty: {ndjson_path}")
+    entry = json.loads(line)
+    if not isinstance(entry, dict):
+        raise RuntimeError(
+            f"NDJSON {ndjson_path}: expected object at line 1, got {type(entry).__name__}"
+        )
+    return entry
+
+
+def test_strict_resolves_peas_to_mas_ref_on_real_magnetic() -> None:
+    """The PEAS magnetic branch ``$ref``s the MAS magnetic schema by URI
+    (``https://psma.com/mas/magnetic.json``). This test inlines a real
+    MAS document from ``TAS/data/magnetics.ndjson`` as a component's
+    ``data`` payload and runs strict validation, verifying that:
+
+      1. The cross-schema ``$ref`` from PEAS to MAS resolves cleanly
+         through the registry (no ``schema_ref`` violations) — this is
+         the regression guard for the host migration committed in
+         249751f (openconverters.com / openmagnetics.com → psma.com,
+         aligned with MAS's existing ``$id`` scheme).
+
+      2. PEAS root validation actually runs on the inline MAS document
+         (not silently skipped). Confirmed by observing the legitimate
+         "missing 'inputs' property" violation: NDJSON entries are MAS-
+         only and don't yet carry the per-component PEAS ``inputs``
+         block — that's librarian work (Phase B carry-over). What
+         matters here is the *shape* of the violation: ``peas_root``,
+         not ``schema_ref``.
+
+    Before the URI migration this test would have produced a
+    ``schema_ref`` violation ("schema reference unresolvable") because
+    PEAS's ``$ref: http://openmagnetics.com/schemas/magnetic.json`` had
+    no matching ``$id`` in any loaded schema (MAS declared
+    ``https://psma.com/mas/magnetic.json``). After the migration the
+    URIs align and the lookup succeeds.
+    """
+    magnetics_path = Path(__file__).resolve().parents[2] / "TAS" / "data" / "magnetics.ndjson"
+    if not magnetics_path.exists():
+        pytest.skip(f"{magnetics_path} not present — test requires real NDJSON data")
+
+    mag = _first_real_entry(magnetics_path)
+    if "magnetic" not in mag:
+        pytest.fail(
+            f"first entry of {magnetics_path.name} is not wrapped as "
+            f"{{'magnetic': ...}} — TAS data shape has regressed"
+        )
+
+    tas = _minimal_tas_with_data(mag)
+    report = validate_tas(tas, strict=True)
+
+    schema_ref = [v for v in report.violations if v.code == "schema_ref"]
+    assert not schema_ref, (
+        "PEAS→MAS $ref resolution failed — the URI migration regressed:\n"
+        + "\n".join(f"  {v.path}: {v.message}" for v in schema_ref)
+    )
+
+    # Positive assertion: the PEAS layer ran. Otherwise this test would
+    # be vacuous (an inline data payload that nobody validates would
+    # also produce zero schema_ref violations).
+    peas_root_violations = [v for v in report.violations if v.code == "peas_root"]
+    assert peas_root_violations, (
+        "PEAS root validation produced zero violations on an inline MAS "
+        "document that is known to lack the per-component 'inputs' block "
+        "— suggests the PEAS layer was silently skipped. Check that "
+        "_validate_component_peas is wired into validate_tas for inline "
+        "(non-string) data payloads."
+    )
