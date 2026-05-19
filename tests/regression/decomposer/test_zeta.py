@@ -82,16 +82,16 @@ def test_zeta_tas_round_trip_shape() -> None:
     assert roles == ["switchingCell", "control"], roles
 
     sc = tas["topology"]["stages"][0]
-    names = {c["name"] for c in sc["circuit"]["components"]}
+    names = {c["name"] for c in sc["circuit"]["components"] if not c["name"].startswith("P_")}
     assert names == {"Q1", "D1", "L1", "L2", "C_flying", "C_out"}, names
 
     conn_names = {c["name"] for c in sc["circuit"]["connections"]}
     assert conn_names == {"node_SW", "node_X"}, conn_names
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    assert set(ports) == {"Vin", "Vout", "GND", "Q1_gate"}
+    assert set(ports) == {"Vin", "Vout", "GND"}
     # Zeta signature: Vin enters at Q1.D (high-side switch)
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"]}
+    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
     assert vin_eps == {("Q1", "D")}, vin_eps
-    vout_eps = {(e["component"], e["pin"]) for e in ports["Vout"]["endpoints"]}
+    vout_eps = {(e["component"], e["pin"]) for e in ports["Vout"]["endpoints"] if not e["component"].startswith("P_")}
     assert vout_eps == {("L2", "2"), ("C_out", "1")}, vout_eps

@@ -260,10 +260,15 @@ def test_round_trip_isolated_flyback():
     # Reader must collapse the K-pair back into a single multi-winding
     # magnetic with inline inductances + coupling.
     comps = tas_b["stages"][0]["circuit"]["components"]
-    transformers = [c for c in comps if c["category"] == "magnetic" and c.get("pins")]
+    # Multi-winding magnetics carry per-winding 'inductances' (vs single-
+    # winding inductors that have a scalar 'value' or none). 'pins' is no
+    # longer emitted — winding identity is encoded in connection endpoints.
+    transformers = [c for c in comps if c["category"] == "magnetic" and c.get("inductances")]
     assert len(transformers) == 1, comps
     t1 = transformers[0]
-    assert sorted(t1["pins"]) == ["pri.1", "pri.2", "sec0.1", "sec0.2"]
+    # Derive pin set from observed connections (single switchingCell stage).
+    t1_pins = sorted({ep["pin"] for w in tas_b.get("interStageCircuit", []) for ep in w.get("endpoints", []) if ep["component"] == t1["name"]})
+    assert t1_pins == ["pri.1", "pri.2", "sec0.1", "sec0.2"], t1_pins
     assert t1["coupling"] == pytest.approx(0.999, abs=1e-9)
     # sorted-label order matches: pri then sec0.
     assert t1["inductances"] == pytest.approx([1.0e-3, 250e-6])
@@ -363,7 +368,7 @@ def test_round_trip_isolated_llc():
 
     # Reader must keep R_bal_hi / R_bal_lo as real BOM (regression
     # against the over-eager _BUS_BAL_RE bleeder filter).
-    b_names = {c["name"] for c in tas_b["stages"][0]["circuit"]["components"]}
+    b_names = {c["name"] for c in tas_b["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert "R_bal_hi" in b_names, b_names
     assert "R_bal_lo" in b_names, b_names
 
@@ -371,11 +376,12 @@ def test_round_trip_isolated_llc():
     # with 6 pins (pri.1/.2 + sec0.1/.2 + sec1.1/.2 in sorted-label order).
     transformers = [
         c for c in tas_b["stages"][0]["circuit"]["components"]
-        if c["category"] == "magnetic" and c.get("pins")
+        if c["category"] == "magnetic" and c.get("inductances")
     ]
     assert len(transformers) == 1, transformers
     t1 = transformers[0]
-    assert sorted(t1["pins"]) == [
+    t1_pins = sorted({ep["pin"] for w in tas_b.get("interStageCircuit", []) for ep in w.get("endpoints", []) if ep["component"] == t1["name"]})
+    assert t1_pins == [
         "pri.1", "pri.2", "sec0.1", "sec0.2", "sec1.1", "sec1.2",
     ]
     assert t1["coupling"] == pytest.approx(0.999, abs=1e-9)

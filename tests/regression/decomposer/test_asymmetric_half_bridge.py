@@ -95,10 +95,10 @@ def test_ahb_tas_shape() -> None:
     roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == ["inverter", "isolation", "outputRectifier", "control"], roles
 
-    inv_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
+    inv_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert inv_names == {"Q1", "Q2", "C_b"}, inv_names
 
-    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
+    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert rect_names == {"D1", "D2", "D3", "D4", "L_out0", "C_out0"}, rect_names
 
     drives = {d["component"] for d in tas["topology"]["stages"][3]["drives"]}
@@ -106,5 +106,5 @@ def test_ahb_tas_shape() -> None:
 
     # Vin must reach Q1.D and C_b.1 (no others).
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"]}
+    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
     assert vin_eps == {("Q1", "D"), ("C_b", "1")}, vin_eps

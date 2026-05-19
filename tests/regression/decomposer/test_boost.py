@@ -81,14 +81,14 @@ def test_boost_tas_round_trip_shape() -> None:
     assert roles == ["switchingCell", "control"], roles
 
     sc = tas["topology"]["stages"][0]
-    names = {c["name"] for c in sc["circuit"]["components"]}
+    names = {c["name"] for c in sc["circuit"]["components"] if not c["name"].startswith("P_")}
     assert names == {"Q1", "D1", "L1", "C_out"}, names
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    assert set(ports) == {"Vin", "Vout", "GND", "Q1_gate"}
+    assert set(ports) == {"Vin", "Vout", "GND"}
     # Vin must land on the inductor (boost signature)
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"]}
+    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
     assert vin_eps == {("L1", "1")}, vin_eps
     # Vout must land on D1.K and C_out.1
-    vout_eps = {(e["component"], e["pin"]) for e in ports["Vout"]["endpoints"]}
+    vout_eps = {(e["component"], e["pin"]) for e in ports["Vout"]["endpoints"] if not e["component"].startswith("P_")}
     assert vout_eps == {("D1", "K"), ("C_out", "1")}, vout_eps

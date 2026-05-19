@@ -71,6 +71,10 @@
             {
               "name": "Q4",
               "data": "TAS/data/mosfets.ndjson?placeholder=Q4"
+            },
+            {
+              "name": "P_Vin",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vin"
             }
           ],
           "connections": []
@@ -85,12 +89,12 @@
         },
         "outputPorts": [
           {
-            "type": "winding",
+            "type": "hfAc",
             "wire": "sec_a_o1",
             "name": "sec_a"
           },
           {
-            "type": "winding",
+            "type": "hfAc",
             "wire": "sec_b_o1",
             "name": "sec_b"
           }
@@ -103,13 +107,7 @@
             },
             {
               "name": "T1",
-              "data": "TAS/data/magnetics.ndjson?placeholder=T1",
-              "pins": [
-                "pri.1",
-                "pri.2",
-                "sec0.1",
-                "sec0.2"
-              ]
+              "data": "TAS/data/magnetics.ndjson?placeholder=T1"
             }
           ],
           "connections": [
@@ -134,7 +132,7 @@
         "name": "secondary_bridge",
         "role": "outputRectifier",
         "inputPort": {
-          "type": "winding",
+          "type": "hfAc",
           "wire": "sec_a_o1"
         },
         "outputPorts": [
@@ -183,6 +181,10 @@
             {
               "name": "C_out0",
               "data": "TAS/data/capacitors.ndjson?placeholder=C_out0"
+            },
+            {
+              "name": "P_Vout0_external",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vout0_external"
             }
           ],
           "connections": []
@@ -255,6 +257,10 @@
           {
             "component": "Q3",
             "pin": "D"
+          },
+          {
+            "component": "P_Vin",
+            "pin": "1"
           }
         ]
       },
@@ -356,6 +362,10 @@
           {
             "component": "C_out0",
             "pin": "1"
+          },
+          {
+            "component": "P_Vout0_external",
+            "pin": "1"
           }
         ]
       },
@@ -382,86 +392,6 @@
           {
             "component": "C_out0",
             "pin": "2"
-          }
-        ]
-      },
-      {
-        "name": "Q1_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q1",
-            "pin": "G"
-          }
-        ]
-      },
-      {
-        "name": "Q2_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q2",
-            "pin": "G"
-          }
-        ]
-      },
-      {
-        "name": "Q3_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q3",
-            "pin": "G"
-          }
-        ]
-      },
-      {
-        "name": "Q4_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q4",
-            "pin": "G"
-          }
-        ]
-      },
-      {
-        "name": "Q5_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q5",
-            "pin": "G"
-          }
-        ]
-      },
-      {
-        "name": "Q6_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q6",
-            "pin": "G"
-          }
-        ]
-      },
-      {
-        "name": "Q7_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q7",
-            "pin": "G"
-          }
-        ]
-      },
-      {
-        "name": "Q8_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q8",
-            "pin": "G"
           }
         ]
       }

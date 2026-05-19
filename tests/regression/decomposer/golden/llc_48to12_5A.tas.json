@@ -79,6 +79,10 @@
             {
               "name": "L_r",
               "data": "TAS/data/magnetics.ndjson?placeholder=L_r"
+            },
+            {
+              "name": "P_Vin",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vin"
             }
           ],
           "connections": [
@@ -140,15 +144,7 @@
           "components": [
             {
               "name": "T1",
-              "data": "TAS/data/magnetics.ndjson?placeholder=T1",
-              "pins": [
-                "pri.1",
-                "pri.2",
-                "sec1.1",
-                "sec1.2",
-                "sec2.1",
-                "sec2.2"
-              ]
+              "data": "TAS/data/magnetics.ndjson?placeholder=T1"
             }
           ],
           "connections": []
@@ -180,6 +176,10 @@
             {
               "name": "C_out0",
               "data": "TAS/data/capacitors.ndjson?placeholder=C_out0"
+            },
+            {
+              "name": "P_Vout0",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vout0"
             }
           ],
           "connections": []
@@ -231,6 +231,10 @@
           },
           {
             "component": "R_bal_hi",
+            "pin": "1"
+          },
+          {
+            "component": "P_Vin",
             "pin": "1"
           }
         ]
@@ -337,6 +341,10 @@
           {
             "component": "C_out0",
             "pin": "1"
+          },
+          {
+            "component": "P_Vout0",
+            "pin": "1"
           }
         ]
       },
@@ -355,26 +363,6 @@
           {
             "component": "Q_LO",
             "pin": "S"
-          }
-        ]
-      },
-      {
-        "name": "Q_HI_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q_HI",
-            "pin": "G"
-          }
-        ]
-      },
-      {
-        "name": "Q_LO_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q_LO",
-            "pin": "G"
           }
         ]
       }

@@ -97,23 +97,23 @@ def test_weinberg_tas_shape() -> None:
     )
     roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == [
-        "inputFilter",
+        "lineFilter",
         "switchingCell",
         "isolation",
         "outputRectifier",
         "control",
     ], roles
 
-    input_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
+    input_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert input_names == {"L1"}, input_names
 
-    sc_names = {c["name"] for c in tas["topology"]["stages"][1]["circuit"]["components"]}
+    sc_names = {c["name"] for c in tas["topology"]["stages"][1]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert sc_names == {"Q1", "Q2"}, sc_names
 
-    iso_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
+    iso_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert iso_names == {"T1"}, iso_names
 
-    rect_names = {c["name"] for c in tas["topology"]["stages"][3]["circuit"]["components"]}
+    rect_names = {c["name"] for c in tas["topology"]["stages"][3]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert rect_names == {"D1", "D2", "C_out0"}, rect_names
 
     drives = {d["component"] for d in tas["topology"]["stages"][4]["drives"]}
@@ -121,5 +121,5 @@ def test_weinberg_tas_shape() -> None:
 
     # Vin enters at L1.a.1 and L1.b.1 (NOT at any switch drain).
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"]}
+    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
     assert vin_eps == {("L1", "a.1"), ("L1", "b.1")}, vin_eps

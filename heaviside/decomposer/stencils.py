@@ -54,6 +54,7 @@ _DATA_URL = {
     "capacitor":  "TAS/data/capacitors.ndjson?placeholder={name}",
     "resistor":   "TAS/data/resistors.ndjson?placeholder={name}",
     "controller": "TAS/data/controllers.ndjson?placeholder={name}",
+    "terminal":   "TAS/data/terminals.ndjson?placeholder={name}",
 }
 
 
@@ -260,15 +261,91 @@ def _gnd_wire(*endpoints: tuple[str, str]) -> dict[str, Any]:
 
 
 def _gate_wires(*switches: str) -> list[dict[str, Any]]:
-    """One ``<Q>_gate`` wire per active switch."""
-    return [
-        {
-            "name": f"{q}_gate",
-            "kind": "wire",
-            "endpoints": [{"component": q, "pin": "G"}],
-        }
-        for q in switches
-    ]
+    """Gate signals are now declared exclusively via the controller
+    stage's ``drives`` list. The TAS writer derives the gate net name
+    (``{Q}_gate``) from drives, so the stencil no longer needs to emit
+    singleton stub wires (which would violate the TAS schema's
+    ``minItems: 2`` on ``connection.endpoints``).
+
+    Kept as a no-op for call-site compatibility — the existing
+    ``*_gate_wires("Q1", ...)`` splats in every stencil now contribute
+    nothing to ``interStageCircuit``.
+    """
+    _ = switches  # intentionally unused; see docstring.
+    return []
+
+
+# -----------------------------------------------------------------------------
+# External terminals
+# -----------------------------------------------------------------------------
+#
+# Every wire that crosses the converter boundary terminates at a real
+# board terminal (screw terminal, header pin, solder pad, connector
+# finger). The TAS connection schema requires every connection to carry
+# ≥2 endpoints, so an externalPort with only internal pins listed is
+# both schema-invalid AND under-models the physics: the conductor that
+# carries Vin onto the board is a real BOM item with measurable contact
+# resistance, current rating, and thermal mass.
+#
+# ``_attach_external_terminals`` is a post-processor: it walks the
+# topology emitted by a stencil, finds every externalPort connection,
+# and ensures it has a terminal endpoint. Terminals are added once per
+# external port label, placed in the stage that owns the first existing
+# endpoint, and named ``P_<label>`` (e.g. ``P_Vin``, ``P_Vout``,
+# ``P_Vout0``). The same helper is idempotent so stencils that already
+# emit terminals explicitly are unaffected.
+
+
+def _attach_external_terminals(topology: dict[str, Any]) -> dict[str, Any]:
+    """Mutate ``topology`` in place: for every externalPort connection,
+    ensure a board-terminal component is wired in as one of the
+    endpoints. Returns the same dict for call-site chaining.
+
+    Idempotent: a connection that already references a ``P_<label>``
+    terminal component is left untouched.
+    """
+    inter = topology.get("interStageCircuit", [])
+    if not inter:
+        return topology
+
+    # Index stages by component name → stage dict, so we can put the
+    # terminal in the same stage that owns the existing endpoint.
+    stages = topology.get("stages", [])
+    comp_to_stage: dict[str, dict[str, Any]] = {}
+    for st in stages:
+        for c in st.get("circuit", {}).get("components", []):
+            comp_to_stage[c["name"]] = st
+
+    for conn in inter:
+        if conn.get("kind") != "externalPort":
+            continue
+        endpoints = conn.get("endpoints", [])
+        terminal_name = f"P_{conn['name']}"
+        # Skip if a terminal is already present.
+        if any(ep.get("component") == terminal_name for ep in endpoints):
+            continue
+        if not endpoints:
+            # No anchor stage to attach the terminal to — leave as-is
+            # so the conformance gate surfaces the producer bug.
+            continue
+
+        # Anchor the terminal in the stage that owns the first
+        # endpoint's component.
+        anchor_comp = endpoints[0]["component"]
+        anchor_stage = comp_to_stage.get(anchor_comp)
+        if anchor_stage is None:
+            continue  # producer bug — referenced component not in any stage
+
+        # Add the terminal component if not yet present.
+        comps = anchor_stage["circuit"].setdefault("components", [])
+        if not any(c["name"] == terminal_name for c in comps):
+            comps.append(_component("terminal", terminal_name))
+            comp_to_stage[terminal_name] = anchor_stage
+
+        # Append the terminal endpoint to the connection.
+        endpoints.append({"component": terminal_name, "pin": "1"})
+
+    return topology
 
 
 def _control_stage() -> dict[str, Any]:    return {
@@ -866,17 +943,20 @@ def four_switch_buck_boost(deck: SpiceDeck) -> TasTopology:
 _INDUCTOR_REFDES = ("Lpri", "Lsec0", "Lsec1", "Lsec2", "Ldemag", "Lout0", "Lout1")
 
 
-def _t1_component(windings: tuple[str, ...]) -> dict[str, Any]:
+def _t1_component(windings: tuple[str, ...] = ()) -> dict[str, Any]:
     """Return the TAS dict for a multi-winding transformer T1.
 
-    ``windings`` enumerates which TAS pins T1 exposes — e.g.
-    ``("pri", "sec0")`` for a 2-winding flyback, ``("pri", "sec0", "demag")``
-    for a single-switch forward.
+    ``windings`` is retained for call-site readability but no longer
+    affects the emitted TAS document — magnetic pin sets are derived by
+    the writer from observed connection endpoints (every magnetic pin
+    must already appear in some connection, else _assign_nets raises a
+    dangling-pin error). The pin-name convention ``<winding>.<idx>``
+    used by connection endpoints (e.g. ``pri.1``, ``sec0.2``) still
+    encodes winding membership for the writer's multi-winding emission.
     """
     return {
         "name": "T1",
         "data": _DATA_URL["magnetic"].format(name="T1"),
-        "pins": [f"{w}.{i}" for w in windings for i in (1, 2)],
     }
 
 
@@ -895,9 +975,9 @@ def _isolation_stage(
     return {
         "name": "isolation",
         "role": "isolation",
-        "inputPort":  {"type": "switchNode", "wire": input_wire},
+        "inputPort":  {"type": "pulsatingDc", "wire": input_wire},
         "outputPorts": [
-            {"type": "winding", "wire": w} for w in output_wires
+            {"type": "hfAc", "wire": w} for w in output_wires
         ],
         "circuit": {
             "components": [_t1_component(windings)],
@@ -965,7 +1045,7 @@ def flyback(deck: SpiceDeck) -> TasTopology:
         "name": "primary_switch",
         "role": "switchingCell",
         "inputPort":  {"type": "dcBus",     "wire": "Vin"},
-        "outputPorts": [{"type": "switchNode", "wire": "switch_node"}],
+        "outputPorts": [{"type": "pulsatingDc", "wire": "switch_node"}],
         "circuit": {
             "components": [_component("mosfet", "Q1")],   # ← S1
             "connections": [],
@@ -981,7 +1061,7 @@ def flyback(deck: SpiceDeck) -> TasTopology:
     output_rectifier_0 = {
         "name": "output_0",
         "role": "outputRectifier",
-        "inputPort":  {"type": "winding",  "wire": "sec0_node"},
+        "inputPort":  {"type": "hfAc",  "wire": "sec0_node"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
@@ -1102,7 +1182,7 @@ def single_switch_forward(deck: SpiceDeck) -> TasTopology:
         "name": "primary_switch",
         "role": "switchingCell",
         "inputPort":  {"type": "dcBus",     "wire": "Vin"},
-        "outputPorts": [{"type": "switchNode", "wire": "switch_node"}],
+        "outputPorts": [{"type": "pulsatingDc", "wire": "switch_node"}],
         "circuit": {
             "components": [
                 _component("mosfet", "Q1"),       # ← S1
@@ -1124,7 +1204,7 @@ def single_switch_forward(deck: SpiceDeck) -> TasTopology:
     output_rectifier_0 = {
         "name": "output_0",
         "role": "outputRectifier",
-        "inputPort":  {"type": "winding",  "wire": "sec0_node"},
+        "inputPort":  {"type": "hfAc",  "wire": "sec0_node"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
@@ -1255,7 +1335,7 @@ def active_clamp_forward(deck: SpiceDeck) -> TasTopology:
         "name": "primary_switch",
         "role": "switchingCell",
         "inputPort":  {"type": "dcBus",     "wire": "Vin"},
-        "outputPorts": [{"type": "switchNode", "wire": "switch_node"}],
+        "outputPorts": [{"type": "pulsatingDc", "wire": "switch_node"}],
         "circuit": {
             "components": [
                 _component("mosfet",    "Q1"),        # ← S1
@@ -1284,7 +1364,7 @@ def active_clamp_forward(deck: SpiceDeck) -> TasTopology:
     output_rectifier_0 = {
         "name": "output_0",
         "role": "outputRectifier",
-        "inputPort":  {"type": "winding",  "wire": "sec0_node"},
+        "inputPort":  {"type": "hfAc",  "wire": "sec0_node"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
@@ -1394,7 +1474,7 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
         "name": "primary_switch",
         "role": "switchingCell",
         "inputPort":  {"type": "dcBus",     "wire": "Vin"},
-        "outputPorts": [{"type": "switchNode", "wire": "switch_node"}],
+        "outputPorts": [{"type": "pulsatingDc", "wire": "switch_node"}],
         "circuit": {
             "components": [
                 _component("mosfet", "Q1"),   # ← S1
@@ -1414,7 +1494,7 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
     output_filter_pri = {
         "name": "output_pri",
         "role": "outputFilter",
-        "inputPort":  {"type": "winding",  "wire": "Vout_pri"},
+        "inputPort":  {"type": "hfAc",  "wire": "Vout_pri"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout_pri"}],
         "circuit": {
             "components": [_component("capacitor", "C_pri")],   # ← Cpri
@@ -1425,7 +1505,7 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
     output_rectifier_0 = {
         "name": "output_0",
         "role": "outputRectifier",
-        "inputPort":  {"type": "winding",  "wire": "sec0_node"},
+        "inputPort":  {"type": "hfAc",  "wire": "sec0_node"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
@@ -1536,7 +1616,7 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
         "name": "primary_switch",
         "role": "switchingCell",
         "inputPort":  {"type": "dcBus",     "wire": "Vin"},
-        "outputPorts": [{"type": "switchNode", "wire": "switch_node"}],
+        "outputPorts": [{"type": "pulsatingDc", "wire": "switch_node"}],
         "circuit": {
             "components": [_component("mosfet", "Q1")],   # ← S1
             "connections": [],
@@ -1554,7 +1634,7 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
     output_rectifier_pri = {
         "name": "output_pri",
         "role": "outputRectifier",
-        "inputPort":  {"type": "switchNode", "wire": "switch_node"},
+        "inputPort":  {"type": "pulsatingDc", "wire": "switch_node"},
         "outputPorts": [{"type": "dcOutput",  "wire": "Vout_pri"}],
         "circuit": {
             "components": [
@@ -1568,7 +1648,7 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
     output_rectifier_0 = {
         "name": "output_0",
         "role": "outputRectifier",
-        "inputPort":  {"type": "winding",  "wire": "sec0_node"},
+        "inputPort":  {"type": "hfAc",  "wire": "sec0_node"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
@@ -1699,8 +1779,8 @@ def two_switch_forward(deck: SpiceDeck) -> TasTopology:
         "inputPort":  {"type": "dcBus", "wire": "Vin"},
         # Two switch-node outputs feed both ends of T1.pri.
         "outputPorts": [
-            {"type": "switchNode", "wire": "switch_node"},
-            {"type": "switchNode", "wire": "pri_gnd_node"},
+            {"type": "pulsatingDc", "wire": "switch_node"},
+            {"type": "pulsatingDc", "wire": "pri_gnd_node"},
         ],
         "circuit": {
             "components": [
@@ -1719,10 +1799,10 @@ def two_switch_forward(deck: SpiceDeck) -> TasTopology:
     isolation = {
         "name": "isolation",
         "role": "isolation",
-        "inputPort": {"type": "switchNode", "wire": "switch_node"},
+        "inputPort": {"type": "pulsatingDc", "wire": "switch_node"},
         "outputPorts": [
-            {"type": "switchNode", "wire": "pri_gnd_node"},  # secondary-of-pri return
-            {"type": "winding",    "wire": "sec0_node"},
+            {"type": "pulsatingDc", "wire": "pri_gnd_node"},  # secondary-of-pri return
+            {"type": "hfAc",    "wire": "sec0_node"},
         ],
         "circuit": {
             "components": [_t1_component(("pri", "sec0"))],
@@ -1733,7 +1813,7 @@ def two_switch_forward(deck: SpiceDeck) -> TasTopology:
     output_rectifier_0 = {
         "name": "output_0",
         "role": "outputRectifier",
-        "inputPort":  {"type": "winding",  "wire": "sec0_node"},
+        "inputPort":  {"type": "hfAc",  "wire": "sec0_node"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
@@ -2146,8 +2226,8 @@ def push_pull(deck: SpiceDeck) -> TasTopology:
         # Vin enters via T1 center tap (see isolation stage).
         "inputPort":  {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [
-            {"type": "switchNode", "wire": "sw_top_node"},
-            {"type": "switchNode", "wire": "sw_bot_node"},
+            {"type": "pulsatingDc", "wire": "sw_top_node"},
+            {"type": "pulsatingDc", "wire": "sw_bot_node"},
         ],
         "circuit": {
             "components": [
@@ -2168,8 +2248,8 @@ def push_pull(deck: SpiceDeck) -> TasTopology:
         # two secondary winding ends.
         "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [
-            {"type": "winding", "wire": "sec_top_node", "name": "sec_top"},
-            {"type": "winding", "wire": "sec_bot_node", "name": "sec_bot"},
+            {"type": "hfAc", "wire": "sec_top_node", "name": "sec_top"},
+            {"type": "hfAc", "wire": "sec_bot_node", "name": "sec_bot"},
         ],
         "circuit": {
             "components": [
@@ -2183,7 +2263,7 @@ def push_pull(deck: SpiceDeck) -> TasTopology:
         "name": "output_0",
         "role": "outputRectifier",
         # Two winding inputs feed the diode-OR at sec_rect.
-        "inputPort":  {"type": "winding",  "wire": "sec_top_node"},
+        "inputPort":  {"type": "hfAc",  "wire": "sec_top_node"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
@@ -2383,8 +2463,8 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
         "role": "isolation",
         "inputPort": {"type": "hfAc", "wire": "pri_top"},
         "outputPorts": [
-            {"type": "winding", "wire": "sec_a", "name": "sec_a"},
-            {"type": "winding", "wire": "sec_b", "name": "sec_b"},
+            {"type": "hfAc", "wire": "sec_a", "name": "sec_a"},
+            {"type": "hfAc", "wire": "sec_b", "name": "sec_b"},
         ],
         "circuit": {
             "components": [_t1_component(("pri", "sec0"))],
@@ -2395,7 +2475,7 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
     output_rectifier_0 = {
         "name": "output_0",
         "role": "outputRectifier",
-        "inputPort":  {"type": "winding",  "wire": "sec_a"},
+        "inputPort":  {"type": "hfAc",  "wire": "sec_a"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
@@ -2602,8 +2682,8 @@ def asymmetric_half_bridge(deck: SpiceDeck) -> TasTopology:
         "role": "isolation",
         "inputPort": {"type": "hfAc", "wire": "pri_top"},
         "outputPorts": [
-            {"type": "winding", "wire": "sec_a", "name": "sec_a"},
-            {"type": "winding", "wire": "sec_b", "name": "sec_b"},
+            {"type": "hfAc", "wire": "sec_a", "name": "sec_a"},
+            {"type": "hfAc", "wire": "sec_b", "name": "sec_b"},
         ],
         "circuit": {
             "components": [_t1_component(("pri", "sec0"))],
@@ -2614,7 +2694,7 @@ def asymmetric_half_bridge(deck: SpiceDeck) -> TasTopology:
     output_rectifier_0 = {
         "name": "output_0",
         "role": "outputRectifier",
-        "inputPort":  {"type": "winding",  "wire": "sec_a"},
+        "inputPort":  {"type": "hfAc",  "wire": "sec_a"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
@@ -2823,7 +2903,7 @@ def weinberg(deck: SpiceDeck) -> TasTopology:
 
     input_filter = {
         "name": "input_coupled_inductor",
-        "role": "inputFilter",
+        "role": "lineFilter",
         "inputPort":  {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [
             {"type": "hfAc", "wire": "priCT_a", "name": "priCT_a"},
@@ -2834,7 +2914,6 @@ def weinberg(deck: SpiceDeck) -> TasTopology:
                 {
                     "name": "L1",
                     "data": _DATA_URL["magnetic"].format(name="L1"),
-                    "pins": ["a.1", "a.2", "b.1", "b.2"],
                 },
             ],
             "connections": [],
@@ -2849,8 +2928,8 @@ def weinberg(deck: SpiceDeck) -> TasTopology:
         # metadata only — see push_pull stencil for the same pattern.
         "inputPort":  {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [
-            {"type": "switchNode", "wire": "drainQ1"},
-            {"type": "switchNode", "wire": "drainQ2"},
+            {"type": "pulsatingDc", "wire": "drainQ1"},
+            {"type": "pulsatingDc", "wire": "drainQ2"},
         ],
         "circuit": {
             "components": [
@@ -2867,10 +2946,10 @@ def weinberg(deck: SpiceDeck) -> TasTopology:
         # CT-CT transformer: primary CT enters at priCT_a/priCT_b
         # (driven from L1), switch drains pull the outer ends to 0.
         # Secondary CT = GND, diode anodes at outer ends.
-        "inputPort": {"type": "switchNode", "wire": "drainQ1"},
+        "inputPort": {"type": "pulsatingDc", "wire": "drainQ1"},
         "outputPorts": [
-            {"type": "winding", "wire": "diodePos", "name": "sec_a"},
-            {"type": "winding", "wire": "diodeNeg", "name": "sec_b"},
+            {"type": "hfAc", "wire": "diodePos", "name": "sec_a"},
+            {"type": "hfAc", "wire": "diodeNeg", "name": "sec_b"},
         ],
         "circuit": {
             "components": [
@@ -2883,7 +2962,7 @@ def weinberg(deck: SpiceDeck) -> TasTopology:
     output_rectifier = {
         "name": "output_0",
         "role": "outputRectifier",
-        "inputPort":  {"type": "winding",  "wire": "diodePos"},
+        "inputPort":  {"type": "hfAc",  "wire": "diodePos"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
@@ -3145,8 +3224,8 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
         "role": "isolation",
         "inputPort": {"type": "hfAc", "wire": "bridge_a1"},
         "outputPorts": [
-            {"type": "winding", "wire": "sec_a_o1", "name": "sec_a"},
-            {"type": "winding", "wire": "sec_b_o1", "name": "sec_b"},
+            {"type": "hfAc", "wire": "sec_a_o1", "name": "sec_a"},
+            {"type": "hfAc", "wire": "sec_b_o1", "name": "sec_b"},
         ],
         "circuit": {
             "components": [
@@ -3175,7 +3254,7 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
         # Two winding inputs feed the secondary full bridge; Vout0 is
         # the bidirectional DC bus (sourced when DAB is in rectifier
         # mode, sunk when in inverter mode).
-        "inputPort":  {"type": "winding",  "wire": "sec_a_o1"},
+        "inputPort":  {"type": "hfAc",  "wire": "sec_a_o1"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [

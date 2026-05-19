@@ -54,7 +54,7 @@
         },
         "outputPorts": [
           {
-            "type": "switchNode",
+            "type": "pulsatingDc",
             "wire": "switch_node"
           }
         ],
@@ -63,6 +63,10 @@
             {
               "name": "Q1",
               "data": "TAS/data/mosfets.ndjson?placeholder=Q1"
+            },
+            {
+              "name": "P_Vin",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vin"
             }
           ],
           "connections": []
@@ -72,12 +76,12 @@
         "name": "isolation",
         "role": "isolation",
         "inputPort": {
-          "type": "switchNode",
+          "type": "pulsatingDc",
           "wire": "switch_node"
         },
         "outputPorts": [
           {
-            "type": "winding",
+            "type": "hfAc",
             "wire": "sec0_node"
           }
         ],
@@ -85,13 +89,7 @@
           "components": [
             {
               "name": "T1",
-              "data": "TAS/data/magnetics.ndjson?placeholder=T1",
-              "pins": [
-                "pri.1",
-                "pri.2",
-                "sec0.1",
-                "sec0.2"
-              ]
+              "data": "TAS/data/magnetics.ndjson?placeholder=T1"
             }
           ],
           "connections": []
@@ -101,7 +99,7 @@
         "name": "output_pri",
         "role": "outputRectifier",
         "inputPort": {
-          "type": "switchNode",
+          "type": "pulsatingDc",
           "wire": "switch_node"
         },
         "outputPorts": [
@@ -119,6 +117,10 @@
             {
               "name": "C_pri",
               "data": "TAS/data/capacitors.ndjson?placeholder=C_pri"
+            },
+            {
+              "name": "P_Vout_pri",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vout_pri"
             }
           ],
           "connections": []
@@ -128,7 +130,7 @@
         "name": "output_0",
         "role": "outputRectifier",
         "inputPort": {
-          "type": "winding",
+          "type": "hfAc",
           "wire": "sec0_node"
         },
         "outputPorts": [
@@ -146,6 +148,10 @@
             {
               "name": "C_out0",
               "data": "TAS/data/capacitors.ndjson?placeholder=C_out0"
+            },
+            {
+              "name": "P_Vout0",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vout0"
             }
           ],
           "connections": []
@@ -186,6 +192,10 @@
           {
             "component": "Q1",
             "pin": "D"
+          },
+          {
+            "component": "P_Vin",
+            "pin": "1"
           }
         ]
       },
@@ -219,6 +229,10 @@
           {
             "component": "C_pri",
             "pin": "1"
+          },
+          {
+            "component": "P_Vout_pri",
+            "pin": "1"
           }
         ]
       },
@@ -248,6 +262,10 @@
           {
             "component": "C_out0",
             "pin": "1"
+          },
+          {
+            "component": "P_Vout0",
+            "pin": "1"
           }
         ]
       },
@@ -270,16 +288,6 @@
           {
             "component": "C_out0",
             "pin": "2"
-          }
-        ]
-      },
-      {
-        "name": "Q1_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q1",
-            "pin": "G"
           }
         ]
       }

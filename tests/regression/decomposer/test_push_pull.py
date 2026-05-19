@@ -114,19 +114,20 @@ def test_pushpull_tas_shape() -> None:
         "control",
     ], roles
 
-    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert sw_names == {"Q1", "Q2"}, sw_names
 
     t1 = tas["topology"]["stages"][1]["circuit"]["components"][0]
     assert t1["name"] == "T1"
-    assert set(t1["pins"]) == {
+    t1_pins = {ep["pin"] for w in tas["topology"]["interStageCircuit"] for ep in w.get("endpoints", []) if ep["component"] == "T1"}
+    assert t1_pins == {
         "pri_top.1", "pri_top.2",
         "pri_bot.1", "pri_bot.2",
         "sec_top.1", "sec_top.2",
         "sec_bot.1", "sec_bot.2",
-    }, t1["pins"]
+    }, t1_pins
 
-    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
+    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert rect_names == {"D1", "D2", "L_out0", "C_out0"}, rect_names
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
@@ -138,25 +139,23 @@ def test_pushpull_tas_shape() -> None:
         "sec_bot_node",
         "Vout0",
         "GND",
-        "Q1_gate",
-        "Q2_gate",
     }, set(ports)
 
     # Vin lands on BOTH primary center-tap pins, NOT on any switch drain.
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"]}
+    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
     assert vin_eps == {
         ("T1", "pri_top.2"),
         ("T1", "pri_bot.1"),
     }, vin_eps
 
     # Each switch drain bridges to the outer end of its primary half-winding.
-    swt = {(e["component"], e["pin"]) for e in ports["sw_top_node"]["endpoints"]}
+    swt = {(e["component"], e["pin"]) for e in ports["sw_top_node"]["endpoints"] if not e["component"].startswith("P_")}
     assert swt == {("Q1", "D"), ("T1", "pri_top.1")}, swt
-    swb = {(e["component"], e["pin"]) for e in ports["sw_bot_node"]["endpoints"]}
+    swb = {(e["component"], e["pin"]) for e in ports["sw_bot_node"]["endpoints"] if not e["component"].startswith("P_")}
     assert swb == {("Q2", "D"), ("T1", "pri_bot.2")}, swb
 
     # Both secondary center-tap pins must land on GND.
-    gnd = {(e["component"], e["pin"]) for e in ports["GND"]["endpoints"]}
+    gnd = {(e["component"], e["pin"]) for e in ports["GND"]["endpoints"] if not e["component"].startswith("P_")}
     assert ("T1", "sec_top.2") in gnd and ("T1", "sec_bot.1") in gnd
     assert ("Q1", "S") in gnd and ("Q2", "S") in gnd
 

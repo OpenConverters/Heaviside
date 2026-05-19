@@ -42,11 +42,11 @@
         },
         "outputPorts": [
           {
-            "type": "switchNode",
+            "type": "pulsatingDc",
             "wire": "sw_top_node"
           },
           {
-            "type": "switchNode",
+            "type": "pulsatingDc",
             "wire": "sw_bot_node"
           }
         ],
@@ -73,12 +73,12 @@
         },
         "outputPorts": [
           {
-            "type": "winding",
+            "type": "hfAc",
             "wire": "sec_top_node",
             "name": "sec_top"
           },
           {
-            "type": "winding",
+            "type": "hfAc",
             "wire": "sec_bot_node",
             "name": "sec_bot"
           }
@@ -87,17 +87,11 @@
           "components": [
             {
               "name": "T1",
-              "data": "TAS/data/magnetics.ndjson?placeholder=T1",
-              "pins": [
-                "pri_top.1",
-                "pri_top.2",
-                "pri_bot.1",
-                "pri_bot.2",
-                "sec_top.1",
-                "sec_top.2",
-                "sec_bot.1",
-                "sec_bot.2"
-              ]
+              "data": "TAS/data/magnetics.ndjson?placeholder=T1"
+            },
+            {
+              "name": "P_Vin",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vin"
             }
           ],
           "connections": []
@@ -107,7 +101,7 @@
         "name": "output_0",
         "role": "outputRectifier",
         "inputPort": {
-          "type": "winding",
+          "type": "hfAc",
           "wire": "sec_top_node"
         },
         "outputPorts": [
@@ -133,6 +127,10 @@
             {
               "name": "C_out0",
               "data": "TAS/data/capacitors.ndjson?placeholder=C_out0"
+            },
+            {
+              "name": "P_Vout0",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vout0"
             }
           ],
           "connections": [
@@ -200,6 +198,10 @@
           {
             "component": "T1",
             "pin": "pri_bot.1"
+          },
+          {
+            "component": "P_Vin",
+            "pin": "1"
           }
         ]
       },
@@ -271,6 +273,10 @@
           {
             "component": "C_out0",
             "pin": "1"
+          },
+          {
+            "component": "P_Vout0",
+            "pin": "1"
           }
         ]
       },
@@ -297,26 +303,6 @@
           {
             "component": "C_out0",
             "pin": "2"
-          }
-        ]
-      },
-      {
-        "name": "Q1_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q1",
-            "pin": "G"
-          }
-        ]
-      },
-      {
-        "name": "Q2_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q2",
-            "pin": "G"
           }
         ]
       }

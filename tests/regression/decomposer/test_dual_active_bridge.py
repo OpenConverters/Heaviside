@@ -103,16 +103,16 @@ def test_dab_tas_shape() -> None:
         "control",
     ], roles
 
-    pri_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
+    pri_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert pri_names == {"Q1", "Q2", "Q3", "Q4"}, pri_names
 
-    iso_names = {c["name"] for c in tas["topology"]["stages"][1]["circuit"]["components"]}
+    iso_names = {c["name"] for c in tas["topology"]["stages"][1]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert iso_names == {"L_r", "T1"}, iso_names
 
-    sec_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
+    sec_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert sec_names == {"Q5", "Q6", "Q7", "Q8"}, sec_names
 
-    of_names = {c["name"] for c in tas["topology"]["stages"][3]["circuit"]["components"]}
+    of_names = {c["name"] for c in tas["topology"]["stages"][3]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert of_names == {"C_out0"}, of_names
 
     drives = {d["component"] for d in tas["topology"]["stages"][4]["drives"]}
@@ -120,5 +120,5 @@ def test_dab_tas_shape() -> None:
 
     # Vin reaches Q1.D and Q3.D (and nothing else).
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"]}
+    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
     assert vin_eps == {("Q1", "D"), ("Q3", "D")}, vin_eps

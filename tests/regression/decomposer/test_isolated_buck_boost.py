@@ -81,20 +81,20 @@ def test_isobb_tas_round_trip_shape() -> None:
     ], roles
 
     # 1 switch (no synch rectifier).
-    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert sw_names == {"Q1"}, sw_names
 
     # Primary output rectifier has D_pri + C_pri.
-    pri_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
+    pri_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert pri_names == {"D_pri", "C_pri"}, pri_names
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {"Vin", "switch_node", "Vout_pri",
                           "sec0_node", "Vout0",
-                          "GND", "Q1_gate"}, set(ports)
+                          "GND"}, set(ports)
 
     # Switch node taps Q1.S + T1.pri.1 + D_pri.K (the inverting-BB signature).
-    sw_eps = {(e["component"], e["pin"]) for e in ports["switch_node"]["endpoints"]}
+    sw_eps = {(e["component"], e["pin"]) for e in ports["switch_node"]["endpoints"] if not e["component"].startswith("P_")}
     assert sw_eps == {("Q1", "S"), ("T1", "pri.1"), ("D_pri", "K")}, sw_eps
 
     # Controller regulates Vout_pri.

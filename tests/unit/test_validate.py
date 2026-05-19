@@ -52,15 +52,29 @@ def test_registry_builds_with_tas_and_peas_roots() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_tas_only_on_decomposer_golden_buck_only_known_stencil_bugs() -> None:
-    """Fresh decomposer output (pre-bridge) must satisfy the TAS root
-    schema except for *known* stencil bugs that are tracked separately.
+def test_tas_only_on_decomposer_golden_buck_is_clean() -> None:
+    """Fresh decomposer output (pre-bridge) for a non-isolated buck
+    must satisfy the TAS root schema with zero violations under
+    ``--tas-only``.
 
-    Known violation (deferred to a stencil-fix phase): the buck stencil
-    emits ``interStageCircuit`` connections with a single endpoint (e.g.
-    ``Q1.D`` or ``Q1.G``), but the TAS schema requires ``minItems: 2``.
-    Any *other* tas_root violation, or any schema_ref / unexpected code,
-    must fail the test loudly — that signals a regression.
+    This is a regression guard for the Phase C stencil cleanup. Earlier
+    iterations allowed a documented carve-out for single-endpoint
+    interStage connections (gate/control singletons emitted by the
+    stencils), but Phase C eliminated those entirely:
+
+      * Step 2 dropped internal-signal singleton connections — the
+        writer auto-synthesises gate nets from controller ``drives``
+        declarations.
+      * Step 3 introduced first-class ``terminal`` components so
+        externalPort connections always have ≥2 endpoints.
+      * Step 4 dropped the ``pins`` field from magnetic components in
+        favour of pin derivation from observed connection endpoints.
+
+    The remaining ``[tas_root] is too long`` violations on bridge
+    topologies (half-bridge, full-bridge, push-pull, DAB) are tracked
+    separately — they require a TAS schema unfreeze (multi-output role
+    expansion) and are exercised by their own regression tests, not
+    this gate.
 
     Note: strict mode would fail on the placeholder URIs; this test
     exercises ``--tas-only`` which skips the per-component PEAS / URI
@@ -69,21 +83,14 @@ def test_tas_only_on_decomposer_golden_buck_only_known_stencil_bugs() -> None:
     tas = _load_golden("buck_48to12_5A.tas.json")
     report = validate_tas(tas, strict=False)
 
-    unexpected = [
-        v for v in report.violations
-        if not (
-            v.code == "tas_root"
-            and "interStageCircuit" in v.path
-            and "endpoints" in v.path
-            and "too short" in v.message
-        )
-    ]
-    if unexpected:
+    if report.violations:
         pytest.fail(
-            "tas-only validation surfaced unexpected violations (not the "
-            "known single-endpoint interStageCircuit stencil bug): "
-            + "; ".join(f"[{v.code}] {v.path}: {v.message}" for v in unexpected)
+            "tas-only validation surfaced violations on a clean buck "
+            "golden — Phase C cleanup is supposed to leave non-bridge "
+            "topologies with zero schema-level issues: "
+            + "; ".join(f"[{v.code}] {v.path}: {v.message}" for v in report.violations)
         )
+    assert report.ok
 
 
 def test_tas_root_rejects_missing_topology() -> None:

@@ -79,20 +79,20 @@ def test_isobuck_tas_round_trip_shape() -> None:
         "outputRectifier", "control"
     ], roles
 
-    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert sw_names == {"Q1", "Q2"}, sw_names
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {"Vin", "switch_node", "Vout_pri",
                           "sec0_node", "Vout0",
-                          "GND", "Q1_gate", "Q2_gate"}, set(ports)
+                          "GND"}, set(ports)
 
     # Switch node has Q1.S + Q2.D + T1.pri.1
-    sw_eps = {(e["component"], e["pin"]) for e in ports["switch_node"]["endpoints"]}
+    sw_eps = {(e["component"], e["pin"]) for e in ports["switch_node"]["endpoints"] if not e["component"].startswith("P_")}
     assert sw_eps == {("Q1", "S"), ("Q2", "D"), ("T1", "pri.1")}, sw_eps
 
     # Vout_pri shares T1.pri.2 with C_pri.1 (primary buck output).
-    vp_eps = {(e["component"], e["pin"]) for e in ports["Vout_pri"]["endpoints"]}
+    vp_eps = {(e["component"], e["pin"]) for e in ports["Vout_pri"]["endpoints"] if not e["component"].startswith("P_")}
     assert vp_eps == {("T1", "pri.2"), ("C_pri", "1")}, vp_eps
 
     # Controller regulates around Vout_pri (NOT Vout0) — flybuck signature.

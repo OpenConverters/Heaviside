@@ -35,7 +35,7 @@
     "stages": [
       {
         "name": "input_coupled_inductor",
-        "role": "inputFilter",
+        "role": "lineFilter",
         "inputPort": {
           "type": "dcBus",
           "wire": "Vin"
@@ -56,13 +56,11 @@
           "components": [
             {
               "name": "L1",
-              "data": "TAS/data/magnetics.ndjson?placeholder=L1",
-              "pins": [
-                "a.1",
-                "a.2",
-                "b.1",
-                "b.2"
-              ]
+              "data": "TAS/data/magnetics.ndjson?placeholder=L1"
+            },
+            {
+              "name": "P_Vin",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vin"
             }
           ],
           "connections": []
@@ -77,11 +75,11 @@
         },
         "outputPorts": [
           {
-            "type": "switchNode",
+            "type": "pulsatingDc",
             "wire": "drainQ1"
           },
           {
-            "type": "switchNode",
+            "type": "pulsatingDc",
             "wire": "drainQ2"
           }
         ],
@@ -103,17 +101,17 @@
         "name": "isolation",
         "role": "isolation",
         "inputPort": {
-          "type": "switchNode",
+          "type": "pulsatingDc",
           "wire": "drainQ1"
         },
         "outputPorts": [
           {
-            "type": "winding",
+            "type": "hfAc",
             "wire": "diodePos",
             "name": "sec_a"
           },
           {
-            "type": "winding",
+            "type": "hfAc",
             "wire": "diodeNeg",
             "name": "sec_b"
           }
@@ -122,17 +120,7 @@
           "components": [
             {
               "name": "T1",
-              "data": "TAS/data/magnetics.ndjson?placeholder=T1",
-              "pins": [
-                "pri_a.1",
-                "pri_a.2",
-                "pri_b.1",
-                "pri_b.2",
-                "sec_a.1",
-                "sec_a.2",
-                "sec_b.1",
-                "sec_b.2"
-              ]
+              "data": "TAS/data/magnetics.ndjson?placeholder=T1"
             }
           ],
           "connections": []
@@ -142,7 +130,7 @@
         "name": "output_0",
         "role": "outputRectifier",
         "inputPort": {
-          "type": "winding",
+          "type": "hfAc",
           "wire": "diodePos"
         },
         "outputPorts": [
@@ -164,6 +152,10 @@
             {
               "name": "C_out0",
               "data": "TAS/data/capacitors.ndjson?placeholder=C_out0"
+            },
+            {
+              "name": "P_Vout0",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vout0"
             }
           ],
           "connections": [
@@ -231,6 +223,10 @@
           {
             "component": "L1",
             "pin": "b.1"
+          },
+          {
+            "component": "P_Vin",
+            "pin": "1"
           }
         ]
       },
@@ -326,6 +322,10 @@
           {
             "component": "C_out0",
             "pin": "1"
+          },
+          {
+            "component": "P_Vout0",
+            "pin": "1"
           }
         ]
       },
@@ -352,26 +352,6 @@
           {
             "component": "C_out0",
             "pin": "2"
-          }
-        ]
-      },
-      {
-        "name": "Q1_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q1",
-            "pin": "G"
-          }
-        ]
-      },
-      {
-        "name": "Q2_gate",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q2",
-            "pin": "G"
           }
         ]
       }

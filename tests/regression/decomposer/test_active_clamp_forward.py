@@ -77,22 +77,22 @@ def test_acf_tas_round_trip_shape() -> None:
     roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == ["switchingCell", "isolation", "outputRectifier", "control"], roles
 
-    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert sw_names == {"Q1", "Q_clamp", "C_clamp"}, sw_names
 
-    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]}
+    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert rect_names == {"D_fwd", "D_fw", "L_out0", "C_out0"}, rect_names
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {"Vin", "switch_node", "sec0_node", "Vout0",
-                          "GND", "Q1_gate", "Q_clamp_gate"}, set(ports)
+                          "GND"}, set(ports)
 
     # Switch node has three endpoints in active-clamp (Q1.S + Q_clamp.S + T1.pri.1).
-    sw_eps = {(e["component"], e["pin"]) for e in ports["switch_node"]["endpoints"]}
+    sw_eps = {(e["component"], e["pin"]) for e in ports["switch_node"]["endpoints"] if not e["component"].startswith("P_")}
     assert sw_eps == {("Q1", "S"), ("Q_clamp", "S"), ("T1", "pri.1")}, sw_eps
 
     # Vout exits at output choke + cap (not directly off a diode).
-    vout_eps = {(e["component"], e["pin"]) for e in ports["Vout0"]["endpoints"]}
+    vout_eps = {(e["component"], e["pin"]) for e in ports["Vout0"]["endpoints"] if not e["component"].startswith("P_")}
     assert vout_eps == {("L_out0", "2"), ("C_out0", "1")}, vout_eps
 
     # Controller drives both primary switches.

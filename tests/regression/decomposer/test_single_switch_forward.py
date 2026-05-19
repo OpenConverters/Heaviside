@@ -80,32 +80,34 @@ def test_ssforward_tas_round_trip_shape() -> None:
         "switchingCell", "isolation", "outputRectifier", "control",
     ], roles
 
-    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"]}
+    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
     assert sw_names == {"Q1", "D_demag"}, sw_names
 
     # T1 is 3-winding: pri (excitation) + demag (reset) + sec0 (forward).
     t1 = tas["topology"]["stages"][1]["circuit"]["components"][0]
     assert t1["name"] == "T1"
-    assert set(t1["pins"]) == {
+    t1_pins = {ep["pin"] for w in tas["topology"]["interStageCircuit"] for ep in w.get("endpoints", []) if ep["component"] == "T1"}
+    assert t1_pins == {
         "pri.1", "pri.2", "demag.1", "demag.2", "sec0.1", "sec0.2",
-    }, t1["pins"]
+    }, t1_pins
 
     # Injected output stage: 2 diodes (D_fwd, D_fw) + L_out0 + C_out0.
     rect_names = {
         c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]
+        if not c["name"].startswith("P_")
     }
     assert rect_names == {"D_fwd", "D_fw", "L_out0", "C_out0"}, rect_names
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {
         "Vin", "switch_node", "demag_node", "sec0_node",
-        "Vout0", "GND", "Q1_gate",
+        "Vout0", "GND",
     }, set(ports)
 
     # Vin must reach both Q1.D and D_demag.K (demag reset returns to Vin).
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"]}
+    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
     assert vin_eps == {("Q1", "D"), ("D_demag", "K")}, vin_eps
 
     # Vout0 is the LC filter port.
-    vout_eps = {(e["component"], e["pin"]) for e in ports["Vout0"]["endpoints"]}
+    vout_eps = {(e["component"], e["pin"]) for e in ports["Vout0"]["endpoints"] if not e["component"].startswith("P_")}
     assert vout_eps == {("L_out0", "2"), ("C_out0", "1")}, vout_eps
