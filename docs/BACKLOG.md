@@ -9,33 +9,30 @@ from `Now`, do it, commit, and move on without checking in.
 
 ## Now (do next, in order)
 
-1. **Fix the 8 spec-blocked topologies in `scripts/probe_extras.py`.** From
-   `docs/extras-probe-report.md`:
-   - `boost` (NaN result)
-   - `flyback` (duty cycle constraint)
-   - `isolated_buck`, `isolated_buck_boost` (need ≥2 output voltages)
-   - `asymmetric_half_bridge` (needs nested `dutyCycle`)
-   - `phase_shifted_full_bridge`, `phase_shifted_half_bridge` (needs nested
-     `phaseShift` — top-level rejected)
-   - `cllc` (powerFlow)
-   - `clllc` (highVoltageBusVoltage)
-
-   Per-topology spec shapes live in MKF `converter_models/Advanced<Topology>.h`
-   headers. Goal: every converter in the probe lands in `OK` or
-   `EXPECTED_EMPTY`, exit code 0. Unblocks stencils for these topologies.
-
-2. **Stencils for the next batch of topologies** (in priority order):
+1. **Stencils for the next batch of topologies** (in priority order):
    `phase_shifted_full_bridge`, `asymmetric_half_bridge`, `push_pull`,
    `weinberg`, `series_resonant`, `dual_active_bridge`. Each needs:
    - a stencil function in `heaviside/decomposer/stencils.py`
    - a golden `.spice` + `.tas.json` under `tests/regression/decomposer/golden/`
-   - a `magnetic_binding` entry in the registry
+   - a `magnetic_binding` entry in the registry — extras roles now empirically
+     confirmed via `docs/extras-probe.json`:
+     - PSFB / PSHB → `outputInductor` + `seriesInductor`
+     - AHB → `outputInductor` (with `rectifierType=fullBridge`)
+     - push_pull → `outputInductor`
+     - weinberg → `inputCoupledInductor`
+     - SRC / DAB → `seriesInductor`
    - a row in the drift test prefix map
 
-3. **End-to-end `heaviside design` CLI command.** First user-visible surface.
+2. **End-to-end `heaviside design` CLI command.** First user-visible surface.
    Pipeline: `DesignSpec` (JSON or flags) → `decompose_from_spec` →
    `design_converter_components` → `attach_components_to_tas` → print/save
    the populated TAS. No agent layer yet — just the bridge driven from argv.
+
+3. **Resonant cap binding for LLC / SRC / CLLC / CLLLC.** Probe shows CLLC
+   exposes `Cr1_resonantCapacitor_primary` + `Cr2_resonantCapacitor_secondary`
+   and CLLLC exposes 2 caps + 2 inductors. The current bridge only attaches
+   *magnetic* extras; need an `extra_capacitors` attach path before stencils
+   for these can land. Blocks: librarian agent.
 
 ## Upstream bugs (track, can't fix from Heaviside)
 

@@ -39,9 +39,9 @@ REPORT_PATH = ROOT / "docs" / "extras-probe-report.md"
 DATA_PATH = ROOT / "docs" / "extras-probe.json"
 
 # Topologies known to be intentionally extras-free (per dispatch_extra_components
-# in vendor/PyOpenMagnetics/src/converter.cpp:1056). Probing still verifies
-# the engine answers cleanly with [].
-EXPECTED_EMPTY: set[str] = {"vienna"}
+# in vendor/PyOpenMagnetics/src/converter.cpp:1056). Probing still verifies the
+# engine answers cleanly with [] or a clear "no extras dispatch" error.
+EXPECTED_EMPTY: set[str] = {"vienna", "power_factor_correction"}
 
 # Best-effort default value for each field MKF may complain is missing.
 # Loud failure for any field outside this whitelist.
@@ -72,7 +72,18 @@ FIELD_DEFAULTS: dict[str, Any] = {
 }
 
 # Per-topology spec overrides (applied on top of the base spec before
-# any retry rounds). Use the empirically-confirmed shape from probing.
+# any retry rounds). Two reserved keys for nested control:
+#
+#   "_op_extras":            dict merged into each operatingPoints[*]
+#                            (use for fields like phaseShift / dutyCycle
+#                            / powerFlow that the AdvancedXxx schemas
+#                            place inside the OP, not at top level).
+#   "_replace_op":           if present (dict), replaces operatingPoints[0]
+#                            entirely. Use when the OP shape diverges so
+#                            much from the base that merging is messier
+#                            than rewriting.
+#
+# Anything else is a top-level key (deep-replaced via dict.update).
 PER_TOPOLOGY_OVERRIDES: dict[str, dict[str, Any]] = {
     # Resonant: minimum/maximum switching frequency window.
     "llc": {
@@ -80,12 +91,38 @@ PER_TOPOLOGY_OVERRIDES: dict[str, dict[str, Any]] = {
         "maxSwitchingFrequency": 300000.0,
     },
     "cllc": {
-        "minSwitchingFrequency": 80000.0,
-        "maxSwitchingFrequency": 300000.0,
+        # CLLC is per-OP powerFlow + bidirectional symmetric design.
+        # Pin the bus voltages high enough that 18 A draw stays valid.
+        "inputVoltage": {"minimum": 700.0, "nominal": 750.0, "maximum": 800.0},
+        "minSwitchingFrequency": 40000.0,
+        "maxSwitchingFrequency": 250000.0,
+        "qualityFactor": 0.3,
+        "symmetricDesign": True,
+        "bidirectional": True,
+        "_replace_op": {
+            "outputVoltages": [600.0],
+            "outputCurrents": [18.33],
+            "switchingFrequency": 73000.0,
+            "ambientTemperature": 25.0,
+            "powerFlow": "forward",
+        },
     },
     "clllc": {
-        "minSwitchingFrequency": 80000.0,
-        "maxSwitchingFrequency": 300000.0,
+        # CLLLC has bus voltages + per-OP powerFlowDirection.
+        "highVoltageBusVoltage": {"nominal": 400.0},
+        "lowVoltageBusVoltage": {"nominal": 400.0},
+        "minSwitchingFrequency": 250000.0,
+        "maxSwitchingFrequency": 500000.0,
+        "primaryResonantFrequency": 350000.0,
+        "qualityFactor": 0.4,
+        "inductanceRatioK": 6.0,
+        "_replace_op": {
+            "outputVoltages": [400.0],
+            "outputCurrents": [16.5],
+            "switchingFrequency": 350000.0,
+            "ambientTemperature": 25.0,
+            "powerFlowDirection": "forward",
+        },
     },
     "series_resonant": {
         "minSwitchingFrequency": 80000.0,
@@ -94,8 +131,62 @@ PER_TOPOLOGY_OVERRIDES: dict[str, dict[str, Any]] = {
     # DAB: phase-shift modulation.
     "dual_active_bridge": {"phaseShift": 0.25},
     # PFC: line-frequency operation, no DC input bound.
+    # Kept for documentation; PFC is in EXPECTED_EMPTY (no extras
+    # dispatch in PyOM), so the spec is never sent.
     "power_factor_correction": {
         "inputVoltage": {"minimum": 85.0, "nominal": 230.0, "maximum": 265.0},
+    },
+    # Flyback: relax maxDutyCycle so the solver's CCM duty stays in-range.
+    "flyback": {
+        "maximumDutyCycle": 0.6,
+    },
+    # Boost: base_spec's L=1 mH is far too large for a boost; the solver
+    # produces NaN waveforms. Use a typical 10 µH and no turns ratio.
+    "boost": {
+        "inputVoltage": {"minimum": 9.0, "nominal": 12.0, "maximum": 15.0},
+        "maximumDutyCycle": 0.85,
+        "desiredInductance": 10e-6,
+        "desiredTurnsRatios": [],
+        "_replace_op": {
+            "outputVoltages": [48.0],
+            "outputCurrents": [2.0],
+            "switchingFrequency": 200000.0,
+            "ambientTemperature": 25.0,
+        },
+    },
+    # Isolated buck / buck-boost need ≥2 output voltages (primary + secondary).
+    "isolated_buck": {
+        "_replace_op": {
+            "outputVoltages": [12.0, 5.0],
+            "outputCurrents": [5.0, 2.0],
+            "switchingFrequency": 200000.0,
+            "ambientTemperature": 25.0,
+        },
+    },
+    "isolated_buck_boost": {
+        "_replace_op": {
+            "outputVoltages": [12.0, 5.0],
+            "outputCurrents": [5.0, 2.0],
+            "switchingFrequency": 200000.0,
+            "ambientTemperature": 25.0,
+        },
+    },
+    # AHB / PSFB / PSHB: duty / phase shift go *inside* the operating point.
+    # AHB centerTapped doubles the internal turns-ratio list; use fullBridge
+    # so the [4.0] in base_spec matches outputs=1.
+    "asymmetric_half_bridge": {
+        "rectifierType": "fullBridge",
+        "_op_extras": {"dutyCycle": 0.45},
+    },
+    "phase_shifted_full_bridge": {
+        "inputVoltage": {"minimum": 370.0, "nominal": 400.0, "maximum": 410.0},
+        "rectifierType": "centerTapped",
+        "_op_extras": {"phaseShift": 126.0},
+    },
+    "phase_shifted_half_bridge": {
+        "inputVoltage": {"minimum": 370.0, "nominal": 400.0, "maximum": 410.0},
+        "rectifierType": "centerTapped",
+        "_op_extras": {"phaseShift": 135.0},
     },
 }
 
@@ -160,9 +251,26 @@ def _try_one(pyom: Any, variant: str, spec: dict[str, Any]) -> dict[str, Any] | 
     return pyom.get_extra_components_inputs(variant, spec, "IDEAL", None)
 
 
+def _apply_overrides(spec: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Apply per-topology overrides supporting the reserved nested keys.
+
+    See ``PER_TOPOLOGY_OVERRIDES`` docstring for ``_op_extras`` and
+    ``_replace_op`` semantics.
+    """
+    op_extras = overrides.pop("_op_extras", None) if "_op_extras" in overrides else None
+    replace_op = overrides.pop("_replace_op", None) if "_replace_op" in overrides else None
+    spec.update(overrides)
+    if replace_op is not None:
+        spec["operatingPoints"] = [dict(replace_op)]
+    if op_extras:
+        for op in spec.get("operatingPoints", []):
+            op.update(op_extras)
+    return spec
+
+
 def _probe_entry(entry: TopologyEntry, pyom: Any, max_rounds: int = 8) -> ProbeOutcome:
     spec = _base_spec()
-    spec.update(PER_TOPOLOGY_OVERRIDES.get(entry.name, {}))
+    _apply_overrides(spec, deepcopy(PER_TOPOLOGY_OVERRIDES.get(entry.name, {})))
     fields_added: list[str] = []
 
     last_error: str | None = None
@@ -184,6 +292,22 @@ def _probe_entry(entry: TopologyEntry, pyom: Any, max_rounds: int = 8) -> ProbeO
                     spec[missing] = FIELD_DEFAULTS[missing]
                     fields_added.append(missing)
                     break  # restart the variant loop with the patched spec
+                # If the topology is intentionally extras-free, PyOM raises
+                # "has no extra-components dispatch" — treat as OK with [].
+                if (
+                    entry.name in EXPECTED_EMPTY
+                    and isinstance(err, str)
+                    and "has no extra-components dispatch" in err
+                ):
+                    return ProbeOutcome(
+                        entry,
+                        "OK",
+                        round_idx + 1,
+                        fields_added,
+                        [],
+                        None,
+                        variant,
+                    )
                 # Unrepairable error
                 return ProbeOutcome(
                     entry,
