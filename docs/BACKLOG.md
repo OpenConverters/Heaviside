@@ -162,10 +162,14 @@ so the gap stays visible from inside Heaviside's planning loop.
   choke `ΔI_L = Vout·(1−D)/(L_out·fsw)` worst at D_min (Vin_max),
   Isat stamped on L_out0 only — T1 is intentionally skipped because
   the demag winding clamps its core every cycle.  `D_max ≥ 0.5`
-  throws (reset-window violation).  Multi-output flybacks throw (not
-  yet supported).  **Remaining**: active_clamp_forward (different
-  reset mechanism, clamp-cap sizing), isolated_buck /
-  isolated_buck_boost (multi-output);
+  throws (reset-window violation).  Active-clamp forward reuses the
+  same shared extractor (`_enrich_forward_family(..., enforce_half_duty=False)`)
+  since the output-side analytics are identical — the clamp cap +
+  auxiliary FET absorb the reset volt-seconds so D may exceed 0.5;
+  the realism gate's generic 0.05 < D < 0.95 CCM bound still
+  applies and fail-closes any over-ceiling design.  Multi-output
+  flybacks throw (not yet supported).  **Remaining**: isolated_buck
+  / isolated_buck_boost (multi-output);
   librarian agent populates `vds_rated` / `vrrm_rated` / `v_rated` on TAS
   components for the voltage derating checks; analyst agent computes Tj
   for thermal_limit; sim agent populates `simulation_results` /

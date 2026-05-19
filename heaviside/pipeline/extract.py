@@ -975,24 +975,34 @@ def _winding_turns_by_name(
 
 def _enrich_forward_family(
     tas: dict, spec: Mapping[str, Any], *, topology_name: str,
+    enforce_half_duty: bool = True,
 ) -> None:
-    """Shared extractor for single-switch and two-switch forward.
+    """Shared extractor for the forward family (single-switch,
+    two-switch, active-clamp).
 
-    Both variants emit the same two-magnetic shape: a multi-winding T1
-    inside an ``isolation``-role stage and a single output choke L_out0
-    inside an ``outputRectifier``-role stage.  Active-clamp forward
-    uses a different reset mechanism (clamp cap + auxiliary FET) and
-    needs its own extractor, so it is intentionally NOT covered here.
+    All three variants emit the same two-magnetic shape: a multi-winding
+    T1 inside an ``isolation``-role stage and a single output choke
+    L_out0 inside an ``outputRectifier``-role stage.  The output-side
+    analytics are identical (V_sec = Vin/n drives the same buck-shaped
+    L_out), so the only behavioural axis is the reset mechanism, which
+    we expose via ``enforce_half_duty``:
+
+      * ``True`` (default — single-switch / two-switch forward): the
+        magnetising current must decay through the demag winding (SSF)
+        or the two reset diodes (2SF) inside ``(1 − D)·T_sw``.  With a
+        single-turns demag winding this forces ``D < 0.5``; we throw
+        if ``D_max ≥ 0.5``.
+      * ``False`` (active-clamp forward): the clamp capacitor and
+        auxiliary FET absorb the reset volt-seconds (V_clamp = Vin·D/(1−D)),
+        so D may exceed 0.5.  We leave the upper bound to the realism
+        gate's generic 0.95 CCM ceiling.
 
     Math (CCM, ignoring rectifier drop):
 
       * Turns ratio ``n = N_pri / N_sec0`` read from T1 by winding name.
       * Secondary square-wave voltage during the on-time = ``Vin / n``.
       * Duty ``D = Vout · n / Vin`` ⇒ ``D_max`` at ``Vin_min``,
-        ``D_min`` at ``Vin_max``.  Single-switch / standard
-        two-switch forward are bounded above by ``D = 0.5`` by the
-        reset window; if ``D_max ≥ 0.5`` we throw (the design will
-        not reset).
+        ``D_min`` at ``Vin_max``.
       * Output choke ripple is buck-shaped on the secondary side:
         ``V_L_on = Vin/n − Vout = Vout · (1−D)/D``,
         ``ΔI_L = Vout · (1−D) / (L_out · fsw)``.  Monotone decreasing
@@ -1001,7 +1011,8 @@ def _enrich_forward_family(
       * ``Ipeak_worst = Iout + ΔI_L_worst / 2``.
       * ``Isat = B_sat · N_L_out · A_e / L_out`` from the output
         choke's own MAS — T1 is intentionally not Isat-checked
-        because the demag winding clamps its core every cycle.
+        because the reset mechanism (demag winding / reset diodes /
+        clamp cap) drives the core back to B≈0 every cycle.
     """
     where = f"{topology_name} spec"
     vmin, vmax = _vin_extremes(spec, where)
@@ -1019,7 +1030,7 @@ def _enrich_forward_family(
 
     d_max = vout * n / vmin
     d_min = vout * n / vmax
-    if d_max >= 0.5:
+    if enforce_half_duty and d_max >= 0.5:
         raise EnrichmentError(
             f"{topology_name} enrichment: D_max = {d_max:.3f} ≥ 0.5 — single/two-"
             "switch forward cannot reset within its half-period window. Either "
@@ -1077,6 +1088,18 @@ def _enrich_two_switch_forward(tas: dict, spec: Mapping[str, Any]) -> None:
     _enrich_forward_family(tas, spec, topology_name="two_switch_forward")
 
 
+def _enrich_active_clamp_forward(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Active-clamp forward: same output-side math as the rest of the
+    forward family, but the clamp capacitor + auxiliary FET reset the
+    transformer so duty is not constrained to D < 0.5.  The realism
+    gate's generic CCM 0.05 < D < 0.95 bound still applies.
+    """
+    _enrich_forward_family(
+        tas, spec, topology_name="active_clamp_forward",
+        enforce_half_duty=False,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -1091,6 +1114,7 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "zeta": _enrich_zeta,
     "single_switch_forward": _enrich_single_switch_forward,
     "two_switch_forward": _enrich_two_switch_forward,
+    "active_clamp_forward": _enrich_active_clamp_forward,
 }
 
 
