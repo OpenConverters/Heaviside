@@ -21,16 +21,34 @@ from heaviside.librarian.safe_access import (
     describe_lock,
     safe_append,
 )
+from heaviside.librarian.tas import (
+    SCHEMA_MAP,
+    DuplicateComponentError,
+    SchemaNotFoundError,
+    ValidationError,
+    add_component,
+    component_exists,
+    load_validator,
+    validate_component,
+)
 
 __all__ = [
     "CATEGORIES",
     "LOCK_DIR",
+    "SCHEMA_MAP",
     "TAS_DATA_DIR",
+    "DuplicateComponentError",
     "LibrarianError",
     "LockTimeoutError",
+    "SchemaNotFoundError",
     "Transaction",
     "UnknownCategoryError",
+    "ValidationError",
     "acquire_lock",
+    "add_component",
+    "component_exists",
     "describe_lock",
+    "load_validator",
     "safe_append",
+    "validate_component",
 ]
