@@ -240,6 +240,34 @@ so the gap stays visible from inside Heaviside's planning loop.
   current contribution to L1 windings — pinned by
   `secondary_reflected_current_modelled: false` provenance flag
   for future extension.  Fifteenth PASS-capable topology.
+  LLC (`_enrich_llc`, 19 new tests in `tests/unit/test_extract_llc.py`)
+  is the first resonant extractor: HB primary, series Cr+Lr tank,
+  3-winding CT-secondary T1.  Duty 0.5 (frequency-regulated); gain
+  Vout = Vin/(2n) with sub-resonant boost factor
+  `M_max = max(1, 2·n·Vout/Vin_min)` scaling the FHA load-reflected
+  envelope `(π/2)·Iout/n`; magnetizing peak `Vin_max/(8·Lm·fsw)`
+  (HB ½·Vin drive); L_r binds Isat, T1 not stamped (HB symmetric
+  drive + Cr DC-block).  Sixteenth PASS-capable topology.
+  Phase-shifted full bridge (`_enrich_phase_shifted_full_bridge`, 19
+  new tests).  D_eff = Vout/(n·Vin) treated as the full-period
+  power-delivery fraction; ripple `Vout·(1−D_eff)/(L·2·fsw)` on
+  L_out0; throws on D_eff > 1.  L_out0 binds; L_r and T1 not
+  stamped (bridge symmetry).  Seventeenth PASS-capable topology.
+  DAB (`_enrich_dual_active_bridge`, 17 new tests; `dab` alias
+  registered).  SPS modulation, per-switch duty 0.5, phase-shift
+  d solved per Vin extreme from `k = 2·fsw·L_r·Iout/(n·Vin)`;
+  throws on `k ≥ 0.25` (over-d region beyond v0.1 model).
+  Ipeak `(Vin+n·Vout)·d/(4·fsw·L_r_worst)` at Vin_min; L_r binds,
+  T1 not stamped.  Eighteenth PASS-capable topology.
+  CLLLC (`_enrich_clllc`, 21 new tests).  Bidirectional symmetric
+  resonant — dual FB + dual tanks; like LLC but Vout = Vin/n (no
+  /2 since FB drives full Vin) and magnetizing /4 (not /8) for the
+  same reason.  L_r1 binds Isat with a stencil-order invariant
+  name check (must be first magnetic in the isolation stage:
+  C_r1, L_r1, T1, L_r2, C_r2); L_r2 and T1 deliberately not
+  stamped.  Introduces `_find_named_magnetic_in_stage_role` helper
+  for topologies that co-locate L_r and T1 in the same stage.
+  Nineteenth PASS-capable topology.
   **Remaining**:
   librarian agent populates `vds_rated` / `vrrm_rated` / `v_rated` on TAS
   components for the voltage derating checks; analyst agent computes Tj
