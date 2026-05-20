@@ -221,6 +221,25 @@ so the gap stays visible from inside Heaviside's planning loop.
   ripple worst at `D_eff_min` (Vin_max).  T1 not Isat-stamped
   (asymmetric drive + DC blocking cap C_b balance volt-seconds).
   Fourteenth PASS-capable topology.
+  Weinberg V1 (`_enrich_weinberg`, 19 new tests in
+  `tests/unit/test_extract_weinberg.py`) is a current-fed
+  push-pull with an input coupled inductor L1 (2 symmetric windings
+  a, b) feeding the CT primary of a 4-winding transformer T1
+  (pri_a, pri_b, sec_a, sec_b); the CT-FW secondary rectifier
+  feeds C_out0 directly — there is NO discrete output choke because
+  L1 already provides the boost / output inductance.  Voltage
+  transfer `Vout = n·Vin / (2·(1−D))` with `n = N_sec/N_pri` solved
+  for `D = 1 − n·Vin / (2·Vout)`; throws when `D_min ≤ 0.5` (loses
+  boost-mode operation) or `D_max ≥ 1` (degenerate).  L1 binds the
+  realism gate as the input coupled inductor: average current =
+  input current `I_in = Iout·Vout/Vin` worst at Vin_min, overlap-
+  window ripple `Vin·(2D−1)/(L·2·fsw)` is parabolic in Vin with
+  interior peak at `Vin = Vout/(2n)` evaluated when in range.  T1
+  is intentionally NOT Isat-stamped (symmetric drive resets the
+  core every cycle).  V0.1 does NOT model secondary-reflected
+  current contribution to L1 windings — pinned by
+  `secondary_reflected_current_modelled: false` provenance flag
+  for future extension.  Fifteenth PASS-capable topology.
   **Remaining**:
   librarian agent populates `vds_rated` / `vrrm_rated` / `v_rated` on TAS
   components for the voltage derating checks; analyst agent computes Tj

@@ -1572,6 +1572,149 @@ def _enrich_asymmetric_half_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Weinberg (current-fed push-pull with input coupled inductor)
+# ---------------------------------------------------------------------------
+
+
+def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty + L1 Isat / Ipeak for the Weinberg V1 converter.
+
+    Weinberg V1 = current-fed push-pull with an input coupled inductor
+    L1 (2 symmetric windings a, b) feeding the center-tapped primary
+    of a 4-winding transformer T1 (pri_a, pri_b, sec_a, sec_b); the
+    secondary CT-FW rectifier (D1, D2) delivers Vout into C_out0.
+    Stencil at stencils.py:2797.
+
+    Voltage transfer (classic V1, boost-mode, overlapping conduction):
+
+      ``Vout = n · Vin / (2 · (1 − D))``   where ``n = N_sec / N_pri``,
+      ``D ∈ (0.5, 1)`` is the per-switch duty.  Overlap fraction
+      ``(2D − 1)`` shorts the transformer primary and charges both L1
+      windings from Vin; non-overlap fraction ``2·(1 − D)`` transfers
+      energy to the secondary via one primary half at a time.
+
+    Solving for D: ``D = 1 − n · Vin / (2 · Vout)``.
+
+      * ``D_max = 1 − n · Vin_min / (2 · Vout)`` (largest at Vin_min)
+      * ``D_min = 1 − n · Vin_max / (2 · Vout)`` (smallest at Vin_max)
+
+    Throws when ``D_min ≤ 0.5`` (loses boost-mode operation,
+    Weinberg V1 voltage transfer breaks) or ``D_max ≥ 1`` (degenerate).
+
+    L1 is the binding magnetic — there is NO discrete output choke,
+    L1 already provides the boost / output inductance via the coupled
+    structure.  Average current through each L1 winding equals the
+    input current ``I_in = Iout · Vout / Vin`` (η = 1 v0.1
+    approximation, matching boost / cuk family); worst at Vin_min.
+
+    Ripple per winding (during overlap, charging from Vin):
+
+      ``ΔI_L = Vin · (2D − 1) / (L · 2·fsw)``
+            = ``Vin · (1 − n·Vin/Vout) / (L · 2·fsw)``
+
+    parabolic in Vin with interior peak at ``Vin = Vout / (2n)``.
+    Evaluate at ``Vin_min``, ``Vin_max``, and the interior peak (if
+    in range) and pick the worst.  PROTEUS −20 % L tolerance applied.
+
+    T1 is intentionally NOT Isat-stamped: the symmetric push-pull
+    drive resets the transformer core every cycle (same rationale as
+    push-pull T1).
+    """
+    where = "weinberg spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    L = _required_inductance(spec, "desiredInductance", where)
+
+    # T1 turns ratio (n = N_sec / N_pri).
+    _, _, t1_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "weinberg enrichment (T1)"
+    )
+    t1_mas = _read_mas(t1_comp, "weinberg T1 MAS")
+    N_pri = _winding_turns_by_name(t1_mas, "pri_a", "weinberg T1 MAS")
+    N_sec = _winding_turns_by_name(t1_mas, "sec_a", "weinberg T1 MAS")
+    n = float(N_sec) / float(N_pri)
+
+    d_max = 1.0 - n * vmin / (2.0 * vout)
+    d_min = 1.0 - n * vmax / (2.0 * vout)
+    if d_min <= 0.5:
+        raise EnrichmentError(
+            f"weinberg enrichment: D_min = {d_min:.4f} ≤ 0.5 at Vin_max = "
+            f"{vmax} V — Weinberg V1 requires per-switch D > 0.5 (overlap "
+            "mode) for boost-style step-up.  Either raise Vout or lower "
+            "the secondary/primary turns ratio (n)."
+        )
+    if d_max >= 1.0:
+        raise EnrichmentError(
+            f"weinberg enrichment: D_max = {d_max:.4f} ≥ 1.0 at Vin_min = "
+            f"{vmin} V — degenerate (per-switch duty cannot reach 100 %)."
+        )
+
+    # L1 (input coupled inductor) — lineFilter stage.
+    si, ci, l1_comp = _find_magnetic_in_stage_role(
+        tas, "lineFilter", "weinberg enrichment (L1)"
+    )
+    l1_mas = _read_mas(l1_comp, "weinberg L1 MAS")
+    A_e, _, b_sat = _mas_isat_inputs(l1_mas, "weinberg L1 MAS")
+    # L1 has two symmetric windings (a, b); use winding "a" turns.
+    N_l1 = _winding_turns_by_name(l1_mas, "a", "weinberg L1 MAS")
+
+    L_worst = 0.8 * L
+    fsw_eff = 2.0 * fsw
+
+    def _ripple_at(vin: float) -> float:
+        return vin * (1.0 - n * vin / vout) / (L_worst * fsw_eff)
+
+    candidates = [vmin, vmax]
+    interior = vout / (2.0 * n)
+    if vmin < interior < vmax:
+        candidates.append(interior)
+    ripple_worst = max(_ripple_at(v) for v in candidates)
+
+    iL_avg_max = iout * vout / vmin       # input current at Vin_min
+    ipeak_worst = iL_avg_max + ripple_worst / 2.0
+    isat = b_sat * float(N_l1) * float(A_e) / L
+
+    tas["duty"]     = round(d_max, 6)
+    tas["duty_min"] = round(d_min, 6)
+    tas["duty_max"] = round(d_max, 6)
+
+    enriched = dict(l1_comp)
+    enriched["isat"]        = round(isat, 6)
+    enriched["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched["isat_provenance"] = {
+        "method": "B_sat * N * A_e / L (weinberg v0.1, input coupled inductor)",
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": int(N_l1),
+        "effective_area_m2": float(A_e),
+        "inductance_H": L,
+    }
+    enriched["ipeak_provenance"] = {
+        "method": (
+            "I_in(Vin_min) + ripple_worst/2 (boost-shaped overlap ripple "
+            "ΔI = Vin·(2D-1)/(L*0.8·2·fsw), parabolic in Vin with "
+            "interior peak at Vin = Vout/(2n))"
+        ),
+        "role": "input_coupled_inductor",
+        "iout_A": iout,
+        "vout_V": vout,
+        "turns_ratio_n_sec_over_n_pri": round(n, 6),
+        "n_primary_half": N_pri,
+        "n_secondary_half": N_sec,
+        "d_per_switch_max": round(d_max, 6),
+        "d_per_switch_min": round(d_min, 6),
+        "iL_avg_max_A": round(iL_avg_max, 6),
+        "ripple_worst_A_pp": round(ripple_worst, 6),
+        "vin_min_V": vmin,
+        "vin_max_V": vmax,
+        "fsw_per_switch_Hz": fsw,
+        "fsw_effective_Hz": fsw_eff,
+        "L_worst_H": L_worst,
+        "secondary_reflected_current_modelled": False,
+    }
+    tas["topology"]["stages"][si]["circuit"]["components"][ci] = enriched
+
+
+# ---------------------------------------------------------------------------
 # Four-switch buck-boost (4SBB)
 # ---------------------------------------------------------------------------
 
@@ -1725,6 +1868,7 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "isolated_buck_boost": _enrich_isolated_buck_boost,
     "push_pull": _enrich_push_pull,
     "asymmetric_half_bridge": _enrich_asymmetric_half_bridge,
+    "weinberg": _enrich_weinberg,
     "four_switch_buck_boost": _enrich_four_switch_buck_boost,
 }
 
