@@ -942,6 +942,49 @@ def _find_magnetic_in_stage_role(
     )
 
 
+def _find_named_magnetic_in_stage_role(
+    tas: Mapping[str, Any], role: str, name: str, where: str,
+) -> Mapping[str, Any]:
+    """Return the magnetic component whose ``name`` matches inside the
+    first stage with the given ``role``.
+
+    Used by topologies (DAB, CLLLC) where multiple magnetics coexist in
+    the same stage and the "first magnetic" dispatch in
+    ``_find_magnetic_in_stage_role`` is insufficient to disambiguate.
+    """
+    topology = tas.get("topology")
+    if not isinstance(topology, Mapping):
+        raise EnrichmentError("tas.topology: must be a mapping")
+    stages = topology.get("stages")
+    if not isinstance(stages, list):
+        raise EnrichmentError("tas.topology.stages: must be a list")
+    for stage in stages:
+        if not isinstance(stage, Mapping) or stage.get("role") != role:
+            continue
+        circuit = stage.get("circuit") if isinstance(stage.get("circuit"), Mapping) else None
+        comps = circuit.get("components") if isinstance(circuit, Mapping) else None
+        if not isinstance(comps, list):
+            continue
+        for c in comps:
+            if not isinstance(c, Mapping):
+                continue
+            if c.get("name") != name:
+                continue
+            data = c.get("data")
+            if isinstance(data, Mapping) and "magnetic" in data:
+                return c
+            if c.get("category") == "magnetic":
+                return c
+            raise EnrichmentError(
+                f"{where}: component named {name!r} in stage role={role!r} "
+                "is not a magnetic (missing category=magnetic or data.magnetic)"
+            )
+    raise EnrichmentError(
+        f"{where}: no magnetic named {name!r} found in stage with "
+        f"role={role!r} — stencil emission contract violated"
+    )
+
+
 def _winding_turns_by_name(
     mas: Mapping[str, Any], winding_name: str, where: str,
 ) -> int:
@@ -2154,6 +2197,318 @@ def _enrich_phase_shifted_full_bridge(tas: dict, spec: Mapping[str, Any]) -> Non
 
 
 # ---------------------------------------------------------------------------
+# Dual Active Bridge (DAB) — single-phase-shift (SPS) control
+# ---------------------------------------------------------------------------
+
+
+def _enrich_dual_active_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty + L_r Isat / Ipeak for the dual active bridge.
+
+    DAB = two full bridges (Q1..Q4 primary, Q5..Q8 secondary SR)
+    coupled through a series resonant/leakage inductor L_r and a
+    transformer T1 (pri, sec0).  Both bridges run at 50 %
+    complementary duty (square wave on each side); power transfer is
+    controlled by the phase-shift angle ``φ`` between the two square
+    waves (single-phase-shift / SPS modulation).  Stencil at
+    stencils.py:3179.
+
+    Normalised phase shift ``d = φ / (T_sw/2) ∈ [-1, 1]``; for forward
+    power transfer the operating region is ``d ∈ (0, 0.5]``.
+
+    Secondary-referred power transfer (Mi, "A Survey of DAB"):
+
+      ``P = (n · V1 · V2 · d · (1 − |d|)) / (2 · fsw · L_r)``
+
+    with ``n = N_pri / N_sec`` and ``L_r`` the total commutation
+    inductance referred to the primary.  Solving for ``d`` given the
+    operating point ``P = Vout · Iout`` and ``V1 = Vin``, ``V2 = Vout``:
+
+      ``Iout = (n · Vin · d · (1 − d)) / (2 · fsw · L_r)``
+
+      ``k = 2 · fsw · L_r · Iout / (n · Vin)``
+      ``d = (1 − sqrt(1 − 4k)) / 2``      (smaller root, operating region)
+
+    Real-root condition: ``k ≤ 0.25``  ⇒
+    ``Iout ≤ n · Vin / (8 · fsw · L_r)`` = ``P_max / Vout``.  Throws at
+    Vin_min when the discriminant collapses (DAB cannot deliver the
+    requested load at d ≤ 0.5; the operator would need to enter the
+    over-d region where peak current rises super-linearly — a deliberate
+    design red flag).
+
+    Peak tank current (worst case at the bridge switching transition):
+
+      ``I_pk = (Vin + n · Vout) · d · T_sw / (4 · L_r)``
+             ``= (Vin + n · Vout) · d / (4 · fsw · L_r)``
+
+    Derivation: in the active interval (duration ``φ``), the inductor
+    sees ``V_L = Vin + n·Vout`` (both bridge midpoints driving in the
+    same direction); current ramps from ``−I_pk`` to ``+I_pk``, giving
+    ``2·I_pk = (Vin + n·Vout) · φ / L_r``.
+
+    Worst case for both ``d`` and ``Vin + n·Vout``: at ``Vin_min`` ``d``
+    is largest (heaviest load relative to capability) while
+    ``n · Vout`` is fixed; therefore the peak is evaluated at
+    ``Vin_min``.  PROTEUS −20 % tolerance: ``L_r_worst = 0.8 · L_r``.
+
+    L_r is the binding magnetic (in the ``isolation`` stage, ahead of
+    T1 in the component order).  T1 is intentionally NOT Isat-stamped:
+    both bridges are symmetric square waves, so primary current is
+    bipolar with zero net DC by symmetry — same rationale as PSFB and
+    LLC.
+
+    Per-switch duty: each bridge runs at 50 % complementary; ``tas[duty]``
+    is stamped 0.5 with the phase shift recorded separately in
+    ``ipeak_provenance.phase_shift_d_normalised`` (which is the
+    operationally interesting handle for DAB).
+
+    Raises ``EnrichmentError`` (no fallbacks per CLAUDE.md) on missing
+    spec fields, missing transformer windings, missing MAS, or
+    unrealisable power demand at Vin_min.
+    """
+    import math as _math
+    where = "dual_active_bridge spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    L_r = _required_inductance(spec, "desiredInductance", where)
+
+    # T1 turns (n = N_pri / N_sec for DAB convention; reflected
+    # secondary voltage on the primary side = n · Vout).
+    # NB: L_r and T1 share the ``isolation`` stage with L_r FIRST
+    # (see stencils.py:3232), so we look up T1 by name rather than by
+    # the "first magnetic" dispatch used for L_r below.
+    t1_comp = _find_named_magnetic_in_stage_role(
+        tas, "isolation", "T1", "dual_active_bridge enrichment (T1)"
+    )
+    t1_mas = _read_mas(t1_comp, "dual_active_bridge T1 MAS")
+    N_pri = _winding_turns_by_name(t1_mas, "pri",  "dual_active_bridge T1 MAS")
+    N_sec = _winding_turns_by_name(t1_mas, "sec0", "dual_active_bridge T1 MAS")
+    n = float(N_pri) / float(N_sec)
+    nV2 = n * vout
+
+    def _solve_d(vin: float) -> float:
+        k = 2.0 * fsw * L_r * iout / (n * vin)
+        if k >= 0.25:
+            P_max = n * vin / (8.0 * fsw * L_r)
+            raise EnrichmentError(
+                f"dual_active_bridge enrichment: k = 2·fsw·L_r·Iout / "
+                f"(n·Vin) = {k:.4f} ≥ 0.25 at Vin = {vin} V — "
+                f"required power exceeds P_max/Vout = {P_max:.4g} A "
+                "deliverable at d ≤ 0.5.  Increase n, decrease L_r, "
+                "raise Vin_min, or accept entering the over-d region "
+                "(super-linear peak current rise — outside the v0.1 model)."
+            )
+        return (1.0 - _math.sqrt(1.0 - 4.0 * k)) / 2.0
+
+    d_at_vmin = _solve_d(vmin)   # largest d (worst case for peak)
+    d_at_vmax = _solve_d(vmax)   # smallest d
+
+    # L_r in isolation stage (first magnetic encountered before T1).
+    si, ci, lr_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "dual_active_bridge enrichment (L_r)"
+    )
+    lr_mas = _read_mas(lr_comp, "dual_active_bridge L_r MAS")
+    A_e, N_lr, b_sat = _mas_isat_inputs(lr_mas, "dual_active_bridge L_r MAS")
+
+    L_r_worst = 0.8 * L_r
+    ipeak_worst = (vmin + nV2) * d_at_vmin / (4.0 * fsw * L_r_worst)
+    isat = b_sat * float(N_lr) * float(A_e) / L_r
+
+    tas["duty"]     = 0.5
+    tas["duty_min"] = 0.5
+    tas["duty_max"] = 0.5
+
+    enriched = dict(lr_comp)
+    enriched["isat"]        = round(isat, 6)
+    enriched["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched["isat_provenance"] = {
+        "method": (
+            "B_sat * N * A_e / L_r "
+            "(dual_active_bridge v0.1, series commutation inductor)"
+        ),
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": int(N_lr),
+        "effective_area_m2": float(A_e),
+        "inductance_H": L_r,
+    }
+    enriched["ipeak_provenance"] = {
+        "method": (
+            "(Vin + n·Vout) · d / (4 · fsw · L_r_worst) evaluated at "
+            "Vin_min (worst d, smallest reset voltage) with L_r_worst "
+            "= 0.8 · L_r (PROTEUS -20% tolerance); d solved from "
+            "SPS power equation Iout = n·Vin·d·(1-d) / (2·fsw·L_r)"
+        ),
+        "role": "series_commutation_inductor",
+        "iout_A": iout,
+        "vout_V": vout,
+        "turns_ratio_n_pri_over_n_sec": round(n, 6),
+        "n_primary": N_pri,
+        "n_secondary": N_sec,
+        "phase_shift_d_at_vin_min": round(d_at_vmin, 6),
+        "phase_shift_d_at_vin_max": round(d_at_vmax, 6),
+        "phase_shift_d_normalised": round(d_at_vmin, 6),  # worst-case d
+        "n_times_vout_V": round(nV2, 6),
+        "vin_min_V": vmin,
+        "vin_max_V": vmax,
+        "fsw_Hz": fsw,
+        "L_r_worst_H": L_r_worst,
+        "sps_modulation": True,
+        "t1_isat_modelled": False,
+    }
+    tas["topology"]["stages"][si]["circuit"]["components"][ci] = enriched
+
+
+# ---------------------------------------------------------------------------
+# CLLLC (bidirectional symmetric resonant — dual full bridges + dual tanks)
+# ---------------------------------------------------------------------------
+
+
+def _enrich_clllc(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty + L_r1 Isat / Ipeak for the CLLLC converter.
+
+    CLLLC = bidirectional symmetric resonant: HV full bridge (Q1..Q4)
+    drives a series tank C_r1 + L_r1, then transformer T1 (pri, sec0),
+    then secondary tank L_r2 + C_r2 feeding the LV synchronous-rectifier
+    bridge (Q5..Q8).  Stencil at stencils.py:3477.
+
+    Forward-mode DC gain at primary resonance (``f_r1 = 1/(2π√(L_r1·C_r1))``):
+
+      ``Vout = Vin / n``   with ``n = N_pri / N_sec``
+
+    (no factor of 2 — both bridges are full-bridges driving full Vin
+    across the tank, unlike LLC's half-bridge which divides by 2).
+
+    Required gain across Vin range:
+
+      ``M(Vin) = (n · Vout) / Vin``
+
+    M = 1 ⇒ at resonance.  M > 1 ⇒ sub-resonant (boost gain demanded);
+    M < 1 ⇒ super-resonant.  The extractor uses
+    ``M_max = max(1, M(Vin_min))`` as a conservative scalar on the
+    tank current envelope.  FHA load-reflected primary peak current:
+
+      ``I_load_pk = (π / 2) · Iout / n``
+
+    Magnetizing peak current (triangular at the half-period; primary
+    sees full ±Vin under FB drive, hence /4 not /8 as in LLC's HB):
+
+      ``I_m_pk = Vin_max · T_sw / (4 · L_m) = Vin_max / (4 · L_m · fsw)``
+
+    ``L_m`` comes from ``spec.desiredMagnetizingInductance`` with the
+    PROTEUS −20 % tolerance ``L_m_worst = 0.8 · L_m``.
+
+    Combined peak (L_r1, in primary tank):
+
+      ``I_pk_worst = M_max · I_load_pk + I_m_pk``
+
+    Duty: 50 % complementary FB (frequency modulation regulates), same
+    rationale as LLC.
+
+    L_r1 binds inductor_isat_margin (first magnetic in the isolation
+    stage's component order: C_r1, L_r1, T1, L_r2, C_r2).  L_r2, T1
+    are deliberately NOT Isat-stamped:
+
+      * **T1** alternates polarity each half-period (FB symmetric
+        reset, identical to LLC/PSFB).
+      * **L_r2** carries secondary-scale current (Iout, not Iout/n).
+        Its DC flux is also zero by symmetry of the LV bridge drive,
+        so it does not bind Isat margin under nominal operation; a
+        dedicated v0.2 may add secondary-side stamping for explicit
+        bidirectional / reverse-mode analysis.
+
+    Raises ``EnrichmentError`` (no fallbacks per CLAUDE.md) on any
+    missing spec field, missing MAS payload, or missing transformer
+    winding.
+    """
+    import math as _math
+    where = "clllc spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    L_r1 = _required_inductance(spec, "desiredInductance", where)
+    L_m  = _required_inductance(spec, "desiredMagnetizingInductance", where)
+
+    # T1 turns (n = N_pri / N_sec for the FB primary-step-down convention).
+    # T1 shares the ``isolation`` stage with L_r1 / L_r2 (stencil order
+    # C_r1, L_r1, T1, L_r2, C_r2 — see stencils.py:3477), so the
+    # "first magnetic" dispatch would land on L_r1; look T1 up by name.
+    t1_comp = _find_named_magnetic_in_stage_role(
+        tas, "isolation", "T1", "clllc enrichment (T1)"
+    )
+    t1_mas = _read_mas(t1_comp, "clllc T1 MAS")
+    N_pri = _winding_turns_by_name(t1_mas, "pri",  "clllc T1 MAS")
+    N_sec = _winding_turns_by_name(t1_mas, "sec0", "clllc T1 MAS")
+    n = float(N_pri) / float(N_sec)
+
+    # L_r1 (primary tank inductor) — first magnetic in the isolation
+    # stage's component list per the stencil ordering
+    # (C_r1, L_r1, T1, L_r2, C_r2).  _find_magnetic_in_stage_role
+    # returns the first magnetic encountered, which is L_r1.
+    si, ci, lr1_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "clllc enrichment (L_r1)"
+    )
+    if lr1_comp.get("name") != "L_r1":
+        raise EnrichmentError(
+            f"clllc enrichment: expected first magnetic in isolation "
+            f"stage to be 'L_r1' (primary tank inductor), found "
+            f"{lr1_comp.get('name')!r}.  Check stencil ordering."
+        )
+    lr1_mas = _read_mas(lr1_comp, "clllc L_r1 MAS")
+    A_e, N_lr1, b_sat = _mas_isat_inputs(lr1_mas, "clllc L_r1 MAS")
+
+    M_at_vmin = (n * vout) / vmin
+    M_max = max(1.0, M_at_vmin)
+
+    i_load_pk = (_math.pi / 2.0) * (iout / n)
+    L_m_worst = 0.8 * L_m
+    i_mag_pk = vmax / (4.0 * L_m_worst * fsw)
+
+    ipeak_worst = M_max * i_load_pk + i_mag_pk
+    isat = b_sat * float(N_lr1) * float(A_e) / L_r1
+
+    tas["duty"]     = 0.5
+    tas["duty_min"] = 0.5
+    tas["duty_max"] = 0.5
+
+    enriched = dict(lr1_comp)
+    enriched["isat"]        = round(isat, 6)
+    enriched["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched["isat_provenance"] = {
+        "method": "B_sat * N * A_e / L_r1 (clllc v0.1, primary tank inductor)",
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": int(N_lr1),
+        "effective_area_m2": float(A_e),
+        "inductance_H": L_r1,
+    }
+    enriched["ipeak_provenance"] = {
+        "method": (
+            "M_max * (pi/2) * (Iout/n)  +  Vin_max / (4 * Lm_worst * fsw)  "
+            "[FHA load-reflected sinusoidal envelope plus triangular "
+            "magnetizing peak; M_max = max(1, n*Vout/Vin_min) is the "
+            "sub-resonant boost-gain scalar; full-bridge primary => "
+            "magnetizing /4 (not /8 as LLC HB); Lm_worst = 0.8 * Lm]"
+        ),
+        "role": "primary_resonant_tank_inductor",
+        "iout_A": iout,
+        "vout_V": vout,
+        "turns_ratio_n_pri_over_n_sec": round(n, 6),
+        "n_primary": N_pri,
+        "n_secondary": N_sec,
+        "vin_min_V": vmin,
+        "vin_max_V": vmax,
+        "fsw_Hz": fsw,
+        "gain_at_vin_min": round(M_at_vmin, 6),
+        "boost_factor_M_max": round(M_max, 6),
+        "i_load_pk_A": round(i_load_pk, 6),
+        "i_mag_pk_A": round(i_mag_pk, 6),
+        "Lm_H": L_m,
+        "Lm_worst_H": L_m_worst,
+        "duty_50pct_complementary_FB": True,
+        "l_r2_isat_modelled": False,
+        "t1_isat_modelled": False,
+    }
+    tas["topology"]["stages"][si]["circuit"]["components"][ci] = enriched
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -2176,6 +2531,9 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "four_switch_buck_boost": _enrich_four_switch_buck_boost,
     "llc": _enrich_llc,
     "phase_shifted_full_bridge": _enrich_phase_shifted_full_bridge,
+    "dual_active_bridge": _enrich_dual_active_bridge,
+    "dab": _enrich_dual_active_bridge,
+    "clllc": _enrich_clllc,
 }
 
 
