@@ -1997,6 +1997,163 @@ def _enrich_llc(tas: dict, spec: Mapping[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase-shifted full bridge (PSFB)
+# ---------------------------------------------------------------------------
+
+
+def _enrich_phase_shifted_full_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty + L_out0 Isat / Ipeak for the phase-shifted full bridge.
+
+    PSFB = four primary switches Q_A / Q_B (leg A) and Q_C / Q_D (leg C)
+    each leg running at 50 % complementary duty, with leg C phase-shifted
+    relative to leg A by angle φ; series resonant/leakage inductor L_r
+    in series with the primary; transformer T1 (pri, sec0 — center-
+    tapped secondary with the CT implicitly at GND); two-diode full-
+    wave secondary rectifier (D1, D2) into output choke L_out0 + C_out0.
+    Stencil at stencils.py:2423.
+
+    Effective primary duty as a function of phase shift:
+
+      ``D_eff = 1 − φ / 180°``   (range 0 to 1 nominally)
+
+    Voltage transfer (CT-FW rectifier on a single sec0 winding, CT at GND):
+
+      ``Vout = n · Vin · D_eff``   with ``n = N_sec0 / N_pri``.
+
+    Solving for D_eff per Vin extreme:
+
+      ``D_eff = Vout / (n · Vin)``.
+
+      * D_eff_max at Vin_min (largest phase overlap)
+      * D_eff_min at Vin_max (smallest phase overlap)
+
+    Real-D_eff condition: ``D_eff ≤ 1.0`` ⇒ ``n · Vin ≥ Vout``.  Throws
+    at Vin_min if the gain demand exceeds 1 (PSFB cannot synthesise
+    D_eff > 1: that would require negative φ which is unphysical).
+
+    Output-side analytics (output choke L_out0): the CT-FW rectifier
+    delivers two power pulses per primary switching period, so L_out0
+    sees an effective frequency of ``2·fsw``.  The per-pulse on-time
+    fraction equals ``D_eff`` directly (because ``D_eff`` is already
+    defined as the fraction of the *full* period during which power is
+    delivered to the secondary, summed across both half-period overlaps).
+    Volt-second balance on L_out0 confirms:
+
+      (n·Vin − Vout) · t_overlap = Vout · (T/2 − t_overlap)
+      ⇒ Vout = n·Vin · (2·t_overlap/T) = n·Vin · D_eff
+      ⇒ ΔI_L = Vout · (1 − D_eff) / (L_out · 2·fsw)
+
+      * worst at ``D_eff_min`` ⇒ ``Vin_max`` (overlap shrinks)
+      * ``Ipeak_worst = Iout + ΔI_L_worst / 2``
+      * ``Isat = B_sat · N · A_e / L_out`` from L_out0's own MAS
+
+    L_r and T1 are intentionally NOT Isat-stamped:
+
+      * **L_r** carries bipolar primary current with zero net DC by
+        symmetry of the four-switch drive; the series-blocking action
+        is provided by the symmetric phase modulation, not a DC
+        blocking cap (PSFB is the DC-blocking-cap-free cousin of AHB).
+      * **T1** alternates primary polarity each half-period (HB-style
+        symmetric reset) and the realism gate's binding magnetic is the
+        output choke per ``inductor_isat_margin`` semantics.
+
+    PROTEUS −20 % L tolerance applied to L_out0 in the ripple
+    computation.
+
+    Raises ``EnrichmentError`` (no fallbacks per CLAUDE.md) for any
+    missing / invalid spec field, missing MAS payload, missing
+    transformer winding, or unrealisable gain at Vin_min.
+    """
+    where = "phase_shifted_full_bridge spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    L_out = _required_inductance(spec, "desiredInductance", where)
+
+    # T1 in the isolation stage — windings pri / sec0.
+    _, _, t1_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "phase_shifted_full_bridge enrichment (T1)"
+    )
+    t1_mas = _read_mas(t1_comp, "phase_shifted_full_bridge T1 MAS")
+    N_pri  = _winding_turns_by_name(t1_mas, "pri",  "phase_shifted_full_bridge T1 MAS")
+    N_sec0 = _winding_turns_by_name(t1_mas, "sec0", "phase_shifted_full_bridge T1 MAS")
+    n = float(N_sec0) / float(N_pri)   # secondary / primary
+
+    def _solve_d_eff(vin: float) -> float:
+        d = vout / (n * vin)
+        if d > 1.0:
+            raise EnrichmentError(
+                f"phase_shifted_full_bridge enrichment: required "
+                f"D_eff = Vout / (n · Vin) = {d:.4f} > 1.0 at Vin = {vin} V — "
+                "PSFB cannot synthesise overlap > 100 % (would need φ < 0). "
+                "Raise n (more secondary turns) or raise Vin_min."
+            )
+        return d
+
+    d_eff_max = _solve_d_eff(vmin)     # largest overlap at Vin_min
+    d_eff_min = _solve_d_eff(vmax)     # smallest overlap at Vin_max
+
+    # L_out0 (output choke) — lives in outputRectifier stage.
+    so, co, lout_comp = _find_magnetic_in_stage_role(
+        tas, "outputRectifier", "phase_shifted_full_bridge enrichment (L_out0)"
+    )
+    lout_mas = _read_mas(lout_comp, "phase_shifted_full_bridge L_out0 MAS")
+    A_e, N_lout, b_sat = _mas_isat_inputs(
+        lout_mas, "phase_shifted_full_bridge L_out0 MAS"
+    )
+
+    fsw_eff = 2.0 * fsw
+    L_worst = 0.8 * L_out
+    # D_eff is already the full-period power-delivery fraction; the
+    # output choke sees that as its on-fraction directly (no 2× factor).
+    ripple_worst = vout * (1.0 - d_eff_min) / (L_worst * fsw_eff)
+    ipeak_worst = iout + ripple_worst / 2.0
+    isat = b_sat * float(N_lout) * float(A_e) / L_out
+
+    tas["duty"]     = round(d_eff_max, 6)
+    tas["duty_min"] = round(d_eff_min, 6)
+    tas["duty_max"] = round(d_eff_max, 6)
+
+    enriched = dict(lout_comp)
+    enriched["isat"]        = round(isat, 6)
+    enriched["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched["isat_provenance"] = {
+        "method": (
+            "B_sat * N * A_e / L_out "
+            "(phase_shifted_full_bridge v0.1, output choke)"
+        ),
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": int(N_lout),
+        "effective_area_m2": float(A_e),
+        "inductance_H": L_out,
+    }
+    enriched["ipeak_provenance"] = {
+        "method": (
+            "Iout + ripple_worst/2 (buck-shaped on secondary at "
+            "D_eff_min, L*0.8, fsw_eff = 2*fsw via CT-FW rectifier "
+            "two-pulse output; D_eff = Vout/(n·Vin) is the full-period "
+            "power-delivery fraction, applied directly to L_out0 ripple)"
+        ),
+        "role": "output_choke",
+        "iout_A": iout,
+        "vout_V": vout,
+        "turns_ratio_n_sec0_over_n_pri": round(n, 6),
+        "n_primary": N_pri,
+        "n_secondary": N_sec0,
+        "d_eff_max": round(d_eff_max, 6),
+        "d_eff_min": round(d_eff_min, 6),
+        "ripple_worst_A_pp": round(ripple_worst, 6),
+        "vin_min_V": vmin,
+        "vin_max_V": vmax,
+        "fsw_per_switch_Hz": fsw,
+        "fsw_effective_Hz": fsw_eff,
+        "L_worst_H": L_worst,
+        "l_r_isat_modelled": False,
+        "t1_isat_modelled": False,
+    }
+    tas["topology"]["stages"][so]["circuit"]["components"][co] = enriched
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -2018,6 +2175,7 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "weinberg": _enrich_weinberg,
     "four_switch_buck_boost": _enrich_four_switch_buck_boost,
     "llc": _enrich_llc,
+    "phase_shifted_full_bridge": _enrich_phase_shifted_full_bridge,
 }
 
 
