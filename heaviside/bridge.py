@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from heaviside.topologies.registry import TopologyEntry, get
+from heaviside._pyom_cache import cached_call
 
 ExtraComponentsMode = Literal["IDEAL", "REAL"]
 
@@ -170,13 +171,18 @@ def design_magnetics(
     last_error: str | None = None
     for variant in entry.pyom_names:
         t0 = time.monotonic()
-        result = pyom.design_magnetics_from_converter(
-            variant,
-            dict(converter_spec),
-            int(max_results),
-            str(core_mode),
-            bool(use_ngspice),
-            dict(weights) if weights is not None else None,
+        _spec_arg = dict(converter_spec)
+        _weights_arg = dict(weights) if weights is not None else None
+        result = cached_call(
+            "design_magnetics_from_converter",
+            (variant, _spec_arg, int(max_results), str(core_mode),
+             bool(use_ngspice), _weights_arg),
+            call=lambda v=variant, s=_spec_arg, w=_weights_arg: (
+                pyom.design_magnetics_from_converter(
+                    v, s, int(max_results), str(core_mode),
+                    bool(use_ngspice), w,
+                )
+            ),
         )
         elapsed = time.monotonic() - t0
 
@@ -660,11 +666,16 @@ def extra_components(
 
     last_error: str | None = None
     for variant in entry.pyom_names:
-        result = pyom.get_extra_components_inputs(
-            variant,
-            dict(converter_spec),
-            mode,
-            dict(main_magnetic_mas) if main_magnetic_mas is not None else None,
+        _spec_arg = dict(converter_spec)
+        _mmm_arg = (
+            dict(main_magnetic_mas) if main_magnetic_mas is not None else None
+        )
+        result = cached_call(
+            "get_extra_components_inputs",
+            (variant, _spec_arg, mode, _mmm_arg),
+            call=lambda v=variant, s=_spec_arg, m=_mmm_arg: (
+                pyom.get_extra_components_inputs(v, s, mode, m)
+            ),
         )
 
         # PyOM error envelopes are dicts with an "error" key.
@@ -755,8 +766,13 @@ def design_extra_magnetic(
     pyom = _import_pyom()
 
     t0 = time.monotonic()
-    result = pyom.calculate_advised_magnetics(
-        dict(spec.inputs), int(max_results), str(core_mode)
+    _spec_inputs = dict(spec.inputs)
+    result = cached_call(
+        "calculate_advised_magnetics",
+        (_spec_inputs, int(max_results), str(core_mode)),
+        call=lambda s=_spec_inputs: (
+            pyom.calculate_advised_magnetics(s, int(max_results), str(core_mode))
+        ),
     )
     elapsed = time.monotonic() - t0
 
