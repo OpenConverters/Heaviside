@@ -208,6 +208,19 @@ so the gap stays visible from inside Heaviside's planning loop.
   overlap mode (all four switches modulating) is not modelled in
   v0.1 — the mixed-mode pessimistic combination is the conservative
   envelope.  Thirteenth PASS-capable topology.
+  Asymmetric half-bridge (`_enrich_asymmetric_half_bridge`, 17 new
+  tests in `tests/unit/test_extract_asymmetric_half_bridge.py`)
+  solves the Imbertson-Mohan voltage transfer
+  `Vout = 2·n·D·(1−D)·Vin` for the smaller (practical) root
+  `D = (1 − sqrt(1 − 4k))/2` with `k = Vout/(2·n·Vin)`; throws on
+  discriminant collapse (`k ≥ 0.25` ⇒ `n·Vin ≤ 2·Vout` is the AHB
+  hard limit because D = 0.5 is the volt-second balance fixed
+  point).  Output choke sees the full-bridge rectifier's two
+  pulses per primary period, so `fsw_eff = 2·fsw` and `D_eff = 2·D`
+  reduce the secondary side to a push-pull-shaped buck filter;
+  ripple worst at `D_eff_min` (Vin_max).  T1 not Isat-stamped
+  (asymmetric drive + DC blocking cap C_b balance volt-seconds).
+  Fourteenth PASS-capable topology.
   **Remaining**:
   librarian agent populates `vds_rated` / `vrrm_rated` / `v_rated` on TAS
   components for the voltage derating checks; analyst agent computes Tj

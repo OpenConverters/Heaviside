@@ -1441,6 +1441,137 @@ def _enrich_push_pull(tas: dict, spec: Mapping[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Asymmetric half-bridge (AHB)
+# ---------------------------------------------------------------------------
+
+
+def _enrich_asymmetric_half_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty + L_out0 Isat / Ipeak for the asymmetric half-bridge.
+
+    AHB = two primary switches Q1/Q2 driven with complementary duty
+    cycles D and (1−D) through a DC blocking cap C_b that absorbs the
+    asymmetric volt-seconds; a transformer T1 (pri, sec0); and a full-
+    bridge rectifier (D1..D4) feeding a buck-style L_out + C_out
+    output filter.  Stencil at stencils.py:2642.
+
+    Voltage-transfer (Imbertson-Mohan, full-bridge secondary rectifier):
+
+      ``Vout = 2 · n · D · (1 − D) · Vin``  where ``n = N_sec/N_pri``.
+
+    Solving for D (taking the smaller, practical root):
+
+      ``D = (1 − sqrt(1 − 4k)) / 2``   with ``k = Vout / (2 · n · Vin)``.
+
+    Real-root condition: ``k ≤ 0.25`` ⇒ ``n · Vin ≥ 2 · Vout``.  We
+    throw at Vin_min when the discriminant collapses (D would need to
+    exceed 0.5, which is the AHB's hard physical limit).
+
+    Output-side analytics: the full-bridge rectifier delivers two
+    pulses per primary switching period (widths D·T and (1−D)·T), so
+    the output choke sees an effective frequency of ``2·fsw`` and an
+    effective duty of ``D_eff = 2·D`` (same shape as push-pull).
+    Under that substitution the buck-on-the-secondary math is
+    identical to the forward family:
+
+      * ``ΔI_L = Vout · (1 − D_eff_min) / (L_out · 2·fsw)``
+      * worst at ``D_eff_min`` ⇒ ``Vin_max`` (D shrinks as Vin grows)
+      * ``Ipeak_worst = Iout + ΔI_L_worst / 2``
+      * ``Isat = B_sat · N · A_e / L_out`` from L_out0's own MAS
+
+    T1 is intentionally NOT Isat-stamped: the asymmetric drive
+    alternates primary polarity each half-period and the DC blocking
+    cap absorbs the residual volt-seconds (same rationale as the
+    forward family and push-pull).
+
+    PROTEUS −20 % L tolerance applied to every ripple computation.
+    """
+    import math as _math
+    where = "asymmetric_half_bridge spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    L_out = _required_inductance(spec, "desiredInductance", where)
+
+    _, _, t1_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "asymmetric_half_bridge enrichment (T1)"
+    )
+    t1_mas = _read_mas(t1_comp, "asymmetric_half_bridge T1 MAS")
+    N_pri = _winding_turns_by_name(t1_mas, "pri",  "asymmetric_half_bridge T1 MAS")
+    N_sec = _winding_turns_by_name(t1_mas, "sec0", "asymmetric_half_bridge T1 MAS")
+    n = float(N_sec) / float(N_pri)  # secondary/primary turns ratio
+
+    def _solve_d(vin: float) -> float:
+        k = vout / (2.0 * n * vin)
+        if k >= 0.25:
+            raise EnrichmentError(
+                f"asymmetric_half_bridge enrichment: "
+                f"k = Vout/(2·n·Vin) = {k:.4f} ≥ 0.25 at Vin = {vin} V — "
+                "D = (1 − sqrt(1 − 4k))/2 has no real root.  Raise the "
+                "secondary/primary turns ratio (more secondary turns) or "
+                "raise Vin_min: AHB cannot deliver Vout > n·Vin/2."
+            )
+        return (1.0 - _math.sqrt(1.0 - 4.0 * k)) / 2.0
+
+    d_max = _solve_d(vmin)         # smallest Vin ⇒ largest D
+    d_min = _solve_d(vmax)         # largest Vin ⇒ smallest D
+    d_eff_max = 2.0 * d_max
+    d_eff_min = 2.0 * d_min
+
+    # Output choke (lives in outputRectifier stage)
+    so, co, lout_comp = _find_magnetic_in_stage_role(
+        tas, "outputRectifier", "asymmetric_half_bridge enrichment (L_out)"
+    )
+    lout_mas = _read_mas(lout_comp, "asymmetric_half_bridge L_out MAS")
+    A_e, N_lout, b_sat = _mas_isat_inputs(
+        lout_mas, "asymmetric_half_bridge L_out MAS"
+    )
+
+    fsw_eff = 2.0 * fsw
+    L_worst = 0.8 * L_out
+    ripple_worst = vout * (1.0 - d_eff_min) / (L_worst * fsw_eff)
+    ipeak_worst = iout + ripple_worst / 2.0
+    isat = b_sat * float(N_lout) * float(A_e) / L_out
+
+    tas["duty"]     = round(d_eff_max, 6)
+    tas["duty_min"] = round(d_eff_min, 6)
+    tas["duty_max"] = round(d_eff_max, 6)
+
+    enriched = dict(lout_comp)
+    enriched["isat"]        = round(isat, 6)
+    enriched["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched["isat_provenance"] = {
+        "method": "B_sat * N * A_e / L_out (asymmetric_half_bridge v0.1, output choke)",
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": int(N_lout),
+        "effective_area_m2": float(A_e),
+        "inductance_H": L_out,
+    }
+    enriched["ipeak_provenance"] = {
+        "method": (
+            "Iout + ripple_worst/2 (buck-shaped on secondary at D_eff_min, "
+            "L*0.8, fsw_eff = 2*fsw via full-bridge rectifier two-pulse "
+            "output; D solved from Vout = 2·n·D·(1−D)·Vin)"
+        ),
+        "role": "output_choke",
+        "iout_A": iout,
+        "vout_V": vout,
+        "turns_ratio_n_sec_over_n_pri": round(n, 6),
+        "n_primary": N_pri,
+        "n_secondary": N_sec,
+        "d_per_switch_max": round(d_max, 6),
+        "d_per_switch_min": round(d_min, 6),
+        "d_eff_min": round(d_eff_min, 6),
+        "d_eff_max": round(d_eff_max, 6),
+        "ripple_worst_A_pp": round(ripple_worst, 6),
+        "vin_min_V": vmin,
+        "vin_max_V": vmax,
+        "fsw_per_switch_Hz": fsw,
+        "fsw_effective_Hz": fsw_eff,
+        "L_worst_H": L_worst,
+    }
+    tas["topology"]["stages"][so]["circuit"]["components"][co] = enriched
+
+
+# ---------------------------------------------------------------------------
 # Four-switch buck-boost (4SBB)
 # ---------------------------------------------------------------------------
 
@@ -1593,6 +1724,7 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "isolated_buck": _enrich_isolated_buck,
     "isolated_buck_boost": _enrich_isolated_buck_boost,
     "push_pull": _enrich_push_pull,
+    "asymmetric_half_bridge": _enrich_asymmetric_half_bridge,
     "four_switch_buck_boost": _enrich_four_switch_buck_boost,
 }
 
