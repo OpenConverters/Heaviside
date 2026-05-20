@@ -37,8 +37,15 @@ from heaviside.librarian.fetcher.auth import (
 from heaviside.librarian.fetcher.base import (
     DistributorError,
     FetcherError,
+    IncompleteSourceError,
     MalformedResponseError,
     RateLimitError,
+)
+from heaviside.librarian.fetcher.convert import (
+    DIGIKEY_MOSFET_PARAM_MAP,
+    convert_digikey_to_tas_mosfet,
+    convert_mouser_to_tas_mosfet,
+    parse_si_value,
 )
 from heaviside.librarian.fetcher.digikey import (
     DIGIKEY_PROD_BASE,
@@ -49,22 +56,41 @@ from heaviside.librarian.fetcher.mouser import (
     MOUSER_API_BASE,
     MouserClient,
 )
+from heaviside.librarian.fetcher.staging import (
+    STAGING_DIR,
+    StagedRecord,
+    StagingError,
+    apply_staged,
+    list_staged,
+    stage_fetch,
+)
 
 __all__ = [
     "CredentialError",
     "Credentials",
+    "DIGIKEY_MOSFET_PARAM_MAP",
     "DIGIKEY_PROD_BASE",
     "DIGIKEY_SANDBOX_BASE",
     "DigiKeyClient",
     "DigiKeyCredentials",
     "DistributorError",
     "FetcherError",
+    "IncompleteSourceError",
     "MOUSER_API_BASE",
     "MalformedResponseError",
     "MissingCredentialError",
     "MouserClient",
     "MouserCredentials",
     "RateLimitError",
+    "STAGING_DIR",
+    "StagedRecord",
+    "StagingError",
     "TokenCache",
+    "apply_staged",
+    "convert_digikey_to_tas_mosfet",
+    "convert_mouser_to_tas_mosfet",
+    "list_staged",
     "load_credentials",
+    "parse_si_value",
+    "stage_fetch",
 ]

@@ -21,6 +21,7 @@ __all__ = [
     "DistributorError",
     "RateLimitError",
     "MalformedResponseError",
+    "IncompleteSourceError",
 ]
 
 
@@ -91,3 +92,44 @@ class MalformedResponseError(FetcherError):
     from a contract violation (e.g. Digi-Key search returned no
     ``Products`` key).
     """
+
+
+class IncompleteSourceError(FetcherError):
+    """Distributor returned a well-formed payload that lacks a
+    schema-required field.
+
+    The Digi-Key / Mouser parameter dictionaries omit fields
+    silently — Proteus papered over the gap by defaulting the
+    missing values to ``0.0`` via ``_parse_value`` and then
+    appending the row anyway, polluting TAS with junk.  In strict
+    mode the converter raises this error so the caller can either
+    enrich the payload (via ``component-librarian`` datasheet
+    parsing) or quarantine the part.
+
+    Attributes
+    ----------
+    source : str
+        ``"digikey"`` or ``"mouser"``.
+    mpn : str
+        Manufacturer part number that failed conversion.
+    missing_field : str
+        Dotted SAS/CAS/RAS path that was unfilled (e.g.
+        ``"electrical.outputCapacitance"``).
+    """
+
+    def __init__(
+        self,
+        source: str,
+        mpn: str,
+        missing_field: str,
+        *,
+        detail: str | None = None,
+    ) -> None:
+        suffix = f" ({detail})" if detail else ""
+        super().__init__(
+            f"{source} payload for {mpn!r} is missing required field "
+            f"{missing_field!r}{suffix}"
+        )
+        self.source = source
+        self.mpn = mpn
+        self.missing_field = missing_field
