@@ -1850,6 +1850,153 @@ def _enrich_four_switch_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# LLC (resonant half-bridge, center-tapped secondary)
+# ---------------------------------------------------------------------------
+
+
+def _enrich_llc(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty + L_r Isat / Ipeak for the LLC resonant converter.
+
+    LLC = half-bridge primary inverter (Q_HI / Q_LO at 50 % complementary
+    duty), series resonant tank ``Cr`` + ``Lr`` driving the primary of
+    a 3-winding transformer T1 (``pri`` + center-tapped secondary
+    ``sec1`` / ``sec2``), full-wave secondary rectifier ``D1`` / ``D2``
+    into ``C_out0``.  Stencil at stencils.py:1975.
+
+    Voltage transfer (DC, first-harmonic approximation at resonance):
+
+      ``Vout = Vin / (2 · n)``  with ``n = N_pri / N_sec1``.
+
+    Required gain across Vin range:
+
+      ``M(Vin) = (2 · n · Vout) / Vin``
+
+    M = 1 ⇒ at resonance.  M > 1 ⇒ sub-resonant (fsw < fr) — tank
+    current rises to maintain Vout; M < 1 ⇒ super-resonant.  The
+    extractor uses ``M_max = M(Vin_min)`` as a conservative scalar on
+    the tank current envelope; this captures the dominant low-line
+    derating without committing to a specific gain curve (FHA vs PSpice
+    cycle-by-cycle differ by < 30 % over typical M ∈ [0.8, 1.5]).
+
+    Duty cycle: LLC operates at a fixed 50 % complementary half-bridge
+    duty regardless of Vin (regulation is by frequency).  The extractor
+    stamps ``duty = duty_min = duty_max = 0.5``; the realism gate's
+    duty-cycle-bounds check is then trivially satisfied — the binding
+    contract for the gate is that frequency-modulated topologies still
+    expose the per-switch on-time so downstream consumers
+    (timing-margin tests, gate-driver sizing) see a real number rather
+    than ``UNAVAILABLE``.
+
+    L_r peak current (worst-case):
+
+      * Load-reflected envelope, sinusoidal (FHA):
+        ``I_load_pk = (π / 2) · (Iout / n)``
+      * Magnetizing peak, triangular at the half-period:
+        ``I_m_pk = (Vin_max / 2) · T_sw / (4 · L_m)``
+        = ``Vin_max / (8 · L_m · fsw)``
+        L_m is read from ``spec.desiredMagnetizingInductance`` (PROTEUS
+        −20 % tolerance baked in: ``L_m_worst = 0.8 · L_m``).
+        Worst-case Vin for magnetizing flux is ``Vin_max`` (largest
+        primary voltage during the on-half).
+      * Sub-resonant boost factor: ``M_max = max(1, 2·n·Vout / Vin_min)``
+        scales the load-reflected component (magnetizing is already
+        Vin-driven and captured separately).
+      * ``I_pk_worst = M_max · I_load_pk + I_m_pk``
+
+    Isat: closed-form on L_r's own MAS:
+
+      ``Isat = B_sat · N_Lr · A_e / L_r``
+
+    T1 is intentionally NOT Isat-stamped: the LLC primary is driven
+    symmetrically (HB midpoint swings between 0 and Vin) and the
+    series ``Cr`` blocks DC; the only flux excursion is the magnetizing
+    ripple which is bounded by the design rules above and rides on the
+    L_r stamp via ``I_m_pk``.
+
+    Raises ``EnrichmentError`` (no fallbacks per CLAUDE.md) for any
+    missing / invalid spec field, missing MAS payload, or missing
+    transformer winding.
+    """
+    import math as _math
+    where = "llc spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+    L_r = _required_inductance(spec, "desiredInductance", where)
+    L_m = _required_inductance(spec, "desiredMagnetizingInductance", where)
+
+    # T1 in the isolation stage — windings pri / sec1 / sec2 (CT).
+    _, _, t1_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "llc enrichment (T1)"
+    )
+    t1_mas = _read_mas(t1_comp, "llc T1 MAS")
+    N_pri  = _winding_turns_by_name(t1_mas, "pri",  "llc T1 MAS")
+    N_sec1 = _winding_turns_by_name(t1_mas, "sec1", "llc T1 MAS")
+    n = float(N_pri) / float(N_sec1)   # step-down ratio per half-secondary
+
+    # L_r in the inverter stage — series-resonant inductor.
+    si, ci, lr_comp = _find_magnetic_in_stage_role(
+        tas, "inverter", "llc enrichment (L_r)"
+    )
+    lr_mas = _read_mas(lr_comp, "llc L_r MAS")
+    A_e, N_lr, b_sat = _mas_isat_inputs(lr_mas, "llc L_r MAS")
+
+    # Required gain at low line (FHA scalar; M ≥ 1 means sub-resonant).
+    M_at_vmin = (2.0 * n * vout) / vmin
+    M_max = max(1.0, M_at_vmin)
+
+    # Load-reflected primary peak (sinusoidal envelope, FHA).
+    i_load_pk = (_math.pi / 2.0) * (iout / n)
+
+    # Magnetizing peak (triangular, worst-case at Vin_max).
+    L_m_worst = 0.8 * L_m
+    i_mag_pk = vmax / (8.0 * L_m_worst * fsw)
+
+    ipeak_worst = M_max * i_load_pk + i_mag_pk
+    isat = b_sat * float(N_lr) * float(A_e) / L_r
+
+    tas["duty"]     = 0.5
+    tas["duty_min"] = 0.5
+    tas["duty_max"] = 0.5
+
+    enriched = dict(lr_comp)
+    enriched["isat"]        = round(isat, 6)
+    enriched["ipeak_worst"] = round(ipeak_worst, 6)
+    enriched["isat_provenance"] = {
+        "method": "B_sat * N * A_e / L_r (llc v0.1, series-resonant inductor)",
+        "b_sat_T": round(b_sat, 6),
+        "n_turns": int(N_lr),
+        "effective_area_m2": float(A_e),
+        "inductance_H": L_r,
+    }
+    enriched["ipeak_provenance"] = {
+        "method": (
+            "M_max * (pi/2) * (Iout/n)  +  Vin_max / (8 * Lm_worst * fsw)  "
+            "[FHA load-reflected sinusoidal envelope plus triangular "
+            "magnetizing peak; M_max = max(1, 2*n*Vout/Vin_min) is the "
+            "sub-resonant boost-gain scalar; Lm_worst = 0.8 * Lm "
+            "(PROTEUS −20 % tolerance)]"
+        ),
+        "role": "series_resonant_inductor",
+        "iout_A": iout,
+        "vout_V": vout,
+        "turns_ratio_n_pri_over_n_sec1": round(n, 6),
+        "n_primary": N_pri,
+        "n_secondary_half": N_sec1,
+        "vin_min_V": vmin,
+        "vin_max_V": vmax,
+        "fsw_Hz": fsw,
+        "gain_at_vin_min": round(M_at_vmin, 6),
+        "boost_factor_M_max": round(M_max, 6),
+        "i_load_pk_A": round(i_load_pk, 6),
+        "i_mag_pk_A": round(i_mag_pk, 6),
+        "Lm_H": L_m,
+        "Lm_worst_H": L_m_worst,
+        "duty_50pct_complementary_HB": True,
+    }
+    tas["topology"]["stages"][si]["circuit"]["components"][ci] = enriched
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -1870,6 +2017,7 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "asymmetric_half_bridge": _enrich_asymmetric_half_bridge,
     "weinberg": _enrich_weinberg,
     "four_switch_buck_boost": _enrich_four_switch_buck_boost,
+    "llc": _enrich_llc,
 }
 
 
