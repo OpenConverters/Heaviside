@@ -24,8 +24,16 @@ import pytest
 from heaviside.librarian import validate_component
 from heaviside.librarian.fetcher.base import IncompleteSourceError
 from heaviside.librarian.fetcher.convert import (
+    convert_digikey_to_tas_capacitor,
+    convert_digikey_to_tas_diode,
+    convert_digikey_to_tas_igbt,
     convert_digikey_to_tas_mosfet,
+    convert_digikey_to_tas_resistor,
+    convert_mouser_to_tas_capacitor,
+    convert_mouser_to_tas_diode,
+    convert_mouser_to_tas_igbt,
     convert_mouser_to_tas_mosfet,
+    convert_mouser_to_tas_resistor,
     parse_si_value,
 )
 
@@ -323,3 +331,557 @@ def test_mouser_missing_manufacturer_raises() -> None:
     with pytest.raises(IncompleteSourceError) as excinfo:
         convert_mouser_to_tas_mosfet(payload)
     assert excinfo.value.missing_field == "manufacturerInfo.name"
+
+
+# ===========================================================================
+# Diode converters
+# ===========================================================================
+
+
+def _wolfspeed_diode_digikey(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "ManufacturerPartNumber": "C3D04060A",
+        "Manufacturer": {"Value": "Wolfspeed"},
+        "DigiKeyPartNumber": "C3D04060A-ND",
+        "ProductStatus": "Active",
+        "UnitPrice": 3.50,
+        "QuantityAvailable": 500,
+        "PrimaryDatasheet": "https://wolfspeed.com/.../C3D04060A.pdf",
+        "ProductUrl": "https://www.digikey.com/...",
+        "Description": {
+            "ProductDescription": "DIODE SCHOTTKY 600V 4A TO220AC SiC",
+        },
+        "Parameters": [
+            {"Parameter": "Voltage - DC Reverse (Vr) (Max)", "Value": "600 V"},
+            {"Parameter": "Voltage - Forward (Vf) (Max) @ If", "Value": "1.5 V"},
+            {"Parameter": "Current - Average Rectified (Io)", "Value": "4 A"},
+            {"Parameter": "Reverse Recovery Charge (Qrr) (Typ)", "Value": "13 nC"},
+            {"Parameter": "Supplier Device Package", "Value": "TO-220AC"},
+        ],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_digikey_diode_happy_path_validates() -> None:
+    envelope = convert_digikey_to_tas_diode(_wolfspeed_diode_digikey())
+    assert set(envelope.keys()) == {"semiconductor"}
+    assert set(envelope["semiconductor"].keys()) == {"diode"}
+    diode = envelope["semiconductor"]["diode"]
+    part = diode["manufacturerInfo"]["datasheetInfo"]["part"]
+    assert part["technology"] == "SiC"
+    assert part["subType"] == "sicSchottky"
+    assert part["case"] == "TO-220AC"
+    assert "deviceType" not in part
+    electrical = diode["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    assert electrical["reverseVoltage"] == pytest.approx(600.0)
+    assert electrical["forwardVoltage"] == pytest.approx(1.5)
+    assert electrical["forwardCurrent"] == pytest.approx(4.0)
+    assert electrical["reverseRecoveryCharge"] == pytest.approx(13e-9)
+    validate_component("diodes", envelope)
+
+
+@pytest.mark.parametrize(
+    "description,expected_subtype",
+    [
+        ("DIODE SCHOTTKY 100V 5A", "schottky"),
+        ("DIODE SCHOTTKY SiC 1200V 10A", "sicSchottky"),
+        ("DIODE ULTRAFAST 600V 8A", "ultrafast"),
+        ("DIODE FAST RECOVERY 200V 3A", "fastRecovery"),
+        ("DIODE TVS 33V UNIDIR", "tvs"),
+        ("DIODE ZENER 12V 500MW", "zener"),
+        ("DIODE GP RECTIFIER 1000V 1A", "standard"),
+    ],
+)
+def test_digikey_diode_subtype_resolution(
+    description: str, expected_subtype: str,
+) -> None:
+    payload = _wolfspeed_diode_digikey(
+        Description={"ProductDescription": description},
+    )
+    env = convert_digikey_to_tas_diode(payload)
+    assert env["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"][
+        "part"
+    ]["subType"] == expected_subtype
+
+
+@pytest.mark.parametrize(
+    "param_to_drop,expected_field",
+    [
+        ("Voltage - DC Reverse (Vr) (Max)", "electrical.reverseVoltage"),
+        ("Voltage - Forward (Vf) (Max) @ If", "electrical.forwardVoltage"),
+        ("Current - Average Rectified (Io)", "electrical.forwardCurrent"),
+        ("Reverse Recovery Charge (Qrr) (Typ)", "electrical.reverseRecoveryCharge"),
+    ],
+)
+def test_digikey_diode_missing_required_param_raises(
+    param_to_drop: str, expected_field: str,
+) -> None:
+    payload = _wolfspeed_diode_digikey()
+    payload["Parameters"] = [
+        p for p in payload["Parameters"] if p["Parameter"] != param_to_drop
+    ]
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_digikey_to_tas_diode(payload)
+    assert excinfo.value.missing_field == expected_field
+    assert excinfo.value.source == "digikey"
+
+
+def _wolfspeed_diode_mouser(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "ManufacturerPartNumber": "C3D04060A",
+        "Manufacturer": "Wolfspeed",
+        "MouserPartNumber": "581-C3D04060A",
+        "Description": "DIODE SCHOTTKY 600V 4A SiC TO-220AC",
+        "DataSheetUrl": "https://wolfspeed.com/.../C3D04060A.pdf",
+        "ProductDetailUrl": "https://www.mouser.com/...",
+        "AvailabilityInStock": "75",
+        "PriceBreaks": [{"Quantity": 1, "Price": "$3.50", "Currency": "USD"}],
+        "ProductAttributes": [
+            {"AttributeName": "Voltage - DC Reverse (Vr) (Max)", "AttributeValue": "600 V"},
+            {"AttributeName": "Voltage - Forward (Vf) (Max) @ If", "AttributeValue": "1.5 V"},
+            {"AttributeName": "Current - Average Rectified (Io)", "AttributeValue": "4 A"},
+            {"AttributeName": "Reverse Recovery Charge (Qrr) (Typ)", "AttributeValue": "13 nC"},
+        ],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_mouser_diode_happy_path_validates() -> None:
+    envelope = convert_mouser_to_tas_diode(_wolfspeed_diode_mouser())
+    validate_component("diodes", envelope)
+    diode = envelope["semiconductor"]["diode"]
+    assert diode["distributorsInfo"][0]["name"] == "Mouser"
+    assert diode["distributorsInfo"][0]["cost"] == pytest.approx(3.50)
+
+
+def test_mouser_diode_thin_payload_raises() -> None:
+    payload = _wolfspeed_diode_mouser()
+    payload["ProductAttributes"] = [
+        p for p in payload["ProductAttributes"]
+        if p["AttributeName"] != "Reverse Recovery Charge (Qrr) (Typ)"
+    ]
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_mouser_to_tas_diode(payload)
+    assert excinfo.value.missing_field == "electrical.reverseRecoveryCharge"
+
+
+# ===========================================================================
+# IGBT converters
+# ===========================================================================
+
+
+def _infineon_igbt_digikey(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "ManufacturerPartNumber": "IKW40N120H3",
+        "Manufacturer": {"Value": "Infineon"},
+        "DigiKeyPartNumber": "IKW40N120H3-ND",
+        "ProductStatus": "Active",
+        "UnitPrice": 12.0,
+        "QuantityAvailable": 100,
+        "PrimaryDatasheet": "https://infineon.com/...",
+        "ProductUrl": "https://www.digikey.com/...",
+        "Description": {
+            "ProductDescription": "IGBT 1200V 40A 250W TO247",
+        },
+        "Parameters": [
+            {"Parameter": "Voltage - Collector Emitter Breakdown (Max)", "Value": "1200 V"},
+            {"Parameter": "Vce(on) (Max) @ Vge, Ic", "Value": "2.05 V"},
+            {"Parameter": "Current - Collector (Ic) @ 25°C", "Value": "40 A"},
+            {"Parameter": "Supplier Device Package", "Value": "TO-247"},
+        ],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_digikey_igbt_happy_path_validates() -> None:
+    envelope = convert_digikey_to_tas_igbt(_infineon_igbt_digikey())
+    igbt = envelope["semiconductor"]["igbt"]
+    part = igbt["manufacturerInfo"]["datasheetInfo"]["part"]
+    assert part["partNumber"] == "IKW40N120H3"
+    assert part["technology"] == "Si"
+    assert part["subType"] == "nChannel"
+    electrical = igbt["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    assert electrical["collectorEmitterVoltage"] == pytest.approx(1200.0)
+    assert electrical["collectorEmitterSaturation"] == pytest.approx(2.05)
+    assert electrical["continuousCollectorCurrent"] == pytest.approx(40.0)
+    validate_component("igbts", envelope)
+
+
+@pytest.mark.parametrize(
+    "param_to_drop,expected_field",
+    [
+        (
+            "Voltage - Collector Emitter Breakdown (Max)",
+            "electrical.collectorEmitterVoltage",
+        ),
+        ("Vce(on) (Max) @ Vge, Ic", "electrical.collectorEmitterSaturation"),
+        (
+            "Current - Collector (Ic) @ 25°C",
+            "electrical.continuousCollectorCurrent",
+        ),
+    ],
+)
+def test_digikey_igbt_missing_required_param_raises(
+    param_to_drop: str, expected_field: str,
+) -> None:
+    payload = _infineon_igbt_digikey()
+    payload["Parameters"] = [
+        p for p in payload["Parameters"] if p["Parameter"] != param_to_drop
+    ]
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_digikey_to_tas_igbt(payload)
+    assert excinfo.value.missing_field == expected_field
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "IGBT MODULE 1200V 100A HALF BRIDGE",
+        "IGBT 6-PACK 600V 30A",
+        "IGBT DUAL 1200V 100A",
+        "IGBT H-BRIDGE 600V 50A",
+    ],
+)
+def test_digikey_igbt_rejects_modules(description: str) -> None:
+    payload = _infineon_igbt_digikey(
+        Description={"ProductDescription": description},
+    )
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_digikey_to_tas_igbt(payload)
+    assert excinfo.value.missing_field == "semiconductor.igbt"
+
+
+def test_mouser_igbt_happy_path_validates() -> None:
+    payload = {
+        "ManufacturerPartNumber": "IKW40N120H3",
+        "Manufacturer": "Infineon",
+        "MouserPartNumber": "726-IKW40N120H3",
+        "Description": "IGBT 1200V 40A 250W TO247",
+        "DataSheetUrl": "http://x",
+        "ProductDetailUrl": "http://y",
+        "AvailabilityInStock": "30",
+        "PriceBreaks": [{"Quantity": 1, "Price": "$12.00", "Currency": "USD"}],
+        "ProductAttributes": [
+            {"AttributeName": "Voltage - Collector Emitter Breakdown (Max)", "AttributeValue": "1200 V"},
+            {"AttributeName": "Vce(on) (Max) @ Vge, Ic", "AttributeValue": "2.05 V"},
+            {"AttributeName": "Current - Collector (Ic) @ 25°C", "AttributeValue": "40 A"},
+        ],
+    }
+    envelope = convert_mouser_to_tas_igbt(payload)
+    validate_component("igbts", envelope)
+
+
+# ===========================================================================
+# Resistor converters
+# ===========================================================================
+
+
+def _vishay_resistor_digikey(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "ManufacturerPartNumber": "CRCW08051K00FKEA",
+        "Manufacturer": {"Value": "Vishay Dale"},
+        "DigiKeyPartNumber": "541-1.00KCCT-ND",
+        "ProductStatus": "Active",
+        "UnitPrice": 0.10,
+        "QuantityAvailable": 100000,
+        "PrimaryDatasheet": "http://vishay.com/...",
+        "ProductUrl": "http://digikey.com/...",
+        "Description": {
+            "ProductDescription": "RES SMD 1K OHM 1% 1/8W 0805",
+        },
+        "Parameters": [
+            {"Parameter": "Resistance", "Value": "1 kΩ"},
+            {"Parameter": "Tolerance", "Value": "±1%"},
+            {"Parameter": "Power (Watts)", "Value": "0.125 W"},
+            {"Parameter": "Composition", "Value": "Thick Film"},
+            {"Parameter": "Supplier Device Package", "Value": "0805 (2012 Metric)"},
+        ],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_digikey_resistor_happy_path_validates() -> None:
+    envelope = convert_digikey_to_tas_resistor(_vishay_resistor_digikey())
+    res = envelope["resistor"]
+    part = res["manufacturerInfo"]["datasheetInfo"]["part"]
+    assert part["technology"] == "thickFilm"
+    assert part["case"] == "0805 (2012 Metric)"
+    electrical = res["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    assert electrical["resistance"] == {"nominal": pytest.approx(1000.0)}
+    assert electrical["tolerance"] == pytest.approx(0.01)
+    assert electrical["powerRating"] == pytest.approx(0.125)
+    validate_component("resistors", envelope)
+
+
+@pytest.mark.parametrize(
+    "raw,expected_fraction",
+    [
+        ("±1%", 0.01),
+        ("5%", 0.05),
+        ("0.1%", 0.001),
+        ("±0.5%", 0.005),
+    ],
+)
+def test_digikey_resistor_tolerance_parsing(
+    raw: str, expected_fraction: float,
+) -> None:
+    payload = _vishay_resistor_digikey()
+    for p in payload["Parameters"]:
+        if p["Parameter"] == "Tolerance":
+            p["Value"] = raw
+    envelope = convert_digikey_to_tas_resistor(payload)
+    assert envelope["resistor"]["manufacturerInfo"]["datasheetInfo"][
+        "electrical"
+    ]["tolerance"] == pytest.approx(expected_fraction)
+
+
+@pytest.mark.parametrize(
+    "composition,expected_enum",
+    [
+        ("Thick Film", "thickFilm"),
+        ("Thin Film", "thinFilm"),
+        ("Metal Film", "metalFilm"),
+        ("Wirewound", "wirewound"),
+        ("Wire Wound", "wirewound"),
+        ("Carbon Composition", "carbonComposition"),
+        ("Current Sense", "currentSenseShunt"),
+    ],
+)
+def test_digikey_resistor_technology_mapping(
+    composition: str, expected_enum: str,
+) -> None:
+    payload = _vishay_resistor_digikey()
+    for p in payload["Parameters"]:
+        if p["Parameter"] == "Composition":
+            p["Value"] = composition
+    envelope = convert_digikey_to_tas_resistor(payload)
+    assert envelope["resistor"]["manufacturerInfo"]["datasheetInfo"][
+        "part"
+    ]["technology"] == expected_enum
+
+
+@pytest.mark.parametrize(
+    "param_to_drop,expected_field",
+    [
+        ("Resistance", "electrical.resistance"),
+        ("Power (Watts)", "electrical.powerRating"),
+        ("Tolerance", "electrical.tolerance"),
+        ("Composition", "datasheetInfo.part.technology"),
+        ("Supplier Device Package", "datasheetInfo.part.case"),
+    ],
+)
+def test_digikey_resistor_missing_required_param_raises(
+    param_to_drop: str, expected_field: str,
+) -> None:
+    payload = _vishay_resistor_digikey()
+    payload["Parameters"] = [
+        p for p in payload["Parameters"] if p["Parameter"] != param_to_drop
+    ]
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_digikey_to_tas_resistor(payload)
+    assert excinfo.value.missing_field == expected_field
+
+
+def test_digikey_resistor_unknown_composition_raises() -> None:
+    payload = _vishay_resistor_digikey()
+    for p in payload["Parameters"]:
+        if p["Parameter"] == "Composition":
+            p["Value"] = "Quantum Vortex Resistor"
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_digikey_to_tas_resistor(payload)
+    assert excinfo.value.missing_field == "datasheetInfo.part.technology"
+    assert "unknown" in str(excinfo.value)
+
+
+def test_digikey_resistor_unparseable_tolerance_raises() -> None:
+    payload = _vishay_resistor_digikey()
+    for p in payload["Parameters"]:
+        if p["Parameter"] == "Tolerance":
+            p["Value"] = "TBD%"
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_digikey_to_tas_resistor(payload)
+    assert excinfo.value.missing_field == "electrical.tolerance"
+
+
+def test_mouser_resistor_happy_path_validates() -> None:
+    payload = {
+        "ManufacturerPartNumber": "CRCW08051K00FKEA",
+        "Manufacturer": "Vishay Dale",
+        "MouserPartNumber": "71-CRCW08051K00FKEA",
+        "Description": "RES SMD 1K OHM 1% 1/8W 0805",
+        "DataSheetUrl": "http://x",
+        "ProductDetailUrl": "http://y",
+        "AvailabilityInStock": "50000",
+        "PriceBreaks": [{"Quantity": 1, "Price": "$0.10", "Currency": "USD"}],
+        "ProductAttributes": [
+            {"AttributeName": "Resistance", "AttributeValue": "1 kΩ"},
+            {"AttributeName": "Tolerance", "AttributeValue": "±1%"},
+            {"AttributeName": "Power (Watts)", "AttributeValue": "0.125 W"},
+            {"AttributeName": "Composition", "AttributeValue": "Thick Film"},
+            {"AttributeName": "Supplier Device Package", "AttributeValue": "0805"},
+        ],
+    }
+    envelope = convert_mouser_to_tas_resistor(payload)
+    validate_component("resistors", envelope)
+
+
+# ===========================================================================
+# Capacitor converters
+# ===========================================================================
+
+
+def _murata_capacitor_digikey(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "ManufacturerPartNumber": "GRM21BR71H104KA01L",
+        "Manufacturer": {"Value": "Murata"},
+        "DigiKeyPartNumber": "490-3296-1-ND",
+        "ProductStatus": "Active",
+        "UnitPrice": 0.10,
+        "QuantityAvailable": 100000,
+        "PrimaryDatasheet": "http://murata.com/...",
+        "ProductUrl": "http://digikey.com/...",
+        "Description": {
+            "ProductDescription": "CAP CER 0.1UF 50V X7R 0805",
+        },
+        "Parameters": [
+            {"Parameter": "Capacitance", "Value": "0.1 µF"},
+            {"Parameter": "Voltage - Rated", "Value": "50 V"},
+            {"Parameter": "ESR (Equivalent Series Resistance)", "Value": "25 mΩ"},
+            {"Parameter": "Ripple Current @ Low Frequency", "Value": "2 A"},
+            {"Parameter": "Package / Case", "Value": "0805 (2012 Metric)"},
+            {"Parameter": "Family", "Value": "Ceramic Capacitors"},
+            {"Parameter": "Series", "Value": "GRM"},
+            {"Parameter": "Mounting Type", "Value": "Surface Mount, MLCC"},
+        ],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_digikey_capacitor_happy_path_validates() -> None:
+    envelope = convert_digikey_to_tas_capacitor(_murata_capacitor_digikey())
+    cap = envelope["capacitor"]
+    part = cap["manufacturerInfo"]["datasheetInfo"]["part"]
+    assert part["technology"] == "MLCC"
+    assert part["series"] == "GRM"
+    assert part["case"] == "0805 (2012 Metric)"
+    electrical = cap["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    assert electrical["capacitance"] == {"nominal": pytest.approx(0.1e-6)}
+    assert electrical["ratedVoltage"] == pytest.approx(50.0)
+    assert electrical["esr"] == pytest.approx(0.025)
+    assert electrical["rippleCurrent"] == pytest.approx(2.0)
+    mech = cap["manufacturerInfo"]["datasheetInfo"]["mechanical"]
+    assert mech["shape"] == {"assembly": "SMT", "shapeType": "rectangular"}
+    # We do NOT invent dimensions when the distributor doesn't publish them.
+    assert mech["dimensions"] == {}
+    validate_component("capacitors", envelope)
+
+
+@pytest.mark.parametrize(
+    "family,expected_tech",
+    [
+        ("Ceramic Capacitors", "MLCC"),
+        ("Aluminum Electrolytic Capacitors", "AluminumElectrolytic"),
+        ("Aluminum Polymer Capacitors", "AluminumPolymer"),
+        ("Tantalum Capacitors", "Tantalum"),
+        ("Tantalum Polymer Capacitors", "TantalumPolymer"),
+        ("Film Capacitors", "Film"),
+    ],
+)
+def test_digikey_capacitor_technology_mapping(
+    family: str, expected_tech: str,
+) -> None:
+    payload = _murata_capacitor_digikey()
+    for p in payload["Parameters"]:
+        if p["Parameter"] == "Family":
+            p["Value"] = family
+    # Aluminum/Tantalum bulk caps don't validate as SMT MLCCs — adjust
+    # mounting so the shape resolver doesn't trip while we test only
+    # the technology mapping.
+    if expected_tech in {
+        "AluminumElectrolytic", "AluminumPolymer", "Supercapacitor",
+    }:
+        for p in payload["Parameters"]:
+            if p["Parameter"] == "Mounting Type":
+                p["Value"] = "Through Hole"
+    envelope = convert_digikey_to_tas_capacitor(payload)
+    assert envelope["capacitor"]["manufacturerInfo"]["datasheetInfo"][
+        "part"
+    ]["technology"] == expected_tech
+
+
+@pytest.mark.parametrize(
+    "param_to_drop,expected_field",
+    [
+        ("Capacitance", "electrical.capacitance"),
+        ("Voltage - Rated", "electrical.ratedVoltage"),
+        ("ESR (Equivalent Series Resistance)", "electrical.esr"),
+        ("Ripple Current @ Low Frequency", "electrical.rippleCurrent"),
+        ("Package / Case", "datasheetInfo.part.case"),
+        ("Family", "datasheetInfo.part.technology"),
+        ("Series", "datasheetInfo.part.series"),
+        ("Mounting Type", "datasheetInfo.mechanical.shape.assembly"),
+    ],
+)
+def test_digikey_capacitor_missing_required_param_raises(
+    param_to_drop: str, expected_field: str,
+) -> None:
+    payload = _murata_capacitor_digikey()
+    payload["Parameters"] = [
+        p for p in payload["Parameters"] if p["Parameter"] != param_to_drop
+    ]
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_digikey_to_tas_capacitor(payload)
+    assert excinfo.value.missing_field == expected_field
+
+
+def test_digikey_capacitor_unrecognised_assembly_raises() -> None:
+    payload = _murata_capacitor_digikey()
+    for p in payload["Parameters"]:
+        if p["Parameter"] == "Mounting Type":
+            p["Value"] = "Magnetic Levitation"
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_digikey_to_tas_capacitor(payload)
+    assert excinfo.value.missing_field == "datasheetInfo.mechanical.shape.assembly"
+
+
+def test_digikey_capacitor_smt_aluminum_refuses_to_guess_shape() -> None:
+    """SMT + AluminumElectrolytic is not in the safe-mapping table —
+    rather than guessing 'rectangular' (which would be wrong for SMT
+    can caps) the converter raises."""
+    payload = _murata_capacitor_digikey()
+    for p in payload["Parameters"]:
+        if p["Parameter"] == "Family":
+            p["Value"] = "Aluminum Electrolytic Capacitors"
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_digikey_to_tas_capacitor(payload)
+    assert excinfo.value.missing_field == "datasheetInfo.mechanical.shape.shapeType"
+
+
+def test_mouser_capacitor_happy_path_validates() -> None:
+    payload = {
+        "ManufacturerPartNumber": "GRM21BR71H104KA01L",
+        "Manufacturer": "Murata",
+        "MouserPartNumber": "81-GRM21BR71H104KA01L",
+        "Description": "CAP CER 0.1UF 50V X7R 0805",
+        "DataSheetUrl": "http://x",
+        "ProductDetailUrl": "http://y",
+        "AvailabilityInStock": "20000",
+        "PriceBreaks": [{"Quantity": 1, "Price": "$0.10", "Currency": "USD"}],
+        "ProductAttributes": [
+            {"AttributeName": "Capacitance", "AttributeValue": "0.1 µF"},
+            {"AttributeName": "Voltage - Rated", "AttributeValue": "50 V"},
+            {"AttributeName": "ESR (Equivalent Series Resistance)", "AttributeValue": "25 mΩ"},
+            {"AttributeName": "Ripple Current @ Low Frequency", "AttributeValue": "2 A"},
+            {"AttributeName": "Package / Case", "AttributeValue": "0805"},
+            {"AttributeName": "Family", "AttributeValue": "Ceramic Capacitors"},
+            {"AttributeName": "Series", "AttributeValue": "GRM"},
+            {"AttributeName": "Mounting Type", "AttributeValue": "Surface Mount, MLCC"},
+        ],
+    }
+    envelope = convert_mouser_to_tas_capacitor(payload)
+    validate_component("capacitors", envelope)

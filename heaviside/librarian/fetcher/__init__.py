@@ -43,8 +43,16 @@ from heaviside.librarian.fetcher.base import (
 )
 from heaviside.librarian.fetcher.convert import (
     DIGIKEY_MOSFET_PARAM_MAP,
+    convert_digikey_to_tas_capacitor,
+    convert_digikey_to_tas_diode,
+    convert_digikey_to_tas_igbt,
     convert_digikey_to_tas_mosfet,
+    convert_digikey_to_tas_resistor,
+    convert_mouser_to_tas_capacitor,
+    convert_mouser_to_tas_diode,
+    convert_mouser_to_tas_igbt,
     convert_mouser_to_tas_mosfet,
+    convert_mouser_to_tas_resistor,
     parse_si_value,
 )
 from heaviside.librarian.fetcher.digikey import (
@@ -87,8 +95,16 @@ __all__ = [
     "StagingError",
     "TokenCache",
     "apply_staged",
+    "convert_digikey_to_tas_capacitor",
+    "convert_digikey_to_tas_diode",
+    "convert_digikey_to_tas_igbt",
     "convert_digikey_to_tas_mosfet",
+    "convert_digikey_to_tas_resistor",
+    "convert_mouser_to_tas_capacitor",
+    "convert_mouser_to_tas_diode",
+    "convert_mouser_to_tas_igbt",
     "convert_mouser_to_tas_mosfet",
+    "convert_mouser_to_tas_resistor",
     "list_staged",
     "load_credentials",
     "parse_si_value",
