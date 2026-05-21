@@ -35,7 +35,7 @@ import yaml
 
 from heaviside.agents import tools as _tools_module
 from heaviside.agents.tools import resolve_tools
-from heaviside.llm import ModelTier, classify_model
+from heaviside.llm import ModelTier, classify_model, is_kimi_model
 
 __all__ = [
     "PROMPTS_DIR",
@@ -219,6 +219,7 @@ def load_agent(
     model: str | None = None,
     prompts_dir: Path | None = None,
     agent_cls: Any = None,
+    kimi_model_builder: Any = None,
 ) -> Any:
     """Construct a Strands ``Agent`` for the named prompt.
 
@@ -230,17 +231,37 @@ def load_agent(
         agent_cls: Inject a fake ``Agent`` class — used by the unit
             tests to avoid network calls.  Default is the real
             :class:`strands.Agent`.
+        kimi_model_builder: Inject a fake substitute for
+            :func:`heaviside.llm.build_kimi_model` — used by unit
+            tests so neither the ``openai`` SDK nor a real
+            ``MOONSHOT_API_KEY`` need be present.  Receives the
+            keyword ``model_id`` and must return a value that the
+            Strands ``Agent`` accepts as ``model=``.  Default is the
+            real :func:`build_kimi_model`.
 
     The constructed agent has:
 
     * ``system_prompt`` = the prompt body,
     * ``tools`` = the resolved callables from
       :data:`heaviside.agents.tools.TOOL_REGISTRY`,
-    * ``model`` = ``model`` arg → prompt ``model:`` → :data:`DEFAULT_MODEL`.
+    * ``model`` = a fully constructed Strands ``Model`` object when
+      the resolved model id matches a Moonshot prefix (``kimi-*`` or
+      ``moonshot-*``); otherwise the raw model-id string passed
+      through to Strands so its built-in provider routing applies.
 
     Tier policy: a model classified ``blocked`` is refused
     unconditionally.  A prompt with ``tier_required:`` enforces a
     minimum tier; unknown-tier models satisfy no ``tier_required``.
+
+    Raises:
+        AgentLoadError: tier policy violation or prompt-file
+            structural problem.
+        heaviside.llm.KimiCredentialError: Kimi-family model resolved
+            but ``MOONSHOT_API_KEY`` is unset.  Surfaced from the
+            builder verbatim — Heaviside refuses to silently fall
+            back to a string model id that Strands cannot route.
+        heaviside.llm.KimiDependencyError: Kimi-family model resolved
+            but the ``openai`` SDK is not installed.
     """
     definition = load_agent_definition(name, prompts_dir=prompts_dir)
 
@@ -249,6 +270,17 @@ def load_agent(
 
     tools = resolve_tools(list(definition.allowed_tools))
 
+    # Route Kimi-family ids through the Moonshot builder so Strands
+    # receives a fully constructed ``OpenAIModel`` pointed at
+    # ``api.moonshot.ai``.  For non-Kimi ids the bare string is
+    # handed to Strands, which selects its own provider adapter.
+    if is_kimi_model(chosen_model):
+        if kimi_model_builder is None:
+            from heaviside.llm import build_kimi_model as kimi_model_builder  # noqa: PLC0415
+        model_arg: Any = kimi_model_builder(model_id=chosen_model)
+    else:
+        model_arg = chosen_model
+
     if agent_cls is None:
         # Deferred import keeps strands optional for code paths that
         # never construct a live Agent (e.g. dataclass-only tests).
@@ -256,7 +288,7 @@ def load_agent(
         agent_cls = _Agent
 
     return agent_cls(
-        model=chosen_model,
+        model=model_arg,
         tools=tools,
         system_prompt=definition.system_prompt,
         name=definition.name,

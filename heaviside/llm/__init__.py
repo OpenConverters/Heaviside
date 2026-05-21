@@ -15,6 +15,7 @@ from heaviside.llm.model_tiers import (
 )
 from heaviside.llm.kimi import (
     DEFAULT_KIMI_MODEL_ID,
+    KIMI_MODEL_PREFIXES,
     MOONSHOT_BASE_URL_CN,
     MOONSHOT_BASE_URL_INTL,
     KimiCredentialError,
@@ -22,11 +23,13 @@ from heaviside.llm.kimi import (
     KimiDependencyError,
     KimiError,
     build_kimi_model,
+    is_kimi_model,
     load_kimi_credentials,
 )
 
 __all__ = [
     "DEFAULT_KIMI_MODEL_ID",
+    "KIMI_MODEL_PREFIXES",
     "KimiCredentialError",
     "KimiCredentials",
     "KimiDependencyError",
@@ -37,6 +40,7 @@ __all__ = [
     "build_kimi_model",
     "classify_model",
     "context_window",
+    "is_kimi_model",
     "is_review_role_allowed",
     "load_kimi_credentials",
 ]

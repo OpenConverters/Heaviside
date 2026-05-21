@@ -46,6 +46,7 @@ from typing import Any
 
 __all__ = [
     "DEFAULT_KIMI_MODEL_ID",
+    "KIMI_MODEL_PREFIXES",
     "MOONSHOT_BASE_URL_INTL",
     "MOONSHOT_BASE_URL_CN",
     "KimiCredentialError",
@@ -53,6 +54,7 @@ __all__ = [
     "KimiDependencyError",
     "KimiError",
     "build_kimi_model",
+    "is_kimi_model",
     "load_kimi_credentials",
 ]
 
@@ -71,6 +73,14 @@ MOONSHOT_BASE_URL_CN: str = "https://api.moonshot.cn/v1"
 
 #: Default model id per ``heaviside/llm/model_tiers.json`` (Tier 1).
 DEFAULT_KIMI_MODEL_ID: str = "kimi-k2.5"
+
+#: Model-id prefixes that route through Moonshot.  ``kimi-k2.5`` and
+#: any forthcoming ``kimi-*`` variants live on Moonshot; the
+#: ``moonshot-v1-*`` family is the legacy line still served from the
+#: same endpoint.  Used by :func:`is_kimi_model` to decide whether
+#: :func:`heaviside.agents.load_agent` should build an
+#: ``OpenAIModel`` object or pass the bare string through to Strands.
+KIMI_MODEL_PREFIXES: tuple[str, ...] = ("kimi-", "moonshot-")
 
 #: Environment variable names — kept in one place so renames are a
 #: one-file change.
@@ -182,6 +192,24 @@ def load_kimi_credentials(
 # ---------------------------------------------------------------------------
 # Model construction
 # ---------------------------------------------------------------------------
+
+
+def is_kimi_model(model_id: str) -> bool:
+    """Return ``True`` when *model_id* should be routed through Moonshot.
+
+    A non-string input returns ``False`` — defensive against callers
+    that hand us an already-constructed Strands ``Model`` object
+    (which must be passed through verbatim).
+
+    The check is prefix-based against :data:`KIMI_MODEL_PREFIXES`,
+    case-insensitive.  Anything not matching is some other provider's
+    model id (Anthropic, OpenAI proper, Bedrock, …) and Strands is
+    expected to handle the string itself.
+    """
+    if not isinstance(model_id, str):
+        return False
+    lowered = model_id.strip().lower()
+    return any(lowered.startswith(prefix) for prefix in KIMI_MODEL_PREFIXES)
 
 
 def build_kimi_model(

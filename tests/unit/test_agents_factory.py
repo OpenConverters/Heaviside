@@ -131,14 +131,39 @@ def test_allowed_tools_must_be_list_of_str(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_load_agent_default_model_is_kimi() -> None:
-    agent = load_agent("component-librarian", agent_cls=FakeAgent)
-    assert agent.model == DEFAULT_MODEL == "kimi-k2.5"
+def test_load_agent_default_model_routes_to_kimi_builder() -> None:
+    """Default model id ``kimi-k2.5`` flows through the Kimi builder.
+
+    The factory must hand Strands a fully constructed ``OpenAIModel``
+    object — never the bare string ``"kimi-k2.5"`` — because the
+    Strands string router has no entry for Moonshot model ids.  The
+    test injects a stub builder so no network or openai SDK is needed.
+    """
+    seen: dict[str, Any] = {}
+
+    def fake_builder(*, model_id: str) -> str:
+        seen["model_id"] = model_id
+        return f"FAKE_KIMI_MODEL({model_id})"
+
+    agent = load_agent(
+        "component-librarian",
+        agent_cls=FakeAgent,
+        kimi_model_builder=fake_builder,
+    )
+    assert DEFAULT_MODEL == "kimi-k2.5"
+    assert seen == {"model_id": "kimi-k2.5"}
+    assert agent.model == "FAKE_KIMI_MODEL(kimi-k2.5)"
     assert agent.name == "component-librarian"
 
 
 def test_load_agent_resolves_tools() -> None:
-    agent = load_agent("component-auditor", agent_cls=FakeAgent)
+    # Use a non-Kimi model id so the factory passes the bare string
+    # through; this test exercises tool resolution, not model wiring.
+    agent = load_agent(
+        "component-auditor",
+        model="claude-opus-4-6",
+        agent_cls=FakeAgent,
+    )
     tool_names = [t.tool_spec["name"] for t in agent.tools]
     assert "audit_category" in tool_names
     assert "read_knowledge" in tool_names
@@ -173,7 +198,12 @@ def test_load_agent_passes_system_prompt(tmp_path: Path) -> None:
     (tmp_path / "hello.md").write_text(
         "---\nname: hello\ndescription: x\nallowed_tools: [read_knowledge]\n---\n\n# Hello world\n\nbody text\n"
     )
-    agent = load_agent("hello", prompts_dir=tmp_path, agent_cls=FakeAgent)
+    agent = load_agent(
+        "hello",
+        model="claude-opus-4-6",
+        prompts_dir=tmp_path,
+        agent_cls=FakeAgent,
+    )
     assert agent.system_prompt.startswith("# Hello world")
     assert "body text" in agent.system_prompt
 
@@ -184,7 +214,12 @@ def test_unknown_tool_in_prompt_raises(tmp_path: Path) -> None:
         "allowed_tools: [read_knowledge, not_a_real_tool]\n---\n\nbody\n"
     )
     with pytest.raises(KeyError, match="unknown tool name"):
-        load_agent("typo", prompts_dir=tmp_path, agent_cls=FakeAgent)
+        load_agent(
+            "typo",
+            model="claude-opus-4-6",
+            prompts_dir=tmp_path,
+            agent_cls=FakeAgent,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -193,10 +228,102 @@ def test_unknown_tool_in_prompt_raises(tmp_path: Path) -> None:
 
 
 def test_load_agent_constructs_real_strands_agent_object() -> None:
-    """Construct via the real strands.Agent class; do not invoke."""
+    """Construct via the real strands.Agent class; do not invoke.
+
+    Uses a non-Kimi model id so the factory passes the bare string
+    through to Strands and the test does not require a Moonshot key
+    or the ``openai`` SDK.  The Kimi-routing path is covered by
+    ``test_load_agent_default_model_routes_to_kimi_builder`` and the
+    live eval at ``tests/evals/test_kimi_smoke.py``.
+    """
     from strands import Agent
-    agent = load_agent("component-librarian")
+    agent = load_agent("component-librarian", model="claude-opus-4-6")
     assert isinstance(agent, Agent)
     # Strands keeps the tool list under .tool_registry — not asserting
     # the exact internal API beyond "constructor accepted our payload".
     assert agent is not None
+
+
+# ---------------------------------------------------------------------------
+# Kimi-routing behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_explicit_kimi_model_id_routes_through_builder() -> None:
+    """A ``model=`` override that is a Kimi id still routes correctly."""
+    seen: dict[str, Any] = {}
+
+    def fake_builder(*, model_id: str) -> str:
+        seen["model_id"] = model_id
+        return f"FAKE({model_id})"
+
+    agent = load_agent(
+        "component-librarian",
+        model="moonshot-v1-128k",
+        agent_cls=FakeAgent,
+        kimi_model_builder=fake_builder,
+    )
+    assert seen == {"model_id": "moonshot-v1-128k"}
+    assert agent.model == "FAKE(moonshot-v1-128k)"
+
+
+def test_non_kimi_model_id_bypasses_builder() -> None:
+    """Non-Kimi ids are handed to Strands as bare strings.
+
+    The builder must not be called — Strands has its own routing for
+    anthropic, openai, bedrock, …
+    """
+    builder_called = False
+
+    def fake_builder(*, model_id: str) -> str:
+        nonlocal builder_called
+        builder_called = True
+        return "should-not-be-used"
+
+    agent = load_agent(
+        "component-librarian",
+        model="claude-opus-4-6",
+        agent_cls=FakeAgent,
+        kimi_model_builder=fake_builder,
+    )
+    assert builder_called is False
+    assert agent.model == "claude-opus-4-6"
+
+
+def test_kimi_credential_error_propagates() -> None:
+    """A builder that raises ``KimiCredentialError`` is not swallowed.
+
+    Strict-mode contract: when the default model is Kimi but no key
+    is available, ``load_agent`` must raise — never fall back to a
+    bare string that Strands cannot route.
+    """
+    from heaviside.llm import KimiCredentialError
+
+    def angry_builder(*, model_id: str) -> Any:
+        raise KimiCredentialError("no key in env (test)")
+
+    with pytest.raises(KimiCredentialError, match="no key in env"):
+        load_agent(
+            "component-librarian",
+            agent_cls=FakeAgent,
+            kimi_model_builder=angry_builder,
+        )
+
+
+def test_kimi_model_id_case_insensitive() -> None:
+    """``KIMI-K2.5`` (upper-case) still routes through the builder."""
+    seen: dict[str, Any] = {}
+
+    def fake_builder(*, model_id: str) -> str:
+        seen["model_id"] = model_id
+        return "FAKE"
+
+    load_agent(
+        "component-librarian",
+        model="KIMI-K2.5",
+        agent_cls=FakeAgent,
+        kimi_model_builder=fake_builder,
+    )
+    # The factory forwards the *original* id (preserving case) — only
+    # the routing decision is case-insensitive.
+    assert seen == {"model_id": "KIMI-K2.5"}

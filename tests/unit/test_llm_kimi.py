@@ -204,3 +204,62 @@ def test_build_kimi_model_raises_dependency_error_when_openai_missing(
     creds = KimiCredentials(api_key="sk-1", base_url=MOONSHOT_BASE_URL_INTL)
     with pytest.raises(KimiDependencyError, match="openai"):
         build_kimi_model(credentials=creds)
+
+
+# ---------------------------------------------------------------------------
+# is_kimi_model
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "kimi-k2.5",
+        "kimi-k2",
+        "KIMI-K2.5",
+        "moonshot-v1-128k",
+        "moonshot-v1-32k",
+        "Moonshot-v1-Auto",
+        "  kimi-k2.5  ",  # whitespace tolerated
+    ],
+)
+def test_is_kimi_model_recognises_moonshot_family(model_id: str) -> None:
+    from heaviside.llm import is_kimi_model
+
+    assert is_kimi_model(model_id) is True
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "claude-opus-4-6",
+        "claude-sonnet-4-5",
+        "gpt-4o",
+        "gpt-5",
+        "llama3:8b",
+        "bedrock/anthropic.claude-3-5-sonnet",
+        "",
+        "kimi",  # missing dash → not a member of the family
+        "moonshot",
+    ],
+)
+def test_is_kimi_model_rejects_non_moonshot(model_id: str) -> None:
+    from heaviside.llm import is_kimi_model
+
+    assert is_kimi_model(model_id) is False
+
+
+def test_is_kimi_model_rejects_non_string() -> None:
+    """Already-constructed Model objects are passed through unchanged.
+
+    The factory uses this to distinguish "needs the builder" from
+    "Strands already has a Model object".
+    """
+    from heaviside.llm import is_kimi_model
+
+    class FakeModel:
+        pass
+
+    assert is_kimi_model(FakeModel()) is False  # type: ignore[arg-type]
+    assert is_kimi_model(None) is False  # type: ignore[arg-type]
+    assert is_kimi_model(42) is False  # type: ignore[arg-type]
