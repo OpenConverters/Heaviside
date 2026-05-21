@@ -27,8 +27,10 @@ Cost
 ----
 
 A single ``kimi-k2.5`` chat-completions call with ~20 input tokens
-and ``max_tokens=8``.  Order-of-magnitude under USD 0.001 per run
-at May 2026 Moonshot pricing.
+and ``max_tokens=512`` (generous bound that accommodates the model's
+reasoning trace; actual completion is typically <100 tokens).
+Order-of-magnitude under USD 0.01 per run at May 2026 Moonshot
+pricing.
 
 How to run
 ----------
@@ -101,7 +103,13 @@ def test_build_real_kimi_model_constructs() -> None:
     """
     from heaviside.llm import build_kimi_model
 
-    model = build_kimi_model(params={"temperature": 0.0, "max_tokens": 8})
+    # ``kimi-k2.5`` rejects ``temperature != 1`` with HTTP 400
+    # (``only 1 is allowed for this model``).  Use the only accepted
+    # value; determinism is enforced by the system prompt instead.
+    # ``kimi-k2.5`` is also a reasoning model: it emits an internal
+    # thought trace before the user-visible answer, so ``max_tokens``
+    # must accommodate both.  512 is generous for a one-word reply.
+    model = build_kimi_model(params={"temperature": 1.0, "max_tokens": 512})
     # No state checked beyond "construction succeeded" — the next
     # test exercises behaviour.
     assert model is not None
@@ -121,7 +129,7 @@ def test_kimi_agent_round_trip() -> None:
 
     from heaviside.llm import build_kimi_model
 
-    model = build_kimi_model(params={"temperature": 0.0, "max_tokens": 16})
+    model = build_kimi_model(params={"temperature": 1.0, "max_tokens": 512})
     agent = Agent(
         model=model,
         system_prompt=(
