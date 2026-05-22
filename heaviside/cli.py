@@ -210,12 +210,32 @@ def design(
             enrich_tas_for_realism,
             evaluate_tas,
         )
+        from heaviside.sim import SimError, simulate_steady_state, stamp_simulation_results
 
         try:
             tas_for_gate = enrich_tas_for_realism(tas, topology=topology, spec=spec_json)
         except EnrichmentError as exc:
             typer.echo(f"error: realism enrichment failed: {exc}", err=True)
             raise typer.Exit(code=6) from None
+
+        # Run the ngspice simulator on the same deck the decomposer
+        # produced so the four sim-dependent realism checks
+        # (efficiency_sanity, power_balance, output_voltage_regulation,
+        # no_negative_losses) get real numbers instead of UNAVAILABLE.
+        # SimError is non-fatal: realism continues with those four
+        # checks staying UNAVAILABLE.
+        try:
+            netlist, _ = decompose_from_spec(
+                topology,
+                spec_json,
+                turns_ratios=turns_ratios,
+                magnetizing_inductance=magnetizing_inductance,
+                bridge_simulation_mode=mode,
+            )
+            sim_result = simulate_steady_state(netlist)
+            stamp_simulation_results(tas_for_gate, sim_result)
+        except (SimError, DecomposerError) as exc:
+            typer.echo(f"sim runner skipped: {exc}", err=True)
 
         report = evaluate_tas(tas_for_gate, topology=topology, spec=spec_json)
         summary = report.summary
