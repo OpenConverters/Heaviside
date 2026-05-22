@@ -148,8 +148,21 @@ def design(
     from heaviside.decomposer import decompose_from_spec
     from heaviside.decomposer.api import DecomposerError
     from heaviside.bridge import BridgeError
+    from heaviside.spec.validate_topology import (
+        SpecValidationError,
+        validate_spec_for_topology,
+    )
 
     spec_json = _load_spec(spec)
+
+    # Per-topology spec validation runs BEFORE any PyMKF call so users
+    # see "missing maximumDutyCycle" up-front instead of mid-pipeline.
+    try:
+        validate_spec_for_topology(topology, spec_json)
+    except SpecValidationError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
     turns_ratios = _parse_turns(turns, spec_json)
     magnetizing_inductance = _parse_lm(lm, spec_json)
     mode = _resolve_bridge_mode(bridge_mode, topology)

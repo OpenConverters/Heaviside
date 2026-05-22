@@ -817,6 +817,154 @@ def design_extra_magnetic(
     return designs
 
 
+# -----------------------------------------------------------------------------
+# Candidate post-filter (saturation-margin aware)
+# -----------------------------------------------------------------------------
+
+
+def _ipeak_worst_buck(spec: Mapping[str, Any]) -> float | None:
+    """Worst-case peak current in a buck inductor across the operating range.
+
+    Mirrors the formula used by ``heaviside.pipeline.extract`` so the
+    bridge's post-filter and the realism gate's enrichment agree on what
+    counts as "passable". Returns ``None`` if the spec is incomplete
+    enough that we cannot compute a number (caller falls back to PyMKF's
+    top scorer in that case).
+    """
+    try:
+        vin = spec.get("inputVoltage") or {}
+        vmin = vin.get("minimum") if isinstance(vin, Mapping) else None
+        vmax = vin.get("maximum") if isinstance(vin, Mapping) else None
+        if not (isinstance(vmin, (int, float)) and isinstance(vmax, (int, float))):
+            return None
+        ops = spec.get("operatingPoints")
+        if not (isinstance(ops, list) and ops):
+            return None
+        op = ops[0]
+        if not isinstance(op, Mapping):
+            return None
+        vouts = op.get("outputVoltages")
+        iouts = op.get("outputCurrents")
+        fsw = op.get("switchingFrequency")
+        if not (isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))):
+            return None
+        if not (isinstance(iouts, list) and iouts and isinstance(iouts[0], (int, float))):
+            return None
+        if not isinstance(fsw, (int, float)) or fsw <= 0:
+            return None
+        L = spec.get("desiredInductance")
+        if not isinstance(L, (int, float)) or L <= 0:
+            return None
+        vout = float(vouts[0])
+        iout = float(iouts[0])
+        if vout >= float(vmin):
+            return None  # buck cannot step up; let realism flag it
+        d_min = vout / float(vmax)
+        L_worst = 0.8 * float(L)
+        ripple_worst = vout * (1.0 - d_min) / (L_worst * float(fsw))
+        return iout + ripple_worst / 2.0
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+# Per-topology worst-case-Ipeak computers. None entries mean "post-filter
+# is a no-op for that topology"; the bridge keeps PyMKF's top scorer
+# and the realism gate (if it has its own per-topology extractor) will
+# report any margin failure honestly.
+_IPEAK_WORST: dict[str, "Any"] = {
+    "buck": _ipeak_worst_buck,
+}
+
+
+def _isat_from_mas(mas: Mapping[str, Any], L_henries: float) -> float | None:
+    """Compute ``Isat = B_sat * N * A_e / L`` for a candidate MAS.
+
+    Returns ``None`` if the MAS lacks any of the required fields
+    (effectiveArea, saturation curve, primary numberTurns) — those
+    candidates are skipped during selection rather than treated as
+    infinite-margin passes.
+    """
+    if not isinstance(mas, Mapping) or L_henries <= 0:
+        return None
+    try:
+        A_e = (
+            mas.get("core", {})
+            .get("processedDescription", {})
+            .get("effectiveParameters", {})
+            .get("effectiveArea")
+        )
+        if not isinstance(A_e, (int, float)) or A_e <= 0:
+            return None
+        fd = mas.get("coil", {}).get("functionalDescription")
+        if not (isinstance(fd, list) and fd and isinstance(fd[0], Mapping)):
+            return None
+        N = fd[0].get("numberTurns")
+        if not isinstance(N, (int, float)) or N <= 0:
+            return None
+        sat = (
+            mas.get("core", {})
+            .get("functionalDescription", {})
+            .get("material", {})
+            .get("saturation")
+        )
+        if not (isinstance(sat, list) and sat):
+            return None
+        b_values = [
+            p["magneticFluxDensity"] for p in sat
+            if isinstance(p, Mapping)
+            and isinstance(p.get("magneticFluxDensity"), (int, float))
+            and p.get("magneticFluxDensity") > 0
+        ]
+        if not b_values:
+            return None
+        b_sat = min(b_values)
+        return float(b_sat) * float(N) * float(A_e) / float(L_henries)
+    except (KeyError, TypeError, AttributeError):
+        return None
+
+
+def _select_main_by_isat_margin(
+    candidates: Sequence[MagneticDesign],
+    entry: TopologyEntry,
+    spec: Mapping[str, Any],
+    *,
+    min_isat_ratio: float,
+) -> MagneticDesign:
+    """Pick the highest-scoring candidate whose Isat margin clears
+    ``min_isat_ratio`` against the spec's worst-case peak current.
+
+    Falls back to ``candidates[0]`` (PyMKF's top scorer) when:
+      * the post-filter is disabled (``min_isat_ratio <= 0``);
+      * no per-topology Ipeak_worst computer is registered for
+        ``entry.name``;
+      * the spec is too incomplete to compute Ipeak_worst;
+      * the candidate pool has no MAS we can evaluate;
+      * NO candidate clears the margin (then we deliberately keep
+        PyMKF's pick so the realism gate can FAIL the design honestly).
+    """
+    if not candidates:
+        raise BridgeError("_select_main_by_isat_margin: empty candidate list")
+    if min_isat_ratio <= 0:
+        return candidates[0]
+    ipeak_fn = _IPEAK_WORST.get(entry.name)
+    if ipeak_fn is None:
+        return candidates[0]
+    ipeak = ipeak_fn(spec)
+    if ipeak is None or ipeak <= 0:
+        return candidates[0]
+    L = spec.get("desiredInductance")
+    if not isinstance(L, (int, float)) or L <= 0:
+        return candidates[0]
+    threshold = float(min_isat_ratio) * float(ipeak)
+    for cand in candidates:
+        isat = _isat_from_mas(cand.magnetic, float(L))
+        if isat is None:
+            continue
+        if isat >= threshold:
+            return cand
+    return candidates[0]
+
+
 def design_converter_components(
     topology: str | TopologyEntry,
     converter_spec: Mapping[str, Any],
@@ -825,27 +973,44 @@ def design_converter_components(
     core_mode: str = "available cores",
     use_ngspice: bool = False,
     weights: Mapping[str, float] | None = None,
+    min_isat_ratio: float = 1.2,
+    candidate_pool_size: int = 10,
 ) -> ConverterComponents:
     """End-to-end Phase A + Phase B for a converter spec.
 
     1. Design the main magnetic via :func:`design_magnetics`.
-    2. Probe extras in REAL mode against that main magnetic.
-    3. Design each extra magnetic via :func:`design_extra_magnetic`.
-    4. Pass capacitor specs through untouched (bridge does not pick caps).
+       Internally requests up to ``candidate_pool_size`` candidates
+       (default 10) so we can post-filter for saturation margin even
+       when the caller asked for ``max_results=1``.
+    2. Post-filter the candidate list: pick the highest-scoring main
+       whose computed ``Isat >= min_isat_ratio * Ipeak_worst`` (default
+       1.2x, matching the realism gate's check). Falls through to the
+       PyMKF-preferred top candidate only when no candidate clears the
+       margin (so the realism gate FAILs honestly rather than us hiding
+       a bad pick).
+    3. Probe extras in REAL mode against the chosen main magnetic.
+    4. Design each extra magnetic via :func:`design_extra_magnetic`.
+    5. Pass capacitor specs through untouched (bridge does not pick caps).
 
-    All results bundled into a :class:`ConverterComponents` record.
+    Pass ``min_isat_ratio=0`` to disable the post-filter and restore the
+    pre-2026-05-22 behaviour (always take PyMKF's top scorer).
     """
     entry = topology if isinstance(topology, TopologyEntry) else get(topology)
 
+    # Request more candidates than the caller wants so the post-filter
+    # has room to pick a properly-sized core.
+    pool = max(int(max_results), int(candidate_pool_size))
     main_designs = design_magnetics(
         entry,
         converter_spec,
-        max_results=max_results,
+        max_results=pool,
         core_mode=core_mode,
         use_ngspice=use_ngspice,
         weights=weights,
     )
-    main = main_designs[0]
+    main = _select_main_by_isat_margin(
+        main_designs, entry, converter_spec, min_isat_ratio=min_isat_ratio,
+    )
 
     mag_specs, cap_specs = extra_components(
         entry,

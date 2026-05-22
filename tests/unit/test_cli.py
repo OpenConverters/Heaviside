@@ -96,7 +96,18 @@ def test_design_missing_lm_exits_2(tmp_path: Path) -> None:
 
 def test_design_bad_turns_flag_exits_2(tmp_path: Path) -> None:
     spec = tmp_path / "spec.json"
-    spec.write_text(json.dumps({"desiredInductance": 1e-6}))
+    # Spec must pass per-topology validation (post-2026-05-22) so we
+    # exercise the --turns flag parsing rather than the spec validator.
+    spec.write_text(json.dumps({
+        "inputVoltage": {"nominal": 48.0, "minimum": 36.0, "maximum": 60.0},
+        "desiredInductance": 1e-6,
+        "operatingPoints": [{
+            "outputVoltages": [12.0],
+            "outputCurrents": [5.0],
+            "switchingFrequency": 200000,
+            "ambientTemperature": 25,
+        }],
+    }))
     result = runner.invoke(
         app, ["design", "buck", "--spec", str(spec), "--turns", "not_a_number"]
     )
