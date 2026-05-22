@@ -188,6 +188,33 @@ def test_run_analyst_dispatches_per_topology() -> None:
     assert "loss_budget" not in tas2  # no-op for unknown
 
 
+def test_multi_op_stamps_per_op_budgets_and_worst_case_root() -> None:
+    """With 2 operating points, each gets a per-op budget at
+    simulation_results.op<i>.loss_budget, and tas.loss_budget is the
+    element-wise max across ops."""
+    tas = _buck_tas_with_picked_components()
+    spec = dict(_BUCK_SPEC)
+    spec["operatingPoints"] = [
+        {**_BUCK_SPEC["operatingPoints"][0], "outputCurrents": [5.0]},
+        {**_BUCK_SPEC["operatingPoints"][0], "outputCurrents": [8.0]},
+    ]
+    run_buck_analyst(tas, spec)
+
+    # Per-op budgets present at sim_results
+    sim = tas["simulation_results"]
+    assert "op0" in sim and "op1" in sim
+    assert "loss_budget" in sim["op0"]
+    assert "loss_budget" in sim["op1"]
+
+    # op1 has higher iout -> higher Q1_conduction (D*Iout^2*Rds_on scales with Iout^2)
+    op0_q1 = sim["op0"]["loss_budget"]["Q1_conduction"]
+    op1_q1 = sim["op1"]["loss_budget"]["Q1_conduction"]
+    assert op1_q1 > op0_q1, "op1 (8A) Q1 cond should exceed op0 (5A)"
+
+    # Root loss_budget = worst-case (max) per bucket = op1's number
+    assert tas["loss_budget"]["Q1_conduction"] == pytest.approx(op1_q1)
+
+
 def test_stamp_jt_no_op_without_loss_budget() -> None:
     """If the caller forgot to run the loss extractor first,
     stamp_junction_temperatures is a silent no-op (doesn't crash)."""

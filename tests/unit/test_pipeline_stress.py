@@ -181,3 +181,43 @@ def test_derive_stresses_dispatches_to_each_registered_topology() -> None:
     assert derive_stresses("buck", _BUCK_OK) is not None
     assert derive_stresses("boost", _BOOST_OK) is not None
     assert derive_stresses("flyback", _FLYBACK_OK) is not None
+
+
+# ---------------------------------------------------------------------------
+# Multi-op-point sweep
+# ---------------------------------------------------------------------------
+
+
+def test_derive_stresses_returns_worst_case_across_ops() -> None:
+    """Two-op spec: op0 has Iout=5A, op1 has Iout=10A. derive_stresses
+    must return the higher of the two (10A * (1 + ripple/2) = 12A)."""
+    spec = {
+        **_BUCK_OK,
+        "operatingPoints": [
+            {**_BUCK_OK["operatingPoints"][0], "outputCurrents": [5.0]},
+            {**_BUCK_OK["operatingPoints"][0], "outputCurrents": [10.0]},
+        ],
+    }
+    s = derive_stresses("buck", spec)
+    assert s is not None
+    # Worst-case Id is from the 10A op: 10 * (1 + 0.4/2) = 12.0
+    assert s.id_stress == pytest.approx(12.0)
+
+
+def test_derive_stresses_per_op_returns_one_per_op() -> None:
+    from heaviside.pipeline.stress import derive_stresses_per_op
+    spec = {
+        **_BUCK_OK,
+        "operatingPoints": [
+            {**_BUCK_OK["operatingPoints"][0], "outputCurrents": [3.0]},
+            {**_BUCK_OK["operatingPoints"][0], "outputCurrents": [7.0]},
+            {**_BUCK_OK["operatingPoints"][0], "outputCurrents": [5.0]},
+        ],
+    }
+    per_op = derive_stresses_per_op("buck", spec)
+    assert per_op is not None
+    assert len(per_op) == 3
+    # First op: 3A; second: 7A; third: 5A
+    assert per_op[0].id_stress == pytest.approx(3.0 * 1.2)
+    assert per_op[1].id_stress == pytest.approx(7.0 * 1.2)
+    assert per_op[2].id_stress == pytest.approx(5.0 * 1.2)
