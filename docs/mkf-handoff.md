@@ -39,13 +39,14 @@ and keeps the 7-arg signature. Probe results:
 
 1. **Publish a fixed 1.3.13 PyPI wheel** so Heaviside can lift the cap.
 2. **Fix the LLC `design_magnetics_from_converter` segfault** — last hard blocker on LLC end-to-end.
-3. **Fix SRC header line** — drop "Behavioural PULSE bridge" when switch-mode is active.
+3. **PFC: emit a real switching deck, not a behavioural envelope.** The dispatch is wired in 1.3.12, but `power_factor_correction` produces only B-source expressions for a sinusoidal current envelope + triangular ripple. There is no `L` inductor element, no `M`/`S` switch, no `D` diode, no `C` output capacitor — the deck header itself says "Ideal Behavioral Model". Heaviside cannot stencil this into a TAS BOM; PFC stays blocked until the generator emits a real boost cell (`L_boost` + `S_sw` + `D_boost` + `C_bus` + `R_load` + PWM source), matching the shape Vienna already emits per phase.
+4. **Fix SRC header line** — drop "Behavioural PULSE bridge" when switch-mode is active.
 
 ### Empirically-validated spec recipes for the 3 newly-unblocked topologies
 
 Probed by adding missing fields one at a time until `generate_ngspice_circuit` returned a non-error envelope. Each recipe is the *minimum* superset of the base inductor-converter spec — pass these straight through `generate_ngspice_circuit` against the cp312 PyMKF build to get a netlist back.
 
-**PFC** (`power_factor_correction`):
+**PFC** (`power_factor_correction`) — ⚠️ dispatch wired but the deck is an "Ideal Behavioral Model" with only B-sources (no L/S/D/C). Spec recipe below produces a netlist but nothing Heaviside can stencil. See upstream ask #3.
 ```python
 spec = BASE | {
     'outputVoltage': 400.0,

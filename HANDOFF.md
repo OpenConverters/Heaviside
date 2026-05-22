@@ -17,7 +17,7 @@ The **local source build** at `/home/alf/OpenMagnetics/PyMKF/` *does* contain th
 |---|---|
 | LLC `generate_ngspice_circuit` (switch mode) | ✅ SHI/SLO emitted at 150 kHz |
 | LLC `design_magnetics_from_converter` segfault | ❌ still SIGSEGV |
-| PFC dispatch | ✅ wired; spec now requires `outputVoltage` field |
+| PFC dispatch | ⚠️ wired but **generator emits a behavioural envelope, not a switching deck** — no L/S/D/C elements to decompose. Stays blocked. |
 | CLLC dispatch | ✅ wired; spec now requires `powerFlow` field |
 | Vienna dispatch | ✅ wired; spec now requires `lineToLineVoltage` field |
 | SRC switch-mode | ✅ SHI emitted (header text still says "Behavioural" — cosmetic) |
