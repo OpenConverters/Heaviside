@@ -150,6 +150,19 @@ class MouserClient:
                     response.headers.get("Retry-After")
                 ),
             )
+        # Mouser sends rate-limit errors as HTTP 403 with a
+        # "TooManyRequests" code in the body (Code: MaxCallPerMinute /
+        # MaxCallPerDay). Promote those to RateLimitError so callers can
+        # back off / fall through to another distributor instead of
+        # treating it as a generic API failure.
+        if response.status_code == 403 and "TooManyRequests" in response.text:
+            raise RateLimitError(
+                "mouser",
+                response.text,
+                retry_after_seconds=_parse_retry_after(
+                    response.headers.get("Retry-After")
+                ),
+            )
         if response.status_code >= 400:
             raise DistributorError("mouser", response.status_code, response.text)
         try:
