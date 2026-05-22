@@ -201,6 +201,53 @@ def _conservative_bsat(saturation_curve: list[Mapping[str, Any]]) -> float:
     return min(b_values)
 
 
+def _compute_isat_authoritative(
+    mas: Mapping[str, Any],
+    L: float,
+    *,
+    b_sat: float,
+    N: int,
+    A_e: float,
+    temperature_c: float = 100.0,
+    topology_label: str = "",
+) -> tuple[float, dict[str, Any]]:
+    """Return ``(isat, provenance)`` using PyOM's
+    ``calculate_saturation_current`` (authoritative — handles air gap
+    correctly) with the analytical ``B_sat * N * A_e / L`` formula as
+    fallback when PyOM rejects the MAS (e.g. minimal test fixtures
+    missing 'bobbin').
+
+    ``topology_label`` (e.g. ``"isolated_buck"``) is embedded in the
+    provenance ``method`` string so per-topology extract tests can
+    grep for the source. Empty by default for callers that don't care.
+
+    Shared by every per-topology extractor in this module so the
+    fix-once-for-buck doesn't have to be applied 6+ times.
+    """
+    suffix = f" [{topology_label}]" if topology_label else ""
+    method = f"PyOM.calculate_saturation_current{suffix}"
+    try:
+        from PyOpenMagnetics import PyOpenMagnetics as _P
+        isat = float(_P.calculate_saturation_current(dict(mas), float(temperature_c)))
+        if not (isat > 0):
+            raise ValueError(f"PyOM returned non-positive isat: {isat!r}")
+    except Exception as exc:
+        isat = float(b_sat) * float(N) * float(A_e) / float(L)
+        method = (
+            f"analytical fallback (B_sat * N * A_e / L){suffix}; PyOM failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    provenance: dict[str, Any] = {
+        "method": method,
+        "temperature_c": float(temperature_c),
+        "b_sat_T": round(float(b_sat), 6),
+        "n_turns": int(N),
+        "effective_area_m2": float(A_e),
+        "inductance_H": float(L),
+    }
+    return isat, provenance
+
+
 def _find_magnetic_component(tas: Mapping[str, Any]) -> tuple[int, int, Mapping[str, Any]]:
     """Return ``(stage_idx, comp_idx, comp)`` for the first magnetic.
 
@@ -559,7 +606,13 @@ def _enrich_boost(tas: dict, spec: Mapping[str, Any]) -> None:
         "boost inductor MAS",
     )
     b_sat = _conservative_bsat(sat)
-    isat = b_sat * float(N) * float(A_e) / L
+    op = _require(spec, ("operatingPoints",), "boost spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        mas, L, b_sat=b_sat, N=int(N), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="boost",
+    )
 
     tas["duty"] = round(d_max, 6)
     tas["duty_min"] = round(d_min, 6)
@@ -568,13 +621,7 @@ def _enrich_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched_comp = dict(comp)
     enriched_comp["isat"] = round(isat, 6)
     enriched_comp["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched_comp["isat_provenance"] = {
-        "method": "B_sat * N * A_e / L (boost v0.1 extractor)",
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L,
-    }
+    enriched_comp["isat_provenance"] = isat_prov
     enriched_comp["ipeak_provenance"] = {
         "method": "Iout*Vout/Vin_min + ripple_worst/2 (worst-case Vin over range)",
         "iout_A": iout,
@@ -719,7 +766,13 @@ def _enrich_flyback(tas: dict, spec: Mapping[str, Any]) -> None:
     ripple_worst = vmin * d_max / (Lm_worst * fsw)
     ipeak_worst = I_in_max / d_max + ripple_worst / 2.0
 
-    isat = b_sat * float(Np) * float(A_e) / Lm
+    op = _require(spec, ("operatingPoints",), "flyback spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        mas, Lm, b_sat=b_sat, N=int(Np), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="flyback",
+    )
 
     tas["duty"] = round(d_max, 6)
     tas["duty_min"] = round(d_min, 6)
@@ -728,13 +781,7 @@ def _enrich_flyback(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched_comp = dict(comp)
     enriched_comp["isat"] = round(isat, 6)
     enriched_comp["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched_comp["isat_provenance"] = {
-        "method": "B_sat * N_p * A_e / L_m (flyback v0.1, primary-referred)",
-        "b_sat_T": round(b_sat, 6),
-        "n_turns_primary": Np,
-        "effective_area_m2": float(A_e),
-        "magnetizing_inductance_H": Lm,
-    }
+    enriched_comp["isat_provenance"] = isat_prov
     enriched_comp["ipeak_provenance"] = {
         "method": "I_in_max/D_max + ripple_worst/2 at Vin_min, L_m*0.8",
         "iout_A": iout,
@@ -1122,7 +1169,13 @@ def _enrich_forward_family(
     L_worst = 0.8 * L_out
     ripple_worst = vout * (1.0 - d_min) / (L_worst * fsw)
     ipeak_worst = iout + ripple_worst / 2.0
-    isat = b_sat * N_lout * A_e / L_out
+    op = _require(spec, ("operatingPoints",), f"{topology_name} spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        lout_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label=topology_name,
+    )
 
     tas["duty"] = round(d_max, 6)
     tas["duty_min"] = round(d_min, 6)
@@ -1131,13 +1184,7 @@ def _enrich_forward_family(
     enriched = dict(lout_comp)
     enriched["isat"] = round(isat, 6)
     enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = {
-        "method": f"B_sat * N * A_e / L_out ({topology_name} v0.1, output choke)",
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": N_lout,
-        "effective_area_m2": A_e,
-        "inductance_H": L_out,
-    }
+    enriched["isat_provenance"] = isat_prov
     enriched["ipeak_provenance"] = {
         "method": "Iout + ripple_worst/2 (buck-shaped on secondary at D_min, L*0.8)",
         "role": "output_choke",
@@ -1241,7 +1288,13 @@ def _enrich_isolated_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     L_worst = 0.8 * L_pri
     ripple_worst = vout * (1.0 - d_min) / (L_worst * fsw)
     ipeak_worst = iout + ripple_worst / 2.0
-    isat = b_sat * float(N_pri) * float(A_e) / L_pri
+    op = _require(spec, ("operatingPoints",), "isolated_buck spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        mas, L_pri, b_sat=b_sat, N=int(N_pri), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="isolated_buck",
+    )
 
     tas["duty"] = round(d_max, 6)
     tas["duty_min"] = round(d_min, 6)
@@ -1250,13 +1303,7 @@ def _enrich_isolated_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched = dict(t1_comp)
     enriched["isat"] = round(isat, 6)
     enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = {
-        "method": "B_sat * N_pri * A_e / L_pri (isolated_buck v0.1, primary winding)",
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N_pri),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L_pri,
-    }
+    enriched["isat_provenance"] = isat_prov
     enriched["ipeak_provenance"] = {
         "method": "Iout_pri + ripple_worst/2 (buck-shaped on primary at D_min, L*0.8)",
         "role": "primary_buck_inductor",
@@ -1346,7 +1393,13 @@ def _enrich_isolated_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     mas = _read_mas(t1_comp, "isolated_buck_boost T1 MAS")
     A_e, _, b_sat = _mas_isat_inputs(mas, "isolated_buck_boost T1 MAS")
     N_pri = _winding_turns_by_name(mas, "pri", "isolated_buck_boost T1 MAS")
-    isat = b_sat * float(N_pri) * float(A_e) / L_pri
+    op = _require(spec, ("operatingPoints",), "isolated_buck_boost spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        mas, L_pri, b_sat=b_sat, N=int(N_pri), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="isolated_buck_boost",
+    )
 
     tas["duty"] = round(d_max, 6)
     tas["duty_min"] = round(d_min, 6)
@@ -1355,13 +1408,7 @@ def _enrich_isolated_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched = dict(t1_comp)
     enriched["isat"] = round(isat, 6)
     enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = {
-        "method": "B_sat * N_pri * A_e / L_pri (isolated_buck_boost v0.1, primary winding)",
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N_pri),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L_pri,
-    }
+    enriched["isat_provenance"] = isat_prov
     enriched["ipeak_provenance"] = {
         "method": (
             "Iout/(1-D_max) + ripple(Vin_max)/2 — pessimistic upper bound: "
@@ -1473,7 +1520,13 @@ def _enrich_push_pull(tas: dict, spec: Mapping[str, Any]) -> None:
     L_worst = 0.8 * L_out
     ripple_worst = vout * (1.0 - d_eff_min) / (L_worst * fsw_eff)
     ipeak_worst = iout + ripple_worst / 2.0
-    isat = b_sat * float(N_lout) * float(A_e) / L_out
+    op = _require(spec, ("operatingPoints",), "push_pull spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        lout_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="push_pull",
+    )
 
     tas["duty"] = round(d_eff_max, 6)
     tas["duty_min"] = round(d_eff_min, 6)
@@ -1482,13 +1535,7 @@ def _enrich_push_pull(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched = dict(lout_comp)
     enriched["isat"] = round(isat, 6)
     enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = {
-        "method": "B_sat * N * A_e / L_out (push_pull v0.1, output choke)",
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N_lout),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L_out,
-    }
+    enriched["isat_provenance"] = isat_prov
     enriched["ipeak_provenance"] = {
         "method": (
             "Iout + ripple_worst/2 (buck-shaped on secondary at D_eff_min, "
@@ -1604,7 +1651,13 @@ def _enrich_asymmetric_half_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     L_worst = 0.8 * L_out
     ripple_worst = vout * (1.0 - d_eff_min) / (L_worst * fsw_eff)
     ipeak_worst = iout + ripple_worst / 2.0
-    isat = b_sat * float(N_lout) * float(A_e) / L_out
+    op = _require(spec, ("operatingPoints",), "asymmetric_half_bridge spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        lout_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="asymmetric_half_bridge",
+    )
 
     tas["duty"]     = round(d_eff_max, 6)
     tas["duty_min"] = round(d_eff_min, 6)
@@ -1613,13 +1666,7 @@ def _enrich_asymmetric_half_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched = dict(lout_comp)
     enriched["isat"]        = round(isat, 6)
     enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = {
-        "method": "B_sat * N * A_e / L_out (asymmetric_half_bridge v0.1, output choke)",
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N_lout),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L_out,
-    }
+    enriched["isat_provenance"] = isat_prov
     enriched["ipeak_provenance"] = {
         "method": (
             "Iout + ripple_worst/2 (buck-shaped on secondary at D_eff_min, "
@@ -1747,7 +1794,13 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
 
     iL_avg_max = iout * vout / vmin       # input current at Vin_min
     ipeak_worst = iL_avg_max + ripple_worst / 2.0
-    isat = b_sat * float(N_l1) * float(A_e) / L
+    op = _require(spec, ("operatingPoints",), "weinberg spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        l1_mas, L, b_sat=b_sat, N=int(N_l1), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="weinberg",
+    )
 
     tas["duty"]     = round(d_max, 6)
     tas["duty_min"] = round(d_min, 6)
@@ -1756,13 +1809,7 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched = dict(l1_comp)
     enriched["isat"]        = round(isat, 6)
     enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = {
-        "method": "B_sat * N * A_e / L (weinberg v0.1, input coupled inductor)",
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N_l1),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L,
-    }
+    enriched["isat_provenance"] = isat_prov
     enriched["ipeak_provenance"] = {
         "method": (
             "I_in(Vin_min) + ripple_worst/2 (boost-shaped overlap ripple "
@@ -1890,7 +1937,13 @@ def _enrich_four_switch_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     si, ci, comp = _find_magnetic_component(tas)
     mas = _read_mas(comp, "four_switch_buck_boost L1 MAS")
     A_e, N, b_sat = _mas_isat_inputs(mas, "four_switch_buck_boost L1 MAS")
-    isat = b_sat * float(N) * float(A_e) / L
+    op = _require(spec, ("operatingPoints",), "four_switch_buck_boost spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        mas, L, b_sat=b_sat, N=int(N), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="four_switch_buck_boost",
+    )
 
     tas["duty"] = round(d_max, 6)
     tas["duty_min"] = round(d_min, 6)
@@ -1899,13 +1952,7 @@ def _enrich_four_switch_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched = dict(comp)
     enriched["isat"] = round(isat, 6)
     enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = {
-        "method": "B_sat * N * A_e / L (four_switch_buck_boost v0.1)",
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L,
-    }
+    enriched["isat_provenance"] = isat_prov
     enriched["ipeak_provenance"] = {
         "method": (
             "I_L_avg(worst Vin) + ripple_worst/2; mode-aware (buck / boost "

@@ -71,27 +71,49 @@ def _vmax(spec: Mapping[str, Any], where: str) -> float:
 
 
 def _first_op(spec: Mapping[str, Any], where: str) -> Mapping[str, Any]:
+    return _op_at(spec, 0, where)
+
+
+def _op_at(spec: Mapping[str, Any], op_index: int, where: str) -> Mapping[str, Any]:
     ops = spec.get("operatingPoints")
-    if not isinstance(ops, list) or not ops or not isinstance(ops[0], Mapping):
+    if not isinstance(ops, list) or not ops:
         raise StressDerivationError(
-            f"{where}.operatingPoints[0]: required non-empty list of objects"
+            f"{where}.operatingPoints: required non-empty list of objects"
         )
-    return ops[0]
+    if not (0 <= op_index < len(ops)):
+        raise StressDerivationError(
+            f"{where}.operatingPoints[{op_index}]: out of range "
+            f"({len(ops)} ops total)"
+        )
+    op = ops[op_index]
+    if not isinstance(op, Mapping):
+        raise StressDerivationError(
+            f"{where}.operatingPoints[{op_index}]: expected object, got "
+            f"{type(op).__name__}"
+        )
+    return op
 
 
-def _vout_iout(spec: Mapping[str, Any], where: str) -> tuple[float, float]:
-    op = _first_op(spec, where)
+def _vout_iout(
+    spec: Mapping[str, Any], where: str, *, op_index: int = 0,
+) -> tuple[float, float]:
+    op = _op_at(spec, op_index, where)
     vouts = op.get("outputVoltages")
     iouts = op.get("outputCurrents")
     if not (isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))):
         raise StressDerivationError(
-            f"{where}.operatingPoints[0].outputVoltages[0]: required positive number"
+            f"{where}.operatingPoints[{op_index}].outputVoltages[0]: required positive number"
         )
     if not (isinstance(iouts, list) and iouts and isinstance(iouts[0], (int, float))):
         raise StressDerivationError(
-            f"{where}.operatingPoints[0].outputCurrents[0]: required positive number"
+            f"{where}.operatingPoints[{op_index}].outputCurrents[0]: required positive number"
         )
     return float(vouts[0]), float(iouts[0])
+
+
+def _num_operating_points(spec: Mapping[str, Any]) -> int:
+    ops = spec.get("operatingPoints")
+    return len(ops) if isinstance(ops, list) else 0
 
 
 def _ripple_pp(spec: Mapping[str, Any]) -> float:
@@ -124,11 +146,13 @@ def _ripple_pp(spec: Mapping[str, Any]) -> float:
 #       I_ripple_rms ≈ Iout * ripple_ratio / (2 * sqrt(3))   (triangular wave)
 
 
-def buck_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
-    """Worst-case stresses for a buck converter, evaluated at Vin_max."""
+def buck_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStresses:
+    """Stresses for ``operatingPoints[op_index]`` of a buck converter,
+    evaluated at Vin_max for worst-case voltage stress. Use
+    :func:`derive_stresses` for a worst-case-across-ops result."""
     where = "buck spec"
     vmax = _vmax(spec, where)
-    vout, iout = _vout_iout(spec, where)
+    vout, iout = _vout_iout(spec, where, op_index=op_index)
     ripple = _ripple_pp(spec)
     if vout >= vmax:
         raise StressDerivationError(
@@ -160,12 +184,13 @@ def buck_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
 #       I_ripple_rms = Iout * sqrt(D / (1-D)) approximation (Maniktala 2.20)
 
 
-def boost_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
-    """Worst-case stresses for a boost converter, evaluated at Vin_min."""
+def boost_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStresses:
+    """Stresses for ``operatingPoints[op_index]`` of a boost converter,
+    evaluated at Vin_min for worst-case current stress."""
     where = "boost spec"
     vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
-    vout, iout = _vout_iout(spec, where)
+    vout, iout = _vout_iout(spec, where, op_index=op_index)
     ripple = _ripple_pp(spec)
     if vout <= vmax:
         raise StressDerivationError(
@@ -204,12 +229,12 @@ def boost_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
 #   V_working ≈ |Vout|
 
 
-def cuk_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
-    """Worst-case stresses for a Cuk converter (inverting buck-boost-like)."""
+def cuk_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStresses:
+    """Stresses for ``operatingPoints[op_index]`` of a Cuk converter."""
     where = "cuk spec"
     vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
     _ = _require_positive(spec, ("inputVoltage", "maximum"), where)
-    vout, iout = _vout_iout(spec, where)
+    vout, iout = _vout_iout(spec, where, op_index=op_index)
     ripple = _ripple_pp(spec)
     vout_abs = abs(vout)
     # Stress voltage on the switch = Vin + |Vout| (both rails seen)
@@ -246,8 +271,8 @@ def cuk_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
 #       I_ripple_rms = Iout * sqrt((1 - D_min) / D_min) approximation
 
 
-def flyback_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
-    """Worst-case stresses for a flyback converter.
+def flyback_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStresses:
+    """Stresses for ``operatingPoints[op_index]`` of a flyback converter.
 
     Requires ``desiredTurnsRatios`` and ``maximumDutyCycle`` on the spec
     (validated separately by ``heaviside.spec.validate_topology``).
@@ -255,7 +280,7 @@ def flyback_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
     where = "flyback spec"
     vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
-    vout, iout = _vout_iout(spec, where)
+    vout, iout = _vout_iout(spec, where, op_index=op_index)
     ratios = spec.get("desiredTurnsRatios")
     if not (isinstance(ratios, list) and ratios and isinstance(ratios[0], (int, float))):
         raise StressDerivationError(
@@ -294,16 +319,81 @@ _DERIVERS: dict[str, Any] = {
 }
 
 
+def _worst_case_across_ops(
+    fn: Any, spec: Mapping[str, Any],
+) -> ComponentStresses:
+    """Sweep every operatingPoints[*] and return the element-wise
+    worst-case ``ComponentStresses`` across all ops.
+
+    "Worst" for each field is the higher of the two (more stressful):
+    Vds/Id/Vr/If/V_working/I_ripple are all upper-bound stresses, so
+    ``max`` is the sizing-critical value. ``None`` fields propagate as
+    None (no stress declared at any op = no stress to size against).
+    """
+    n_ops = _num_operating_points(spec)
+    if n_ops == 0:
+        return fn(spec, op_index=0)  # will raise StressDerivationError
+
+    worst = fn(spec, op_index=0)
+    for i in range(1, n_ops):
+        try:
+            s = fn(spec, op_index=i)
+        except StressDerivationError:
+            continue  # skip malformed ops; first op was valid
+        worst = ComponentStresses(
+            vds_stress=_max_or_none(worst.vds_stress, s.vds_stress),
+            id_stress=_max_or_none(worst.id_stress, s.id_stress),
+            vr_stress=_max_or_none(worst.vr_stress, s.vr_stress),
+            if_avg_stress=_max_or_none(worst.if_avg_stress, s.if_avg_stress),
+            v_working=_max_or_none(worst.v_working, s.v_working),
+            i_ripple=_max_or_none(worst.i_ripple, s.i_ripple),
+        )
+    return worst
+
+
+def _max_or_none(a: float | None, b: float | None) -> float | None:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return max(a, b)
+
+
 def derive_stresses(topology: str, spec: Mapping[str, Any]) -> ComponentStresses | None:
-    """Return the worst-case ``ComponentStresses`` for ``topology``, or
-    ``None`` when no per-topology deriver is registered (downstream code
-    should treat ``None`` as "skip stress stamping — the realism gate
-    will mark voltage-derating checks UNAVAILABLE").
+    """Return worst-case ``ComponentStresses`` across every
+    operatingPoints[*] for ``topology``. Returns ``None`` when no
+    per-topology deriver is registered (downstream code treats None as
+    "skip stress stamping — the realism gate will mark voltage-derating
+    checks UNAVAILABLE").
+
+    The selector + analyst use this single worst-case value to size
+    components conservatively; per-op stresses and losses are available
+    via :func:`derive_stresses_per_op` for callers (e.g. the realism
+    gate sweep) that need them per operating point.
     """
     fn = _DERIVERS.get(topology)
     if fn is None:
         return None
-    return fn(spec)
+    return _worst_case_across_ops(fn, spec)
+
+
+def derive_stresses_per_op(
+    topology: str, spec: Mapping[str, Any],
+) -> list[ComponentStresses] | None:
+    """Return one ``ComponentStresses`` per operating point.
+
+    Used by the analyst's per-op loss budget and the realism gate's
+    per-op simulation_results stamping. Returns ``None`` when the
+    topology has no registered deriver.
+    """
+    fn = _DERIVERS.get(topology)
+    if fn is None:
+        return None
+    n_ops = _num_operating_points(spec)
+    if n_ops == 0:
+        # Single fallback call so error message paths still trigger.
+        return [fn(spec, op_index=0)]
+    return [fn(spec, op_index=i) for i in range(n_ops)]
 
 
 __all__ = [
@@ -313,5 +403,6 @@ __all__ = [
     "buck_stresses",
     "cuk_stresses",
     "derive_stresses",
+    "derive_stresses_per_op",
     "flyback_stresses",
 ]

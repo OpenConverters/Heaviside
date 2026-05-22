@@ -52,23 +52,46 @@ _GATE_DRIVE_CURRENT_A: float = 1.0
 # ---------------------------------------------------------------------------
 
 
-def _spec_fsw(spec: Mapping[str, Any]) -> float:
+def _spec_op(spec: Mapping[str, Any], op_index: int = 0) -> Mapping[str, Any]:
     ops = spec.get("operatingPoints")
-    if not isinstance(ops, list) or not ops or not isinstance(ops[0], Mapping):
-        raise AnalystError("spec.operatingPoints[0] is required")
-    fsw = ops[0].get("switchingFrequency")
+    if not isinstance(ops, list) or not ops:
+        raise AnalystError("spec.operatingPoints is required (non-empty list)")
+    if not (0 <= op_index < len(ops)):
+        raise AnalystError(
+            f"spec.operatingPoints[{op_index}] out of range ({len(ops)} ops)"
+        )
+    op = ops[op_index]
+    if not isinstance(op, Mapping):
+        raise AnalystError(f"spec.operatingPoints[{op_index}] must be an object")
+    return op
+
+
+def _spec_fsw(spec: Mapping[str, Any], op_index: int = 0) -> float:
+    op = _spec_op(spec, op_index)
+    fsw = op.get("switchingFrequency")
     if not isinstance(fsw, (int, float)) or fsw <= 0:
-        raise AnalystError("spec.operatingPoints[0].switchingFrequency must be positive")
+        raise AnalystError(
+            f"spec.operatingPoints[{op_index}].switchingFrequency must be positive"
+        )
     return float(fsw)
 
 
-def _spec_vout_iout(spec: Mapping[str, Any]) -> tuple[float, float]:
-    op = spec["operatingPoints"][0]
+def _spec_vout_iout(
+    spec: Mapping[str, Any], op_index: int = 0,
+) -> tuple[float, float]:
+    op = _spec_op(spec, op_index)
     vouts = op.get("outputVoltages") or []
     iouts = op.get("outputCurrents") or []
     if not vouts or not iouts:
-        raise AnalystError("operatingPoints[0].outputVoltages/outputCurrents required")
+        raise AnalystError(
+            f"operatingPoints[{op_index}].outputVoltages/outputCurrents required"
+        )
     return float(vouts[0]), float(iouts[0])
+
+
+def _num_ops(spec: Mapping[str, Any]) -> int:
+    ops = spec.get("operatingPoints")
+    return len(ops) if isinstance(ops, list) else 0
 
 
 def _spec_vin_nominal(spec: Mapping[str, Any]) -> float:
@@ -150,9 +173,9 @@ def _inductor_loss_from_mas(comp: Mapping[str, Any]) -> dict[str, float | None]:
 
 
 def compute_buck_loss_budget(
-    tas: dict[str, Any], spec: Mapping[str, Any],
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
 ) -> dict[str, float | None]:
-    """Per-component loss attribution for a buck design.
+    """Per-component loss attribution for a buck design at ``op_index``.
 
     Returns a flat dict suitable to stamp at ``tas["loss_budget"]``.
     Each key is a component-bucket label; each value is watts or
@@ -160,8 +183,8 @@ def compute_buck_loss_budget(
     by the realism gate's ``no_negative_losses`` check so a partial
     budget is still a valid budget.
     """
-    fsw = _spec_fsw(spec)
-    vout, iout = _spec_vout_iout(spec)
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
     vin = _spec_vin_nominal(spec)
     duty = vout / vin if vin > 0 else 0.0
 
@@ -330,15 +353,57 @@ def _stamp_analyst_efficiency(tas: dict[str, Any], spec: Mapping[str, Any]) -> N
     op["total_loss_analyst"] = round(total_loss, 4)
 
 
-def run_buck_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
-    """In-place: compute loss budget, stamp it on tas, then stamp Tj
-    on every BOM component that has Rth_ja + a computable loss.
+def _worst_case_loss_budget(
+    per_op_budgets: list[dict[str, float | None]],
+) -> dict[str, float | None]:
+    """Reduce a list of per-op loss budgets to a single worst-case
+    (max per bucket) flat budget.
 
-    Also stamps the analyst-derived efficiency so the realism gate's
-    efficiency_sanity check can pass through the design's true
-    efficiency rather than the lossy-deck simulation efficiency.
+    ``None`` values propagate as None when EVERY op reports None for
+    that bucket (i.e. the input is genuinely unmeasurable); otherwise
+    the max of the numeric values wins. The realism gate's
+    ``no_negative_losses`` reads from this flat budget directly.
     """
-    tas["loss_budget"] = compute_buck_loss_budget(tas, spec)
+    if not per_op_budgets:
+        return {}
+    all_keys: set[str] = set()
+    for b in per_op_budgets:
+        all_keys.update(b)
+    worst: dict[str, float | None] = {}
+    for k in sorted(all_keys):
+        numeric = [b[k] for b in per_op_budgets
+                   if isinstance(b.get(k), (int, float))]
+        worst[k] = max(numeric) if numeric else None
+    return worst
+
+
+def _stamp_per_op_budgets(
+    tas: dict[str, Any], per_op_budgets: list[dict[str, float | None]],
+) -> None:
+    """Stamp each op's loss budget at ``simulation_results.op<i>.loss_budget``
+    for per-op visibility. The flat ``tas.loss_budget`` is the worst-case
+    reduction and is what the realism gate evaluates.
+    """
+    sim = tas.setdefault("simulation_results", {})
+    if not isinstance(sim, dict):
+        return
+    for i, budget in enumerate(per_op_budgets):
+        op_block = sim.setdefault(f"op{i}", {})
+        if isinstance(op_block, dict):
+            op_block["loss_budget"] = budget
+
+
+def run_buck_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """In-place: compute per-op loss budgets across every operating
+    point, stamp the worst-case-per-bucket at ``tas.loss_budget``,
+    stamp per-op breakdowns at ``simulation_results.op<i>.loss_budget``,
+    then stamp Tj on every BOM component (using the worst-case loss)
+    and the analyst-derived efficiency.
+    """
+    n = max(_num_ops(spec), 1)
+    per_op = [compute_buck_loss_budget(tas, spec, op_index=i) for i in range(n)]
+    _stamp_per_op_budgets(tas, per_op)
+    tas["loss_budget"] = _worst_case_loss_budget(per_op)
     stamp_junction_temperatures(tas, spec)
     _stamp_analyst_efficiency(tas, spec)
 
@@ -350,6 +415,7 @@ def _compute_generic_loss_budget(
     duty: float,
     pri_current: float,
     sec_current: float,
+    op_index: int = 0,
 ) -> dict[str, float | None]:
     """Topology-generic loss budget keyed by closed-form duty + currents.
 
@@ -364,13 +430,14 @@ def _compute_generic_loss_budget(
         flyback, total switch-node current for cuk)
       * ``sec_current``: the device-side current during switch OFF
         (diode forward current avg; output cap loading)
+      * ``op_index``: which operating point to use for fsw / Vout
 
     Inductor losses come straight from PyMKF's MAS outputs (same as
     buck — that path is topology-independent because PyMKF computes
     losses for the winding it designed).
     """
-    fsw = _spec_fsw(spec)
-    vout, iout = _spec_vout_iout(spec)
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
     vin = _spec_vin_nominal(spec)
 
     budget: dict[str, float | None] = {}
@@ -433,50 +500,79 @@ def _compute_generic_loss_budget(
     return budget
 
 
-def run_boost_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
-    """Boost loss budget + Tj. D = 1 - Vin/Vout, primary current
-    through Q1 is the inductor current (Iin = Pout/Vin/eta)."""
-    vout, iout = _spec_vout_iout(spec)
-    vin = _spec_vin_nominal(spec)
-    duty = 1.0 - vin / vout
-    iin = iout * vout / vin  # primary = inductor current ~ Iin
-    tas["loss_budget"] = _compute_generic_loss_budget(
-        tas, spec, duty=duty, pri_current=iin, sec_current=iout,
-    )
+def _run_generic_analyst(
+    tas: dict[str, Any],
+    spec: Mapping[str, Any],
+    compute_op_budget: Any,
+) -> None:
+    """Shared driver: walk every op, stamp per-op budgets, reduce to
+    worst-case at root, then Tj + analyst-derived efficiency.
+
+    ``compute_op_budget(tas, spec, op_index)`` returns one op's budget.
+    """
+    n = max(_num_ops(spec), 1)
+    per_op = [compute_op_budget(tas, spec, op_index=i) for i in range(n)]
+    _stamp_per_op_budgets(tas, per_op)
+    tas["loss_budget"] = _worst_case_loss_budget(per_op)
     stamp_junction_temperatures(tas, spec)
     _stamp_analyst_efficiency(tas, spec)
 
 
-def run_cuk_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
-    """Cuk loss budget. Same topology-generic flow with the cuk-
-    specific assumption that primary and secondary inductor currents
-    sum through Q1 during switch ON."""
-    vout, iout = _spec_vout_iout(spec)
+def _boost_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    duty = 1.0 - vin / vout
+    iin = iout * vout / vin  # inductor avg = input avg for boost
+    return _compute_generic_loss_budget(
+        tas, spec, duty=duty, pri_current=iin, sec_current=iout,
+        op_index=op_index,
+    )
+
+
+def _cuk_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    vout, iout = _spec_vout_iout(spec, op_index)
     vin = _spec_vin_nominal(spec)
     vout_abs = abs(vout)
     duty = vout_abs / (vin + vout_abs)
     iin = iout * vout_abs / vin
-    tas["loss_budget"] = _compute_generic_loss_budget(
+    return _compute_generic_loss_budget(
         tas, spec, duty=duty, pri_current=(iin + iout), sec_current=iout,
+        op_index=op_index,
     )
-    stamp_junction_temperatures(tas, spec)
-    _stamp_analyst_efficiency(tas, spec)
 
 
-def run_flyback_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
-    """Flyback loss budget. Primary current is Iout/n (reflected),
-    secondary current avg is Iout / (1 - D)."""
+def _flyback_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
     ratios = spec.get("desiredTurnsRatios") or [1.0]
     n = float(ratios[0])
     d_max = float(spec.get("maximumDutyCycle", 0.5))
-    _, iout = _spec_vout_iout(spec)
-    ipri = (iout / n) * 1.5  # 50% ripple typical
+    _, iout = _spec_vout_iout(spec, op_index)
+    ipri = (iout / n) * 1.5
     isec_avg = iout / (1.0 - d_max)
-    tas["loss_budget"] = _compute_generic_loss_budget(
+    return _compute_generic_loss_budget(
         tas, spec, duty=d_max, pri_current=ipri, sec_current=isec_avg,
+        op_index=op_index,
     )
-    stamp_junction_temperatures(tas, spec)
-    _stamp_analyst_efficiency(tas, spec)
+
+
+def run_boost_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """Boost loss budget + Tj across every operating point."""
+    _run_generic_analyst(tas, spec, _boost_op_budget)
+
+
+def run_cuk_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """Cuk loss budget + Tj across every operating point."""
+    _run_generic_analyst(tas, spec, _cuk_op_budget)
+
+
+def run_flyback_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """Flyback loss budget + Tj across every operating point."""
+    _run_generic_analyst(tas, spec, _flyback_op_budget)
 
 
 # Per-topology analyst dispatch. Add new topologies here as their loss

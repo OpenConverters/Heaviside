@@ -182,14 +182,17 @@ _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
     # input current. iout is computed AFTER the meas pass from
     # ``vout / Rload`` rather than probed (see _compute_iout_from_rload).
     "single_output_dc": [
-        ("v(vin_dc)",  "i(vin_sense)", "v(vout)",       "i(vout_sense)"),
-        ("v(vin_dc)",  "i(vin_sense)", "v(vout)",       "i(vl_sense)"),
-        ("v(vin_dc)",  "i(vin_sense)", "v(vout_cap)",   "i(vout_sense)"),
+        ("v(vin_dc)",  "i(vin_sense)", "v(vout)",            "i(vout_sense)"),
+        ("v(vin_dc)",  "i(vin_sense)", "v(vout)",            "i(vl_sense)"),
+        ("v(vin_dc)",  "i(vin_sense)", "v(vout_cap)",        "i(vout_sense)"),
+        # Cuk-family: vout node is named vout_load_node (load is past
+        # a 0V ammeter). Same convention used by sepic/zeta variants.
+        ("v(vin_dc)",  "i(vin_sense)", "v(vout_load_node)",  "i(vout_sense)"),
         # Boost-family fallback: use vl_sense for both iin and iout,
         # then override iout = vout / Rload after the .meas pass.
-        ("v(vin_dc)",  "i(vl_sense)",  "v(vout)",       "i(vl_sense)"),
+        ("v(vin_dc)",  "i(vl_sense)",  "v(vout)",            "i(vl_sense)"),
         # Vienna single-phase deck: vin is the AC phase voltage source
-        ("v(vphase)",  "i(vphase)",    "v(vdc_cap)",    "i(vph_sense)"),
+        ("v(vphase)",  "i(vphase)",    "v(vdc_cap)",         "i(vph_sense)"),
     ],
 }
 
