@@ -1,0 +1,199 @@
+"""Tests for ``heaviside.pipeline.analyst``: loss budget + Tj stages."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from heaviside.pipeline.analyst import (
+    AnalystError,
+    compute_buck_loss_budget,
+    run_analyst,
+    run_buck_analyst,
+    stamp_junction_temperatures,
+)
+
+_BUCK_SPEC = {
+    "inputVoltage": {"nominal": 48.0, "minimum": 36.0, "maximum": 60.0},
+    "currentRippleRatio": 0.4,
+    "operatingPoints": [{
+        "outputVoltages": [12.0],
+        "outputCurrents": [5.0],
+        "switchingFrequency": 200_000.0,
+        "ambientTemperature": 25.0,
+    }],
+}
+
+
+def _buck_tas_with_picked_components() -> dict[str, Any]:
+    """A buck TAS where the catalogue selector has already stamped
+    Q1/D1/L1/C_out with the gate-readable flat fields."""
+    return {
+        "topology": {
+            "stages": [{
+                "name": "power_stage",
+                "circuit": {
+                    "components": [
+                        {
+                            "name": "Q1",
+                            "rds_on": 0.005,
+                            "qg_total": 30e-9,
+                            "rth_ja": 40.0,
+                            "tj_max": 150.0,
+                        },
+                        {
+                            "name": "D1",
+                            "vf_typ": 0.45,
+                            "qrr": 0.0,
+                            "rth_ja": 50.0,
+                            "tj_max": 175.0,
+                        },
+                        {
+                            "name": "L1",
+                            "data": {
+                                "outputs": [{
+                                    "coreLosses": {"coreLosses": 0.300},
+                                    "windingLosses": {
+                                        "windingLosses": [
+                                            {"totalLosses": 0.150},
+                                        ],
+                                    },
+                                }],
+                            },
+                        },
+                        {
+                            "name": "C_out",
+                            "esr": 0.020,
+                            "ripple_current_stress": 0.577,
+                        },
+                    ],
+                },
+            }],
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# compute_buck_loss_budget — hand-checked closed-form values
+# ---------------------------------------------------------------------------
+
+
+def test_q1_conduction_loss_matches_hand_calc() -> None:
+    """P_Q1_cond = D * Iout^2 * Rds_on  with D = Vout/Vin_nom = 0.25:
+       = 0.25 * 25 * 0.005 = 0.03125 W"""
+    tas = _buck_tas_with_picked_components()
+    budget = compute_buck_loss_budget(tas, _BUCK_SPEC)
+    assert budget["Q1_conduction"] == pytest.approx(0.03125, rel=1e-6)
+
+
+def test_q1_switching_loss_matches_hand_calc() -> None:
+    """P_Q1_sw = Vin * Iout * Qg * fsw / Ig
+       = 48 * 5 * 30e-9 * 200000 / 1.0 = 1.44 W"""
+    tas = _buck_tas_with_picked_components()
+    budget = compute_buck_loss_budget(tas, _BUCK_SPEC)
+    assert budget["Q1_switching"] == pytest.approx(1.44, rel=1e-6)
+
+
+def test_d1_conduction_loss_matches_hand_calc() -> None:
+    """P_D1_cond = (1 - D) * Iout * Vf = 0.75 * 5 * 0.45 = 1.6875 W"""
+    tas = _buck_tas_with_picked_components()
+    budget = compute_buck_loss_budget(tas, _BUCK_SPEC)
+    assert budget["D1_conduction"] == pytest.approx(1.6875, rel=1e-6)
+
+
+def test_d1_switching_loss_zero_for_schottky() -> None:
+    """Qrr=0 (Schottky) -> P_D1_sw = 0."""
+    tas = _buck_tas_with_picked_components()
+    budget = compute_buck_loss_budget(tas, _BUCK_SPEC)
+    assert budget["D1_switching"] == 0.0
+
+
+def test_inductor_losses_extracted_from_mas() -> None:
+    """L1 losses come straight from PyMKF's MAS outputs[op].coreLosses
+    and outputs[op].windingLosses. No closed-form recomputation."""
+    tas = _buck_tas_with_picked_components()
+    budget = compute_buck_loss_budget(tas, _BUCK_SPEC)
+    assert budget["L1_core"] == pytest.approx(0.300)
+    assert budget["L1_dcr"] == pytest.approx(0.150)
+
+
+def test_capacitor_esr_loss_uses_rms_ripple() -> None:
+    """P_C_esr = I_ripple_rms^2 * ESR = 0.577^2 * 0.020 ~= 6.66 mW"""
+    tas = _buck_tas_with_picked_components()
+    budget = compute_buck_loss_budget(tas, _BUCK_SPEC)
+    assert budget["C_out_esr"] == pytest.approx(0.577 ** 2 * 0.020, rel=1e-3)
+
+
+def test_loss_budget_reports_none_for_missing_inputs() -> None:
+    """Removing a stamped field -> the analyst returns None for that
+    bucket (not 0, not a fallback). Realism gate ignores None."""
+    tas = _buck_tas_with_picked_components()
+    # Strip Q1's Rds_on (selector didn't run? data quality?)
+    tas["topology"]["stages"][0]["circuit"]["components"][0].pop("rds_on")
+    budget = compute_buck_loss_budget(tas, _BUCK_SPEC)
+    assert budget["Q1_conduction"] is None
+    # Q1_switching still computable from Qg
+    assert budget["Q1_switching"] is not None
+
+
+def test_loss_budget_throws_on_missing_spec_fields() -> None:
+    bad = {"inputVoltage": {"nominal": 48.0}}  # no operatingPoints
+    with pytest.raises(AnalystError):
+        compute_buck_loss_budget(_buck_tas_with_picked_components(), bad)
+
+
+# ---------------------------------------------------------------------------
+# stamp_junction_temperatures
+# ---------------------------------------------------------------------------
+
+
+def test_tj_is_ambient_plus_loss_times_rth() -> None:
+    """Q1 has loss = 0.03125 + 1.44 = 1.47125 W, Rth_ja = 40.
+       Tj = 25 + 1.47125 * 40 = 83.85 °C."""
+    tas = _buck_tas_with_picked_components()
+    run_buck_analyst(tas, _BUCK_SPEC)
+    q1 = tas["topology"]["stages"][0]["circuit"]["components"][0]
+    expected_loss = 0.03125 + 1.44
+    expected_tj = 25.0 + expected_loss * 40.0
+    assert q1["tj"] == pytest.approx(expected_tj, rel=1e-3)
+    assert q1["tj_provenance"]["t_ambient_c"] == 25.0
+    assert q1["tj_provenance"]["rth_ja_c_per_w"] == 40.0
+
+
+def test_tj_skipped_when_rth_ja_missing() -> None:
+    tas = _buck_tas_with_picked_components()
+    # Drop Q1's Rth_ja
+    tas["topology"]["stages"][0]["circuit"]["components"][0].pop("rth_ja")
+    run_buck_analyst(tas, _BUCK_SPEC)
+    q1 = tas["topology"]["stages"][0]["circuit"]["components"][0]
+    assert "tj" not in q1, "Tj should not be stamped when Rth_ja is missing"
+
+
+def test_run_buck_analyst_stamps_loss_budget_at_root() -> None:
+    tas = _buck_tas_with_picked_components()
+    run_buck_analyst(tas, _BUCK_SPEC)
+    assert "loss_budget" in tas
+    assert isinstance(tas["loss_budget"], dict)
+
+
+def test_run_analyst_dispatches_per_topology() -> None:
+    """Buck dispatches; an unported topology is a clean no-op."""
+    tas = _buck_tas_with_picked_components()
+    run_analyst("buck", tas, _BUCK_SPEC)
+    assert "loss_budget" in tas
+
+    tas2 = _buck_tas_with_picked_components()
+    run_analyst("totally_made_up", tas2, _BUCK_SPEC)
+    assert "loss_budget" not in tas2  # no-op for unknown
+
+
+def test_stamp_jt_no_op_without_loss_budget() -> None:
+    """If the caller forgot to run the loss extractor first,
+    stamp_junction_temperatures is a silent no-op (doesn't crash)."""
+    tas = _buck_tas_with_picked_components()
+    # Don't call run_buck_analyst — tas has no loss_budget key.
+    stamp_junction_temperatures(tas, _BUCK_SPEC)
+    # No Tj should be stamped.
+    for c in tas["topology"]["stages"][0]["circuit"]["components"]:
+        assert "tj" not in c

@@ -68,6 +68,8 @@ class Mosfet:
     rds_on: float             # onResistance (ohms at gate_vgs / id_test)
     qg_total: float           # totalGateCharge (coulombs)
     vgs_threshold_max: float  # gateThresholdVoltage.maximum (volts)
+    rth_ja: float | None      # thermalResistanceJunctionAmbient (K/W)
+    tj_max: float | None      # junctionTemperatureMax (°C)
     case: str                 # package code from part.case
     technology: str           # Si / SiC / GaN
     status: str               # production / discontinued
@@ -132,6 +134,12 @@ class Mosfet:
         if not isinstance(ds_url, str):
             ds_url = ""
 
+        thermal = di.get("thermal") or {}
+        rth_ja_raw = thermal.get("thermalResistanceJunctionAmbient")
+        rth_ja = float(rth_ja_raw) if isinstance(rth_ja_raw, (int, float)) and rth_ja_raw > 0 else None
+        tj_max_raw = thermal.get("junctionTemperatureMax")
+        tj_max = float(tj_max_raw) if isinstance(tj_max_raw, (int, float)) else None
+
         return cls(
             mpn=mpn,
             manufacturer=manufacturer,
@@ -140,6 +148,8 @@ class Mosfet:
             rds_on=float(rds_on),
             qg_total=float(qg_total),
             vgs_threshold_max=float(vgs_th_max),
+            rth_ja=rth_ja,
+            tj_max=tj_max,
             case=case,
             technology=technology,
             status=status,
@@ -349,6 +359,8 @@ class Diode:
     vf_typ: float           # forwardVoltage (volts) at rated current
     qrr: float              # reverseRecoveryCharge (coulombs); 0 for Schottky
     trr: float              # reverseRecoveryTime (seconds); 0 for Schottky
+    rth_ja: float | None    # thermalResistanceJunctionAmbient (K/W)
+    tj_max: float | None    # junctionTemperatureMax (°C)
     case: str
     technology: str         # Si / SiC schottky / fast / ultrafast (from subType)
     status: str
@@ -373,14 +385,16 @@ class Diode:
 
         vrrm = elec.get("reverseVoltage")
         if_avg = elec.get("forwardCurrent")
+        vf = elec.get("forwardVoltage")
+        # Vf REQUIRED: the LOWEST_VF tiebreaker would otherwise reward
+        # rows where Vf is missing (treated as 0 via silent fallback),
+        # which is exactly the "no silent fallbacks" trap. Rows without
+        # a published Vf get skipped here; the auditor flags them.
         if not all(
             isinstance(x, (int, float)) and x > 0
-            for x in (vrrm, if_avg)
+            for x in (vrrm, if_avg, vf)
         ):
             return None
-        vf = elec.get("forwardVoltage")
-        if not isinstance(vf, (int, float)) or vf < 0:
-            vf = 0.0  # rare; selector doesn't filter on Vf today
 
         qrr = elec.get("reverseRecoveryCharge")
         if not isinstance(qrr, (int, float)) or qrr < 0:
@@ -405,6 +419,12 @@ class Diode:
         if not isinstance(ds_url, str):
             ds_url = ""
 
+        thermal = di.get("thermal") or {}
+        rth_ja_raw = thermal.get("thermalResistanceJunctionAmbient")
+        rth_ja = float(rth_ja_raw) if isinstance(rth_ja_raw, (int, float)) and rth_ja_raw > 0 else None
+        tj_max_raw = thermal.get("junctionTemperatureMax")
+        tj_max = float(tj_max_raw) if isinstance(tj_max_raw, (int, float)) else None
+
         return cls(
             mpn=mpn,
             manufacturer=manufacturer,
@@ -413,6 +433,8 @@ class Diode:
             vf_typ=float(vf),
             qrr=float(qrr),
             trr=float(trr),
+            rth_ja=rth_ja,
+            tj_max=tj_max,
             case=case,
             technology=tech,
             status=status,
@@ -532,6 +554,7 @@ class Capacitor:
     v_rated: float               # ratedVoltage (volts)
     ripple_current_rms: float    # rippleCurrent (amps RMS)
     esr: float                   # esr (ohms); 0 for MLCC when not declared
+    rth: float | None            # thermalResistance (K/W) case-to-ambient
     technology: str              # ceramic / aluminum_electrolytic / film / tantalum
     case: str
     status: str
@@ -588,6 +611,9 @@ class Capacitor:
         if not isinstance(ds_url, str):
             ds_url = ""
 
+        rth_raw = elec.get("thermalResistance")
+        rth = float(rth_raw) if isinstance(rth_raw, (int, float)) and rth_raw > 0 else None
+
         return cls(
             mpn=mpn,
             manufacturer=manufacturer,
@@ -595,6 +621,7 @@ class Capacitor:
             v_rated=float(v_rated),
             ripple_current_rms=float(ripple),
             esr=float(esr),
+            rth=rth,
             technology=tech,
             case=case,
             status=status,

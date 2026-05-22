@@ -159,6 +159,11 @@ def _stamp_mosfet(
     comp["id_rated"] = sel.chosen.id_continuous
     comp["id_stress"] = stress_id
     comp["rds_on"] = sel.chosen.rds_on
+    comp["qg_total"] = sel.chosen.qg_total
+    if sel.chosen.rth_ja is not None:
+        comp["rth_ja"] = sel.chosen.rth_ja
+    if sel.chosen.tj_max is not None:
+        comp["tj_max"] = sel.chosen.tj_max
     comp["selection_provenance"] = {
         "category": "mosfet",
         "mpn": sel.chosen.mpn,
@@ -194,6 +199,11 @@ def _stamp_diode(
     comp["if_avg_rated"] = sel.chosen.if_avg_rated
     comp["if_avg_stress"] = stress_if_avg
     comp["vf_typ"] = sel.chosen.vf_typ
+    comp["qrr"] = sel.chosen.qrr
+    if sel.chosen.rth_ja is not None:
+        comp["rth_ja"] = sel.chosen.rth_ja
+    if sel.chosen.tj_max is not None:
+        comp["tj_max"] = sel.chosen.tj_max
     comp["selection_provenance"] = {
         "category": "diode",
         "mpn": sel.chosen.mpn,
@@ -223,6 +233,8 @@ def _stamp_capacitor(
     comp["ripple_current_rated"] = sel.chosen.ripple_current_rms
     comp["ripple_current_stress"] = stress_ripple
     comp["esr"] = sel.chosen.esr
+    if sel.chosen.rth is not None:
+        comp["rth_ja"] = sel.chosen.rth
     comp["selection_provenance"] = {
         "category": "capacitor",
         "mpn": sel.chosen.mpn,

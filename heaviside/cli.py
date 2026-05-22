@@ -254,6 +254,16 @@ def design(
         except (SimError, DecomposerError) as exc:
             typer.echo(f"sim runner skipped: {exc}", err=True)
 
+        # Analyst stage: per-component loss attribution + junction
+        # temperatures. No-op for topologies without a registered
+        # analyst (realism gate keeps no_negative_losses + thermal_limit
+        # UNAVAILABLE for those, which is the honest failure mode).
+        from heaviside.pipeline.analyst import AnalystError, run_analyst
+        try:
+            run_analyst(topology, tas_for_gate, spec_json)
+        except AnalystError as exc:
+            typer.echo(f"analyst skipped: {exc}", err=True)
+
         report = evaluate_tas(tas_for_gate, topology=topology, spec=spec_json)
         summary = report.summary
         typer.echo(
