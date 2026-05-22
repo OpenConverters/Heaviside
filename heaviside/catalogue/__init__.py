@@ -13,20 +13,40 @@ NO write paths — it is a pure read-only function of the TAS DB.
 
 from heaviside.catalogue.assemble import assemble_bom_from_tas
 from heaviside.catalogue.selector import (
+    Capacitor,
+    CapacitorConstraints,
+    CapacitorSelection,
+    CapacitorTiebreaker,
+    Diode,
+    DiodeConstraints,
+    DiodeSelection,
+    DiodeTiebreaker,
     Mosfet,
     MosfetConstraints,
     MosfetSelection,
     MosfetTiebreaker,
     SelectionError,
+    select_capacitor,
+    select_diode,
     select_mosfet,
 )
 
 __all__ = [
+    "Capacitor",
+    "CapacitorConstraints",
+    "CapacitorSelection",
+    "CapacitorTiebreaker",
+    "Diode",
+    "DiodeConstraints",
+    "DiodeSelection",
+    "DiodeTiebreaker",
     "Mosfet",
     "MosfetConstraints",
     "MosfetSelection",
     "MosfetTiebreaker",
     "SelectionError",
     "assemble_bom_from_tas",
+    "select_capacitor",
+    "select_diode",
     "select_mosfet",
 ]

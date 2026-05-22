@@ -225,16 +225,19 @@ class MosfetSelection:
 class SelectionError(LookupError):
     """No TAS row satisfies the given constraints.
 
-    The ``rejection_counts`` field records *why* candidates were
-    rejected (how many fell on Vds, how many on Id, etc.) so the
-    caller can either loosen the constraint, widen the technology
-    allowlist, or queue a librarian fetch for a part class the DB
-    is missing.
+    Shared across mosfet / diode / capacitor selectors — ``constraints``
+    is the typed constraints dataclass used by the caller (a
+    ``MosfetConstraints``, ``DiodeConstraints``, or
+    ``CapacitorConstraints``). The ``rejection_counts`` field records
+    *why* candidates were rejected (how many fell on Vds, how many on
+    Id, etc.) so the caller can either loosen the constraint, widen
+    the technology allowlist, or queue a librarian fetch for a part
+    class the DB is missing.
     """
 
     def __init__(
         self,
-        constraints: MosfetConstraints,
+        constraints: Any,
         rejection_counts: Mapping[str, int],
         total_rows_considered: int,
     ) -> None:
@@ -242,9 +245,9 @@ class SelectionError(LookupError):
         self.rejection_counts = dict(rejection_counts)
         self.total_rows_considered = total_rows_considered
         super().__init__(
-            f"no mosfet in TAS satisfies {constraints!r}. "
-            f"Considered {total_rows_considered} rows; rejected by "
-            f"{dict(rejection_counts)}"
+            f"no {type(constraints).__name__} candidate in TAS satisfies "
+            f"{constraints!r}. Considered {total_rows_considered} rows; "
+            f"rejected by {dict(rejection_counts)}"
         )
 
 
@@ -330,13 +333,424 @@ def select_mosfet(
     )
 
 
+# ---------------------------------------------------------------------------
+# Diode selector
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Diode:
+    """Subset of a TAS diode envelope consumed by the selector."""
+
+    mpn: str
+    manufacturer: str
+    vrrm_rated: float       # reverseVoltage (volts)
+    if_avg_rated: float     # forwardCurrent (amps)
+    vf_typ: float           # forwardVoltage (volts) at rated current
+    qrr: float              # reverseRecoveryCharge (coulombs); 0 for Schottky
+    trr: float              # reverseRecoveryTime (seconds); 0 for Schottky
+    case: str
+    technology: str         # Si / SiC schottky / fast / ultrafast (from subType)
+    status: str
+    datasheet_url: str
+    raw_envelope: Mapping[str, Any]
+
+    @classmethod
+    def from_envelope(cls, env: Mapping[str, Any]) -> Diode | None:
+        try:
+            diode = env["semiconductor"]["diode"]
+            mi = diode["manufacturerInfo"]
+            di = mi["datasheetInfo"]
+            elec = di["electrical"]
+            part = di.get("part") or {}
+        except (KeyError, TypeError):
+            return None
+
+        mpn = mi.get("reference")
+        manufacturer = mi.get("name")
+        if not isinstance(mpn, str) or not isinstance(manufacturer, str):
+            return None
+
+        vrrm = elec.get("reverseVoltage")
+        if_avg = elec.get("forwardCurrent")
+        if not all(
+            isinstance(x, (int, float)) and x > 0
+            for x in (vrrm, if_avg)
+        ):
+            return None
+        vf = elec.get("forwardVoltage")
+        if not isinstance(vf, (int, float)) or vf < 0:
+            vf = 0.0  # rare; selector doesn't filter on Vf today
+
+        qrr = elec.get("reverseRecoveryCharge")
+        if not isinstance(qrr, (int, float)) or qrr < 0:
+            qrr = 0.0
+        trr = elec.get("reverseRecoveryTime")
+        if not isinstance(trr, (int, float)) or trr < 0:
+            trr = 0.0
+
+        case = part.get("case")
+        if not isinstance(case, str):
+            case = ""
+        # Diode "technology" lives at part.subType (Schottky / FastRecovery / ...)
+        tech = part.get("subType")
+        if not isinstance(tech, str):
+            tech = ""
+
+        status = mi.get("status")
+        if not isinstance(status, str):
+            status = "unknown"
+
+        ds_url = mi.get("datasheetUrl")
+        if not isinstance(ds_url, str):
+            ds_url = ""
+
+        return cls(
+            mpn=mpn,
+            manufacturer=manufacturer,
+            vrrm_rated=float(vrrm),
+            if_avg_rated=float(if_avg),
+            vf_typ=float(vf),
+            qrr=float(qrr),
+            trr=float(trr),
+            case=case,
+            technology=tech,
+            status=status,
+            datasheet_url=ds_url,
+            raw_envelope=env,
+        )
+
+
+class DiodeTiebreaker(StrEnum):
+    LOWEST_VF = "lowest_vf"
+    LOWEST_QRR = "lowest_qrr"
+    HIGHEST_VRRM_MARGIN = "highest_vrrm_margin"
+    HIGHEST_IF_MARGIN = "highest_if_margin"
+
+
+@dataclass(frozen=True, slots=True)
+class DiodeConstraints:
+    vrrm_min: float
+    if_avg_min: float
+    qrr_max: float | None = None  # None means "no Qrr filter" (e.g. Schottky-only)
+    exclude_discontinued: bool = True
+
+    def __post_init__(self) -> None:
+        for name in ("vrrm_min", "if_avg_min"):
+            val = getattr(self, name)
+            if not isinstance(val, (int, float)) or val <= 0:
+                raise ValueError(
+                    f"DiodeConstraints.{name} must be a positive number, got {val!r}"
+                )
+        if self.qrr_max is not None and self.qrr_max < 0:
+            raise ValueError(
+                f"DiodeConstraints.qrr_max must be non-negative, got {self.qrr_max!r}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class DiodeSelection:
+    chosen: Diode
+    constraints: DiodeConstraints
+    tiebreaker: DiodeTiebreaker
+    margins: Mapping[str, float]
+    alternatives_considered: int
+
+
+def select_diode(
+    c: DiodeConstraints,
+    *,
+    tiebreaker: DiodeTiebreaker,
+    tas_data_dir: Path | None = None,
+) -> DiodeSelection:
+    root = tas_data_dir if tas_data_dir is not None else _tas_data_dir()
+    path = root / "diodes.ndjson"
+
+    passing: list[Diode] = []
+    rejection: Counter[str] = Counter()
+    total = 0
+
+    for _lineno, env in iter_envelopes(path):
+        total += 1
+        d = Diode.from_envelope(env)
+        if d is None:
+            rejection["unreadable_row"] += 1
+            continue
+        if c.exclude_discontinued and d.status != "production":
+            rejection["discontinued"] += 1
+            continue
+        if d.vrrm_rated < c.vrrm_min:
+            rejection["vrrm_low"] += 1
+            continue
+        if d.if_avg_rated < c.if_avg_min:
+            rejection["if_avg_low"] += 1
+            continue
+        if c.qrr_max is not None and d.qrr > c.qrr_max:
+            rejection["qrr_high"] += 1
+            continue
+        passing.append(d)
+
+    if not passing:
+        raise SelectionError(c, rejection, total)
+
+    if tiebreaker is DiodeTiebreaker.LOWEST_VF:
+        winner = min(passing, key=lambda d: d.vf_typ)
+    elif tiebreaker is DiodeTiebreaker.LOWEST_QRR:
+        winner = min(passing, key=lambda d: d.qrr)
+    elif tiebreaker is DiodeTiebreaker.HIGHEST_VRRM_MARGIN:
+        winner = max(passing, key=lambda d: d.vrrm_rated / c.vrrm_min)
+    elif tiebreaker is DiodeTiebreaker.HIGHEST_IF_MARGIN:
+        winner = max(passing, key=lambda d: d.if_avg_rated / c.if_avg_min)
+    else:  # pragma: no cover
+        raise ValueError(f"unhandled tiebreaker {tiebreaker!r}")
+
+    margins = {
+        "vrrm_margin": winner.vrrm_rated / c.vrrm_min,
+        "if_avg_margin": winner.if_avg_rated / c.if_avg_min,
+        "qrr_headroom": (
+            (c.qrr_max / winner.qrr) if (c.qrr_max and winner.qrr > 0) else float("inf")
+        ),
+    }
+    return DiodeSelection(
+        chosen=winner, constraints=c, tiebreaker=tiebreaker,
+        margins=margins, alternatives_considered=len(passing),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Capacitor selector
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Capacitor:
+    """Subset of a TAS capacitor envelope consumed by the selector."""
+
+    mpn: str
+    manufacturer: str
+    capacitance: float           # capacitance.nominal (farads)
+    v_rated: float               # ratedVoltage (volts)
+    ripple_current_rms: float    # rippleCurrent (amps RMS)
+    esr: float                   # esr (ohms); 0 for MLCC when not declared
+    technology: str              # ceramic / aluminum_electrolytic / film / tantalum
+    case: str
+    status: str
+    datasheet_url: str
+    raw_envelope: Mapping[str, Any]
+
+    @classmethod
+    def from_envelope(cls, env: Mapping[str, Any]) -> Capacitor | None:
+        try:
+            cap = env["capacitor"]
+            mi = cap["manufacturerInfo"]
+            di = mi["datasheetInfo"]
+            elec = di["electrical"]
+            part = di.get("part") or {}
+        except (KeyError, TypeError):
+            return None
+
+        mpn = mi.get("reference")
+        manufacturer = mi.get("name")
+        if not isinstance(mpn, str) or not isinstance(manufacturer, str):
+            return None
+
+        # capacitance may be a number or {nominal,minimum,maximum}.
+        cap_field = elec.get("capacitance")
+        cap_nom = cap_field.get("nominal") if isinstance(cap_field, Mapping) else cap_field
+        v_rated = elec.get("ratedVoltage")
+        if not all(
+            isinstance(x, (int, float)) and x > 0
+            for x in (cap_nom, v_rated)
+        ):
+            return None
+
+        ripple = elec.get("rippleCurrent")
+        if not isinstance(ripple, (int, float)) or ripple < 0:
+            ripple = 0.0
+        esr = elec.get("esr")
+        if not isinstance(esr, (int, float)) or esr < 0:
+            esr = 0.0
+
+        # Capacitor technology comes from part.family/series/subType — varies.
+        tech = (part.get("family") or part.get("subType") or part.get("series"))
+        if not isinstance(tech, str):
+            tech = ""
+
+        case = part.get("case")
+        if not isinstance(case, str):
+            case = ""
+
+        status = mi.get("status")
+        if not isinstance(status, str):
+            status = "unknown"
+
+        ds_url = mi.get("datasheetUrl")
+        if not isinstance(ds_url, str):
+            ds_url = ""
+
+        return cls(
+            mpn=mpn,
+            manufacturer=manufacturer,
+            capacitance=float(cap_nom),
+            v_rated=float(v_rated),
+            ripple_current_rms=float(ripple),
+            esr=float(esr),
+            technology=tech,
+            case=case,
+            status=status,
+            datasheet_url=ds_url,
+            raw_envelope=env,
+        )
+
+
+class CapacitorTiebreaker(StrEnum):
+    LOWEST_ESR = "lowest_esr"
+    HIGHEST_RIPPLE_HEADROOM = "highest_ripple_headroom"
+    HIGHEST_VOLTAGE_MARGIN = "highest_voltage_margin"
+    HIGHEST_CAPACITANCE = "highest_capacitance"
+
+
+@dataclass(frozen=True, slots=True)
+class CapacitorConstraints:
+    """Capacitor selection constraints.
+
+    ``ripple_current_min`` is OPTIONAL (``None`` = skip the filter)
+    because MLCC datasheets do not publish a ripple-current rating —
+    enforcing it would reject every MLCC even when an MLCC is the
+    correct choice. Set it to a positive value only when sourcing an
+    electrolytic / film / tantalum bulk cap where ripple is the
+    binding stress.
+    """
+
+    capacitance_min: float           # F; smallest acceptable C
+    capacitance_max: float           # F; largest acceptable C (avoid 10x oversizing)
+    v_rated_min: float               # V; minimum rated voltage (= V_working * derating)
+    ripple_current_min: float | None = None
+    technology_allowed: frozenset[str] = frozenset()  # empty = any
+    exclude_discontinued: bool = True
+
+    def __post_init__(self) -> None:
+        for name in ("capacitance_min", "capacitance_max", "v_rated_min"):
+            val = getattr(self, name)
+            if not isinstance(val, (int, float)) or val <= 0:
+                raise ValueError(
+                    f"CapacitorConstraints.{name} must be a positive number, got {val!r}"
+                )
+        if self.ripple_current_min is not None and (
+            not isinstance(self.ripple_current_min, (int, float))
+            or self.ripple_current_min < 0
+        ):
+            raise ValueError(
+                f"CapacitorConstraints.ripple_current_min must be non-negative or None, "
+                f"got {self.ripple_current_min!r}"
+            )
+        if self.capacitance_min > self.capacitance_max:
+            raise ValueError(
+                "CapacitorConstraints.capacitance_min > capacitance_max "
+                f"({self.capacitance_min} > {self.capacitance_max})"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class CapacitorSelection:
+    chosen: Capacitor
+    constraints: CapacitorConstraints
+    tiebreaker: CapacitorTiebreaker
+    margins: Mapping[str, float]
+    alternatives_considered: int
+
+
+def select_capacitor(
+    c: CapacitorConstraints,
+    *,
+    tiebreaker: CapacitorTiebreaker,
+    tas_data_dir: Path | None = None,
+) -> CapacitorSelection:
+    root = tas_data_dir if tas_data_dir is not None else _tas_data_dir()
+    path = root / "capacitors.ndjson"
+
+    passing: list[Capacitor] = []
+    rejection: Counter[str] = Counter()
+    total = 0
+
+    for _lineno, env in iter_envelopes(path):
+        total += 1
+        cap = Capacitor.from_envelope(env)
+        if cap is None:
+            rejection["unreadable_row"] += 1
+            continue
+        if c.exclude_discontinued and cap.status != "production":
+            rejection["discontinued"] += 1
+            continue
+        if c.technology_allowed and cap.technology not in c.technology_allowed:
+            rejection["technology"] += 1
+            continue
+        if cap.v_rated < c.v_rated_min:
+            rejection["v_rated_low"] += 1
+            continue
+        if cap.capacitance < c.capacitance_min:
+            rejection["capacitance_low"] += 1
+            continue
+        if cap.capacitance > c.capacitance_max:
+            rejection["capacitance_high"] += 1
+            continue
+        if c.ripple_current_min is not None and cap.ripple_current_rms < c.ripple_current_min:
+            rejection["ripple_low"] += 1
+            continue
+        passing.append(cap)
+
+    if not passing:
+        raise SelectionError(c, rejection, total)
+
+    if tiebreaker is CapacitorTiebreaker.LOWEST_ESR:
+        # MLCC rows often have esr=0; treat zero as "best" deliberately,
+        # but the caller can filter via technology_allowed if they need
+        # an explicit-ESR part.
+        winner = min(passing, key=lambda c: c.esr)
+    elif tiebreaker is CapacitorTiebreaker.HIGHEST_RIPPLE_HEADROOM:
+        winner = max(
+            passing,
+            key=lambda x: x.ripple_current_rms / c.ripple_current_min,
+        )
+    elif tiebreaker is CapacitorTiebreaker.HIGHEST_VOLTAGE_MARGIN:
+        winner = max(passing, key=lambda x: x.v_rated / c.v_rated_min)
+    elif tiebreaker is CapacitorTiebreaker.HIGHEST_CAPACITANCE:
+        winner = max(passing, key=lambda x: x.capacitance)
+    else:  # pragma: no cover
+        raise ValueError(f"unhandled tiebreaker {tiebreaker!r}")
+
+    margins = {
+        "v_margin": winner.v_rated / c.v_rated_min,
+        "capacitance_ratio": winner.capacitance / c.capacitance_min,
+        "ripple_headroom": (
+            winner.ripple_current_rms / c.ripple_current_min
+            if (c.ripple_current_min and c.ripple_current_min > 0)
+            else float("inf")
+        ),
+    }
+    return CapacitorSelection(
+        chosen=winner, constraints=c, tiebreaker=tiebreaker,
+        margins=margins, alternatives_considered=len(passing),
+    )
+
+
 # CatalogueReadError is exported only via the package surface; not in
 # selector.__all__ because the selector's own contract is SelectionError.
 __all__ = [
+    "Capacitor",
+    "CapacitorConstraints",
+    "CapacitorSelection",
+    "CapacitorTiebreaker",
+    "Diode",
+    "DiodeConstraints",
+    "DiodeSelection",
+    "DiodeTiebreaker",
     "Mosfet",
     "MosfetConstraints",
     "MosfetSelection",
     "MosfetTiebreaker",
     "SelectionError",
+    "select_capacitor",
+    "select_diode",
     "select_mosfet",
 ]
