@@ -188,6 +188,10 @@ _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
         # Cuk-family: vout node is named vout_load_node (load is past
         # a 0V ammeter). Same convention used by sepic/zeta variants.
         ("v(vin_dc)",  "i(vin_sense)", "v(vout_load_node)",  "i(vout_sense)"),
+        # Flyback-family: secondary is named vout0, sec_sense0 for the
+        # first output rail (multi-output isolated topologies tag with
+        # the rail index).
+        ("v(vin_dc)",  "i(vpri_sense)","v(vout0)",            "i(vsec_sense0)"),
         # Boost-family fallback: use vl_sense for both iin and iout,
         # then override iout = vout / Rload after the .meas pass.
         ("v(vin_dc)",  "i(vl_sense)",  "v(vout)",            "i(vl_sense)"),

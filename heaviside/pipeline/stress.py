@@ -274,13 +274,23 @@ def cuk_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStre
 def flyback_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStresses:
     """Stresses for ``operatingPoints[op_index]`` of a flyback converter.
 
-    Requires ``desiredTurnsRatios`` and ``maximumDutyCycle`` on the spec
-    (validated separately by ``heaviside.spec.validate_topology``).
+    Requires ``desiredTurnsRatios``, ``maximumDutyCycle``,
+    ``efficiency``, and ``desiredMagnetizingInductance`` on the spec
+    (the last two needed for the accurate primary peak current
+    formula that includes magnetizing ripple — must match the formula
+    in heaviside/pipeline/extract.py:_enrich_flyback so the
+    post-filter and realism gate agree).
     """
     where = "flyback spec"
     vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
+    op = _op_at(spec, op_index, where)
+    fsw = op.get("switchingFrequency")
+    if not isinstance(fsw, (int, float)) or fsw <= 0:
+        raise StressDerivationError(
+            f"{where}.operatingPoints[{op_index}].switchingFrequency required"
+        )
     ratios = spec.get("desiredTurnsRatios")
     if not (isinstance(ratios, list) and ratios and isinstance(ratios[0], (int, float))):
         raise StressDerivationError(
@@ -292,13 +302,33 @@ def flyback_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> Component
         raise StressDerivationError(
             f"{where}.maximumDutyCycle must be in (0, 1)"
         )
+    eff = spec.get("efficiency")
+    if not isinstance(eff, (int, float)) or not (0.0 < eff <= 1.0):
+        raise StressDerivationError(
+            f"{where}.efficiency required in (0, 1] for accurate ipeak"
+        )
+    Lm = spec.get("desiredMagnetizingInductance")
+    if not isinstance(Lm, (int, float)) or Lm <= 0:
+        raise StressDerivationError(
+            f"{where}.desiredMagnetizingInductance required (henries) for ipeak"
+        )
+
+    # Match extract.py:_enrich_flyback closed form so post-filter and
+    # realism gate agree on Ipeak_worst:
+    #   I_in_max = Pout / (eff * Vmin)
+    #   ripple_worst = Vmin * D_max / (0.8 * Lm * fsw)
+    #   ipeak_worst = I_in_max / D_max + ripple_worst / 2
+    Pout = vout * iout
+    I_in_max = Pout / (float(eff) * vmin)
+    Lm_worst = 0.8 * float(Lm)
+    ripple_worst = vmin * float(d_max) / (Lm_worst * float(fsw))
+    ipri_pk = I_in_max / float(d_max) + ripple_worst / 2.0
+
     # Primary switch off-state voltage: Vin_max + reflected secondary
     vds = vmax + n * vout
-    # Primary peak current from energy balance: Iin_avg = Iout/n at Dmax
-    ipri_pk = (iout / n) * (1.0 + 0.5)  # 50% ripple typical for flyback
     # Secondary diode reverse voltage during ON state
     vr = vout + vmax / n
-    if_avg = iout / (1.0 - d_max)
+    if_avg = iout / (1.0 - float(d_max))
     return ComponentStresses(
         vds_stress=vds,
         id_stress=ipri_pk,
@@ -306,7 +336,7 @@ def flyback_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> Component
         if_avg_stress=if_avg,
         v_working=vout,
         # Flyback cap ripple: secondary current pulses; high ripple
-        i_ripple=iout * ((1.0 - d_max) / d_max) ** 0.5,
+        i_ripple=iout * ((1.0 - float(d_max)) / float(d_max)) ** 0.5,
     )
 
 

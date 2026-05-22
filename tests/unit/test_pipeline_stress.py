@@ -143,6 +143,8 @@ _FLYBACK_OK = {
     "currentRippleRatio": 0.4,
     "desiredTurnsRatios": [5.0],
     "maximumDutyCycle": 0.5,
+    "efficiency": 0.85,
+    "desiredMagnetizingInductance": 200e-6,
     "operatingPoints": [{
         "outputVoltages": [12.0], "outputCurrents": [2.0],
         "switchingFrequency": 100_000.0, "ambientTemperature": 25.0,
