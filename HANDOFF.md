@@ -20,7 +20,7 @@ The **local source build** at `/home/alf/OpenMagnetics/PyMKF/` *does* contain th
 | PFC dispatch | ⚠️ wired but **generator emits a behavioural envelope, not a switching deck** — no L/S/D/C elements to decompose. Stays blocked. |
 | CLLC dispatch | ✅ wired; spec now requires `powerFlow` field |
 | Vienna dispatch | ✅ wired; spec now requires `lineToLineVoltage` field |
-| SRC switch-mode | ✅ SHI emitted (header text still says "Behavioural" — cosmetic) |
+| SRC switch-mode | ❌ `bridge_simulation_mode` silently ignored — deck stays behavioural `Vbridge PULSE` with no primary MOSFETs. Stencil blocked. |
 
 The cap is still correct **for PyPI** (the published 1.3.12 wheel is broken). To use the fixes you need a local cp312 build of `/home/alf/OpenMagnetics/PyMKF/` installed with `pip install --force-reinstall <wheel>`. See [`docs/mkf-handoff.md`](docs/mkf-handoff.md) for the per-blocker repros and the upstream remaining work (the LLC segfault).
 

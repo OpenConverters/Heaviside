@@ -33,7 +33,7 @@ and keeps the 7-arg signature. Probe results:
 - **PFC** — ✅ dispatch wired. Now needs `outputVoltage` field in spec; previously errored with "unknown topology".
 - **CLLC** — ✅ dispatch wired. Now needs `powerFlow` field in spec.
 - **Vienna** — ✅ dispatch wired. Now needs `lineToLineVoltage` field in spec; previously crashed with `at() with string`.
-- **SRC** — ✅ switch-mode emits SHI now. The header line "Behavioural PULSE bridge" is stale text — cosmetic only.
+- **SRC** — ❌ `bridge_simulation_mode="switch"` is still silently ignored. The deck remains a behavioural `Vbridge sw_node mid_point PULSE(...)` source with no primary MOSFETs. (My earlier probe miscounted a substring match — re-grepping the deck for `^S[1-9a-d]` finds zero real switches.) The header line `"Behavioural PULSE bridge"` is honest, not cosmetic. SRC is also tagged "Phase 2" upstream with no below-resonance support, suggesting deliberate WIP status. Heaviside cannot stencil SRC until real primary switches are emitted (same posture as PFC).
 
 ### Remaining upstream asks (in priority order)
 
