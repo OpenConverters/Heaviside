@@ -64,6 +64,19 @@ make types          # regenerate TypedDicts from schema submodules
 pytest -m unit      # ~seconds
 ```
 
+### Decomposer regression suite needs the vendor PyOpenMagnetics wheel
+
+`uv pip install -e '.[dev]'` pulls the PyPI `PyOpenMagnetics` wheel, which currently lacks the `bridge_simulation_mode` argument on `generate_ngspice_circuit`. Every bridge-topology regression test (`test_llc`, `test_dual_active_bridge`, `test_phase_shifted_full_bridge`, `test_clllc`, `test_weinberg`, `test_active_clamp_forward`, …) needs the vendor build that ships with this repo:
+
+```bash
+cd vendor/PyOpenMagnetics
+python -m build --wheel        # produces dist/PyOpenMagnetics-*.whl
+pip install --force-reinstall dist/PyOpenMagnetics-*.whl
+cd -
+```
+
+Heaviside's decomposer detects the mismatch at import time and throws a `DecomposerError` with the exact install command — if you see that error, run the snippet above. See `HANDOFF.md` for upstream-regression details.
+
 ## Relationship to Proteus
 
 Proteus is frozen at tag `frozen-2026-05-18`. Only TAS-backfill commits are permitted on the `proteus-maintenance` branch. **Heaviside does not import from Proteus.** Every piece of functionality is reimplemented from first principles against PyOpenMagnetics and the schema submodules.

@@ -31,6 +31,25 @@ class DecomposerError(RuntimeError):
 
 def _import_pyom() -> Any:
     from PyOpenMagnetics import PyOpenMagnetics as _ext
+
+    # The PyPI PyOpenMagnetics wheels (1.3.10, 1.3.12) ship a 6-arg
+    # generate_ngspice_circuit binding without bridge_simulation_mode.
+    # Heaviside's decomposer needs the 7-arg binding from the vendor build
+    # (vendor/PyOpenMagnetics, currently 1.3.11) so bridge topologies emit
+    # real switches instead of behavioural PULSE sources. Detect the
+    # mismatch here and throw a clear message rather than letting a TypeError
+    # surface deep in a stencil run.
+    doc = (_ext.generate_ngspice_circuit.__doc__ or "")
+    if "bridge_simulation_mode" not in doc:
+        raise DecomposerError(
+            "PyOpenMagnetics.generate_ngspice_circuit lacks the "
+            "bridge_simulation_mode parameter — you are running against a "
+            "PyPI wheel (likely 1.3.10/1.3.12) rather than the vendored "
+            "build. Install the vendor wheel: "
+            "`pip install vendor/PyOpenMagnetics/dist/*.whl` (or run "
+            "`python -m build --wheel` inside vendor/PyOpenMagnetics first). "
+            "See HANDOFF.md for the 1.3.12 upstream regression details."
+        )
     return _ext
 
 
