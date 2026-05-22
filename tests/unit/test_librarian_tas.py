@@ -60,32 +60,34 @@ def _retarget_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 _VALID_RECORDS: dict[str, dict[str, Any]] = {
     "mosfets": {
-        "mosfet": {
-            "manufacturerInfo": {
-                "name": "TEST-MFR",
-                "reference": "TEST-MOSFET-001",
-                "status": "production",
-                "datasheetInfo": {
-                    "part": {
-                        "partNumber": "TEST-MOSFET-001",
-                        "technology": "Si",
-                        "subType": "nChannel",
-                        "case": "TO-220",
-                    },
-                    "electrical": {
-                        "drainSourceVoltage": 100,
-                        "gateSourceVoltageMax": 20,
-                        "continuousDrainCurrent": 30,
-                        "pulsedDrainCurrent": 120,
-                        "powerDissipation": 50,
-                        "onResistance": 0.025,
-                        # SAS schema tightening (May 2026): the three
-                        # below are now schema-required for mosfets.
-                        "gateThresholdVoltage": {
-                            "minimum": 2.0, "nominal": 3.0, "maximum": 4.0,
+        "semiconductor": {
+            "mosfet": {
+                "manufacturerInfo": {
+                    "name": "TEST-MFR",
+                    "reference": "TEST-MOSFET-001",
+                    "status": "production",
+                    "datasheetInfo": {
+                        "part": {
+                            "partNumber": "TEST-MOSFET-001",
+                            "technology": "Si",
+                            "subType": "nChannel",
+                            "case": "TO-220",
                         },
-                        "outputCapacitance": 250e-12,
-                        "totalGateCharge": 80e-9,
+                        "electrical": {
+                            "drainSourceVoltage": 100,
+                            "gateSourceVoltageMax": 20,
+                            "continuousDrainCurrent": 30,
+                            "pulsedDrainCurrent": 120,
+                            "powerDissipation": 50,
+                            "onResistance": 0.025,
+                            # SAS schema tightening (May 2026): the three
+                            # below are now schema-required for mosfets.
+                            "gateThresholdVoltage": {
+                                "minimum": 2.0, "nominal": 3.0, "maximum": 4.0,
+                            },
+                            "outputCapacitance": 250e-12,
+                            "totalGateCharge": 80e-9,
+                        },
                     },
                 },
             },
@@ -161,7 +163,7 @@ class TestSchemaMap:
 class TestValidateEnvelope:
 
     def test_missing_top_envelope_throws(self):
-        with pytest.raises(tas.ValidationError, match="mosfet"):
+        with pytest.raises(tas.ValidationError, match="semiconductor"):
             tas.validate_component("mosfets", {"wrong": {}})
 
     def test_diode_missing_outer_envelope_throws(self):
@@ -194,7 +196,7 @@ class TestValidateAgainstRealSchemas:
 
     def test_missing_required_field_raises_with_path(self):
         bad = json.loads(json.dumps(_VALID_RECORDS["mosfets"]))  # deep copy
-        del bad["mosfet"]["manufacturerInfo"]
+        del bad["semiconductor"]["mosfet"]["manufacturerInfo"]
         with pytest.raises(tas.ValidationError) as exc_info:
             tas.validate_component("mosfets", bad)
         # Error list is exposed for programmatic inspection.
@@ -222,7 +224,9 @@ class TestComponentExistsLookup:
 
     def test_finds_mosfet_via_manufacturer_reference(self):
         _seed("mosfets", [{
-            "mosfet": {"manufacturerInfo": {"reference": "EPC2019"}},
+            "semiconductor": {"mosfet": {
+                "manufacturerInfo": {"reference": "EPC2019"},
+            }},
         }])
         assert tas.component_exists("mosfets", "EPC2019") is True
         assert tas.component_exists("mosfets", "epc2019") is True  # case-insens
@@ -276,7 +280,9 @@ class TestComponentExistsLookup:
         path = sa.TAS_DATA_DIR / "mosfets.ndjson"
         path.write_text(
             "\n"
-            + json.dumps({"mosfet": {"manufacturerInfo": {"reference": "X"}}})
+            + json.dumps({"semiconductor": {"mosfet": {
+                "manufacturerInfo": {"reference": "X"},
+            }}})
             + "\n\n",
             encoding="utf-8",
         )
@@ -317,7 +323,7 @@ class TestAddComponent:
         lines = path.read_text().splitlines()
         assert len(lines) == 1
         round_trip = json.loads(lines[0])
-        assert (round_trip["mosfet"]["manufacturerInfo"]["reference"]
+        assert (round_trip["semiconductor"]["mosfet"]["manufacturerInfo"]["reference"]
                 == "TEST-MOSFET-001")
 
     def test_compact_json_no_whitespace(self):
@@ -358,7 +364,7 @@ class TestAddComponent:
             tas._VALIDATOR_CACHE["mosfets"] = _AcceptAll()
         try:
             with pytest.raises(tas.LibrarianError, match="no extractable"):
-                tas.add_component("mosfets", {"mosfet": {}})
+                tas.add_component("mosfets", {"semiconductor": {"mosfet": {}}})
         finally:
             tas._clear_validator_cache()
 

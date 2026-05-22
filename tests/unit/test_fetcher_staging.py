@@ -54,27 +54,29 @@ def _retarget_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 def _valid_mosfet(mpn: str = "TEST-MOSFET-001") -> dict[str, Any]:
     """Schema-valid mosfet envelope (mirrors test_librarian_tas's fixture)."""
     return {
-        "mosfet": {
-            "manufacturerInfo": {
-                "name": "TEST-MFR",
-                "reference": mpn,
-                "status": "production",
-                "datasheetInfo": {
-                    "part": {
-                        "partNumber": mpn,
-                        "technology": "Si",
-                        "subType": "nChannel",
-                        "case": "TO-220",
-                    },
-                    "electrical": {
-                        "drainSourceVoltage": 100,
-                        "onResistance": 0.025,
-                        "continuousDrainCurrent": 30,
-                        "gateThresholdVoltage": {
-                            "minimum": 2.0, "nominal": 3.0, "maximum": 4.0,
+        "semiconductor": {
+            "mosfet": {
+                "manufacturerInfo": {
+                    "name": "TEST-MFR",
+                    "reference": mpn,
+                    "status": "production",
+                    "datasheetInfo": {
+                        "part": {
+                            "partNumber": mpn,
+                            "technology": "Si",
+                            "subType": "nChannel",
+                            "case": "TO-220",
                         },
-                        "outputCapacitance": 250e-12,
-                        "totalGateCharge": 80e-9,
+                        "electrical": {
+                            "drainSourceVoltage": 100,
+                            "onResistance": 0.025,
+                            "continuousDrainCurrent": 30,
+                            "gateThresholdVoltage": {
+                                "minimum": 2.0, "nominal": 3.0, "maximum": 4.0,
+                            },
+                            "outputCapacitance": 250e-12,
+                            "totalGateCharge": 80e-9,
+                        },
                     },
                 },
             },
@@ -102,7 +104,7 @@ def test_stage_fetch_writes_expected_envelope(tmp_path: Path) -> None:
     assert payload["category"] == "mosfets"
     assert payload["source"] == "digikey"
     assert payload["mpn"] == "TEST-MOSFET-001"
-    assert payload["component"]["mosfet"]["manufacturerInfo"]["name"] == "TEST-MFR"
+    assert payload["component"]["semiconductor"]["mosfet"]["manufacturerInfo"]["name"] == "TEST-MFR"
     assert isinstance(payload["staged_at"], float)
     assert payload["staged_at"] == pytest.approx(time.time(), abs=10.0)
     assert "raw_response" not in payload  # not provided
@@ -176,7 +178,7 @@ def test_staged_record_round_trips() -> None:
     assert record.category == "mosfets"
     assert record.source == "digikey"
     assert record.mpn == "A"
-    assert record.component["mosfet"]["manufacturerInfo"]["reference"] == "A"
+    assert record.component["semiconductor"]["mosfet"]["manufacturerInfo"]["reference"] == "A"
 
 
 def test_staged_record_missing_file_raises(tmp_path: Path) -> None:
@@ -239,7 +241,7 @@ def test_apply_staged_writes_to_tas_and_archives() -> None:
     assert tas_file.exists()
     line = tas_file.read_text(encoding="utf-8").splitlines()[0]
     record = json.loads(line)
-    assert record["mosfet"]["manufacturerInfo"]["reference"] == "TEST-MOSFET-001"
+    assert record["semiconductor"]["mosfet"]["manufacturerInfo"]["reference"] == "TEST-MOSFET-001"
 
     # Staging file got moved to applied/<ts>-<name>.
     assert not target.exists()
@@ -265,7 +267,7 @@ def test_apply_staged_validation_failure_leaves_file_in_place(tmp_path: Path) ->
     and not silently archive."""
     broken = _valid_mosfet("BROKEN")
     # Drop the required electrical.onResistance field.
-    del broken["mosfet"]["manufacturerInfo"]["datasheetInfo"]["electrical"][
+    del broken["semiconductor"]["mosfet"]["manufacturerInfo"]["datasheetInfo"]["electrical"][
         "onResistance"
     ]
     target = stage_fetch("mosfets", "BROKEN", broken, source="digikey")

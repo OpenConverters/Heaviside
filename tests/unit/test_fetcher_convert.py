@@ -123,9 +123,9 @@ def test_digikey_mosfet_happy_path_validates_against_schema() -> None:
     payload = _wolfspeed_digikey_payload()
     envelope = convert_digikey_to_tas_mosfet(payload)
 
-    # Top-level shape: {"mosfet": {...}}.
-    assert set(envelope.keys()) == {"mosfet"}
-    mosfet = envelope["mosfet"]
+    # Top-level shape: {"semiconductor": {"mosfet": {...}}}.
+    assert set(envelope.keys()) == {"semiconductor"}
+    mosfet = envelope["semiconductor"]["mosfet"]
     assert mosfet["manufacturerInfo"]["name"] == "Wolfspeed"
     assert mosfet["manufacturerInfo"]["reference"] == "C3M0020075K"
     assert mosfet["manufacturerInfo"]["status"] == "production"
@@ -152,7 +152,7 @@ def test_digikey_mosfet_happy_path_validates_against_schema() -> None:
 
 def test_digikey_distributor_block_populated() -> None:
     envelope = convert_digikey_to_tas_mosfet(_wolfspeed_digikey_payload())
-    dist = envelope["mosfet"]["distributorsInfo"]
+    dist = envelope["semiconductor"]["mosfet"]["distributorsInfo"]
     assert len(dist) == 1
     assert dist[0]["name"] == "Digi-Key"
     assert dist[0]["reference"] == "C3M0020075K-ND"
@@ -177,7 +177,7 @@ def test_digikey_technology_resolution(
         Description={"ProductDescription": description},
     )
     envelope = convert_digikey_to_tas_mosfet(payload)
-    assert envelope["mosfet"]["manufacturerInfo"]["datasheetInfo"]["part"][
+    assert envelope["semiconductor"]["mosfet"]["manufacturerInfo"]["datasheetInfo"]["part"][
         "technology"
     ] == expected
 
@@ -246,7 +246,7 @@ def test_digikey_missing_mpn_raises() -> None:
 def test_digikey_non_active_product_marks_discontinued() -> None:
     payload = _wolfspeed_digikey_payload(ProductStatus="Obsolete")
     envelope = convert_digikey_to_tas_mosfet(payload)
-    assert envelope["mosfet"]["manufacturerInfo"]["status"] == "discontinued"
+    assert envelope["semiconductor"]["mosfet"]["manufacturerInfo"]["status"] == "discontinued"
 
 
 def test_digikey_alternate_param_label_accepted() -> None:
@@ -256,7 +256,7 @@ def test_digikey_alternate_param_label_accepted() -> None:
         if entry["Parameter"] == "Rds On (Max) @ Id, Vgs":
             entry["Parameter"] = "Rds On (Max)"  # newer label variant
     envelope = convert_digikey_to_tas_mosfet(payload)
-    assert envelope["mosfet"]["manufacturerInfo"]["datasheetInfo"]["electrical"][
+    assert envelope["semiconductor"]["mosfet"]["manufacturerInfo"]["datasheetInfo"]["electrical"][
         "onResistance"
     ] == pytest.approx(0.020)
 
@@ -298,7 +298,7 @@ def _mouser_payload(**overrides: Any) -> dict[str, Any]:
 def test_mouser_mosfet_happy_path_validates() -> None:
     envelope = convert_mouser_to_tas_mosfet(_mouser_payload())
     validate_component("mosfets", envelope)
-    mosfet = envelope["mosfet"]
+    mosfet = envelope["semiconductor"]["mosfet"]
     assert mosfet["distributorsInfo"][0]["name"] == "Mouser"
     assert mosfet["distributorsInfo"][0]["cost"] == pytest.approx(22.50)
     assert mosfet["distributorsInfo"][0]["quantity"] == 150

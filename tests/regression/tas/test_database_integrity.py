@@ -67,7 +67,7 @@ _ROW_COUNT_BASELINE: dict[str, int] = {
     "diodes.ndjson": 7_839,
     "igbts.ndjson": 3_587,
     "magnetics.ndjson": 50_553,
-    "mosfets.ndjson": 7_607,
+    "mosfets.ndjson": 6_712,
     "resistors.ndjson": 117_472,
 }
 _ROW_COUNT_TOLERANCE = 0.10
@@ -97,8 +97,8 @@ _CONFLICT_MARKERS = ("<<<<<<<", "=======", ">>>>>>>")
 # strict xfails: the day the librarian repairs the corpus the test
 # will XPASS and pytest will fail the suite, forcing this marker to
 # be removed in the same commit that lands the repair.
-_KNOWN_DRIFT_CONFLICT = {"mosfets.ndjson"}
-_KNOWN_DRIFT_ENVELOPE = {"mosfets.ndjson"}
+_KNOWN_DRIFT_CONFLICT: set[str] = set()
+_KNOWN_DRIFT_ENVELOPE: set[str] = set()
 
 
 def _mark_known_drift(filename: str, known_set: set[str], reason: str):
@@ -139,10 +139,10 @@ def test_file_exists_and_nonempty(filename: str) -> None:
         _mark_known_drift(
             f,
             _KNOWN_DRIFT_CONFLICT,
-            "mosfets.ndjson carries unresolved git merge-conflict "
-            "markers at L2802/L2806/L2810 — pinned by "
-            "test_semiconductor_wrap.py; awaiting component-librarian "
-            "repair (forbidden to fix by hand per AGENTS.md guardrail).",
+            "file carries unresolved git merge-conflict markers — "
+            "pinned by test_semiconductor_wrap.py; awaiting "
+            "component-librarian repair (forbidden to fix by hand "
+            "per AGENTS.md guardrail).",
         )
         for f in _ACTIVE_FILES
     ],
@@ -242,8 +242,8 @@ def _wrapped_files() -> list[str]:
         _mark_known_drift(
             f,
             _KNOWN_DRIFT_ENVELOPE,
-            "mosfets.ndjson rows are flat (no {'semiconductor': {...}} "
-            "wrap) — pinned by test_semiconductor_wrap.py; awaiting "
+            "rows are flat (no {'semiconductor': {...}} wrap) — "
+            "pinned by test_semiconductor_wrap.py; awaiting "
             "component-librarian schema-migration pass.",
         )
         for f in _wrapped_files()

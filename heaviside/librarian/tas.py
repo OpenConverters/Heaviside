@@ -181,7 +181,7 @@ def _unwrap_two(outer: str, inner: str):
 # are intentionally absent — strict-mode policy refuses to write
 # unvalidated rows through the librarian.
 SCHEMA_MAP: dict[str, tuple[Path, Any]] = {
-    "mosfets":    (_REPO_ROOT / "SAS" / "schemas" / "mosfet.json",    _unwrap_top("mosfet")),
+    "mosfets":    (_REPO_ROOT / "SAS" / "schemas" / "mosfet.json",    _unwrap_two("semiconductor", "mosfet")),
     "diodes":     (_REPO_ROOT / "SAS" / "schemas" / "diode.json",     _unwrap_two("semiconductor", "diode")),
     "igbts":      (_REPO_ROOT / "SAS" / "schemas" / "igbt.json",      _unwrap_two("semiconductor", "igbt")),
     "capacitors": (_REPO_ROOT / "CAS" / "schemas" / "capacitor.json", _unwrap_top("capacitor")),
@@ -352,7 +352,7 @@ def _extract_mpn(component: dict[str, Any]) -> str:
                             return str(pn)
     semi = component.get("semiconductor")
     if isinstance(semi, dict):
-        for nested in ("diode", "igbt", "bjt"):
+        for nested in ("diode", "igbt", "bjt", "mosfet"):
             sub = semi.get(nested)
             if isinstance(sub, dict):
                 mi = sub.get("manufacturerInfo")
@@ -441,7 +441,7 @@ def _envelope_mpn(record: dict[str, Any]) -> str | None:
     # magnetic / semiconductor.diode / semiconductor.igbt / semiconductor / controller / mosfet
     inner = record.get("semiconductor")
     if isinstance(inner, dict):
-        for nested in ("diode", "igbt", "bjt"):
+        for nested in ("diode", "igbt", "bjt", "mosfet"):
             sub = inner.get(nested)
             if isinstance(sub, dict):
                 mi = sub.get("manufacturerInfo")
@@ -454,7 +454,7 @@ def _envelope_mpn(record: dict[str, Any]) -> str | None:
             ref = mi.get("reference")
             if ref:
                 return str(ref)
-    for envelope in ("magnetic", "mosfet", "controller"):
+    for envelope in ("magnetic", "controller"):
         inner = record.get(envelope)
         if isinstance(inner, dict):
             mi = inner.get("manufacturerInfo")

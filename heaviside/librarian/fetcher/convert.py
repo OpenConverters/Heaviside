@@ -287,7 +287,7 @@ def convert_digikey_to_tas_mosfet(
     distributor: str = "Digi-Key",
 ) -> dict[str, Any]:
     """Convert a Digi-Key Product Information v3 payload into a TAS
-    ``{"mosfet": {...}}`` envelope.
+    ``{"semiconductor": {"mosfet": {...}}}`` envelope.
 
     Raises:
         IncompleteSourceError: Any of the six schema-required
@@ -395,27 +395,29 @@ def convert_digikey_to_tas_mosfet(
         ) from exc
 
     return {
-        "mosfet": {
-            "manufacturerInfo": {
-                "name": manufacturer,
-                "reference": mpn,
-                "status": status,
-                "datasheetUrl": datasheet_url,
-                "datasheetInfo": {
-                    "part": part,
-                    "electrical": electrical,
+        "semiconductor": {
+            "mosfet": {
+                "manufacturerInfo": {
+                    "name": manufacturer,
+                    "reference": mpn,
+                    "status": status,
+                    "datasheetUrl": datasheet_url,
+                    "datasheetInfo": {
+                        "part": part,
+                        "electrical": electrical,
+                    },
                 },
-            },
-            "distributorsInfo": [
-                {
-                    "name": distributor,
-                    "reference": distributor_ref,
-                    "link": product.get("ProductUrl", ""),
-                    "cost": cost,
-                    "quantity": int(product.get("QuantityAvailable", 0) or 0),
-                    "updatedAt": date.today().strftime("%Y-%m-%d"),
-                }
-            ],
+                "distributorsInfo": [
+                    {
+                        "name": distributor,
+                        "reference": distributor_ref,
+                        "link": product.get("ProductUrl", ""),
+                        "cost": cost,
+                        "quantity": int(product.get("QuantityAvailable", 0) or 0),
+                        "updatedAt": date.today().strftime("%Y-%m-%d"),
+                    }
+                ],
+            }
         }
     }
 
@@ -426,7 +428,7 @@ def convert_digikey_to_tas_mosfet(
 
 
 def convert_mouser_to_tas_mosfet(product: dict[str, Any]) -> dict[str, Any]:
-    """Convert a Mouser ``Parts[]`` entry into a TAS ``{"mosfet": {...}}`` envelope.
+    """Convert a Mouser ``Parts[]`` entry into a TAS ``{"semiconductor": {"mosfet": {...}}}`` envelope.
 
     Mouser's free-tier API returns far thinner parameter data than
     Digi-Key — most rows lack at least one of the six schema-required
@@ -518,31 +520,33 @@ def convert_mouser_to_tas_mosfet(product: dict[str, Any]) -> dict[str, Any]:
         quantity = 0
 
     return {
-        "mosfet": {
-            "manufacturerInfo": {
-                "name": manufacturer,
-                "reference": mpn,
-                "status": "production",
-                "datasheetUrl": product.get("DataSheetUrl") or "",
-                "datasheetInfo": {
-                    "part": {
-                        "partNumber": mpn,
-                        "technology": technology,
-                        "subType": subtype,
+        "semiconductor": {
+            "mosfet": {
+                "manufacturerInfo": {
+                    "name": manufacturer,
+                    "reference": mpn,
+                    "status": "production",
+                    "datasheetUrl": product.get("DataSheetUrl") or "",
+                    "datasheetInfo": {
+                        "part": {
+                            "partNumber": mpn,
+                            "technology": technology,
+                            "subType": subtype,
+                        },
+                        "electrical": electrical,
                     },
-                    "electrical": electrical,
                 },
-            },
-            "distributorsInfo": [
-                {
-                    "name": "Mouser",
-                    "reference": product.get("MouserPartNumber", ""),
-                    "link": product.get("ProductDetailUrl", ""),
-                    "cost": cost,
-                    "quantity": quantity,
-                    "updatedAt": date.today().strftime("%Y-%m-%d"),
-                }
-            ],
+                "distributorsInfo": [
+                    {
+                        "name": "Mouser",
+                        "reference": product.get("MouserPartNumber", ""),
+                        "link": product.get("ProductDetailUrl", ""),
+                        "cost": cost,
+                        "quantity": quantity,
+                        "updatedAt": date.today().strftime("%Y-%m-%d"),
+                    }
+                ],
+            }
         }
     }
 
