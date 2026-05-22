@@ -285,11 +285,62 @@ def stamp_junction_temperatures(
 # ---------------------------------------------------------------------------
 
 
+def _stamp_analyst_efficiency(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """Derive efficiency from the analyst's loss budget + spec Pout and
+    stamp it into ``tas.simulation_results.op0.efficiency_analyst``.
+
+    This is engineering-truth efficiency (picked components against spec
+    operating point), distinct from the sim runner's measured efficiency
+    which is dominated by lossy testbench scaffolding (snubbers, ideal
+    diode models) in MKF's stock decks. The realism gate prefers this
+    key over sim's ``efficiency`` so the verdict reflects the design,
+    not the deck-modelling artefacts.
+
+    No-op if loss_budget is incomplete (every bucket None) — caller
+    must run the loss extractor first; we never invent an efficiency
+    out of partial data.
+    """
+    budget = tas.get("loss_budget")
+    if not isinstance(budget, Mapping):
+        return
+    total_loss = 0.0
+    seen = False
+    for v in budget.values():
+        if isinstance(v, (int, float)):
+            total_loss += float(v)
+            seen = True
+    if not seen:
+        return
+    vout, iout = _spec_vout_iout(spec)
+    pout = vout * iout
+    if pout <= 0:
+        return
+    pin = pout + total_loss
+    if pin <= 0:
+        return
+    sim = tas.setdefault("simulation_results", {})
+    if not isinstance(sim, dict):
+        return
+    op = sim.setdefault("op0", {})
+    if not isinstance(op, dict):
+        return
+    op["efficiency_analyst"] = round(pout / pin, 4)
+    op["pout_analyst"] = round(pout, 4)
+    op["pin_analyst"] = round(pin, 4)
+    op["total_loss_analyst"] = round(total_loss, 4)
+
+
 def run_buck_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
     """In-place: compute loss budget, stamp it on tas, then stamp Tj
-    on every BOM component that has Rth_ja + a computable loss."""
+    on every BOM component that has Rth_ja + a computable loss.
+
+    Also stamps the analyst-derived efficiency so the realism gate's
+    efficiency_sanity check can pass through the design's true
+    efficiency rather than the lossy-deck simulation efficiency.
+    """
     tas["loss_budget"] = compute_buck_loss_budget(tas, spec)
     stamp_junction_temperatures(tas, spec)
+    _stamp_analyst_efficiency(tas, spec)
 
 
 # Per-topology analyst dispatch. Add new topologies here as their loss

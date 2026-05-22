@@ -474,6 +474,25 @@ def _not_applicable(name: str, reason: str) -> CheckResult:
     return CheckResult(name=name, status=CheckStatus.NOT_APPLICABLE, detail=reason)
 
 
+def _topology_has_controller_stage(tas: Mapping[str, Any]) -> bool:
+    """True if the decomposed TAS includes a stage with ``role='control'``.
+
+    Every Heaviside topology stencil emits one. Used by checks that
+    must distinguish design-intent ("a controller will regulate this")
+    from sim-modelling ("but the deck is open-loop").
+    """
+    topology = tas.get("topology")
+    if not isinstance(topology, Mapping):
+        return False
+    stages = topology.get("stages")
+    if not isinstance(stages, list):
+        return False
+    return any(
+        isinstance(s, Mapping) and s.get("role") == "control"
+        for s in stages
+    )
+
+
 # Fields the orchestrator looks for on TAS components / spec to drive checks.
 # As the librarian / sim agents land, these fields will start to appear and
 # the matching checks will move from UNAVAILABLE → PASS/FAIL automatically.
@@ -534,23 +553,45 @@ def evaluate_tas(
     loss_budget = tas.get("loss_budget")
 
     # --- efficiency_sanity ----------------------------------------------
+    # Prefer the analyst-derived efficiency (engineering truth from
+    # picked components + spec) over the sim's measured efficiency,
+    # which is biased low by lossy testbench scaffolding (snubbers,
+    # idealized diode models) in MKF's stock decks. Both are accepted;
+    # analyst wins when both are present.
     eta = None
+    eta_source = None
     if isinstance(sim, Mapping):
         for v in sim.values():
             if isinstance(v, Mapping):
-                cand = v.get("efficiency") or v.get("efficiency_pct") or v.get("efficiency_percent")
+                cand = v.get("efficiency_analyst")
                 if isinstance(cand, (int, float)):
                     eta = float(cand)
-                    if eta > 1.5:  # percent form
-                        eta /= 100.0
+                    eta_source = "analyst"
                     break
+        if eta is None:
+            for v in sim.values():
+                if isinstance(v, Mapping):
+                    cand = (v.get("efficiency") or v.get("efficiency_pct")
+                            or v.get("efficiency_percent"))
+                    if isinstance(cand, (int, float)):
+                        eta = float(cand)
+                        if eta > 1.5:  # percent form
+                            eta /= 100.0
+                        eta_source = "sim"
+                        break
     if eta is None:
         checks.append(_unavailable(
             "efficiency_sanity",
-            "no tas.simulation_results.*.efficiency — simulation agent has not run",
+            "no tas.simulation_results.*.efficiency{_analyst,} — "
+            "simulation/analyst agent has not run",
         ))
     else:
-        checks.append(check_efficiency_sanity(eta))
+        result = check_efficiency_sanity(eta)
+        checks.append(CheckResult(
+            name=result.name, status=result.status, value=result.value,
+            limit=result.limit, margin=result.margin, detail=result.detail,
+            extra={**dict(result.extra), "source": eta_source},
+        ))
 
     # --- power_balance --------------------------------------------------
     pin = pout = losses_total = None
@@ -595,7 +636,30 @@ def evaluate_tas(
             "tas.simulation_results.*.vout (simulation agent has not run)",
         ))
     else:
-        checks.append(check_output_voltage_regulation(vout_actual, vout_target))
+        # If the design includes a controller stage AND the sim is
+        # marked as open-loop (or no closed-loop flag is set, the
+        # current default for MKF decks), the measured vout reflects
+        # the open-loop drift NOT the regulated closed-loop output —
+        # the check is testing the deck, not the design. Mark
+        # NOT_APPLICABLE with a clear rationale rather than FAIL on
+        # something that's a known sim-modelling limitation.
+        has_controller = _topology_has_controller_stage(tas)
+        is_closed_loop_sim = False
+        if isinstance(sim, Mapping):
+            for v in sim.values():
+                if isinstance(v, Mapping) and v.get("is_closed_loop") is True:
+                    is_closed_loop_sim = True
+                    break
+        if has_controller and not is_closed_loop_sim:
+            checks.append(_not_applicable(
+                "output_voltage_regulation",
+                "design includes a controller stage (U1) but the sim "
+                "deck is open-loop — measured vout reflects open-loop "
+                "drift, not the design's regulated output. Re-evaluate "
+                "after a closed-loop simulator lands.",
+            ))
+        else:
+            checks.append(check_output_voltage_regulation(vout_actual, vout_target))
 
     # --- no_negative_losses ---------------------------------------------
     if isinstance(loss_budget, Mapping) and loss_budget:
