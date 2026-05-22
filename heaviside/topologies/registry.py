@@ -294,6 +294,11 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_vienna",
         "converter",
         "ac_dc",
+        # Vienna emits a single per-phase boost cell (PyMKF's "Phase-1 SPICE"
+        # simplification). L1 is the per-phase boost inductor, treated as the
+        # main magnetic. C_bus_DC is the shared DC bus output cap (no extras
+        # binding — librarian sources from outputDcVoltage in spec).
+        magnetic_binding={"L1": None},
     ),
     # --- magnetic-only components (not converters; used directly by EMC filter design) ---
     TopologyEntry(

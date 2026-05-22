@@ -1,0 +1,177 @@
+{
+  "inputs": {
+    "designRequirements": {
+      "efficiency": 0.95,
+      "inputType": "dc",
+      "inputVoltage": {
+        "nominal": 326.6,
+        "minimum": 311.0,
+        "maximum": 359.0
+      },
+      "outputs": [
+        {
+          "name": "out0",
+          "voltage": {
+            "nominal": 800.0
+          },
+          "regulation": "voltage"
+        }
+      ]
+    },
+    "operatingPoints": [
+      {
+        "name": "op0",
+        "inputVoltage": 326.6,
+        "ambientTemperature": 25.0,
+        "outputs": [
+          {
+            "name": "out0",
+            "voltage": 800.0,
+            "current": 0.5
+          }
+        ]
+      }
+    ]
+  },
+  "topology": {
+    "stages": [
+      {
+        "name": "phase_boost_cell",
+        "role": "switchingCell",
+        "inputPort": {
+          "type": "dcBus",
+          "wire": "Vin"
+        },
+        "outputPorts": [
+          {
+            "type": "dcOutput",
+            "wire": "Vout"
+          }
+        ],
+        "circuit": {
+          "components": [
+            {
+              "name": "L1",
+              "data": "TAS/data/magnetics.ndjson?placeholder=L1"
+            },
+            {
+              "name": "Q1",
+              "data": "TAS/data/mosfets.ndjson?placeholder=Q1"
+            },
+            {
+              "name": "D1",
+              "data": "TAS/data/diodes.ndjson?placeholder=D1"
+            },
+            {
+              "name": "C_bus_DC",
+              "data": "TAS/data/capacitors.ndjson?placeholder=C_bus_DC"
+            },
+            {
+              "name": "P_Vin",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vin"
+            },
+            {
+              "name": "P_Vout",
+              "data": "TAS/data/terminals.ndjson?placeholder=P_Vout"
+            }
+          ],
+          "connections": [
+            {
+              "name": "sw_node",
+              "kind": "wire",
+              "endpoints": [
+                {
+                  "component": "L1",
+                  "pin": "2"
+                },
+                {
+                  "component": "Q1",
+                  "pin": "D"
+                },
+                {
+                  "component": "D1",
+                  "pin": "A"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "controller",
+        "role": "control",
+        "circuit": {
+          "components": [
+            {
+              "name": "U1",
+              "data": "TAS/data/controllers.ndjson?placeholder=U1"
+            }
+          ],
+          "connections": []
+        },
+        "senses": [
+          {
+            "wire": "Vout",
+            "signal": "voltage"
+          }
+        ],
+        "drives": [
+          {
+            "component": "Q1",
+            "signal": "gate"
+          }
+        ]
+      }
+    ],
+    "interStageCircuit": [
+      {
+        "name": "Vin",
+        "kind": "externalPort",
+        "direction": "input",
+        "endpoints": [
+          {
+            "component": "L1",
+            "pin": "1"
+          },
+          {
+            "component": "P_Vin",
+            "pin": "1"
+          }
+        ]
+      },
+      {
+        "name": "Vout",
+        "kind": "externalPort",
+        "direction": "output",
+        "endpoints": [
+          {
+            "component": "D1",
+            "pin": "K"
+          },
+          {
+            "component": "C_bus_DC",
+            "pin": "1"
+          },
+          {
+            "component": "P_Vout",
+            "pin": "1"
+          }
+        ]
+      },
+      {
+        "name": "GND",
+        "kind": "wire",
+        "endpoints": [
+          {
+            "component": "Q1",
+            "pin": "S"
+          },
+          {
+            "component": "C_bus_DC",
+            "pin": "2"
+          }
+        ]
+      }
+    ]
+  }
+}

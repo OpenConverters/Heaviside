@@ -110,7 +110,8 @@ _TESTBENCH_PREFIXES: tuple[str, ...] = (
     "Rload", "R_load",           # load resistors (Rload, R_load_o1, …)
     "Rsec",                      # secondary winding DCR
     "Rlout", "R_lo_dcr",         # output choke DCR (two_switch_forward, AHB, …)
-    "Rdc_supply_dummy", "Rbus_HV_dummy", "Rdc_sec",
+    "Rdc_supply_dummy", "Rbus_HV_dummy", "Rdc_sec", "Rphase_dummy",
+    "Resr",                      # cap ESR with no underscore (Vienna 'Resr')
     "Rpri_ret", "Rsec_ret",      # bridge return resistors
     "Rct_",                      # PSFB center-tap return stubs (1µΩ to GND)
 )
@@ -4014,6 +4015,121 @@ def cllc(deck: SpiceDeck) -> TasTopology:
     }
 
 
+# -----------------------------------------------------------------------------
+# Vienna stencil (3-phase boost-PFC, single-phase emulation per upstream)
+# -----------------------------------------------------------------------------
+#
+# IMPORTANT — upstream simplification: PyMKF's Vienna ngspice generator
+# describes its own output as "Phase-1 SPICE: single-phase boost emulation at
+# peak-of-line". It emits ONE boost cell representing one of three identical
+# phases at the line peak (Vphase frozen at V_LL × √2/√3). The other two
+# phases are conceptually identical by symmetry. Heaviside's stencil therefore
+# models the per-phase BOM (L1, Q1, D1, C_bus_DC); a true 3-phase BOM
+# (3× L/Q/D + 1× C_bus) is blocked until PyMKF emits the full 3-phase deck.
+#
+# MKF deck layout (verified empirically against /tmp/vienna_deck.spice):
+#
+#   * Source (frozen DC at phase peak)
+#   Vphase vphase 0 326.6              ; testbench AC source surrogate
+#   Rphase_dummy vphase 0 1Meg         ; testbench bleeder
+#   Vph_sense vphase l_a 0             ; ammeter (drop)
+#
+#   * Boost inductor
+#   Lboost l_a sw_node 1m IC=0.13      ; L1 (pin1=l_a/Vin, pin2=sw_node)
+#
+#   * Switch + body diode + snubber
+#   Vpwm pwm 0 PULSE(...)              ; testbench gate drive
+#   Ssw sw_node 0 pwm 0 SW1            ; Q1 (D=sw_node, S=GND)
+#   Dsw_bd 0 sw_node DIDEAL            ; synthetic body diode (extra_testbench)
+#   Rsnub_sw / Csnub_sw                ; snubbers (testbench prefix-matched)
+#
+#   * Boost diode + output filter
+#   Dboost sw_node vdc_plus DBOOST     ; D1 (A=sw_node, K=vdc_plus)
+#   Resr vdc_plus vdc_cap 0.05         ; testbench ESR (prefix added)
+#   Cout vdc_cap 0 47n IC=400          ; C_bus_DC
+#   Rload vdc_cap 0 3.762k             ; testbench load
+#
+# Real BOM per phase: L1, Q1, D1, C_bus_DC.
+
+
+_VIENNA_REAL_KINDS = {
+    "Lboost": "inductor",
+    "Ssw":    "switch",
+    "Dboost": "diode",
+    "Cout":   "capacitor",
+}
+
+
+def vienna(deck: SpiceDeck) -> TasTopology:
+    """Decompose an MKF Vienna deck into TAS.
+
+    Per upstream's "Phase-1 emulation" convention, the BOM models ONE
+    of three identical phases (L1 + Q1 + D1) plus the shared DC bus
+    capacitor (C_bus_DC). Wraps the standard boost-cell pattern with
+    Vienna's deck-specific refdes names.
+    """
+    _validate_real_set(
+        deck,
+        "vienna",
+        _VIENNA_REAL_KINDS,
+        # Synthetic body diode for Ssw (collides with the real D1 used by
+        # buck/boost/flyback as the freewheeling diode, so it lives in
+        # extra_testbench).
+        extra_testbench=frozenset({"Dsw_bd"}),
+    )
+
+    switching_cell = {
+        "name": "phase_boost_cell",
+        "role": "switchingCell",
+        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout"}],
+        "circuit": {
+            "components": [
+                _component("magnetic",  "L1"),         # ← Lboost
+                _component("mosfet",    "Q1"),         # ← Ssw
+                _component("diode",     "D1"),         # ← Dboost
+                _component("capacitor", "C_bus_DC"),   # ← Cout
+            ],
+            "connections": [
+                # sw_node: L1.2 = Q1.D = D1.A (boost cell midpoint)
+                {
+                    "name": "sw_node",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "L1", "pin": "2"},
+                        {"component": "Q1", "pin": "D"},
+                        {"component": "D1", "pin": "A"},
+                    ],
+                },
+            ],
+        },
+    }
+
+    control = _control_stage()
+
+    inter_stage = [
+        {
+            "name": "Vin",
+            "kind": "externalPort",
+            "direction": "input",
+            "endpoints": [{"component": "L1", "pin": "1"}],
+        },
+        {
+            "name": "Vout",
+            "kind": "externalPort",
+            "direction": "output",
+            "endpoints": [
+                {"component": "D1",       "pin": "K"},
+                {"component": "C_bus_DC", "pin": "1"},
+            ],
+        },
+        _gnd_wire(("Q1", "S"), ("C_bus_DC", "2")),
+        *_gate_wires("Q1"),
+    ]
+
+    return {"stages": [switching_cell, control], "interStageCircuit": inter_stage}
+
+
 STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "buck": buck,
     "boost": boost,
@@ -4037,6 +4153,7 @@ STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "dab": dual_active_bridge,
     "clllc": clllc,
     "cllc": cllc,
+    "vienna": vienna,
 }
 
 

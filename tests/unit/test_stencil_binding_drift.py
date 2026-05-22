@@ -44,6 +44,7 @@ PREFIX_TO_TOPOLOGY: dict[str, str] = {
     "pushpull": "push_pull",
     "sepic": "sepic",
     "ssforward": "single_switch_forward",
+    "vienna": "vienna",
     "wbg": "weinberg",
     "zeta": "zeta",
 }
