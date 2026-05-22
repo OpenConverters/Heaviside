@@ -70,6 +70,114 @@ def test_derive_stresses_dispatches_per_topology() -> None:
 
 
 def test_derive_stresses_returns_none_for_unported_topology() -> None:
-    # No deriver registered yet for boost — caller must treat None as
-    # "skip stress stamping; gate will mark voltage_derating UNAVAILABLE".
-    assert derive_stresses("boost", _BUCK_OK) is None
+    # No deriver registered yet for an arbitrary unknown topology.
+    assert derive_stresses("totally_made_up", _BUCK_OK) is None
+
+
+# ---------------------------------------------------------------------------
+# Boost
+# ---------------------------------------------------------------------------
+
+
+_BOOST_OK = {
+    "inputVoltage": {"nominal": 12.0, "minimum": 9.0, "maximum": 15.0},
+    "currentRippleRatio": 0.4,
+    "operatingPoints": [{
+        "outputVoltages": [24.0],
+        "outputCurrents": [2.0],
+        "switchingFrequency": 150_000.0,
+        "ambientTemperature": 25.0,
+    }],
+}
+
+
+def test_boost_stresses_match_hand_calc() -> None:
+    """Boost 9->24V@2A, ripple 0.4: Q1 sees Vout=24V. Iin = Iout*Vout/Vin_min
+    = 2 * 24 / 9 = 5.33 A. Id_pk = Iin * 1.2 = 6.4 A."""
+    from heaviside.pipeline.stress import boost_stresses
+    s = boost_stresses(_BOOST_OK)
+    assert s.vds_stress == 24.0
+    assert s.id_stress == pytest.approx(5.333 * 1.2, abs=0.01)
+    assert s.vr_stress == 24.0
+    assert s.if_avg_stress == 2.0
+    assert s.v_working == 24.0
+
+
+def test_boost_throws_on_step_down_spec() -> None:
+    from heaviside.pipeline.stress import boost_stresses
+    bad = {**_BOOST_OK, "operatingPoints": [{
+        **_BOOST_OK["operatingPoints"][0], "outputVoltages": [5.0],
+    }]}
+    with pytest.raises(StressDerivationError, match="step down"):
+        boost_stresses(bad)
+
+
+# ---------------------------------------------------------------------------
+# Cuk
+# ---------------------------------------------------------------------------
+
+
+def test_cuk_stresses_voltage_is_sum_of_rails() -> None:
+    """Cuk Vds = Vin_min + |Vout|: for 18->12V Cuk that's 18+12=30V."""
+    from heaviside.pipeline.stress import cuk_stresses
+    spec = {
+        "inputVoltage": {"nominal": 24.0, "minimum": 18.0, "maximum": 30.0},
+        "currentRippleRatio": 0.4,
+        "operatingPoints": [{
+            "outputVoltages": [12.0], "outputCurrents": [2.0],
+            "switchingFrequency": 150_000.0, "ambientTemperature": 25.0,
+        }],
+    }
+    s = cuk_stresses(spec)
+    assert s.vds_stress == 18.0 + 12.0
+    assert s.v_working == 12.0
+
+
+# ---------------------------------------------------------------------------
+# Flyback
+# ---------------------------------------------------------------------------
+
+
+_FLYBACK_OK = {
+    "inputVoltage": {"nominal": 48.0, "minimum": 36.0, "maximum": 60.0},
+    "currentRippleRatio": 0.4,
+    "desiredTurnsRatios": [5.0],
+    "maximumDutyCycle": 0.5,
+    "operatingPoints": [{
+        "outputVoltages": [12.0], "outputCurrents": [2.0],
+        "switchingFrequency": 100_000.0, "ambientTemperature": 25.0,
+    }],
+}
+
+
+def test_flyback_vds_includes_reflected_secondary() -> None:
+    """Vds = Vin_max + n * Vout: 60 + 5*12 = 120 V."""
+    from heaviside.pipeline.stress import flyback_stresses
+    s = flyback_stresses(_FLYBACK_OK)
+    assert s.vds_stress == 60.0 + 5.0 * 12.0
+
+
+def test_flyback_throws_on_missing_turns_ratio() -> None:
+    from heaviside.pipeline.stress import flyback_stresses
+    bad = {k: v for k, v in _FLYBACK_OK.items() if k != "desiredTurnsRatios"}
+    with pytest.raises(StressDerivationError, match="desiredTurnsRatios"):
+        flyback_stresses(bad)
+
+
+def test_flyback_throws_on_bad_duty() -> None:
+    from heaviside.pipeline.stress import flyback_stresses
+    bad = {**_FLYBACK_OK, "maximumDutyCycle": 1.5}
+    with pytest.raises(StressDerivationError, match="maximumDutyCycle"):
+        flyback_stresses(bad)
+
+
+# ---------------------------------------------------------------------------
+# Dispatcher
+# ---------------------------------------------------------------------------
+
+
+def test_derive_stresses_dispatches_to_each_registered_topology() -> None:
+    """All four registered derivers fire through derive_stresses()."""
+    assert derive_stresses("buck", _BUCK_OK) is not None
+    assert derive_stresses("boost", _BOOST_OK) is not None
+    assert derive_stresses("flyback", _FLYBACK_OK) is not None

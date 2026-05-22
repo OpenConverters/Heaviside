@@ -343,18 +343,21 @@ def assemble_bom_from_tas(
         diode_c = _diode_constraints_from_stress(stresses)
 
     # Capacitor constraints + selection. Topology-aware target
-    # capacitance: buck is the only one wired today. (Other topologies
-    # will need their own formula; until then, we skip cap selection
-    # for them — the realism gate stays UNAVAILABLE on cap derating,
-    # which is the honest signal.)
+    # capacitance: buck/boost/cuk/flyback use the same delta_V budget
+    # formula with the ripple-current value already topology-derived
+    # in stress.py.
     cap_c: CapacitorConstraints | None = None
-    if topology == "buck" and stresses.v_working is not None and stresses.i_ripple is not None:
-        # ripple_current_pp = i_ripple_rms * 2*sqrt(3) (inverse of the
-        # triangular-wave RMS conversion in stress.py)
+    if topology in {"buck", "boost", "cuk", "flyback"} and (
+        stresses.v_working is not None and stresses.i_ripple is not None
+    ):
+        # ripple_current_pp ≈ i_ripple_rms * 2*sqrt(3) for triangular
+        # waveforms; for the discontinuous waveforms of boost/flyback
+        # this is a conservative overestimate (which is what we want
+        # when sizing the output cap).
         ripple_pp = stresses.i_ripple * 2.0 * (3.0 ** 0.5)
         target_c = _buck_target_capacitance(
             ripple_current_pp=ripple_pp,
-            fsw=float(fsw), vout=float(vouts[0]),
+            fsw=float(fsw), vout=float(stresses.v_working),
         )
         cap_c = _capacitor_constraints_from_stress(
             stresses, target_capacitance=target_c,

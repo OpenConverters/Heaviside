@@ -343,10 +343,149 @@ def run_buck_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
     _stamp_analyst_efficiency(tas, spec)
 
 
+def _compute_generic_loss_budget(
+    tas: dict[str, Any],
+    spec: Mapping[str, Any],
+    *,
+    duty: float,
+    pri_current: float,
+    sec_current: float,
+) -> dict[str, float | None]:
+    """Topology-generic loss budget keyed by closed-form duty + currents.
+
+    Used by boost/cuk/flyback analysts that share the same buck-class
+    loss decomposition (MOSFET cond+sw, diode cond+rev-recovery, cap
+    ESR, inductor from MAS) but differ in WHICH current flows through
+    WHICH device. Callers supply:
+
+      * ``duty``: switch on-time fraction (used for cond loss split)
+      * ``pri_current``: the device-side current during switch ON
+        (= inductor current for buck, primary-winding current for
+        flyback, total switch-node current for cuk)
+      * ``sec_current``: the device-side current during switch OFF
+        (diode forward current avg; output cap loading)
+
+    Inductor losses come straight from PyMKF's MAS outputs (same as
+    buck — that path is topology-independent because PyMKF computes
+    losses for the winding it designed).
+    """
+    fsw = _spec_fsw(spec)
+    vout, iout = _spec_vout_iout(spec)
+    vin = _spec_vin_nominal(spec)
+
+    budget: dict[str, float | None] = {}
+
+    q1 = _find_named(tas, "Q1")
+    if q1 is not None:
+        rds_on = q1.get("rds_on")
+        qg = q1.get("qg_total")
+        if isinstance(rds_on, (int, float)) and rds_on > 0:
+            budget["Q1_conduction"] = float(duty) * (pri_current ** 2) * float(rds_on)
+        else:
+            budget["Q1_conduction"] = None
+        if isinstance(qg, (int, float)) and qg > 0:
+            # P_sw ~ Vds_off * Id * (Qg / Ig) * fsw; use spec.Vout for
+            # boost / Vin for buck — but Vds_off varies by topology.
+            # Use the higher of vin/vout as a conservative proxy.
+            vds_off = max(vin, vout)
+            budget["Q1_switching"] = vds_off * pri_current * float(qg) * fsw / _GATE_DRIVE_CURRENT_A
+        else:
+            budget["Q1_switching"] = None
+
+    d1 = _find_named(tas, "D1")
+    if d1 is not None:
+        vf = d1.get("vf_typ")
+        qrr = d1.get("qrr")
+        if isinstance(vf, (int, float)) and vf >= 0:
+            budget["D1_conduction"] = (1.0 - float(duty)) * sec_current * float(vf)
+        else:
+            budget["D1_conduction"] = None
+        if isinstance(qrr, (int, float)) and qrr >= 0:
+            vr = max(vin, vout)
+            budget["D1_switching"] = 0.5 * vr * float(qrr) * fsw
+        else:
+            budget["D1_switching"] = None
+
+    l1 = _find_named(tas, "L1")
+    if l1 is not None:
+        budget.update(_inductor_loss_from_mas(l1))
+
+    # T1 (transformer) for isolated topologies — same MAS-loss path
+    t1 = _find_named(tas, "T1")
+    if t1 is not None:
+        # Re-key to T1_core / T1_dcr.
+        t1_losses = _inductor_loss_from_mas(t1)
+        budget["T1_core"] = t1_losses.get("L1_core")
+        budget["T1_dcr"] = t1_losses.get("L1_dcr")
+
+    cout = _find_named(tas, "C_out") or _find_named(tas, "C_bus_DC")
+    if cout is not None:
+        esr = cout.get("esr")
+        ripple_rms = cout.get("ripple_current_stress")
+        if (
+            isinstance(esr, (int, float)) and esr >= 0
+            and isinstance(ripple_rms, (int, float)) and ripple_rms >= 0
+        ):
+            budget["C_out_esr"] = (ripple_rms ** 2) * float(esr)
+        else:
+            budget["C_out_esr"] = None
+
+    return budget
+
+
+def run_boost_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """Boost loss budget + Tj. D = 1 - Vin/Vout, primary current
+    through Q1 is the inductor current (Iin = Pout/Vin/eta)."""
+    vout, iout = _spec_vout_iout(spec)
+    vin = _spec_vin_nominal(spec)
+    duty = 1.0 - vin / vout
+    iin = iout * vout / vin  # primary = inductor current ~ Iin
+    tas["loss_budget"] = _compute_generic_loss_budget(
+        tas, spec, duty=duty, pri_current=iin, sec_current=iout,
+    )
+    stamp_junction_temperatures(tas, spec)
+    _stamp_analyst_efficiency(tas, spec)
+
+
+def run_cuk_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """Cuk loss budget. Same topology-generic flow with the cuk-
+    specific assumption that primary and secondary inductor currents
+    sum through Q1 during switch ON."""
+    vout, iout = _spec_vout_iout(spec)
+    vin = _spec_vin_nominal(spec)
+    vout_abs = abs(vout)
+    duty = vout_abs / (vin + vout_abs)
+    iin = iout * vout_abs / vin
+    tas["loss_budget"] = _compute_generic_loss_budget(
+        tas, spec, duty=duty, pri_current=(iin + iout), sec_current=iout,
+    )
+    stamp_junction_temperatures(tas, spec)
+    _stamp_analyst_efficiency(tas, spec)
+
+
+def run_flyback_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """Flyback loss budget. Primary current is Iout/n (reflected),
+    secondary current avg is Iout / (1 - D)."""
+    ratios = spec.get("desiredTurnsRatios") or [1.0]
+    n = float(ratios[0])
+    d_max = float(spec.get("maximumDutyCycle", 0.5))
+    _, iout = _spec_vout_iout(spec)
+    ipri = (iout / n) * 1.5  # 50% ripple typical
+    isec_avg = iout / (1.0 - d_max)
+    tas["loss_budget"] = _compute_generic_loss_budget(
+        tas, spec, duty=d_max, pri_current=ipri, sec_current=isec_avg,
+    )
+    stamp_junction_temperatures(tas, spec)
+    _stamp_analyst_efficiency(tas, spec)
+
+
 # Per-topology analyst dispatch. Add new topologies here as their loss
 # formulas are wired.
 _ANALYSTS: dict[str, Any] = {
     "buck": run_buck_analyst,
+    "boost": run_boost_analyst,
+    "cuk": run_cuk_analyst,
+    "flyback": run_flyback_analyst,
 }
 
 
@@ -363,6 +502,9 @@ __all__ = [
     "AnalystError",
     "compute_buck_loss_budget",
     "run_analyst",
+    "run_boost_analyst",
     "run_buck_analyst",
+    "run_cuk_analyst",
+    "run_flyback_analyst",
     "stamp_junction_temperatures",
 ]

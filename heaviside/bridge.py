@@ -910,8 +910,40 @@ def _ipeak_worst_buck(spec: Mapping[str, Any]) -> float | None:
 # is a no-op for that topology"; the bridge keeps PyMKF's top scorer
 # and the realism gate (if it has its own per-topology extractor) will
 # report any margin failure honestly.
-_IPEAK_WORST: dict[str, "Any"] = {
-    "buck": _ipeak_worst_buck,
+#
+# These delegate to heaviside.pipeline.stress so the same closed-form
+# formulas drive both selection (here) and realism-gate stress fields
+# (extract.py / analyst.py).
+
+
+def _ipeak_worst_from_stress(topology: str, spec: Mapping[str, Any]) -> float | None:
+    """Generic Ipeak_worst extractor that defers to the per-topology
+    stress deriver registered in ``heaviside.pipeline.stress``.
+
+    Returns ``None`` when the topology has no registered deriver OR
+    the spec is incomplete; caller (post-filter) treats None as "skip
+    the filter" and falls back to PyMKF's top scorer.
+    """
+    from heaviside.pipeline.stress import StressDerivationError, derive_stresses
+    try:
+        s = derive_stresses(topology, spec)
+    except StressDerivationError:
+        return None
+    if s is None or s.id_stress is None or s.id_stress <= 0:
+        return None
+    return float(s.id_stress)
+
+
+_IPEAK_WORST: dict[str, Any] = {
+    # Buck stays on the L-derived ripple formula (Vout * (1 - Dmin) /
+    # (0.8 * L * fsw) / 2) so the post-filter and realism extract.py
+    # agree on Ipeak without requiring currentRippleRatio in the spec.
+    "buck":    _ipeak_worst_buck,
+    # Other topologies use the spec.currentRippleRatio path via the
+    # stress deriver (less restrictive — works without knowing L).
+    "boost":   lambda spec: _ipeak_worst_from_stress("boost", spec),
+    "cuk":     lambda spec: _ipeak_worst_from_stress("cuk", spec),
+    "flyback": lambda spec: _ipeak_worst_from_stress("flyback", spec),
 }
 
 

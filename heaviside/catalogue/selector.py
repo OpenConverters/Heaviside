@@ -314,17 +314,24 @@ def select_mosfet(
     if not passing:
         raise SelectionError(c, rejection, total)
 
-    # Apply the explicit tiebreaker. Each policy maps to a (key,
-    # reverse) pair; ``sorted`` is stable so within-tier order matches
-    # the NDJSON scan order, which is itself stable across runs.
+    # Tier-2 preference: among parts that satisfy every hard
+    # constraint AND the primary tiebreaker, prefer ones with full
+    # datasheet metadata (Rth_ja + Tj_max) populated — without those
+    # the analyst stage can't compute Tj and the realism gate's
+    # thermal_limit check stays UNAVAILABLE. The tier is implemented
+    # via a tuple sort key: (no_thermal, primary) sorts thermal-rich
+    # parts FIRST, then within each thermal-tier by the primary metric.
+    def _no_thermal(m: Mosfet) -> bool:
+        return m.rth_ja is None or m.tj_max is None
+
     if tiebreaker is MosfetTiebreaker.LOWEST_RDS_ON:
-        winner = min(passing, key=lambda m: m.rds_on)
+        winner = min(passing, key=lambda m: (_no_thermal(m), m.rds_on))
     elif tiebreaker is MosfetTiebreaker.LOWEST_QG:
-        winner = min(passing, key=lambda m: m.qg_total)
+        winner = min(passing, key=lambda m: (_no_thermal(m), m.qg_total))
     elif tiebreaker is MosfetTiebreaker.HIGHEST_VDS_MARGIN:
-        winner = max(passing, key=lambda m: m.vds_rated / c.vds_min)
+        winner = min(passing, key=lambda m: (_no_thermal(m), -m.vds_rated / c.vds_min))
     elif tiebreaker is MosfetTiebreaker.HIGHEST_ID_MARGIN:
-        winner = max(passing, key=lambda m: m.id_continuous / c.id_min)
+        winner = min(passing, key=lambda m: (_no_thermal(m), -m.id_continuous / c.id_min))
     else:  # pragma: no cover — enum is exhaustive
         raise ValueError(f"unhandled tiebreaker {tiebreaker!r}")
 
@@ -515,14 +522,18 @@ def select_diode(
     if not passing:
         raise SelectionError(c, rejection, total)
 
+    # Prefer thermal-rich parts (see MOSFET selector for the same rationale).
+    def _no_thermal_d(d: Diode) -> bool:
+        return d.rth_ja is None or d.tj_max is None
+
     if tiebreaker is DiodeTiebreaker.LOWEST_VF:
-        winner = min(passing, key=lambda d: d.vf_typ)
+        winner = min(passing, key=lambda d: (_no_thermal_d(d), d.vf_typ))
     elif tiebreaker is DiodeTiebreaker.LOWEST_QRR:
-        winner = min(passing, key=lambda d: d.qrr)
+        winner = min(passing, key=lambda d: (_no_thermal_d(d), d.qrr))
     elif tiebreaker is DiodeTiebreaker.HIGHEST_VRRM_MARGIN:
-        winner = max(passing, key=lambda d: d.vrrm_rated / c.vrrm_min)
+        winner = min(passing, key=lambda d: (_no_thermal_d(d), -d.vrrm_rated / c.vrrm_min))
     elif tiebreaker is DiodeTiebreaker.HIGHEST_IF_MARGIN:
-        winner = max(passing, key=lambda d: d.if_avg_rated / c.if_avg_min)
+        winner = min(passing, key=lambda d: (_no_thermal_d(d), -d.if_avg_rated / c.if_avg_min))
     else:  # pragma: no cover
         raise ValueError(f"unhandled tiebreaker {tiebreaker!r}")
 
@@ -729,20 +740,23 @@ def select_capacitor(
     if not passing:
         raise SelectionError(c, rejection, total)
 
+    # Prefer thermal-rich parts (cap thermal lives in electrical.thermalResistance).
+    def _no_thermal_c(x: Capacitor) -> bool:
+        return x.rth is None
+
     if tiebreaker is CapacitorTiebreaker.LOWEST_ESR:
-        # MLCC rows often have esr=0; treat zero as "best" deliberately,
-        # but the caller can filter via technology_allowed if they need
-        # an explicit-ESR part.
-        winner = min(passing, key=lambda c: c.esr)
+        # MLCC rows often have esr=0; treat zero as "best" deliberately.
+        winner = min(passing, key=lambda x: (_no_thermal_c(x), x.esr))
     elif tiebreaker is CapacitorTiebreaker.HIGHEST_RIPPLE_HEADROOM:
-        winner = max(
+        ripple_min = c.ripple_current_min or 1.0  # avoid div by 0 / None
+        winner = min(
             passing,
-            key=lambda x: x.ripple_current_rms / c.ripple_current_min,
+            key=lambda x: (_no_thermal_c(x), -x.ripple_current_rms / ripple_min),
         )
     elif tiebreaker is CapacitorTiebreaker.HIGHEST_VOLTAGE_MARGIN:
-        winner = max(passing, key=lambda x: x.v_rated / c.v_rated_min)
+        winner = min(passing, key=lambda x: (_no_thermal_c(x), -x.v_rated / c.v_rated_min))
     elif tiebreaker is CapacitorTiebreaker.HIGHEST_CAPACITANCE:
-        winner = max(passing, key=lambda x: x.capacitance)
+        winner = min(passing, key=lambda x: (_no_thermal_c(x), -x.capacitance))
     else:  # pragma: no cover
         raise ValueError(f"unhandled tiebreaker {tiebreaker!r}")
 

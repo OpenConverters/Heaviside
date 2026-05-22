@@ -145,9 +145,152 @@ def buck_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
     )
 
 
+# ---------------------------------------------------------------------------
+# Boost stresses (Maniktala Ch.2)
+# ---------------------------------------------------------------------------
+#
+#   Q1 (low-side MOSFET):
+#       Vds_off = Vout (the switch sees Vout when off, assuming D1 conducts)
+#       Id_pk   = I_L_pk = Iin * (1 + ripple/2), where Iin = Pout/Vin_min/eta
+#   D1 (output diode):
+#       Vr ≈ Vout
+#       If_avg ≈ Iout
+#   C_out:
+#       V_working ≈ Vout
+#       I_ripple_rms = Iout * sqrt(D / (1-D)) approximation (Maniktala 2.20)
+
+
+def boost_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
+    """Worst-case stresses for a boost converter, evaluated at Vin_min."""
+    where = "boost spec"
+    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
+    vout, iout = _vout_iout(spec, where)
+    ripple = _ripple_pp(spec)
+    if vout <= vmax:
+        raise StressDerivationError(
+            f"{where}: Vout ({vout}) must be > Vin_max ({vmax}); boost cannot step down"
+        )
+    d_max = 1.0 - vmin / vout  # worst at Vin_min
+    d_min = 1.0 - vmax / vout
+    # Inductor current = Iin = Pout / (Vin * eta). Use eta=1 as the
+    # upper bound on inductor current (more conservative for sizing).
+    iin_pk = iout * vout / vmin
+    return ComponentStresses(
+        vds_stress=vout,
+        id_stress=iin_pk * (1.0 + ripple / 2.0),
+        vr_stress=vout,
+        if_avg_stress=iout,
+        v_working=vout,
+        # Triangular-like at duty cycle: rms approximation
+        i_ripple=iout * (d_max ** 0.5) / ((1.0 - d_max) ** 0.5),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cuk stresses (Maniktala Ch.2; inverting buck-boost family)
+# ---------------------------------------------------------------------------
+#
+# Cuk has TWO inductors (L1 input, L2 output) and a flying coupling cap.
+# Voltages:
+#   Vds_off = Vin + |Vout|  (switch sees the sum of both rails)
+#   Vr      = same
+# Currents:
+#   I_L1 ≈ Iin = Iout * |Vout|/Vin   (at conversion ratio)
+#   I_L2 ≈ Iout
+#   Id_pk for switch ≈ I_L1 + I_L2 worst case
+# Output cap (C_out):
+#   Continuous current from L2, ripple is small
+#   V_working ≈ |Vout|
+
+
+def cuk_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
+    """Worst-case stresses for a Cuk converter (inverting buck-boost-like)."""
+    where = "cuk spec"
+    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _ = _require_positive(spec, ("inputVoltage", "maximum"), where)
+    vout, iout = _vout_iout(spec, where)
+    ripple = _ripple_pp(spec)
+    vout_abs = abs(vout)
+    # Stress voltage on the switch = Vin + |Vout| (both rails seen)
+    vds = vmin + vout_abs
+    # Worst-case inductor current sum at Vin_min
+    iin = iout * vout_abs / vmin
+    id_pk = (iin + iout) * (1.0 + ripple / 2.0)
+    return ComponentStresses(
+        vds_stress=vds,
+        id_stress=id_pk,
+        vr_stress=vds,
+        if_avg_stress=iout,
+        v_working=vout_abs,
+        # Output ripple in Cuk is very low because L2 acts as a filter;
+        # use a conservative 5% of Iout as RMS.
+        i_ripple=0.05 * iout,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Flyback stresses (Maniktala Ch.3, isolated single-switch)
+# ---------------------------------------------------------------------------
+#
+#   Q1 (primary-side switch):
+#       Vds_off = Vin_max + n * Vout + Vleak_spike  (n = N_p / N_s turns ratio)
+#       The reflected secondary voltage during off-state adds to Vin.
+#       Without modelling Vleak, use Vds = Vin_max + n * Vout * derating.
+#       Id_pk = I_pri_pk computed from energy balance: 0.5 * L * I^2 * fsw = Pin
+#   D1 (secondary-side rectifier):
+#       Vr = Vout + Vin_max / n
+#       If_avg ≈ Iout * (1 / (1 - D_max))  (only conducts during D_off)
+#   C_out:
+#       V_working = Vout
+#       I_ripple_rms = Iout * sqrt((1 - D_min) / D_min) approximation
+
+
+def flyback_stresses(spec: Mapping[str, Any]) -> ComponentStresses:
+    """Worst-case stresses for a flyback converter.
+
+    Requires ``desiredTurnsRatios`` and ``maximumDutyCycle`` on the spec
+    (validated separately by ``heaviside.spec.validate_topology``).
+    """
+    where = "flyback spec"
+    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
+    vout, iout = _vout_iout(spec, where)
+    ratios = spec.get("desiredTurnsRatios")
+    if not (isinstance(ratios, list) and ratios and isinstance(ratios[0], (int, float))):
+        raise StressDerivationError(
+            f"{where}.desiredTurnsRatios[0] required (N_pri / N_sec turns ratio)"
+        )
+    n = float(ratios[0])
+    d_max = spec.get("maximumDutyCycle")
+    if not isinstance(d_max, (int, float)) or not (0.0 < d_max < 1.0):
+        raise StressDerivationError(
+            f"{where}.maximumDutyCycle must be in (0, 1)"
+        )
+    # Primary switch off-state voltage: Vin_max + reflected secondary
+    vds = vmax + n * vout
+    # Primary peak current from energy balance: Iin_avg = Iout/n at Dmax
+    ipri_pk = (iout / n) * (1.0 + 0.5)  # 50% ripple typical for flyback
+    # Secondary diode reverse voltage during ON state
+    vr = vout + vmax / n
+    if_avg = iout / (1.0 - d_max)
+    return ComponentStresses(
+        vds_stress=vds,
+        id_stress=ipri_pk,
+        vr_stress=vr,
+        if_avg_stress=if_avg,
+        v_working=vout,
+        # Flyback cap ripple: secondary current pulses; high ripple
+        i_ripple=iout * ((1.0 - d_max) / d_max) ** 0.5,
+    )
+
+
 # Per-topology dispatch. Extend as topologies onboard their stencils.
 _DERIVERS: dict[str, Any] = {
     "buck": buck_stresses,
+    "boost": boost_stresses,
+    "cuk": cuk_stresses,
+    "flyback": flyback_stresses,
 }
 
 
@@ -166,6 +309,9 @@ def derive_stresses(topology: str, spec: Mapping[str, Any]) -> ComponentStresses
 __all__ = [
     "ComponentStresses",
     "StressDerivationError",
+    "boost_stresses",
     "buck_stresses",
+    "cuk_stresses",
     "derive_stresses",
+    "flyback_stresses",
 ]

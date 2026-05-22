@@ -176,15 +176,42 @@ def _saved_probes(deck: str) -> set[str]:
 # (vin_probe, iin_probe, vout_probe, iout_probe). The runner picks the
 # first quadruple whose probes are ALL present in the deck.
 _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
-    # Buck / boost / cuk / sepic / zeta / 4SBB / flyback (single-output)
+    # Buck / boost / cuk / sepic / zeta / 4SBB / flyback (single-output).
+    # ``i(vl_sense)`` is the inductor current; for boost-family decks
+    # the inductor sits in series with the input source, so i_L IS the
+    # input current. iout is computed AFTER the meas pass from
+    # ``vout / Rload`` rather than probed (see _compute_iout_from_rload).
     "single_output_dc": [
         ("v(vin_dc)",  "i(vin_sense)", "v(vout)",       "i(vout_sense)"),
         ("v(vin_dc)",  "i(vin_sense)", "v(vout)",       "i(vl_sense)"),
         ("v(vin_dc)",  "i(vin_sense)", "v(vout_cap)",   "i(vout_sense)"),
+        # Boost-family fallback: use vl_sense for both iin and iout,
+        # then override iout = vout / Rload after the .meas pass.
+        ("v(vin_dc)",  "i(vl_sense)",  "v(vout)",       "i(vl_sense)"),
         # Vienna single-phase deck: vin is the AC phase voltage source
         ("v(vphase)",  "i(vphase)",    "v(vdc_cap)",    "i(vph_sense)"),
     ],
 }
+
+
+# Rload extraction so iout can be computed as vout / Rload for decks
+# that don't emit i(vout_sense). MKF buck-family decks always end with
+# ``Rload <node> 0 <value>``; flyback/cuk variants tag output outputs
+# as ``Rload_o1`` etc. Returns the resistance in ohms or None.
+_RLOAD_RE = re.compile(
+    r"^\s*Rload(?:_\w+)?\s+\S+\s+\S+\s+([\d.eE+-]+)\s*$",
+    re.MULTILINE,
+)
+
+
+def _extract_rload(deck: str) -> float | None:
+    m = _RLOAD_RE.search(deck)
+    if m is None:
+        return None
+    try:
+        return _spice_time(m.group(1))  # repurposed: handles SPICE numbers
+    except SimError:
+        return None
 
 
 def _select_probes(deck: str) -> tuple[str, str, str, str]:
@@ -418,8 +445,8 @@ def simulate_closed_loop(
     deck: str,
     *,
     vout_target: float,
-    tolerance: float = 0.005,        # 0.5 % vout error -> converged
-    max_iterations: int = 8,
+    tolerance: float = 0.02,         # 2 % vout error -> converged (gate is 5 %)
+    max_iterations: int = 12,        # damped step; buck ~2, boost ~5-7
     ngspice_bin: str | None = None,
     timeout_s: float = 60.0,
 ) -> SimResult:
@@ -466,15 +493,18 @@ def simulate_closed_loop(
         if rel_err < tolerance:
             return last_result
         # Adjust duty toward target. For buck the relation is roughly
-        # vout = D * vin, so new_D ≈ old_D * (target / measured).
-        # For boost / inverting topologies the relationship differs,
-        # but the proportional correction still converges monotonically
-        # since 0 < D < 1 keeps vout monotone in D.
+        # vout = D * vin (linear), so a full step new_D = old_D *
+        # (target / measured) converges in one iteration. Boost is
+        # vout = Vin/(1-D) (non-linear) and a full step overshoots;
+        # damp by 50 % to trade convergence speed for stability.
+        # Empirically 0.5 converges buck in 2-3 iters and boost in 5-7.
         current_pulse = _read_pwm_pulse(current_deck)
         if current_pulse is None:  # pragma: no cover — invariant
             raise SimError("PULSE source disappeared mid-iteration")
         old_duty = current_pulse[0] / current_pulse[1]
-        new_duty = old_duty * (vout_target / last_result.vout)
+        full_step_duty = old_duty * (vout_target / last_result.vout)
+        damping = 0.5
+        new_duty = old_duty + damping * (full_step_duty - old_duty)
         # Clamp to a sane range so a bad measurement can't push us
         # outside (0.01, 0.95). The realism gate's duty_cycle_bounds
         # is the canonical check; we just refuse to write nonsense.
@@ -519,6 +549,12 @@ def simulate_steady_state(
         deck_patched, t_start=t_start, t_stop=t_stop,
         vin=vin_p, iin=iin_p, vout=vout_p, iout=iout_p,
     )
+    # Boost-family fallback: when iin and iout probe the same signal
+    # (typically i(vl_sense) because the deck has no i(vout_sense)),
+    # compute iout = vout / Rload from the deck instead of trusting
+    # the inductor-current proxy for the output current.
+    iout_from_rload = iin_p == iout_p and _extract_rload(deck_patched) is not None
+    rload_ohm = _extract_rload(deck_patched) if iout_from_rload else None
 
     with tempfile.TemporaryDirectory() as tmp:
         deck_path = Path(tmp) / "deck.cir"
@@ -555,7 +591,10 @@ def simulate_steady_state(
     vin = measurements["hsv_vin"]
     iin = abs(measurements["hsv_iin"])  # ngspice signs source current opposite of conventional
     vout = measurements["hsv_vout"]
-    iout = abs(measurements["hsv_iout"])
+    if iout_from_rload and rload_ohm and rload_ohm > 0 and vout > 0:
+        iout = vout / rload_ohm
+    else:
+        iout = abs(measurements["hsv_iout"])
     pin = vin * iin
     pout = vout * iout
     total_losses = pin - pout
