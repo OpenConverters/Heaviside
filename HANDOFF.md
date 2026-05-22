@@ -1,11 +1,20 @@
 # Heaviside — Handoff for the next agent
 
-**Date:** 2026-05-22
+**Date:** 2026-05-22 (updated same day)
 **Branch:** `main`
-**Last commit:** `a744c10 fix(mosfets): align code with wrapped semiconductor envelope schema`
+**Last commit:** `ad6158f fix(deps): cap PyOpenMagnetics <1.3.12 pending decomposer port`
 **Autonomy:** per `AGENTS.md`, commit pre-granted, push requires explicit ask.
 
 Read [`AGENTS.md`](AGENTS.md) first if you haven't. Then [`docs/ROADMAP.md`](docs/ROADMAP.md) for phase status and [`docs/BACKLOG.md`](docs/BACKLOG.md) for the ordered work queue. This file is the "where we are, where to go next" snapshot.
+
+## ⚠️ Do NOT upgrade past PyOpenMagnetics 1.3.10/1.3.11
+
+`pyproject.toml` caps `PyOpenMagnetics<1.3.12`. 1.3.12 is on PyPI but:
+
+- removed the `bridgeMode` arg from `generate_ngspice_circuit` (binding signature shrank from 7 → 6), and
+- deleted the switch-mode code path entirely — there is no replacement symbol or spec field. LLC/DAB/PSFB/PSHB/AHB/CLLLC all silently regress to behavioural `Vbridge ... PULSE(...)` decks with no MOSFETs.
+
+Six regression tests depend on switch-mode decks. The port is **blocked upstream** until MKF restores switch-mode emission. See [`docs/mkf-handoff.md`](docs/mkf-handoff.md) "2026-05-22 update" for the full probe results (LLC ngspice ✅ / LLC segfault ❌ / PFC ❌ / CLLC ❌ / Vienna ⚠️ / SRC ⚠️).
 
 ## Where we are
 

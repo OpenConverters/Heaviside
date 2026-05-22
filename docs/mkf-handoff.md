@@ -2,10 +2,52 @@
 
 **From:** Heaviside (Proteus-successor TAS/PEAS pipeline)
 **To:** MKF / PyOpenMagnetics upstream
-**Date:** 2026-05-19
+**Date:** 2026-05-19 (updated 2026-05-22)
 **Status of Heaviside side:** stencil + golden + registry + drift-test ready
 for any topology the moment its MKF bug below is fixed. No Heaviside-side
 work is blocking; everything blocked here is **strictly upstream**.
+
+## 2026-05-22 update — PyOM 1.3.12 probe results
+
+Tested all five blockers below against `PyOpenMagnetics==1.3.12`:
+
+- **LLC `generate_ngspice_circuit`** — ✅ **fixed.** Returns a real deck.
+- **LLC `design_magnetics_from_converter` segfault** — ❌ still SIGSEGV (exit -11).
+- **PFC** (`power_factor_correction` / `pfc`) — ❌ still `"unknown topology"`.
+- **CLLC** — ❌ still `"unknown topology 'cllc'"`.
+- **Vienna** — ⚠️ partial. Dispatch now works; surfaces clean key-missing
+  errors (`'lineToLineVoltage' not found`, then `'outputDcVoltage' not
+  found`) instead of crashing.
+- **SRC** — ⚠️ partial. The `src` alias now dispatches (the literal
+  `"series_resonant"` is still "unknown"). The emitted deck is still the
+  behavioural PULSE bridge — the bridgeMode bug is **not** fixed.
+
+**🚨 New blocker introduced by 1.3.12 — switch-mode emission deleted:**
+`generate_ngspice_circuit` lost its trailing `bridgeMode` argument
+(signature shrank from 7 args to 6). There is no replacement: no spec
+field, no separate symbol, nothing in `dir(PyOpenMagnetics)` matches
+`bridge|switch|mode`. Setting `bridgeMode` inside `converter_json` is
+silently ignored. LLC, DAB, PSFB, PSHB, AHB, CLLLC — every bridge
+topology that previously honored `bridgeMode="switch"` now emits a
+behavioural `Vbridge ... PULSE(...)` source with no MOSFETs in the deck.
+
+This is a **silent regression** — code that calls the new signature gets
+back a syntactically valid netlist that's missing the switches the
+caller asked for. Heaviside pinned `<1.3.12` in commit `ad6158f` and
+will not upgrade until either (a) upstream restores the switch-mode
+emission path, or (b) upstream documents an alternative way to request
+it. Six Heaviside regression tests depend on switch-mode decks
+(`test_llc.py`, `test_phase_shifted_full_bridge.py`, `test_clllc.py`,
+`test_weinberg.py`, `test_dual_active_bridge.py`, and bridge probes in
+`test_bridge_integration.py`) — all would silently regress.
+
+Asks for upstream, in priority order:
+1. Restore switch-mode emission (either bring back the arg or document
+   the new way to request it).
+2. Fix the LLC `design_magnetics_from_converter` segfault.
+3. Wire PFC + CLLC dispatch (still trivial branches).
+4. Vienna — schema validation now surfaces the missing fields; either
+   adjust the schema or document the required spec shape.
 
 ## Context
 
