@@ -185,6 +185,23 @@ def design(
                 topology, spec_json, max_results=1, use_ngspice=False,
             )
             _bridge.attach_components_to_tas(tas, components, topology=topology)
+            # Pick real Q/D/C MPNs from the local TAS DB. Skipped silently
+            # for topologies with no stress deriver registered yet; the
+            # realism gate's voltage-derating checks will stay UNAVAILABLE
+            # for those topologies, which is the honest failure mode.
+            from heaviside.catalogue import (
+                SelectionError,
+                assemble_bom_from_tas,
+            )
+            try:
+                assemble_bom_from_tas(tas, topology=topology, spec=spec_json)
+            except SelectionError as exc:
+                typer.echo(
+                    f"warn: BOM selection failed for {topology!r} — "
+                    f"realism gate will FAIL on the affected components. "
+                    f"Detail: {exc}",
+                    err=True,
+                )
         except BridgeError as exc:
             typer.echo(f"error: bridge attach failed: {exc}", err=True)
             raise typer.Exit(code=4) from None
