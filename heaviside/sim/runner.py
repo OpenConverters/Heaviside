@@ -13,6 +13,20 @@ Scope (Phase 4 v0.1):
     ``total_losses``, ``efficiency`` for ONE operating point (``op0``).
   * No per-component loss attribution — that's a later analyst pass.
 
+Deck post-processing (this module owns these because the upstream
+``SpiceSimulationConfig`` C++ struct is not bound to Python — see
+heaviside.bridge for the upstream-gap note):
+
+  * ``_patch_tran_for_steady_state``: extends the .tran window so the
+    output L-C filter has time to settle, adds UIC for .ic to take effect.
+  * ``_rewrite_lossy_testbench``: replaces MKF's default snubber
+    Rsnub/Csnub (100 Ω / 100 pF — drains ~25 W on a 60 W buck) and
+    DIDEAL diode (RS=1 µΩ — short-circuit current at conduction) with
+    realistic values that don't dominate the loss budget.
+  * ``simulate_closed_loop``: iterative duty-cycle search — runs the
+    sim, measures vout, adjusts the PWM PULSE duty, re-runs, until
+    vout converges to the spec target.
+
 Per CLAUDE.md "no fallbacks": every parse failure raises ``SimError``
 with the offending stdout line; the realism gate sees the error and
 keeps the corresponding checks UNAVAILABLE rather than fabricating
@@ -288,6 +302,196 @@ def _parse_meas_output(stdout: str) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
+# Deck rewrites for realism (work around the unbound SpiceSimulationConfig)
+# ---------------------------------------------------------------------------
+
+
+# MKF default snubber values are 100 Ω // 100 pF across each switch. The
+# 100 Ω burns I_in^2 * 100 Ω of average power per switch cycle (~25 W on
+# a 60 W buck deck) which dominates the deck's measured efficiency.
+# Real designs use much higher R (10s of kΩ if used at all) — the
+# snubber is for ringing damping, not steady-state energy. We rewrite
+# to 10 kΩ // 100 pF: still damps switch ringing, dissipates ~250x
+# less average power.
+#
+# DIDEAL is MKF's "ideal" diode with RS=1µΩ — at Iout=5A, that's a 5µV
+# drop. ngspice's saturation-current handling makes this behave like a
+# short circuit at conduction, contributing to the deck-loss artifact.
+# Rewrite to a realistic Schottky-class model with a finite forward
+# drop and series resistance.
+
+_RSNUB_NEW_OHM: float = 10_000.0
+_CSNUB_NEW_F: float = 100e-12
+_DIDEAL_REWRITE: str = "D(Is=1e-12 N=1.05 RS=0.05)"
+
+_RSNUB_LINE_RE = re.compile(
+    r"^(\s*Rsnub_\S+\s+\S+\s+\S+\s+)([\d.eE+-]+)\s*$",
+    re.MULTILINE,
+)
+_CSNUB_LINE_RE = re.compile(
+    r"^(\s*Csnub_\S+\s+\S+\s+\S+\s+)([\d.eE+-]+)\s*$",
+    re.MULTILINE,
+)
+_DIDEAL_MODEL_RE = re.compile(
+    r"^(\s*\.model\s+DIDEAL\s+)D\([^)]*\)",
+    re.MULTILINE,
+)
+
+
+def _rewrite_lossy_testbench(deck: str) -> str:
+    """Replace MKF's lossy default snubber + ideal-diode values with
+    realistic ones. Idempotent and tolerant of decks that don't have
+    these elements (just returns the deck unchanged).
+
+    Why this lives in Heaviside, not MKF: ``SpiceSimulationConfig``'s
+    ``snubR``/``snubC``/``diodeIS``/``diodeRS`` fields exist in C++
+    but pybind11 doesn't expose ``set_spice_config()``. Until that
+    binding lands, we post-process the netlist text.
+    """
+    out = _RSNUB_LINE_RE.sub(
+        lambda m: f"{m.group(1)}{_RSNUB_NEW_OHM:.6e}", deck,
+    )
+    out = _CSNUB_LINE_RE.sub(
+        lambda m: f"{m.group(1)}{_CSNUB_NEW_F:.6e}", out,
+    )
+    out = _DIDEAL_MODEL_RE.sub(
+        lambda m: f"{m.group(1)}{_DIDEAL_REWRITE}", out,
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Closed-loop duty-cycle search
+# ---------------------------------------------------------------------------
+
+
+# PULSE token: ``Vpwm pwm_ctrl 0 PULSE(V1 V2 TD TR TF PW PER)``
+# Captures the PULSE source name + the seven PULSE arguments so we can
+# rewrite ``PW`` (pulse width) while preserving everything else.
+_PULSE_LINE_RE = re.compile(
+    r"""
+    ^(\s*V(?:pwm|pwm_ctrl|pwmctrl)\S*\s+\S+\s+\S+\s+PULSE\()  # 1: line prefix up to PULSE(
+    (\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+                  # 2..6: V1 V2 TD TR TF
+    (\S+)\s+                                                   # 7: PW (the one we rewrite)
+    (\S+)\)                                                    # 8: PER
+    """,
+    re.MULTILINE | re.VERBOSE,
+)
+
+
+def _read_pwm_pulse(deck: str) -> tuple[float, float] | None:
+    """Return ``(PW, PER)`` of the deck's first PWM PULSE source, or
+    ``None`` if the deck has no recognisable PWM source."""
+    m = _PULSE_LINE_RE.search(deck)
+    if m is None:
+        return None
+    try:
+        return _spice_time(m.group(7)), _spice_time(m.group(8))
+    except SimError:
+        return None
+
+
+def _rewrite_pwm_duty(deck: str, *, new_duty: float, period_s: float) -> str:
+    """Replace the deck's PWM PULSE ``PW`` field so the new duty cycle
+    is ``new_duty * period_s``. Raises if no PWM source found."""
+    if not (0.0 < new_duty < 1.0):
+        raise SimError(
+            f"_rewrite_pwm_duty: duty {new_duty!r} must be in (0, 1)"
+        )
+    new_pw = new_duty * period_s
+    new_pw_str = f"{new_pw:.9e}"
+
+    def _replace(m: re.Match[str]) -> str:
+        # Preserve everything except the PW token (group 7).
+        return (
+            f"{m.group(1)}{m.group(2)} {m.group(3)} {m.group(4)} "
+            f"{m.group(5)} {m.group(6)} {new_pw_str} {m.group(8)})"
+        )
+
+    out, n = _PULSE_LINE_RE.subn(_replace, deck, count=1)
+    if n == 0:
+        raise SimError("_rewrite_pwm_duty: no PWM PULSE source found in deck")
+    return out
+
+
+def simulate_closed_loop(
+    deck: str,
+    *,
+    vout_target: float,
+    tolerance: float = 0.005,        # 0.5 % vout error -> converged
+    max_iterations: int = 8,
+    ngspice_bin: str | None = None,
+    timeout_s: float = 60.0,
+) -> SimResult:
+    """Iterative duty-cycle search until measured vout matches target.
+
+    The MKF deck's PWM is a fixed-duty PULSE source — there's no
+    feedback loop. This driver simulates the controller's effect by:
+
+      1. Run the sim, measure vout.
+      2. If |vout - target| / target < tolerance, return.
+      3. Else: new_duty = old_duty * (target / vout). Rewrite the
+         deck's PULSE PW, re-run.
+      4. Repeat up to ``max_iterations`` (typically converges in 3-4
+         for well-behaved decks).
+
+    Raises ``SimError`` if the deck has no recognisable PWM source
+    (caller falls back to ``simulate_steady_state``) or if the loop
+    fails to converge within ``max_iterations``.
+
+    The returned ``SimResult`` is from the final converged iteration.
+    The caller decides whether to stamp ``is_closed_loop=True`` on the
+    result before passing to the realism gate.
+    """
+    pulse = _read_pwm_pulse(deck)
+    if pulse is None:
+        raise SimError(
+            "simulate_closed_loop: deck has no recognisable PWM PULSE "
+            "source. Use simulate_steady_state for non-PWM decks."
+        )
+    period = pulse[1]
+
+    current_deck = deck
+    last_result: SimResult | None = None
+    for i in range(int(max_iterations)):
+        last_result = simulate_steady_state(
+            current_deck, ngspice_bin=ngspice_bin, timeout_s=timeout_s,
+        )
+        if last_result.vout <= 0:
+            raise SimError(
+                f"simulate_closed_loop: iteration {i} measured "
+                f"vout={last_result.vout!r} <= 0; deck not converging."
+            )
+        rel_err = abs(last_result.vout - vout_target) / vout_target
+        if rel_err < tolerance:
+            return last_result
+        # Adjust duty toward target. For buck the relation is roughly
+        # vout = D * vin, so new_D ≈ old_D * (target / measured).
+        # For boost / inverting topologies the relationship differs,
+        # but the proportional correction still converges monotonically
+        # since 0 < D < 1 keeps vout monotone in D.
+        current_pulse = _read_pwm_pulse(current_deck)
+        if current_pulse is None:  # pragma: no cover — invariant
+            raise SimError("PULSE source disappeared mid-iteration")
+        old_duty = current_pulse[0] / current_pulse[1]
+        new_duty = old_duty * (vout_target / last_result.vout)
+        # Clamp to a sane range so a bad measurement can't push us
+        # outside (0.01, 0.95). The realism gate's duty_cycle_bounds
+        # is the canonical check; we just refuse to write nonsense.
+        new_duty = max(0.01, min(0.95, new_duty))
+        current_deck = _rewrite_pwm_duty(
+            current_deck, new_duty=new_duty, period_s=period,
+        )
+
+    assert last_result is not None  # max_iterations >= 1 guaranteed
+    raise SimError(
+        f"simulate_closed_loop: failed to converge in {max_iterations} "
+        f"iterations. Last vout={last_result.vout:.4f}, target={vout_target:.4f}, "
+        f"rel_err={abs(last_result.vout - vout_target) / vout_target:.4f}."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
@@ -308,7 +512,8 @@ def simulate_steady_state(
             "`apt install ngspice` (Debian/Ubuntu) or `brew install ngspice`."
         )
 
-    deck_patched, t_start, t_stop = _patch_tran_for_steady_state(deck)
+    deck_rewritten = _rewrite_lossy_testbench(deck)
+    deck_patched, t_start, t_stop = _patch_tran_for_steady_state(deck_rewritten)
     vin_p, iin_p, vout_p, iout_p = _select_probes(deck_patched)
     annotated = _inject_meas(
         deck_patched, t_start=t_start, t_stop=t_stop,
@@ -379,6 +584,7 @@ def stamp_simulation_results(
 __all__ = [
     "SimError",
     "SimResult",
+    "simulate_closed_loop",
     "simulate_steady_state",
     "stamp_simulation_results",
 ]

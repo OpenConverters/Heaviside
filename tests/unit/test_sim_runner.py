@@ -16,6 +16,9 @@ from heaviside.sim.runner import (
     _inject_meas,
     _parse_meas_output,
     _patch_tran_for_steady_state,
+    _read_pwm_pulse,
+    _rewrite_lossy_testbench,
+    _rewrite_pwm_duty,
     _saved_probes,
     _select_probes,
     _spice_time,
@@ -215,3 +218,81 @@ def test_simulate_steady_state_raises_on_garbage_deck() -> None:
     """Non-circuit text fails .tran parsing and the runner raises cleanly."""
     with pytest.raises(SimError, match=r"no '\.tran'"):
         simulate_steady_state("not a spice deck\n.end\n")
+
+
+# ---------------------------------------------------------------------------
+# _rewrite_lossy_testbench
+# ---------------------------------------------------------------------------
+
+
+def test_rewrite_snubber_resistor_to_realistic_value() -> None:
+    """MKF's 100 Ω snubber gets bumped to 10 kΩ so it stops dominating
+    the deck's measured efficiency."""
+    deck = (
+        "Rsnub_s1 sw 0 100.000000\n"
+        "Csnub_s1 sw 0 1.000000e-10\n"
+        ".end\n"
+    )
+    out = _rewrite_lossy_testbench(deck)
+    assert "100.000000" not in out  # original gone
+    # New value present in scientific notation.
+    assert "1.000000e+04" in out
+
+
+def test_rewrite_idealised_diode_model() -> None:
+    """DIDEAL gets a realistic Schottky-class model."""
+    deck = (
+        ".model DIDEAL D(IS=1.000000e-14 RS=1.000000e-06)\n"
+        ".end\n"
+    )
+    out = _rewrite_lossy_testbench(deck)
+    assert "1.000000e-14" not in out
+    assert "RS=0.05" in out
+
+
+def test_rewrite_is_no_op_on_clean_deck() -> None:
+    """Decks without Rsnub_/Csnub_/DIDEAL should pass through unchanged."""
+    deck = "Vin vin 0 12\nL1 vin out 1u\nCout out 0 100u\n.end\n"
+    assert _rewrite_lossy_testbench(deck) == deck
+
+
+# ---------------------------------------------------------------------------
+# PWM PULSE rewrite (closed-loop duty search building block)
+# ---------------------------------------------------------------------------
+
+
+def test_read_pwm_pulse_extracts_pw_and_per() -> None:
+    deck = "Vpwm pwm_ctrl 0 PULSE(0 5 0 1e-08 1e-08 1.5e-06 5.0e-06)\n.end\n"
+    pulse = _read_pwm_pulse(deck)
+    assert pulse is not None
+    pw, per = pulse
+    assert pw == pytest.approx(1.5e-6)
+    assert per == pytest.approx(5.0e-6)
+
+
+def test_read_pwm_pulse_returns_none_when_absent() -> None:
+    assert _read_pwm_pulse("Vin in 0 12\n.end\n") is None
+
+
+def test_rewrite_pwm_duty_changes_only_pw_field() -> None:
+    deck = "Vpwm pwm_ctrl 0 PULSE(0 5 0 1e-08 1e-08 1.5e-06 5.0e-06)\n"
+    out = _rewrite_pwm_duty(deck, new_duty=0.40, period_s=5.0e-6)
+    pulse = _read_pwm_pulse(out)
+    assert pulse is not None
+    pw, per = pulse
+    # New duty = 0.40 -> PW = 0.40 * 5 us = 2 us.
+    assert pw == pytest.approx(2.0e-6, rel=1e-6)
+    assert per == pytest.approx(5.0e-6)
+    # The other PULSE fields (V1, V2, TD, TR, TF) must be preserved.
+    assert "PULSE(0 5 0" in out
+
+
+def test_rewrite_pwm_duty_rejects_out_of_range() -> None:
+    deck = "Vpwm pwm_ctrl 0 PULSE(0 5 0 1e-08 1e-08 1.5e-06 5.0e-06)\n"
+    with pytest.raises(SimError, match="must be in"):
+        _rewrite_pwm_duty(deck, new_duty=1.5, period_s=5.0e-6)
+
+
+def test_rewrite_pwm_duty_raises_when_no_pwm_source() -> None:
+    with pytest.raises(SimError, match="no PWM PULSE source"):
+        _rewrite_pwm_duty("Vin in 0 12\n.end\n", new_duty=0.4, period_s=5e-6)

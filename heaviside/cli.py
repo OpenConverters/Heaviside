@@ -227,7 +227,12 @@ def design(
             enrich_tas_for_realism,
             evaluate_tas,
         )
-        from heaviside.sim import SimError, simulate_steady_state, stamp_simulation_results
+        from heaviside.sim import (
+            SimError,
+            simulate_closed_loop,
+            simulate_steady_state,
+            stamp_simulation_results,
+        )
 
         try:
             tas_for_gate = enrich_tas_for_realism(tas, topology=topology, spec=spec_json)
@@ -235,12 +240,12 @@ def design(
             typer.echo(f"error: realism enrichment failed: {exc}", err=True)
             raise typer.Exit(code=6) from None
 
-        # Run the ngspice simulator on the same deck the decomposer
-        # produced so the four sim-dependent realism checks
-        # (efficiency_sanity, power_balance, output_voltage_regulation,
-        # no_negative_losses) get real numbers instead of UNAVAILABLE.
-        # SimError is non-fatal: realism continues with those four
-        # checks staying UNAVAILABLE.
+        # Sim: try closed-loop first (iterative duty search until vout
+        # matches spec target). Falls back to open-loop steady-state if
+        # the deck has no PWM source (resonant/bridge topologies) or
+        # the duty search doesn't converge. SimError is non-fatal — the
+        # realism gate keeps sim-dependent checks UNAVAILABLE if both
+        # paths fail.
         try:
             netlist, _ = decompose_from_spec(
                 topology,
@@ -249,8 +254,36 @@ def design(
                 magnetizing_inductance=magnetizing_inductance,
                 bridge_simulation_mode=mode,
             )
-            sim_result = simulate_steady_state(netlist)
+            sim_result = None
+            is_closed_loop = False
+            ops = spec_json.get("operatingPoints") or [{}]
+            first_op = ops[0] if isinstance(ops[0], dict) else {}
+            vouts = first_op.get("outputVoltages")
+            vout_target = (
+                float(vouts[0])
+                if isinstance(vouts, list) and vouts
+                and isinstance(vouts[0], (int, float))
+                else None
+            )
+            if vout_target is not None:
+                try:
+                    sim_result = simulate_closed_loop(
+                        netlist, vout_target=vout_target,
+                    )
+                    is_closed_loop = True
+                except SimError as exc:
+                    typer.echo(
+                        f"closed-loop sim fell back to open-loop: {exc}",
+                        err=True,
+                    )
+            if sim_result is None:
+                sim_result = simulate_steady_state(netlist)
             stamp_simulation_results(tas_for_gate, sim_result)
+            if is_closed_loop:
+                # Tells the realism gate's output_voltage_regulation
+                # check to actually evaluate (instead of falling through
+                # to NOT_APPLICABLE on the controller-present heuristic).
+                tas_for_gate["simulation_results"]["op0"]["is_closed_loop"] = True
         except (SimError, DecomposerError) as exc:
             typer.echo(f"sim runner skipped: {exc}", err=True)
 

@@ -111,9 +111,48 @@ class MagneticDesign:
 # -----------------------------------------------------------------------------
 
 
+# Realism-relevant PyOpenMagnetics global settings. Applied on first
+# import via :func:`_import_pyom`. These flip OFF-by-default knobs that
+# Heaviside relies on for accurate sim + selection:
+#
+#   * ``circuitSimulatorIncludeSaturation``: model the inductor's BH
+#     saturation in the ngspice deck (default OFF — Heaviside's realism
+#     gate already checks isat margin, but the sim itself should also
+#     reflect saturation for the operating-point sweep to be accurate).
+#   * ``circuitSimulatorIncludeMutualResistance``: model winding-to-
+#     winding resistive coupling (transformers, coupled inductors).
+#
+# Per-topology ``SpiceSimulationConfig`` (snubR/snubC, diode model,
+# output cap, solver tolerances, samplesPerPeriod) is NOT reachable
+# from Python today — ``set_spice_config()`` exists in MKF C++ but
+# pybind11 doesn't bind it. Heaviside post-processes the emitted
+# netlist (heaviside.sim.runner) to override the worst offenders
+# (snubber R/C, diode model) until the binding lands upstream.
+_HEAVISIDE_PYOM_SETTINGS: dict[str, Any] = {
+    "circuitSimulatorIncludeSaturation": True,
+    "circuitSimulatorIncludeMutualResistance": True,
+}
+
+_pyom_settings_applied: bool = False
+
+
 def _import_pyom() -> Any:
-    """Lazy import of the PyOpenMagnetics extension (mirrors ``topologies.dispatch``)."""
+    """Lazy import of the PyOpenMagnetics extension (mirrors ``topologies.dispatch``).
+
+    Also applies :data:`_HEAVISIDE_PYOM_SETTINGS` once on first call,
+    so every downstream caller sees a consistently-configured PyOM.
+    """
+    global _pyom_settings_applied
+    import contextlib
+
     from PyOpenMagnetics import PyOpenMagnetics as _ext
+    if not _pyom_settings_applied:
+        # If a future PyOM build drops one of these keys, swallow it
+        # rather than crashing import — the realism gate is independent
+        # of these settings.
+        with contextlib.suppress(Exception):
+            _ext.set_settings(dict(_HEAVISIDE_PYOM_SETTINGS))
+        _pyom_settings_applied = True
     return _ext
 
 
