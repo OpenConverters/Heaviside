@@ -907,18 +907,18 @@ def _enrich_non_isolated_buckboost(
     si1, ci1, c1 = mags[0]
     mas1 = _read_mas(c1, f"{topology_name} L1 MAS")
     A_e1, N1, b_sat1 = _mas_isat_inputs(mas1, f"{topology_name} L1 MAS")
-    isat_L1 = b_sat1 * N1 * A_e1 / L1_H
+    op = _require(spec, ("operatingPoints",), f"{topology_name} spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat_L1, isat_prov_L1 = _compute_isat_authoritative(
+        mas1, L1_H, b_sat=b_sat1, N=int(N1), A_e=float(A_e1),
+        temperature_c=max(t_amb, 100.0),
+        topology_label=f"{topology_name} L1",
+    )
 
     enriched1 = dict(c1)
     enriched1["isat"] = round(isat_L1, 6)
     enriched1["ipeak_worst"] = round(ipeak_L1, 6)
-    enriched1["isat_provenance"] = {
-        "method": f"B_sat * N * A_e / L1 ({topology_name} v0.1, L1 input inductor)",
-        "b_sat_T": round(b_sat1, 6),
-        "n_turns": N1,
-        "effective_area_m2": A_e1,
-        "inductance_H": L1_H,
-    }
+    enriched1["isat_provenance"] = isat_prov_L1
     enriched1["ipeak_provenance"] = {
         "method": "I_in_max + ripple_worst/2 (Vin_min avg current + Vin_max ripple, L*0.8)",
         "role": "input_inductor",
@@ -939,19 +939,17 @@ def _enrich_non_isolated_buckboost(
     si2, ci2, c2 = mags[1]
     mas2 = _read_mas(c2, f"{topology_name} L2 MAS")
     A_e2, N2, b_sat2 = _mas_isat_inputs(mas2, f"{topology_name} L2 MAS")
-    isat_L2 = b_sat2 * N2 * A_e2 / L2_H
+    isat_L2, isat_prov_L2 = _compute_isat_authoritative(
+        mas2, L2_H, b_sat=b_sat2, N=int(N2), A_e=float(A_e2),
+        temperature_c=max(t_amb, 100.0),
+        topology_label=f"{topology_name} L2",
+    )
+    isat_prov_L2["inductance_source"] = l2_source
 
     enriched2 = dict(c2)
     enriched2["isat"] = round(isat_L2, 6)
     enriched2["ipeak_worst"] = round(ipeak_L2, 6)
-    enriched2["isat_provenance"] = {
-        "method": f"B_sat * N * A_e / L2 ({topology_name} v0.1, L2 output inductor)",
-        "b_sat_T": round(b_sat2, 6),
-        "n_turns": N2,
-        "effective_area_m2": A_e2,
-        "inductance_H": L2_H,
-        "inductance_source": l2_source,
-    }
+    enriched2["isat_provenance"] = isat_prov_L2
     enriched2["ipeak_provenance"] = {
         "method": "Iout + ripple_worst/2 (Vin_max ripple, L*0.8)",
         "role": "output_inductor",

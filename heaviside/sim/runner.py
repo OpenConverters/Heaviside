@@ -591,13 +591,21 @@ def simulate_steady_state(
                 + "\n".join(proc.stdout.splitlines()[-15:])
             )
 
-    vin = measurements["hsv_vin"]
-    iin = abs(measurements["hsv_iin"])  # ngspice signs source current opposite of conventional
-    vout = measurements["hsv_vout"]
-    if iout_from_rload and rload_ohm and rload_ohm > 0 and vout > 0:
-        iout = vout / rload_ohm
+    # All four averages are normalised to magnitudes so derived
+    # power/efficiency stay positive across inverting topologies (cuk,
+    # zeta) where ngspice reports a negative steady-state vout. The
+    # power direction is implicit in the deck (input source -> output
+    # load); we report magnitudes for the realism gate's positivity
+    # checks. Sign of the original measurement is preserved in
+    # ``raw_*`` keys via SimResult.as_dict if downstream needs it.
+    vin = abs(measurements["hsv_vin"])
+    iin = abs(measurements["hsv_iin"])
+    vout_raw = measurements["hsv_vout"]
+    if iout_from_rload and rload_ohm and rload_ohm > 0 and abs(vout_raw) > 0:
+        iout = abs(vout_raw) / rload_ohm
     else:
         iout = abs(measurements["hsv_iout"])
+    vout = abs(vout_raw)
     pin = vin * iin
     pout = vout * iout
     total_losses = pin - pout
