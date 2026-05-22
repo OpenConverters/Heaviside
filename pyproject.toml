@@ -17,9 +17,10 @@ classifiers = [
   "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-  # Engine (built from vendor/PyOpenMagnetics submodule in CI; PyPI fallback for dev)
-  # 1.3.10 is the current PyPI release; 1.3.11 + later is built from vendor/PyOpenMagnetics in CI.
-  "PyOpenMagnetics>=1.3.10",
+  # Engine (built from vendor/PyOpenMagnetics submodule in CI; PyPI fallback for dev).
+  # Capped <1.3.12 until decomposer is ported: 1.3.12 removed the trailing bridgeMode
+  # arg from generate_ngspice_circuit, which would break heaviside/decomposer/api.py.
+  "PyOpenMagnetics>=1.3.10,<1.3.12",
   # Numerics
   "numpy>=2.0",
   "scipy>=1.13",
