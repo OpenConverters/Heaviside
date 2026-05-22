@@ -7,14 +7,22 @@
 
 Read [`AGENTS.md`](AGENTS.md) first if you haven't. Then [`docs/ROADMAP.md`](docs/ROADMAP.md) for phase status and [`docs/BACKLOG.md`](docs/BACKLOG.md) for the ordered work queue. This file is the "where we are, where to go next" snapshot.
 
-## ⚠️ Do NOT upgrade past PyOpenMagnetics 1.3.10/1.3.11
+## PyOpenMagnetics 1.3.12 status (2026-05-22)
 
-`pyproject.toml` caps `PyOpenMagnetics<1.3.12`. 1.3.12 is on PyPI but:
+`pyproject.toml` caps `PyOpenMagnetics<1.3.12`. The **PyPI** 1.3.12 wheel is broken (6-arg signature, switch-mode emission deleted) — *do not* let `uv sync` upgrade past 1.3.11.
 
-- removed the `bridgeMode` arg from `generate_ngspice_circuit` (binding signature shrank from 7 → 6), and
-- deleted the switch-mode code path entirely — there is no replacement symbol or spec field. LLC/DAB/PSFB/PSHB/AHB/CLLLC all silently regress to behavioural `Vbridge ... PULSE(...)` decks with no MOSFETs.
+The **local source build** at `/home/alf/OpenMagnetics/PyMKF/` *does* contain the four upstream fixes (PFC + CLLC dispatch, SRC bridge_simulation_mode, Vienna spec validation) and ships a 7-arg signature with `bridge_simulation_mode` restored. Probe results against that build:
 
-Six regression tests depend on switch-mode decks. The port is **blocked upstream** until MKF restores switch-mode emission. See [`docs/mkf-handoff.md`](docs/mkf-handoff.md) "2026-05-22 update" for the full probe results (LLC ngspice ✅ / LLC segfault ❌ / PFC ❌ / CLLC ❌ / Vienna ⚠️ / SRC ⚠️).
+| Blocker | Status |
+|---|---|
+| LLC `generate_ngspice_circuit` (switch mode) | ✅ SHI/SLO emitted at 150 kHz |
+| LLC `design_magnetics_from_converter` segfault | ❌ still SIGSEGV |
+| PFC dispatch | ✅ wired; spec now requires `outputVoltage` field |
+| CLLC dispatch | ✅ wired; spec now requires `powerFlow` field |
+| Vienna dispatch | ✅ wired; spec now requires `lineToLineVoltage` field |
+| SRC switch-mode | ✅ SHI emitted (header text still says "Behavioural" — cosmetic) |
+
+The cap is still correct **for PyPI** (the published 1.3.12 wheel is broken). To use the fixes you need a local cp312 build of `/home/alf/OpenMagnetics/PyMKF/` installed with `pip install --force-reinstall <wheel>`. See [`docs/mkf-handoff.md`](docs/mkf-handoff.md) for the per-blocker repros and the upstream remaining work (the LLC segfault).
 
 ## Where we are
 

@@ -9,45 +9,37 @@ work is blocking; everything blocked here is **strictly upstream**.
 
 ## 2026-05-22 update — PyOM 1.3.12 probe results
 
-Tested all five blockers below against `PyOpenMagnetics==1.3.12`:
+Two flavours of 1.3.12 exist in the wild today and they behave **very**
+differently. Always check which one you're talking to before relying on
+the table below.
 
-- **LLC `generate_ngspice_circuit`** — ✅ **fixed.** Returns a real deck.
+### 1.3.12 on PyPI — broken; do not use
+
+The published wheel ships a 6-arg `generate_ngspice_circuit` without
+`bridge_simulation_mode`, no replacement symbol, and silently emits
+behavioural `Vbridge ... PULSE(...)` decks with no MOSFETs for every
+bridge topology. Six Heaviside regression tests would silently regress.
+Heaviside pinned `<1.3.12` (commit `ad6158f`) to keep this wheel out.
+**Asked of upstream: publish a fixed 1.3.13 wheel that matches the
+source build below.**
+
+### 1.3.12 source build at `/home/alf/OpenMagnetics/PyMKF/` — works
+
+The local source build contains all four fixes called out in this doc
+and keeps the 7-arg signature. Probe results:
+
+- **LLC `generate_ngspice_circuit`** — ✅ fully fixed. `bridge_simulation_mode="switch"` emits real SHI/SLO MOSFETs at 150 kHz. (At very high fsw the deck errors with `deadTime is too large for halfPeriod` — that's correct physics validation, not a regression.)
 - **LLC `design_magnetics_from_converter` segfault** — ❌ still SIGSEGV (exit -11).
-- **PFC** (`power_factor_correction` / `pfc`) — ❌ still `"unknown topology"`.
-- **CLLC** — ❌ still `"unknown topology 'cllc'"`.
-- **Vienna** — ⚠️ partial. Dispatch now works; surfaces clean key-missing
-  errors (`'lineToLineVoltage' not found`, then `'outputDcVoltage' not
-  found`) instead of crashing.
-- **SRC** — ⚠️ partial. The `src` alias now dispatches (the literal
-  `"series_resonant"` is still "unknown"). The emitted deck is still the
-  behavioural PULSE bridge — the bridgeMode bug is **not** fixed.
+- **PFC** — ✅ dispatch wired. Now needs `outputVoltage` field in spec; previously errored with "unknown topology".
+- **CLLC** — ✅ dispatch wired. Now needs `powerFlow` field in spec.
+- **Vienna** — ✅ dispatch wired. Now needs `lineToLineVoltage` field in spec; previously crashed with `at() with string`.
+- **SRC** — ✅ switch-mode emits SHI now. The header line "Behavioural PULSE bridge" is stale text — cosmetic only.
 
-**🚨 New blocker introduced by 1.3.12 — switch-mode emission deleted:**
-`generate_ngspice_circuit` lost its trailing `bridgeMode` argument
-(signature shrank from 7 args to 6). There is no replacement: no spec
-field, no separate symbol, nothing in `dir(PyOpenMagnetics)` matches
-`bridge|switch|mode`. Setting `bridgeMode` inside `converter_json` is
-silently ignored. LLC, DAB, PSFB, PSHB, AHB, CLLLC — every bridge
-topology that previously honored `bridgeMode="switch"` now emits a
-behavioural `Vbridge ... PULSE(...)` source with no MOSFETs in the deck.
+### Remaining upstream asks (in priority order)
 
-This is a **silent regression** — code that calls the new signature gets
-back a syntactically valid netlist that's missing the switches the
-caller asked for. Heaviside pinned `<1.3.12` in commit `ad6158f` and
-will not upgrade until either (a) upstream restores the switch-mode
-emission path, or (b) upstream documents an alternative way to request
-it. Six Heaviside regression tests depend on switch-mode decks
-(`test_llc.py`, `test_phase_shifted_full_bridge.py`, `test_clllc.py`,
-`test_weinberg.py`, `test_dual_active_bridge.py`, and bridge probes in
-`test_bridge_integration.py`) — all would silently regress.
-
-Asks for upstream, in priority order:
-1. Restore switch-mode emission (either bring back the arg or document
-   the new way to request it).
-2. Fix the LLC `design_magnetics_from_converter` segfault.
-3. Wire PFC + CLLC dispatch (still trivial branches).
-4. Vienna — schema validation now surfaces the missing fields; either
-   adjust the schema or document the required spec shape.
+1. **Publish a fixed 1.3.13 PyPI wheel** so Heaviside can lift the cap.
+2. **Fix the LLC `design_magnetics_from_converter` segfault** — last hard blocker on LLC end-to-end.
+3. **Fix SRC header line** — drop "Behavioural PULSE bridge" when switch-mode is active.
 
 ## Context
 
