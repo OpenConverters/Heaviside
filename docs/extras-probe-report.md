@@ -1,6 +1,6 @@
 # PyOpenMagnetics — Extras Components Probe
 
-Generated: 2026-05-19
+Generated: 2026-05-22
 
 ## Summary
 

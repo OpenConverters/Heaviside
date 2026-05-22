@@ -222,6 +222,16 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         None,
         "converter",
         "resonant",
+        # CLLC has a primary resonant tank (C_r1 + L_r1) and a secondary
+        # tank (L_r2 + C_r2) flanking the main transformer T1. PyMKF
+        # exposes only the two resonant caps as bindable extras; L_r1/L_r2
+        # appear in the deck but are not extras-bound (same posture as
+        # C_bus_LV in CLLLC — librarian sources them from spec alone).
+        magnetic_binding={"T1": None},
+        capacitor_binding={
+            "C_r1": "Cr1_resonantCapacitor_primary",
+            "C_r2": "Cr2_resonantCapacitor_secondary",
+        },
     ),
     TopologyEntry(
         "clllc",

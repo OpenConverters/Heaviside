@@ -32,6 +32,7 @@ PREFIX_TO_TOPOLOGY: dict[str, str] = {
     "ahb": "asymmetric_half_bridge",
     "boost": "boost",
     "buck": "buck",
+    "cllc": "cllc",
     "clllc": "clllc",
     "cuk": "cuk",
     "dab": "dual_active_bridge",

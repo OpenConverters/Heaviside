@@ -232,7 +232,19 @@ def parse_spice(text: str) -> SpiceDeck:
     deck = SpiceDeck()
     current_section: str | None = None
 
+    # Pre-pass: fold ngspice ``+``-continuation lines into the preceding
+    # logical line. CLLC emits multi-line ``.save`` directives this way;
+    # without folding the parser would see "+ v(node_c) ..." as a standalone
+    # element line and raise.
+    folded: list[str] = []
     for raw in text.splitlines():
+        stripped = raw.lstrip()
+        if stripped.startswith("+") and folded:
+            folded[-1] = folded[-1] + " " + stripped[1:].strip()
+        else:
+            folded.append(raw)
+
+    for raw in folded:
         line = raw.strip()
         if not line:
             current_section = None  # blank line ends a section

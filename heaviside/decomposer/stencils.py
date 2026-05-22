@@ -110,7 +110,7 @@ _TESTBENCH_PREFIXES: tuple[str, ...] = (
     "Rload", "R_load",           # load resistors (Rload, R_load_o1, …)
     "Rsec",                      # secondary winding DCR
     "Rlout", "R_lo_dcr",         # output choke DCR (two_switch_forward, AHB, …)
-    "Rdc_supply_dummy", "Rbus_HV_dummy",
+    "Rdc_supply_dummy", "Rbus_HV_dummy", "Rdc_sec",
     "Rpri_ret", "Rsec_ret",      # bridge return resistors
     "Rct_",                      # PSFB center-tap return stubs (1µΩ to GND)
 )
@@ -3705,6 +3705,315 @@ def clllc(deck: SpiceDeck) -> TasTopology:
     }
 
 
+# -----------------------------------------------------------------------------
+# CLLC stencil (bidirectional resonant with synchronous rectifier)
+# -----------------------------------------------------------------------------
+#
+# CLLC is the asymmetric sibling of CLLLC: same dual-bridge shape, but the
+# primary tank (C_res1 + L_res1) and secondary tank (L_res2 + C_res2) feed a
+# compound transformer T1 that absorbs the magnetic asymmetry. PyMKF's
+# ``get_extra_components_inputs("cllc")`` exposes ONLY the two resonant caps
+# (Cr1_resonantCapacitor_primary, Cr2_resonantCapacitor_secondary) — the
+# resonant inductors L_res1 / L_res2 appear in the deck as discrete elements
+# but are not bind-able extras. Heaviside still includes them in the BOM
+# without an extras-binding (same posture as C_bus_LV in CLLLC: the librarian
+# sources them from spec alone).
+#
+# MKF deck (verified empirically against /tmp/cllc_deck.spice, fsw=150 kHz,
+# powerFlow=forward):
+#
+#   * Source
+#   Vin vin_p 0 48                          ; testbench DC supply
+#
+#   * PWM
+#   Vpwm1, Vpwm2                            ; testbench gate drives
+#
+#   * Primary full bridge
+#   S1 vin_p  node_a pwm1 0 SW1             ; Q1 high A (D=Vin, S=bridge_a_hv)
+#   S2 node_a 0      pwm2 0 SW1             ; Q2 low  A
+#   S3 vin_p  node_b pwm2 0 SW1             ; Q3 high B (D=Vin, S=bridge_b_hv)
+#   S4 node_b 0      pwm1 0 SW1             ; Q4 low  B
+#   DS1..DS4                                ; synthetic body diodes (extra_testbench)
+#   Rsn_S* / Csn_S*                         ; RC snubbers (testbench)
+#
+#   * HV tank
+#   Vpri_sense node_a pri_c1_in 0           ; ammeter (drop)
+#   C_res1 pri_c1_in pri_l1_in              ; C_r1 (pin1=bridge_a_hv, pin2=mid1)
+#   L_res1 pri_l1_in pri_trafo_in           ; L_r1 (pin1=mid1, pin2=T1.pri.1)
+#
+#   * Transformer
+#   Lpri pri_trafo_in node_b                ; T1.pri (pin1=L_r1.2, pin2=bridge_b_hv)
+#   Lsec sec_trafo_p sec_trafo_n            ; T1.sec0
+#   Kpri_sec Lpri Lsec 0.9999               ; T1 coupling
+#
+#   * LV tank (mirror; note Lr2 sits between T1.sec0.1 and C_r2.1, opposite
+#     orientation from CLLLC's Cr2-Lr2 chain)
+#   Vsec_sense sec_trafo_p sec_l2_in 0      ; ammeter (drop)
+#   L_res2 sec_l2_in sec_c2_in              ; L_r2 (pin1=T1.sec0.1, pin2=mid2)
+#   C_res2 sec_c2_in node_c                 ; C_r2 (pin1=mid2, pin2=bridge_a_lv)
+#   Vd_ref sec_trafo_n node_d 0             ; ammeter (drop) — T1.sec0.2 ≡ bridge_b_lv
+#   Rdc_sec sec_trafo_n 0 1G                ; testbench leakage path
+#
+#   * Secondary sync-rect bridge (no body diodes drawn; deliberate upstream)
+#   Sa node_c vout_p pwm1 0 SW1             ; Q5 (D=bridge_a_lv, S=Vout0)
+#   Sb vout_n node_c pwm2 0 SW1             ; Q6 (D=GND,         S=bridge_a_lv)
+#   Sc node_d vout_p pwm2 0 SW1             ; Q7 (D=bridge_b_lv, S=Vout0)
+#   Sd vout_n node_d pwm1 0 SW1             ; Q8 (D=GND,         S=bridge_b_lv)
+#   Rsn_S{a..d} / Csn_S{a..d}               ; RC snubbers (testbench)
+#   Vgnd_sec vout_n 0 0                     ; GND-bond ammeter (drop)
+#
+#   * Output filter
+#   Cout vout_p vout_n 10u IC=12            ; C_bus_LV (real, no extras binding)
+#   Vout_sense / Rload                       ; testbench probe + load
+#
+# Real BOM: 8 MOSFETs (Q1..Q8) + T1 + 2 resonant caps (C_r1, C_r2) +
+# 2 resonant inductors (L_r1, L_r2, unbound) + 1 output cap (C_bus_LV, unbound).
+# DS1..DS4 are synthetic body diodes — extra_testbench.
+#
+# Note: secondary-side MOSFET polarity is *inverted* relative to CLLLC. In
+# CLLLC the high-side LV MOSFETs have D=Vout0, S=bridge_a_lv; in CLLC they
+# have D=bridge_a_lv, S=Vout0. The body diode therefore points from Vout0
+# back to the bridge midpoint, which is the correct sync-rect orientation.
+
+
+_CLLC_REAL_KINDS = {
+    # Primary full bridge
+    "S1":       "switch",
+    "S2":       "switch",
+    "S3":       "switch",
+    "S4":       "switch",
+    # Secondary synchronous rectifier
+    "Sa":       "switch",
+    "Sb":       "switch",
+    "Sc":       "switch",
+    "Sd":       "switch",
+    # Resonant caps (the only resonant-tank elements exposed as bindable
+    # extras by PyMKF; the inductors L_res1/L_res2 are absorbed into T1's
+    # compound leakage model and live in extra_testbench).
+    "C_res1":   "capacitor",
+    "C_res2":   "capacitor",
+    # Main transformer
+    "Lpri":     "inductor",
+    "Lsec":     "inductor",
+    "Kpri_sec": "coupling",
+    # Output bulk capacitor
+    "Cout":     "capacitor",
+}
+
+
+def _cllc_control_stage() -> dict[str, Any]:
+    """Controller drives all 8 MOSFETs (4 primary + 4 sync-rect) and senses
+    the LV (output) bus."""
+    return {
+        "name": "controller",
+        "role": "control",
+        "circuit": {
+            "components": [_component("controller", "U1")],
+            "connections": [],
+        },
+        "senses": [{"wire": "Vout0", "signal": "voltage"}],
+        "drives": [
+            {"component": q, "signal": "gate"}
+            for q in ("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8")
+        ],
+    }
+
+
+def cllc(deck: SpiceDeck) -> TasTopology:
+    """Decompose an MKF CLLC deck (bidirectional resonant + sync rectifier).
+
+    Mirrors the CLLLC shape but with the asymmetric tank/transformer layout
+    PyMKF emits for the CLLC topology. ``bridge_simulation_mode="switch"`` is
+    required so MKF emits the real ``S1..S4 / Sa..Sd`` switches instead of a
+    behavioural Vbridge source.
+    """
+    _validate_real_set(
+        deck,
+        "cllc",
+        _CLLC_REAL_KINDS,
+        # DS1..DS4: synthetic body diodes on the primary bridge.
+        # L_res1/L_res2: discrete inductors in the deck that PyMKF treats
+        # as integrated leakage of T1 (not exposed as bindable extras-
+        # magnetic). Heaviside collapses them into T1's compound model
+        # rather than carrying separate-but-unbound BOM entries.
+        extra_testbench=frozenset({
+            "DS1", "DS2", "DS3", "DS4",
+            "L_res1", "L_res2",
+        }),
+    )
+
+    primary_bridge = {
+        "name": "primary_bridge",
+        "role": "inverter",
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
+        "outputPorts": [
+            {"type": "hfAc", "wire": "bridge_a_hv", "name": "bridge_a_hv"},
+            {"type": "hfAc", "wire": "bridge_b_hv", "name": "bridge_b_hv"},
+        ],
+        "circuit": {
+            "components": [
+                _component("mosfet", "Q1"),   # ← S1 (Leg A high)
+                _component("mosfet", "Q2"),   # ← S2 (Leg A low)
+                _component("mosfet", "Q3"),   # ← S3 (Leg B high)
+                _component("mosfet", "Q4"),   # ← S4 (Leg B low)
+            ],
+            "connections": [],
+        },
+    }
+
+    isolation = {
+        "name": "isolation",
+        "role": "isolation",
+        "inputPort": {"type": "hfAc", "wire": "bridge_a_hv"},
+        "outputPorts": [
+            {"type": "hfAc", "wire": "bridge_a_lv", "name": "bridge_a_lv"},
+            {"type": "hfAc", "wire": "bridge_b_lv", "name": "bridge_b_lv"},
+        ],
+        "circuit": {
+            "components": [
+                _component("capacitor", "C_r1"),   # ← C_res1
+                _t1_component(("pri", "sec0")),    # ← Lpri/Lsec + Kpri_sec
+                                                    #   (absorbs L_res1/L_res2 leakage)
+                _component("capacitor", "C_r2"),   # ← C_res2
+            ],
+            "connections": [
+                # HV tank: C_r1.2 ↔ T1.pri.1 (L_res1 collapsed into T1 leakage).
+                {
+                    "name": "cr1_to_pri",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "C_r1", "pin": "2"},
+                        {"component": "T1",   "pin": "pri.1"},
+                    ],
+                },
+                # LV tank: T1.sec0.1 ↔ C_r2.1 (L_res2 collapsed into T1 leakage).
+                {
+                    "name": "cr2_to_sec",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "C_r2", "pin": "1"},
+                        {"component": "T1",   "pin": "sec0.1"},
+                    ],
+                },
+            ],
+        },
+    }
+
+    secondary_bridge = {
+        "name": "secondary_bridge",
+        "role": "outputRectifier",
+        "inputPort":  {"type": "hfAc", "wire": "bridge_a_lv"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
+        "circuit": {
+            "components": [
+                _component("mosfet", "Q5"),   # ← Sa  (LV Leg A "high"; D=bridge, S=Vout0)
+                _component("mosfet", "Q6"),   # ← Sb  (LV Leg A "low";  D=GND,    S=bridge)
+                _component("mosfet", "Q7"),   # ← Sc  (LV Leg B "high"; D=bridge, S=Vout0)
+                _component("mosfet", "Q8"),   # ← Sd  (LV Leg B "low";  D=GND,    S=bridge)
+            ],
+            "connections": [],
+        },
+    }
+
+    output_filter = {
+        "name": "output_filter",
+        "role": "outputFilter",
+        "inputPort":  {"type": "dcOutput", "wire": "Vout0"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
+        "circuit": {
+            "components": [
+                _component("capacitor", "C_bus_LV"),   # ← Cout (no extras binding)
+            ],
+            "connections": [],
+        },
+    }
+
+    control = _cllc_control_stage()
+
+    inter_stage = [
+        {
+            "name": "Vin",
+            "kind": "externalPort",
+            "direction": "input",
+            "endpoints": [
+                {"component": "Q1", "pin": "D"},
+                {"component": "Q3", "pin": "D"},
+            ],
+        },
+        {
+            # HV Leg A: Q1.S = Q2.D = C_r1.1
+            "name": "bridge_a_hv",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q1",   "pin": "S"},
+                {"component": "Q2",   "pin": "D"},
+                {"component": "C_r1", "pin": "1"},
+            ],
+        },
+        {
+            # HV Leg B: Q3.S = Q4.D = T1.pri.2
+            "name": "bridge_b_hv",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q3", "pin": "S"},
+                {"component": "Q4", "pin": "D"},
+                {"component": "T1", "pin": "pri.2"},
+            ],
+        },
+        {
+            # LV Leg A: Q5.D = Q6.S = C_r2.2 (sync-rect polarity: drain at bridge)
+            "name": "bridge_a_lv",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q5",   "pin": "D"},
+                {"component": "Q6",   "pin": "S"},
+                {"component": "C_r2", "pin": "2"},
+            ],
+        },
+        {
+            # LV Leg B: Q7.D = Q8.S = T1.sec0.2
+            "name": "bridge_b_lv",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q7", "pin": "D"},
+                {"component": "Q8", "pin": "S"},
+                {"component": "T1", "pin": "sec0.2"},
+            ],
+        },
+        {
+            # Vout0 = Q5.S = Q7.S = C_bus_LV.1
+            "name": "Vout0",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "Q5",       "pin": "S"},
+                {"component": "Q7",       "pin": "S"},
+                {"component": "C_bus_LV", "pin": "1"},
+            ],
+        },
+        {
+            "name": "Vout0_external",
+            "kind": "externalPort",
+            "direction": "output",
+            "endpoints": [
+                {"component": "C_bus_LV", "pin": "1"},
+            ],
+        },
+        _gnd_wire(
+            ("Q2",       "S"),
+            ("Q4",       "S"),
+            ("Q6",       "D"),
+            ("Q8",       "D"),
+            ("C_bus_LV", "2"),
+        ),
+        *_gate_wires("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8"),
+    ]
+
+    return {
+        "stages": [primary_bridge, isolation, secondary_bridge, output_filter, control],
+        "interStageCircuit": inter_stage,
+    }
+
+
 STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "buck": buck,
     "boost": boost,
@@ -3727,6 +4036,7 @@ STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     # MKF only recognises the short alias "dab" for generate_ngspice_circuit.
     "dab": dual_active_bridge,
     "clllc": clllc,
+    "cllc": cllc,
 }
 
 
