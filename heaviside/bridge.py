@@ -876,16 +876,40 @@ _IPEAK_WORST: dict[str, "Any"] = {
 }
 
 
-def _isat_from_mas(mas: Mapping[str, Any], L_henries: float) -> float | None:
-    """Compute ``Isat = B_sat * N * A_e / L`` for a candidate MAS.
+def _isat_from_mas(
+    mas: Mapping[str, Any],
+    L_henries: float,
+    *,
+    temperature_c: float = 100.0,
+) -> float | None:
+    """Authoritative saturation current for a candidate magnetic.
 
-    Returns ``None`` if the MAS lacks any of the required fields
-    (effectiveArea, saturation curve, primary numberTurns) — those
-    candidates are skipped during selection rather than treated as
-    infinite-margin passes.
+    Calls ``PyOpenMagnetics.calculate_saturation_current(magnetic, T)``
+    which accounts for the air gap (vital — gapped cores have Isat several
+    times larger than ungapped, because the gap dominates the reluctance).
+    Falls back to the analytical ``B_sat * N * A_e / L`` only if the PyOM
+    call fails; that fallback is wildly conservative for gapped cores so
+    we log nothing — the caller treats ``None`` as "skip this candidate".
+
+    The ``L_henries`` parameter is retained for the fallback branch and
+    for caller-side sanity checks. ``temperature_c`` defaults to 100 °C
+    because that's the conservative worst case for ferrite B_sat across
+    a typical 25–125 °C operating range.
     """
     if not isinstance(mas, Mapping) or L_henries <= 0:
         return None
+    try:
+        pyom = _import_pyom()
+        isat = pyom.calculate_saturation_current(dict(mas), float(temperature_c))
+        if isinstance(isat, (int, float)) and isat > 0:
+            return float(isat)
+    except Exception:
+        # PyOM may reject the MAS (missing fields, unknown gap type, …)
+        # — fall through to the analytical fallback rather than crashing
+        # the whole post-filter run.
+        pass
+    # Analytical fallback (treats gap as zero — wildly conservative for
+    # gapped cores; only useful as a "better than nothing" lower bound).
     try:
         A_e = (
             mas.get("core", {})

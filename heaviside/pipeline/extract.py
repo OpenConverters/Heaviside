@@ -401,15 +401,42 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
         raise EnrichmentError(
             f"buck inductor MAS: primary numberTurns must be positive, got {N!r}"
         )
-    # Saturation flux density (conservative across temperature)
+    # Saturation flux density (conservative across temperature) — retained
+    # for provenance + as the analytical fallback if PyOM's authoritative
+    # calculate_saturation_current is unavailable.
     sat = _require(
         mas, ("core", "functionalDescription", "material", "saturation"),
         "buck inductor MAS",
     )
     b_sat = _conservative_bsat(sat)
 
-    # Isat = B_sat · N · A_e / L
-    isat = b_sat * float(N) * float(A_e) / L
+    # Worst-case operating temperature for Isat (ferrite B_sat falls with T).
+    # The spec's per-op ambientTemperature is a lower bound on Tj; PyOM's
+    # design loop targets a hot-junction case so we ask for Isat at 100 °C
+    # by default. (A future analyst stage will compute a real Tj from loss
+    # + Rth and re-query at that temperature.)
+    op = _require(spec, ("operatingPoints",), "buck spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    t_worst = max(t_amb, 100.0)
+
+    # Authoritative Isat from PyOM. Falls back to the analytical
+    # B_sat * N * A_e / L if PyOM is unavailable or rejects the MAS, with
+    # provenance noting which path was taken.
+    isat_method = "PyOM.calculate_saturation_current"
+    isat: float
+    try:
+        from PyOpenMagnetics import PyOpenMagnetics as _P
+        isat = float(_P.calculate_saturation_current(dict(mas), t_worst))
+        if not (isat > 0):
+            raise ValueError(f"PyOM returned non-positive isat: {isat!r}")
+    except Exception as exc:
+        # Conservative fallback (treats gap as zero — underestimates for
+        # gapped cores). Stamp the reason so debug is easy.
+        isat = b_sat * float(N) * float(A_e) / L
+        isat_method = (
+            f"analytical fallback (B_sat * N * A_e / L); PyOM failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
 
     # Stamp results
     tas["duty"] = round(d_max, 6)
@@ -421,7 +448,12 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched_comp["isat"] = round(isat, 6)
     enriched_comp["ipeak_worst"] = round(ipeak_worst, 6)
     enriched_comp["isat_provenance"] = {
-        "method": "B_sat * N * A_e / L (buck v0.1 extractor)",
+        "method": isat_method,
+        "temperature_c": t_worst,
+        # ``b_sat_T`` is the analytical-fallback B_sat (lowest across
+        # the temperature curve). PyOM's authoritative path also uses
+        # this curve internally but adjusts for the air gap, which the
+        # analytical formula ignores.
         "b_sat_T": round(b_sat, 6),
         "n_turns": int(N),
         "effective_area_m2": float(A_e),
