@@ -121,16 +121,18 @@ class MagneticDesign:
 #     reflect saturation for the operating-point sweep to be accurate).
 #   * ``circuitSimulatorIncludeMutualResistance``: model winding-to-
 #     winding resistive coupling (transformers, coupled inductors).
-#
-# Per-topology ``SpiceSimulationConfig`` (snubR/snubC, diode model,
-# output cap, solver tolerances, samplesPerPeriod) is NOT reachable
-# from Python today — ``set_spice_config()`` exists in MKF C++ but
-# pybind11 doesn't bind it. Heaviside post-processes the emitted
-# netlist (heaviside.sim.runner) to override the worst offenders
-# (snubber R/C, diode model) until the binding lands upstream.
+#   * ``coreAdviserSaturationMargin``: multiplicative derating in
+#     MagneticFilterSaturation. Default in MKF is 1.0 (reject only when
+#     Bpeak > Bsat). Maniktala Ch.5 recommends ≥ 1.2 for ferrite designs
+#     to leave headroom for tolerance, temperature, and DC-bias swing.
+#     With 1.2 the CoreAdviser refuses to short-list any core whose
+#     Bpeak·1.2 exceeds Bsat — matching Heaviside's realism-gate
+#     ``inductor_isat_margin`` check so the picked main passes that
+#     check by construction.
 _HEAVISIDE_PYOM_SETTINGS: dict[str, Any] = {
     "circuitSimulatorIncludeSaturation": True,
     "circuitSimulatorIncludeMutualResistance": True,
+    "coreAdviserSaturationMargin": 1.2,
 }
 
 _pyom_settings_applied: bool = False
