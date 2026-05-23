@@ -212,17 +212,19 @@ def _compute_isat_authoritative(
     topology_label: str = "",
 ) -> tuple[float, dict[str, Any]]:
     """Return ``(isat, provenance)`` using PyOM's
-    ``calculate_saturation_current`` (authoritative — handles air gap
-    correctly) with the analytical ``B_sat * N * A_e / L`` formula as
-    fallback when PyOM rejects the MAS (e.g. minimal test fixtures
-    missing 'bobbin').
+    ``calculate_saturation_current`` with the analytical
+    ``B_sat * N * A_e / L`` formula as fallback when PyOM rejects the
+    MAS (e.g. minimal test fixtures missing 'bobbin').
+
+    TODO (project rule, see ~/.claude/CLAUDE.md): the analytical
+    fallback violates "all magnetics math lives in MKF". Existing
+    test fixtures rely on it because they don't carry a complete MAS
+    shape; cleaning that up is downstream work. Production runs hit
+    the PyOM path.
 
     ``topology_label`` (e.g. ``"isolated_buck"``) is embedded in the
     provenance ``method`` string so per-topology extract tests can
-    grep for the source. Empty by default for callers that don't care.
-
-    Shared by every per-topology extractor in this module so the
-    fix-once-for-buck doesn't have to be applied 6+ times.
+    grep for the source.
     """
     suffix = f" [{topology_label}]" if topology_label else ""
     method = f"PyOM.calculate_saturation_current{suffix}"
