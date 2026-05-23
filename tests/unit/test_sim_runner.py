@@ -17,7 +17,6 @@ from heaviside.sim.runner import (
     _parse_meas_output,
     _patch_tran_for_steady_state,
     _read_pwm_pulse,
-    _rewrite_lossy_testbench,
     _rewrite_pwm_duty,
     _saved_probes,
     _select_probes,
@@ -218,42 +217,6 @@ def test_simulate_steady_state_raises_on_garbage_deck() -> None:
     """Non-circuit text fails .tran parsing and the runner raises cleanly."""
     with pytest.raises(SimError, match=r"no '\.tran'"):
         simulate_steady_state("not a spice deck\n.end\n")
-
-
-# ---------------------------------------------------------------------------
-# _rewrite_lossy_testbench
-# ---------------------------------------------------------------------------
-
-
-def test_rewrite_snubber_resistor_to_realistic_value() -> None:
-    """MKF's 100 Ω snubber gets bumped to 10 kΩ so it stops dominating
-    the deck's measured efficiency."""
-    deck = (
-        "Rsnub_s1 sw 0 100.000000\n"
-        "Csnub_s1 sw 0 1.000000e-10\n"
-        ".end\n"
-    )
-    out = _rewrite_lossy_testbench(deck)
-    assert "100.000000" not in out  # original gone
-    # New value present in scientific notation.
-    assert "1.000000e+04" in out
-
-
-def test_rewrite_idealised_diode_model() -> None:
-    """DIDEAL gets a realistic Schottky-class model."""
-    deck = (
-        ".model DIDEAL D(IS=1.000000e-14 RS=1.000000e-06)\n"
-        ".end\n"
-    )
-    out = _rewrite_lossy_testbench(deck)
-    assert "1.000000e-14" not in out
-    assert "RS=0.05" in out
-
-
-def test_rewrite_is_no_op_on_clean_deck() -> None:
-    """Decks without Rsnub_/Csnub_/DIDEAL should pass through unchanged."""
-    deck = "Vin vin 0 12\nL1 vin out 1u\nCout out 0 100u\n.end\n"
-    assert _rewrite_lossy_testbench(deck) == deck
 
 
 # ---------------------------------------------------------------------------

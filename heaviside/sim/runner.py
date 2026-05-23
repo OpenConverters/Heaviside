@@ -13,19 +13,18 @@ Scope (Phase 4 v0.1):
     ``total_losses``, ``efficiency`` for ONE operating point (``op0``).
   * No per-component loss attribution — that's a later analyst pass.
 
-Deck post-processing (this module owns these because the upstream
-``SpiceSimulationConfig`` C++ struct is not bound to Python — see
-heaviside.bridge for the upstream-gap note):
+Deck post-processing:
 
   * ``_patch_tran_for_steady_state``: extends the .tran window so the
     output L-C filter has time to settle, adds UIC for .ic to take effect.
-  * ``_rewrite_lossy_testbench``: replaces MKF's default snubber
-    Rsnub/Csnub (100 Ω / 100 pF — drains ~25 W on a 60 W buck) and
-    DIDEAL diode (RS=1 µΩ — short-circuit current at conduction) with
-    realistic values that don't dominate the loss budget.
   * ``simulate_closed_loop``: iterative duty-cycle search — runs the
     sim, measures vout, adjusts the PWM PULSE duty, re-runs, until
     vout converges to the spec target.
+
+The previous ``_rewrite_lossy_testbench`` (which text-edited Rsnub /
+DIDEAL values to mask MKF's lossy defaults) is gone — those values are
+now overridden upstream via ``SpiceSimulationConfig`` (PyMKF 1.3.13+),
+applied by ``heaviside.decomposer.api.DEFAULT_SPICE_CONFIG``.
 
 Per CLAUDE.md "no fallbacks": every parse failure raises ``SimError``
 with the offending stdout line; the realism gate sees the error and
@@ -340,60 +339,6 @@ def _parse_meas_output(stdout: str) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 
 
-# MKF default snubber values are 100 Ω // 100 pF across each switch. The
-# 100 Ω burns I_in^2 * 100 Ω of average power per switch cycle (~25 W on
-# a 60 W buck deck) which dominates the deck's measured efficiency.
-# Real designs use much higher R (10s of kΩ if used at all) — the
-# snubber is for ringing damping, not steady-state energy. We rewrite
-# to 10 kΩ // 100 pF: still damps switch ringing, dissipates ~250x
-# less average power.
-#
-# DIDEAL is MKF's "ideal" diode with RS=1µΩ — at Iout=5A, that's a 5µV
-# drop. ngspice's saturation-current handling makes this behave like a
-# short circuit at conduction, contributing to the deck-loss artifact.
-# Rewrite to a realistic Schottky-class model with a finite forward
-# drop and series resistance.
-
-_RSNUB_NEW_OHM: float = 10_000.0
-_CSNUB_NEW_F: float = 100e-12
-_DIDEAL_REWRITE: str = "D(Is=1e-12 N=1.05 RS=0.05)"
-
-_RSNUB_LINE_RE = re.compile(
-    r"^(\s*Rsnub_\S+\s+\S+\s+\S+\s+)([\d.eE+-]+)\s*$",
-    re.MULTILINE,
-)
-_CSNUB_LINE_RE = re.compile(
-    r"^(\s*Csnub_\S+\s+\S+\s+\S+\s+)([\d.eE+-]+)\s*$",
-    re.MULTILINE,
-)
-_DIDEAL_MODEL_RE = re.compile(
-    r"^(\s*\.model\s+DIDEAL\s+)D\([^)]*\)",
-    re.MULTILINE,
-)
-
-
-def _rewrite_lossy_testbench(deck: str) -> str:
-    """Replace MKF's lossy default snubber + ideal-diode values with
-    realistic ones. Idempotent and tolerant of decks that don't have
-    these elements (just returns the deck unchanged).
-
-    Why this lives in Heaviside, not MKF: ``SpiceSimulationConfig``'s
-    ``snubR``/``snubC``/``diodeIS``/``diodeRS`` fields exist in C++
-    but pybind11 doesn't expose ``set_spice_config()``. Until that
-    binding lands, we post-process the netlist text.
-    """
-    out = _RSNUB_LINE_RE.sub(
-        lambda m: f"{m.group(1)}{_RSNUB_NEW_OHM:.6e}", deck,
-    )
-    out = _CSNUB_LINE_RE.sub(
-        lambda m: f"{m.group(1)}{_CSNUB_NEW_F:.6e}", out,
-    )
-    out = _DIDEAL_MODEL_RE.sub(
-        lambda m: f"{m.group(1)}{_DIDEAL_REWRITE}", out,
-    )
-    return out
-
-
 # ---------------------------------------------------------------------------
 # Closed-loop duty-cycle search
 # ---------------------------------------------------------------------------
@@ -549,8 +494,7 @@ def simulate_steady_state(
             "`apt install ngspice` (Debian/Ubuntu) or `brew install ngspice`."
         )
 
-    deck_rewritten = _rewrite_lossy_testbench(deck)
-    deck_patched, t_start, t_stop = _patch_tran_for_steady_state(deck_rewritten)
+    deck_patched, t_start, t_stop = _patch_tran_for_steady_state(deck)
     vin_p, iin_p, vout_p, iout_p = _select_probes(deck_patched)
     annotated = _inject_meas(
         deck_patched, t_start=t_start, t_stop=t_stop,

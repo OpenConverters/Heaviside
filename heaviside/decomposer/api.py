@@ -50,7 +50,34 @@ def _import_pyom() -> Any:
             "`python -m build --wheel` inside vendor/PyOpenMagnetics first). "
             "See HANDOFF.md for the 1.3.12 upstream regression details."
         )
+    if "spice_config" not in doc:
+        raise DecomposerError(
+            "PyOpenMagnetics.generate_ngspice_circuit lacks the "
+            "spice_config parameter — your wheel predates the "
+            "SpiceSimulationConfig binding. Rebuild the upstream PyMKF "
+            "wheel (1.3.13+) from /home/alf/OpenMagnetics/PyMKF with "
+            "LOCAL_MKF_DIR=1 and reinstall."
+        )
     return _ext
+
+
+# Realistic SPICE-deck defaults applied via MKF's SpiceSimulationConfig
+# override. MKF's per-topology defaults bake in lossy values that
+# dominate measured efficiency on small converters:
+#
+#   * snubR=100 Ω — burns ~25 W on a 60 W buck deck
+#   * diodeRS=1 µΩ — DIDEAL behaves as a short circuit at conduction
+#
+# Replacing them with realistic values (10 kΩ snubber R that still
+# damps switch ringing; a Schottky-grade diode model) makes sim
+# results match analytical efficiency. Passed verbatim into PyOM's
+# spice_config dict by every call here.
+DEFAULT_SPICE_CONFIG: dict[str, Any] = {
+    "snubR": 10_000.0,
+    "snubC": 100e-12,
+    "diodeIS": 1e-12,
+    "diodeRS": 0.05,
+}
 
 
 def generate_netlist(
@@ -62,6 +89,7 @@ def generate_netlist(
     vin_index: int = 0,
     op_index: int = 0,
     bridge_simulation_mode: str = "",
+    spice_config: Mapping[str, Any] | None = None,
 ) -> str:
     """Ask MKF to emit the canonical ngspice deck for ``topology``.
 
@@ -80,6 +108,9 @@ def generate_netlist(
     envelope or an unexpected response shape.
     """
     pyom = _import_pyom()
+    cfg = dict(DEFAULT_SPICE_CONFIG)
+    if spice_config:
+        cfg.update(dict(spice_config))
     result = pyom.generate_ngspice_circuit(
         topology,
         dict(converter_json),
@@ -88,6 +119,7 @@ def generate_netlist(
         int(vin_index),
         int(op_index),
         str(bridge_simulation_mode),
+        cfg,
     )
     if not isinstance(result, dict):
         raise DecomposerError(
