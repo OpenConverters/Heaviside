@@ -75,8 +75,10 @@ def test_design_invalid_json_exits_2(tmp_path: Path) -> None:
     assert "not valid json" in result.stderr.lower()
 
 
-def test_design_missing_lm_exits_2(tmp_path: Path) -> None:
-    """Buck spec without ``desiredInductance`` and no ``--lm`` must fail loudly."""
+def test_design_no_attach_missing_lm_exits_2(tmp_path: Path) -> None:
+    """``--no-attach`` skips the design step (which is what normally
+    harvests L from MKF), so a spec without ``desiredInductance`` and no
+    ``--lm`` flag has nowhere to get L from — must fail loudly."""
     spec = tmp_path / "spec.json"
     spec.write_text(
         json.dumps({
@@ -89,7 +91,9 @@ def test_design_missing_lm_exits_2(tmp_path: Path) -> None:
             }],
         })
     )
-    result = runner.invoke(app, ["design", "buck", "--spec", str(spec)])
+    result = runner.invoke(
+        app, ["design", "buck", "--spec", str(spec), "--no-attach"],
+    )
     assert result.exit_code == 2
     assert "magnetizing inductance not provided" in result.stderr.lower()
 

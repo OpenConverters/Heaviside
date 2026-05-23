@@ -164,8 +164,49 @@ def design(
         raise typer.Exit(code=2) from None
 
     turns_ratios = _parse_turns(turns, spec_json)
-    magnetizing_inductance = _parse_lm(lm, spec_json)
     mode = _resolve_bridge_mode(bridge_mode, topology)
+
+    # L is computed by MKF in design_converter_components — it owns the
+    # physics derivation (V·s, ripple ratio, duty). Heaviside should not
+    # second-guess it. Order of operations:
+    #   1. Design the magnetic first (no_attach path skips this).
+    #   2. Harvest L from the picked main magnetic.
+    #   3. Inject L into the spec dict so every downstream consumer
+    #      (decompose, extract.py, stress.py, sim.runner) reads the
+    #      same value via the existing ``desiredInductance`` /
+    #      ``desiredMagnetizingInductance`` keys.
+    #   4. Decompose with the harvested L.
+    #
+    # --lm CLI flag is an escape hatch: forces a specific L (e.g. for
+    # research / reproducibility) and short-circuits the harvest.
+    # --no-attach must still supply L via spec or --lm because there
+    # is no design step to harvest from.
+    components = None
+    if no_attach:
+        magnetizing_inductance = _parse_lm(lm, spec_json)
+    else:
+        try:
+            components = _bridge.design_converter_components(
+                topology, spec_json, max_results=1, use_ngspice=False,
+            )
+        except BridgeError as exc:
+            typer.echo(f"error: bridge design failed: {exc}", err=True)
+            raise typer.Exit(code=4) from None
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(
+                f"error: component design failed ({type(exc).__name__}): {exc}",
+                err=True,
+            )
+            raise typer.Exit(code=5) from None
+
+        if lm is not None:
+            magnetizing_inductance = float(lm)
+        else:
+            magnetizing_inductance = components.L_authoritative
+            # Stamp into the spec so the existing extract.py /
+            # stress.py / sim.runner readers all see MKF's L.
+            spec_json["desiredInductance"] = magnetizing_inductance
+            spec_json["desiredMagnetizingInductance"] = magnetizing_inductance
 
     try:
         _, tas = decompose_from_spec(
@@ -181,9 +222,6 @@ def design(
 
     if not no_attach:
         try:
-            components = _bridge.design_converter_components(
-                topology, spec_json, max_results=1, use_ngspice=False,
-            )
             _bridge.attach_components_to_tas(tas, components, topology=topology)
             # Pick real Q/D/C MPNs from the local TAS DB. Skipped silently
             # for topologies with no stress deriver registered yet; the

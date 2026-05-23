@@ -657,11 +657,59 @@ class ConverterComponents:
     extra_capacitors : tuple[ExtraCapacitorSpec, ...]
         Untouched CAS::Inputs envelopes for downstream librarian
         selection — the bridge never picks a capacitor MPN.
+    L_authoritative : float
+        The magnetizing inductance MKF used to size the main magnetic,
+        in henries. Harvested from
+        ``main_magnetic.mas.inputs.designRequirements.magnetizingInductance.nominal``.
+        This is the single source of truth for L across the pipeline —
+        stress, sim, and analyst all consume it. The spec's
+        ``desiredInductance`` / ``desiredMagnetizingInductance`` are
+        advisory hints; the basic ``Flyback``/``Buck``/``Boost`` ctors
+        in PyOM's ``design_magnetics_from_converter`` ignore them and
+        compute their own L from physics (V·s, ripple, duty), so
+        Heaviside must adopt MKF's L to stay coherent.
     """
 
     main_magnetic: MagneticDesign
     extra_magnetics: dict[str, MagneticDesign] = field(default_factory=dict)
     extra_capacitors: tuple[ExtraCapacitorSpec, ...] = ()
+    L_authoritative: float = 0.0
+
+
+def _harvest_authoritative_inductance(mas: Mapping[str, Any]) -> float:
+    """Return the inductance MKF used to size this magnetic (henries).
+
+    Reads ``inputs.designRequirements.magnetizingInductance`` from the
+    MAS envelope returned by ``design_magnetics_from_converter``. MKF's
+    per-topology ``process_design_requirements()`` populates one of the
+    three fields (``nominal`` / ``minimum`` / ``maximum``) depending on
+    the topology's design rule:
+
+      * Flyback / energy-storing isolated → ``nominal`` (a target L
+        derived from V·s + ripple ratio + duty cycle).
+      * Buck / boost → ``minimum`` (the smallest L that keeps the
+        ripple under spec; any L above is acceptable).
+      * Resonant topologies (LLC/LCC) → varies by tank.
+
+    Whichever field is populated is the L MKF actually used to choose
+    the core. Throws if none of the three is populated — per CLAUDE.md
+    "no silent fallback".
+    """
+    mi = (
+        mas.get("inputs", {})
+           .get("designRequirements", {})
+           .get("magnetizingInductance", {})
+    )
+    for key in ("nominal", "minimum", "maximum"):
+        value = mi.get(key)
+        if isinstance(value, (int, float)) and value > 0:
+            return float(value)
+    raise BridgeError(
+        "MKF returned a magnetic without a usable "
+        "designRequirements.magnetizingInductance "
+        f"(nominal/minimum/maximum all unset or non-positive). Got: {mi!r}. "
+        "This is the L MKF used to size the core; Heaviside cannot continue."
+    )
 
 
 def extra_components(
@@ -1236,4 +1284,5 @@ def design_converter_components(
         main_magnetic=main,
         extra_magnetics=extra_mag_designs,
         extra_capacitors=tuple(cap_specs),
+        L_authoritative=_harvest_authoritative_inductance(main.mas),
     )

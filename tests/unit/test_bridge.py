@@ -78,7 +78,13 @@ def _mas(*, scoring: float, shape: str, material: str, n_windings: int) -> dict:
     return {
         "scoring": scoring,
         "mas": {
-            "inputs": {},
+            "inputs": {
+                "designRequirements": {
+                    # MKF stamps the L it actually used to size this magnetic
+                    # here; the bridge harvests it as ConverterComponents.L_authoritative.
+                    "magnetizingInductance": {"nominal": 200e-6},
+                },
+            },
             "magnetic": {
                 "core": {
                     "functionalDescription": {
