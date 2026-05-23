@@ -1149,30 +1149,48 @@ def design_converter_components(
         # useOnlyCoresInStock off so PyMKF sees the full 10K-core
         # catalogue instead of the 1.5K stock subset. Temporarily,
         # via _import_pyom's set_settings — restored after.
-        pyom = _import_pyom()
-        try:
-            prior = pyom.get_settings()
-            prior_in_stock = bool(prior.get("useOnlyCoresInStock", True))
-        except Exception:
-            prior_in_stock = True
-        try:
-            if prior_in_stock:
-                pyom.set_settings({"useOnlyCoresInStock": False})
-            main2, main_designs2 = _try_pick_main(
-                entry, converter_spec,
-                pool=max(int(fallback_pool_size), pool),
-                core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
-                min_isat_ratio=min_isat_ratio,
-                strict=False,  # last attempt: honest fallback to top scorer
-            )
-            main = main2
-            main_designs = main_designs2
-        finally:
-            if prior_in_stock:
-                try:
-                    pyom.set_settings({"useOnlyCoresInStock": True})
-                except Exception:
-                    pass
+        #
+        # Crash safety: PyMKF has a SIGSEGV when asked for more
+        # candidates than its accessible pool actually contains
+        # (observed on flyback with stock cores: max_results=15
+        # returns 14 designs and works; max_results=20 segfaults).
+        # The C++ design loop appears to reserve a vector of size
+        # max_results and overshoots when fewer candidates exist.
+        # Defence: cap tier-2 pool at 2x what tier-1 actually
+        # returned. If tier-1 returned the full pool requested, we
+        # have headroom to grow; if PyMKF gave us fewer (e.g. 8
+        # of 10 requested), we know the accessible pool is small
+        # and we stay within ~2x of that.
+        safe_pool = max(pool, 2 * len(main_designs)) if main_designs else pool
+        tier2_pool = min(int(fallback_pool_size), safe_pool)
+        if tier2_pool <= pool:
+            # No room to actually escalate — accept tier-1's top scorer.
+            main = main_designs[0]
+        else:
+            pyom = _import_pyom()
+            try:
+                prior = pyom.get_settings()
+                prior_in_stock = bool(prior.get("useOnlyCoresInStock", True))
+            except Exception:
+                prior_in_stock = True
+            try:
+                if prior_in_stock:
+                    pyom.set_settings({"useOnlyCoresInStock": False})
+                main2, main_designs2 = _try_pick_main(
+                    entry, converter_spec,
+                    pool=tier2_pool,
+                    core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
+                    min_isat_ratio=min_isat_ratio,
+                    strict=False,  # last attempt: honest fallback to top scorer
+                )
+                main = main2
+                main_designs = main_designs2
+            finally:
+                if prior_in_stock:
+                    try:
+                        pyom.set_settings({"useOnlyCoresInStock": True})
+                    except Exception:
+                        pass
 
     if main is None:  # pragma: no cover — _try_pick_main with strict=False never returns None
         main = main_designs[0]

@@ -137,4 +137,35 @@ Heaviside would then delete `_rewrite_lossy_testbench` entirely.
   * Add a `coreAdviserSaturationMargin` setting (default 1.0 = current behavior), OR
   * Add `SATURATION_MARGIN` to the CoreAdviser scoring filter enum so cores with more headroom rank higher (cheapest-with-headroom).
 
-The two issues are independent but both block accurate downstream design verification.
+## Third upstream gap — PyMKF SEGFAULT on flyback above accessible-pool size
+
+`design_magnetics_from_converter('flyback', spec, max_results, ...)` segfaults
+when `max_results` exceeds the actual number of candidates PyMKF can produce.
+
+Repro (Heaviside cp312 build of PyMKF, default stock catalogue):
+
+```
+flyback spec: Vin nom=48 (36-60), Vout=12, Iout=2, n=5, Lm=200µH
+max_results=10  → returns 10 designs (OK)
+max_results=15  → returns 14 designs (OK; pool exhausted at 14)
+max_results=20  → SIGSEGV
+max_results=50  → SIGSEGV
+```
+
+Python's `faulthandler` traceback resolves to `<lambda>` at
+`heaviside/bridge.py:220` → `pyom.design_magnetics_from_converter(...)`. The
+segfault is inside the C++ call; never returns to Python.
+
+Hypothesis: the C++ design loop reserves a vector of size `max_results` and
+overshoots when fewer real candidates exist. Suspected site: the per-
+candidate result accumulator in `CoreAdviser::design_magnetics` (or the
+PyMKF wrapper's loop assembling the response array).
+
+Mitigation downstream: Heaviside's tier-2 retry now caps the pool at
+`2 × len(tier_1_returned)` so we never ask for more than ~2x what PyMKF's
+own pool size says exists. See `heaviside/bridge.py:design_converter_components`
+for the cap.
+
+Fix upstream: bound `max_results` to `min(requested, actual_available)` at
+the top of `design_magnetics_from_converter`, OR add proper bounds-checking
+inside the C++ result loop.
