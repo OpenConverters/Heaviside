@@ -1267,14 +1267,23 @@ def design_converter_components(
     use_ngspice: bool = False,
     weights: Mapping[str, float] | None = None,
     min_isat_ratio: float = 1.2,
-    candidate_pool_size: int = 10,
+    candidate_pool_size: int = 1,
     fallback_pool_size: int = 50,
 ) -> ConverterComponents:
     """End-to-end Phase A + Phase B for a converter spec.
 
     1. Design the main magnetic via :func:`design_magnetics`. Initial
-       request asks for ``candidate_pool_size`` candidates (default 10)
-       so the post-filter has room to pick a properly-sized core.
+       request asks for ``candidate_pool_size`` candidates (default 1).
+       PyMKF's CoreAdviser already returns the lowest-loss candidate
+       first; the historical default of 10 (so the isat post-filter
+       had headroom) cost 10× the per-candidate sim time without
+       buying back a meaningful realism-gate improvement — most
+       topologies were timing out before completing. Cross-topology
+       Pareto exploration now lives in
+       :func:`design_magnetics_fast` (analytical, ~12 s for 5 candidates)
+       and the della-Pollock orchestrator (``full_design.py``). Bump
+       this back up only when you've measured that the larger pool
+       actually flips a realism verdict.
     2. Post-filter by saturation margin: pick the highest-scoring main
        whose ``Isat >= min_isat_ratio * Ipeak_worst`` (default 1.2x,
        matching the realism gate).
