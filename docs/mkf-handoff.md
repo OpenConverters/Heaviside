@@ -173,6 +173,20 @@ the bridge family. ETA on Heaviside side: ~1 hour once dispatched.
 
 ## 2. CLLC — dispatch intentionally not wired
 
+### Status: ✅ FIXED 2026-05-22 (PyMKF source build)
+
+`PyMKF/src/converter.cpp` now has a dedicated CLLC branch that
+constructs `OpenMagnetics::AdvancedCllcConverter`, applies the optional
+`bridge_simulation_mode`, calls `process()`, computes resonant
+parameters via `calculate_resonant_parameters()`, and forwards to
+`Cllc::generate_ngspice_circuit(turnsRatio, params, vinIdx, opIdx)`.
+This is essentially Option A from the original handoff. CLLC also
+honours `bridge_simulation_mode="switch"` — verified by a 3053-char
+deck containing real `S1..S4` switches, body diodes, and snubbers.
+
+The working spec recipe is in the **2026-05-22 update** section at the
+top of this file.
+
 ### Symptom
 
 ```python
@@ -242,6 +256,25 @@ dispatched: ~2 hours.
 
 ## 3. Vienna — JSON type error inside processor
 
+### Status: ✅ FIXED 2026-05-22 (MKF source build)
+
+Root cause was the original handoff spec passing `outputDcVoltage` as
+`{"nominal": 800.0}` — the MAS schema (`MAS/schemas/inputs/topologies/
+vienna.json`) requires `outputDcVoltage` to be a bare `number`, not a
+DimensionWithTolerance object. The cryptic `type_error.302` came from
+the quicktype-generated `from_json` reaching a `.get<double>()` on the
+nested object.
+
+`MKF/src/converter_models/Vienna.cpp` now has a
+`validate_vienna_spec_shape()` guard run before `from_json` so
+mis-shaped specs surface as field-specific errors:
+
+  `Vienna: 'outputDcVoltage' must be a bare number (e.g. 800.0), not a
+  DimensionWithTolerance object`
+
+The working spec recipe is in the **2026-05-22 update** section at the
+top of this file.
+
 ### Symptom
 
 ```python
@@ -309,6 +342,31 @@ ETA on Heaviside side: ~3 hours (new stage-role pattern).
 ---
 
 ## 4. SRC — emits behavioural bridge only, ignores `bridgeMode`
+
+### Status: ✅ FIXED 2026-05-22 (MKF + PyMKF source build)
+
+The fix lives in two places:
+
+1. **MKF** — `src/converter_models/Src.cpp` now branches on
+   `get_bridge_simulation_mode()`:
+   - `BEHAVIORAL_PULSE` (default) → keeps the existing `Vbridge ...
+     PULSE(...)` source (back-compat).
+   - `VOLTAGE_CONTROLLED_SWITCH` → emits real SQA/SQB/SQC/SQD or
+     SHI/SLO switches with body diodes + RC snubbers, mirroring
+     `Llc.cpp`'s switch-mode branch.
+2. **PyMKF** — `src/converter.cpp` now accepts an optional
+   `bridge_simulation_mode` string parameter on `generate_ngspice_circuit`
+   (`""`/`"pulse"` → no-op, `"switch"` → calls
+   `set_bridge_simulation_mode(VOLTAGE_CONTROLLED_SWITCH)`). Threaded
+   through all three template helpers (`generate_spice_isolated`,
+   `generate_spice_inductor`, `generate_spice_isolated_scalar`) plus
+   the special PFC and CLLC dispatch branches.
+
+Verified end-to-end: `bridge_simulation_mode="switch"` produces a
+2418-char SRC deck containing real `SQA` switches; default produces
+the original 1698-char behavioural deck. The header line "Behavioural
+PULSE bridge" is still printed when running in switch mode — cosmetic
+only, captured as upstream ask #4 at the top of this file.
 
 ### Symptom
 
