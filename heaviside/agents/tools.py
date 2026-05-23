@@ -279,6 +279,47 @@ def _serialize_category_audit(report: Any, *, failure_cap: int = 50) -> dict[str
 
 
 # ---------------------------------------------------------------------------
+# Magnetic Pareto-front exploration
+# ---------------------------------------------------------------------------
+
+
+def _get_pareto_magnetics_impl(
+    topology: str, spec_json: str, n_candidates: int = 5,
+) -> str:
+    """Return a Pareto front of fast-mode magnetic candidates for a converter spec.
+
+    Calls PyOM's ``calculate_advised_magnetics_fast`` (analytical
+    gap/turns + area-product filtering + Steinmetz losses — much
+    faster than the full design loop, suitable for design-space
+    exploration). The result is a JSON-encoded summary table the
+    calling agent can read without parsing MAS directly.
+
+    Args:
+        topology: Canonical topology name (e.g. ``"buck"``, ``"flyback"``).
+        spec_json: Converter spec as a JSON string (the same shape that
+            ``heaviside design`` consumes — ``inputVoltage``,
+            ``operatingPoints``, etc.).
+        n_candidates: Number of Pareto candidates to return (default 5,
+            cap 20 — beyond that PyOM is back into the slow regime).
+
+    Returns:
+        JSON string of ``{"candidates": [...]}`` where each candidate
+        carries ``index``, ``scoring`` (ascending losses), ``shape``,
+        ``material``, ``has_gap``, ``n_windings``, ``n_turns_primary``,
+        ``effective_area_m2``, ``effective_volume_m3``. The agent picks
+        one by index and then calls a separate tool (or the bridge
+        directly) to commit it as the design's main magnetic.
+    """
+    from heaviside.agents.magnetic_picker import pareto_summary
+    from heaviside.bridge import design_magnetics_fast
+
+    spec = json.loads(spec_json)
+    n = max(1, min(int(n_candidates), 20))
+    designs = design_magnetics_fast(topology, spec, max_results=n)
+    return json.dumps({"candidates": pareto_summary(designs)})
+
+
+# ---------------------------------------------------------------------------
 # Strands decoration (the agent-facing surface)
 # ---------------------------------------------------------------------------
 
@@ -291,6 +332,7 @@ audit_component = tool(_audit_component_impl, name="audit_component")
 audit_category = tool(_audit_category_impl, name="audit_category")
 audit_all = tool(_audit_all_impl, name="audit_all")
 read_knowledge = tool(_read_knowledge_impl, name="read_knowledge")
+get_pareto_magnetics = tool(_get_pareto_magnetics_impl, name="get_pareto_magnetics")
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +352,7 @@ TOOL_REGISTRY: dict[str, Any] = {
     "audit_category": audit_category,
     "audit_all": audit_all,
     "read_knowledge": read_knowledge,
+    "get_pareto_magnetics": get_pareto_magnetics,
 }
 
 
@@ -325,6 +368,7 @@ RAW_FUNCTIONS: dict[str, Any] = {
     "audit_category": _audit_category_impl,
     "audit_all": _audit_all_impl,
     "read_knowledge": _read_knowledge_impl,
+    "get_pareto_magnetics": _get_pareto_magnetics_impl,
 }
 
 

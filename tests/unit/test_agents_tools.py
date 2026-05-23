@@ -34,6 +34,7 @@ EXPECTED_TOOL_NAMES = {
     "audit_category",
     "audit_all",
     "read_knowledge",
+    "get_pareto_magnetics",
 }
 
 
