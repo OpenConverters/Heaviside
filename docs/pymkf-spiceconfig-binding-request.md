@@ -137,35 +137,40 @@ Heaviside would then delete `_rewrite_lossy_testbench` entirely.
   * Add a `coreAdviserSaturationMargin` setting (default 1.0 = current behavior), OR
   * Add `SATURATION_MARGIN` to the CoreAdviser scoring filter enum so cores with more headroom rank higher (cheapest-with-headroom).
 
-## Third upstream gap — PyMKF SEGFAULT on flyback above accessible-pool size
+## Third upstream gap — PyMKF SEGFAULT on flyback with max_results > 1
 
-`design_magnetics_from_converter('flyback', spec, max_results, ...)` segfaults
-when `max_results` exceeds the actual number of candidates PyMKF can produce.
+`design_magnetics_from_converter('flyback', spec, max_results, 'available cores', ...)`
+segfaults whenever `max_results >= 2`. The crash is **not** pool-exhaustion;
+it reproduces independently of stock-catalogue size.
 
-Repro (Heaviside cp312 build of PyMKF, default stock catalogue):
+Repro (Heaviside cp312 PyMKF wheel, `core_mode='available cores'`):
 
 ```
 flyback spec: Vin nom=48 (36-60), Vout=12, Iout=2, n=5, Lm=200µH
-max_results=10  → returns 10 designs (OK)
-max_results=15  → returns 14 designs (OK; pool exhausted at 14)
-max_results=20  → SIGSEGV
-max_results=50  → SIGSEGV
+useOnlyCoresInStock=True,  max_results=1 → returns 1 design  (OK)
+useOnlyCoresInStock=True,  max_results=3 → SIGSEGV
+useOnlyCoresInStock=False, max_results=1 → returns 1 design  (OK)
+useOnlyCoresInStock=False, max_results=3 → SIGSEGV
 ```
+
+Buck / boost / cuk are unaffected at max_results=10 with the same wheel.
 
 Python's `faulthandler` traceback resolves to `<lambda>` at
 `heaviside/bridge.py:220` → `pyom.design_magnetics_from_converter(...)`. The
 segfault is inside the C++ call; never returns to Python.
 
-Hypothesis: the C++ design loop reserves a vector of size `max_results` and
-overshoots when fewer real candidates exist. Suspected site: the per-
-candidate result accumulator in `CoreAdviser::design_magnetics` (or the
-PyMKF wrapper's loop assembling the response array).
+Hypothesis: the flyback-specific accumulator path (likely the secondary-side
+core/coil expansion loop) writes past a fixed-size buffer when more than one
+candidate is requested. Suspected site: per-candidate result accumulator in
+`CoreAdviser::design_magnetics` flyback dispatch (or the PyMKF wrapper's
+loop assembling the response array for two-winding topologies).
 
-Mitigation downstream: Heaviside's tier-2 retry now caps the pool at
-`2 × len(tier_1_returned)` so we never ask for more than ~2x what PyMKF's
-own pool size says exists. See `heaviside/bridge.py:design_converter_components`
-for the cap.
+Mitigation downstream: Heaviside hard-caps `pool=1` for flyback in
+`design_converter_components` (see `_CRASHY_POOL_CAP_1`). This disables the
+isat post-filter for flyback (only one candidate to inspect), but keeps the
+process alive. Other topologies retain the full pool.
 
-Fix upstream: bound `max_results` to `min(requested, actual_available)` at
-the top of `design_magnetics_from_converter`, OR add proper bounds-checking
-inside the C++ result loop.
+Fix upstream: (a) bounds-check the flyback accumulator loop, AND/OR
+(b) cap `max_results` to `min(requested, actual_available)` at the top of
+`design_magnetics_from_converter` so undersized accessible pools degrade
+gracefully instead of crashing.

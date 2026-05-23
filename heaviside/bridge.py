@@ -1136,12 +1136,32 @@ def design_converter_components(
     entry = topology if isinstance(topology, TopologyEntry) else get(topology)
 
     pool = max(int(max_results), int(candidate_pool_size))
+    # Upstream crash safety: PyMKF SIGSEGVs when flyback is called with
+    # max_results > 1 (reproduced with both useOnlyCoresInStock=True and
+    # =False; the segfault is in design_magnetics_from_converter's C++
+    # accumulation loop, independent of pool-exhaustion). See
+    # docs/pymkf-spiceconfig-binding-request.md "Third upstream gap".
+    # Until upstream lands a fix, hard-cap the pool for known-crashy
+    # topologies. The isat post-filter degrades to "take the top scorer"
+    # for these — same behaviour as having min_isat_ratio=0 — but the
+    # process stays alive.
+    _CRASHY_POOL_CAP_1 = {"flyback"}
+    _is_crashy = entry.name in _CRASHY_POOL_CAP_1
+    if _is_crashy:
+        pool = 1
     main: MagneticDesign | None
+    # For crashy topologies, tier-2 would also segfault (it widens the
+    # pool), so disable strict mode → tier-1 falls back to candidates[0]
+    # honestly and we never enter the tier-2 branch.
     main, main_designs = _try_pick_main(
         entry, converter_spec, pool=pool,
         core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
         min_isat_ratio=min_isat_ratio,
-        strict=(min_isat_ratio > 0 and int(fallback_pool_size) > pool),
+        strict=(
+            not _is_crashy
+            and min_isat_ratio > 0
+            and int(fallback_pool_size) > pool
+        ),
     )
 
     if main is None:
