@@ -1024,11 +1024,13 @@ def _select_main_by_isat_margin(
     spec: Mapping[str, Any],
     *,
     min_isat_ratio: float,
-) -> MagneticDesign:
+    strict: bool = False,
+) -> MagneticDesign | None:
     """Pick the highest-scoring candidate whose Isat margin clears
     ``min_isat_ratio`` against the spec's worst-case peak current.
 
-    Falls back to ``candidates[0]`` (PyMKF's top scorer) when:
+    Default behaviour (``strict=False``) falls back to ``candidates[0]``
+    (PyMKF's top scorer) when:
       * the post-filter is disabled (``min_isat_ratio <= 0``);
       * no per-topology Ipeak_worst computer is registered for
         ``entry.name``;
@@ -1036,6 +1038,13 @@ def _select_main_by_isat_margin(
       * the candidate pool has no MAS we can evaluate;
       * NO candidate clears the margin (then we deliberately keep
         PyMKF's pick so the realism gate can FAIL the design honestly).
+
+    With ``strict=True`` the last bullet returns ``None`` instead — the
+    caller (typically :func:`design_converter_components`) uses that
+    signal to retry with a larger candidate pool / wider catalogue
+    before accepting an under-margin design. The other fallthroughs
+    still return ``candidates[0]`` because they indicate "no margin
+    check possible" rather than "no margin-satisfying candidate."
     """
     if not candidates:
         raise BridgeError("_select_main_by_isat_margin: empty candidate list")
@@ -1057,7 +1066,34 @@ def _select_main_by_isat_margin(
             continue
         if isat >= threshold:
             return cand
-    return candidates[0]
+    return None if strict else candidates[0]
+
+
+def _try_pick_main(
+    entry: TopologyEntry,
+    converter_spec: Mapping[str, Any],
+    *,
+    pool: int,
+    core_mode: str,
+    use_ngspice: bool,
+    weights: Mapping[str, float] | None,
+    min_isat_ratio: float,
+    strict: bool,
+) -> tuple[MagneticDesign | None, list[MagneticDesign]]:
+    """Single retrieval pass. Returns ``(picked_or_None_if_strict_miss,
+    raw_candidates_list)``. The raw list is returned so the caller can
+    fall back to ``candidates[0]`` (PyMKF's top scorer) after the final
+    retry without a third design_magnetics call.
+    """
+    candidates = design_magnetics(
+        entry, converter_spec, max_results=pool,
+        core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
+    )
+    picked = _select_main_by_isat_margin(
+        candidates, entry, converter_spec,
+        min_isat_ratio=min_isat_ratio, strict=strict,
+    )
+    return picked, candidates
 
 
 def design_converter_components(
@@ -1070,42 +1106,76 @@ def design_converter_components(
     weights: Mapping[str, float] | None = None,
     min_isat_ratio: float = 1.2,
     candidate_pool_size: int = 10,
+    fallback_pool_size: int = 50,
 ) -> ConverterComponents:
     """End-to-end Phase A + Phase B for a converter spec.
 
-    1. Design the main magnetic via :func:`design_magnetics`.
-       Internally requests up to ``candidate_pool_size`` candidates
-       (default 10) so we can post-filter for saturation margin even
-       when the caller asked for ``max_results=1``.
-    2. Post-filter the candidate list: pick the highest-scoring main
-       whose computed ``Isat >= min_isat_ratio * Ipeak_worst`` (default
-       1.2x, matching the realism gate's check). Falls through to the
-       PyMKF-preferred top candidate only when no candidate clears the
-       margin (so the realism gate FAILs honestly rather than us hiding
-       a bad pick).
-    3. Probe extras in REAL mode against the chosen main magnetic.
-    4. Design each extra magnetic via :func:`design_extra_magnetic`.
-    5. Pass capacitor specs through untouched (bridge does not pick caps).
+    1. Design the main magnetic via :func:`design_magnetics`. Initial
+       request asks for ``candidate_pool_size`` candidates (default 10)
+       so the post-filter has room to pick a properly-sized core.
+    2. Post-filter by saturation margin: pick the highest-scoring main
+       whose ``Isat >= min_isat_ratio * Ipeak_worst`` (default 1.2x,
+       matching the realism gate).
+    3. **Interim workaround for upstream MKF gap** (see
+       ``docs/pymkf-spiceconfig-binding-request.md`` — `MagneticFilterSaturation`
+       has no derating margin so its top-K can all sit at 95-100 % of
+       B_sat). If the initial pool has no candidate satisfying the
+       margin, retry with ``fallback_pool_size`` candidates AND the
+       full core catalogue (``useOnlyCoresInStock=False`` — 10K cores
+       instead of 1.5K stock-only). Pays the slower-search cost only
+       when the cheap path fails. Removable when upstream MKF lands
+       the saturation-margin scoring change.
+    4. Probe extras in REAL mode against the chosen main magnetic.
+    5. Design each extra magnetic via :func:`design_extra_magnetic`.
+    6. Pass capacitor specs through untouched (bridge does not pick caps).
 
-    Pass ``min_isat_ratio=0`` to disable the post-filter and restore the
-    pre-2026-05-22 behaviour (always take PyMKF's top scorer).
+    Pass ``min_isat_ratio=0`` to disable the post-filter AND the retry,
+    restoring the pre-2026-05-22 behaviour (always take PyMKF's top
+    scorer). Pass ``fallback_pool_size=0`` to disable just the retry.
     """
     entry = topology if isinstance(topology, TopologyEntry) else get(topology)
 
-    # Request more candidates than the caller wants so the post-filter
-    # has room to pick a properly-sized core.
     pool = max(int(max_results), int(candidate_pool_size))
-    main_designs = design_magnetics(
-        entry,
-        converter_spec,
-        max_results=pool,
-        core_mode=core_mode,
-        use_ngspice=use_ngspice,
-        weights=weights,
+    main: MagneticDesign | None
+    main, main_designs = _try_pick_main(
+        entry, converter_spec, pool=pool,
+        core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
+        min_isat_ratio=min_isat_ratio,
+        strict=(min_isat_ratio > 0 and int(fallback_pool_size) > pool),
     )
-    main = _select_main_by_isat_margin(
-        main_designs, entry, converter_spec, min_isat_ratio=min_isat_ratio,
-    )
+
+    if main is None:
+        # Tier-2 retry: widen the candidate pool + flip
+        # useOnlyCoresInStock off so PyMKF sees the full 10K-core
+        # catalogue instead of the 1.5K stock subset. Temporarily,
+        # via _import_pyom's set_settings — restored after.
+        pyom = _import_pyom()
+        try:
+            prior = pyom.get_settings()
+            prior_in_stock = bool(prior.get("useOnlyCoresInStock", True))
+        except Exception:
+            prior_in_stock = True
+        try:
+            if prior_in_stock:
+                pyom.set_settings({"useOnlyCoresInStock": False})
+            main2, main_designs2 = _try_pick_main(
+                entry, converter_spec,
+                pool=max(int(fallback_pool_size), pool),
+                core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
+                min_isat_ratio=min_isat_ratio,
+                strict=False,  # last attempt: honest fallback to top scorer
+            )
+            main = main2
+            main_designs = main_designs2
+        finally:
+            if prior_in_stock:
+                try:
+                    pyom.set_settings({"useOnlyCoresInStock": True})
+                except Exception:
+                    pass
+
+    if main is None:  # pragma: no cover — _try_pick_main with strict=False never returns None
+        main = main_designs[0]
 
     mag_specs, cap_specs = extra_components(
         entry,

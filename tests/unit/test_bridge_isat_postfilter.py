@@ -184,3 +184,45 @@ def test_select_skips_candidate_with_unreadable_mas() -> None:
     )
     # cand_bad has no readable isat -> skipped; cand_good has isat ~10.2 -> PASS
     assert chosen is cand_good
+
+
+# ---------------------------------------------------------------------------
+# strict=True (tier-2 retry signal)
+# ---------------------------------------------------------------------------
+
+
+def test_strict_returns_none_when_no_candidate_passes() -> None:
+    """The interim MKF-isat workaround needs to know when the cheap
+    pool exhausted. ``strict=True`` returns None instead of falling
+    back to candidates[0] so the caller can retry with a wider pool."""
+    cands = [
+        _candidate(score=3.0, b_sat=0.44, n_turns=6, a_e=3.45e-5),  # ~4.1 A
+        _candidate(score=2.5, b_sat=0.40, n_turns=8, a_e=3.0e-5),   # ~4.4 A
+    ]
+    # buck spec needs ~6.4 A threshold (1.2 * 5.3 ipeak); both cands fail.
+    chosen = _select_main_by_isat_margin(
+        cands, get("buck"), _BUCK_SPEC, min_isat_ratio=1.2, strict=True,
+    )
+    assert chosen is None
+
+
+def test_strict_still_returns_candidate_when_one_passes() -> None:
+    cand_fail = _candidate(score=4.0, b_sat=0.4, n_turns=6, a_e=3.5e-5)
+    cand_pass = _candidate(score=2.0, b_sat=0.4, n_turns=14, a_e=4e-5)
+    chosen = _select_main_by_isat_margin(
+        [cand_fail, cand_pass], get("buck"), _BUCK_SPEC,
+        min_isat_ratio=1.2, strict=True,
+    )
+    assert chosen is cand_pass
+
+
+def test_strict_still_falls_back_when_no_ipeak_fn_registered() -> None:
+    """``strict`` only changes behaviour when a margin check ran. If
+    we couldn't compute Ipeak (no topology entry), we still return
+    candidates[0] as before — the caller has no signal to retry on."""
+    cands = [_candidate(score=3.0, b_sat=0.4, n_turns=6, a_e=3.5e-5)]
+    chosen = _select_main_by_isat_margin(
+        cands, get("boost"), {"inputVoltage": {"nominal": 12.0}},
+        min_isat_ratio=1.2, strict=True,
+    )
+    assert chosen is cands[0]
