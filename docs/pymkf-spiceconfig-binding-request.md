@@ -174,3 +174,86 @@ Fix upstream: (a) bounds-check the flyback accumulator loop, AND/OR
 (b) cap `max_results` to `min(requested, actual_available)` at the top of
 `design_magnetics_from_converter` so undersized accessible pools degrade
 gracefully instead of crashing.
+
+## Fourth upstream gap — `Magnetic::calculate_saturation_current` ignores
+## the temperature arg for B_sat lookup
+
+`MKF/src/constructive_models/Magnetic.cpp:166-176`:
+
+```cpp
+double Magnetic::calculate_saturation_current(double temperature) {
+    auto magneticFluxDensitySaturation = get_mutable_core().get_magnetic_flux_density_saturation();   // ← temperature not forwarded
+    auto initialPermeability = get_mutable_core().get_initial_permeability(temperature);              // uses temperature
+    ...
+}
+```
+
+`B_sat` is temperature-dependent (typical ferrite: 0.495 T @ 25°C vs
+0.390 T @ 100°C — 21% delta), but only permeability is looked up at
+`temperature`. Fix: pass `temperature` to
+`get_magnetic_flux_density_saturation()` too. One-line patch.
+
+## Fifth upstream gap — `calculate_saturation_current` formula uses bare-core reluctance
+
+Same function as #4, line 174:
+
+```cpp
+double saturationCurrent = magneticFluxDensitySaturation * effectiveArea * reluctance / numberTurns;
+```
+
+`reluctance` here is the **core's bare reluctance** (no gap). The
+formula equates to `isat = B_sat · N · A_e / L_bare`, where
+`L_bare = N²/ℜ_core`. When the designed inductor has a gap (or the
+target L differs from L_bare for any reason), the returned isat
+applies to the wrong inductance.
+
+Observed: a flyback toroid picked with `nominal L = 562 µH` but
+`L_bare = 1170 µH` (toroid, ungapped). PyOM returned `isat = 0.898 A`
+for the bare 1170 µH operating point; the analytical figure at the
+designed 562 µH is 1.47 A — a 1.6× spread that flips the realism
+verdict.
+
+Fix: either (a) add an overload `calculate_saturation_current(L_target,
+temperature)` that uses `isat = B_sat · N · A_e / L_target`, or
+(b) compute `reluctance` from the **gapped** core + coil pair so the
+formula evaluates against the actually-designed inductance.
+
+## Sixth upstream gap — CoreAdviser shortlists ungappable cores whose bare L is far off target
+
+Toroids cannot be gapped. For a converter that needs `L = 562 µH`,
+the CoreAdviser should refuse to shortlist a toroid whose bare L is
+1170 µH because no gap strategy will close the gap. Today it ships
+the candidate with `gapping: []` and the achieved inductance is
+~2× the target — silent miss.
+
+Fix locations to investigate: `CoreAdviser::design_magnetics` gap
+optimisation step, and the per-candidate L matching filter
+(`MagneticFilterLosses::evaluate_magnetic` calls
+`check_requirement(magnetizing_inductance, candidate_L)` —
+that's where a non-gappable shape with L outside the tolerance
+window should be rejected).
+
+## Seventh upstream gap — `design_magnetics_from_converter` dispatches to basic ctors that ignore `desiredInductance`
+
+`PyMKF/src/converter.cpp:820` constructs `OpenMagnetics::Flyback(json)`
+(basic). The basic `Flyback::process_design_requirements()` computes
+its own `globalNeededInductance` from V·s + ripple ratio + duty and
+**ignores** whatever `desiredInductance` field the JSON contains.
+Buck (line 827) and Boost (833) do the same.
+
+Meanwhile `process_flyback_internal` (line 149, used by
+`process_converter` — the topology-only path) constructs
+`AdvancedFlyback`, which DOES honour `desiredInductance`.
+
+The inconsistency causes downstream surprises: a user spec that sets
+`desiredInductance` works through one API surface and is silently
+discarded through the other. Heaviside now adopts the L MKF actually
+used (harvested from the returned MAS at
+`designRequirements.magnetizingInductance`), so this no longer
+silently breaks Heaviside — but the inconsistency is still worth
+documenting / fixing upstream.
+
+Fix options: (a) dispatch to `Advanced*` ctors in
+`design_magnetics_from_converter`, OR (b) document clearly that
+`desiredInductance` is advisory-only in this API surface, OR (c) add
+an explicit `lockToUserInductance` flag.
