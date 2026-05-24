@@ -1291,7 +1291,6 @@ def _enrich_forward_family(
     where = f"{topology_name} spec"
     vmin, vmax = _vin_extremes(spec, where)
     vout, iout, fsw = _operating_point(spec, where)
-    L_out = _required_inductance(spec, "desiredInductance", where)
 
     # T1 lives in the isolation stage; read its turns ratio.
     _, _, t1_comp = _find_magnetic_in_stage_role(
@@ -1311,10 +1310,14 @@ def _enrich_forward_family(
             "raise the turns ratio (more primary turns) or raise Vin_min."
         )
 
-    # L_out lives in the outputRectifier stage.
+    # L_out lives in the outputRectifier stage. Harvest its L from its
+    # OWN MAS (the value MKF achieved with the picked core + gap), not
+    # from spec.desiredInductance — see PSFB enricher comment.
     so, co, lout_comp = _find_magnetic_in_stage_role(
         tas, "outputRectifier", f"{topology_name} enrichment (L_out)"
     )
+    lout_full_mas = _read_full_mas_root(lout_comp, f"{topology_name} L_out MAS")
+    L_out = _harvest_inductance(lout_full_mas, f"{topology_name} L_out MAS")
     lout_mas = _read_mas(lout_comp, f"{topology_name} L_out MAS")
     A_e, N_lout, b_sat = _mas_isat_inputs(lout_mas, f"{topology_name} L_out MAS")
 
@@ -1417,7 +1420,6 @@ def _enrich_isolated_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     where = "isolated_buck spec"
     vmin, vmax = _vin_extremes(spec, where)
     vout, iout, fsw = _operating_point(spec, where)
-    L_pri = _required_inductance(spec, "desiredInductance", where)
 
     if vout >= vmin:
         raise EnrichmentError(
@@ -1427,10 +1429,12 @@ def _enrich_isolated_buck(tas: dict, spec: Mapping[str, Any]) -> None:
 
     # T1 lives in the isolation stage; read its primary winding turns
     # and core data.  Unlike the forward family, T1 IS the binding
-    # magnetic here.
+    # magnetic here. Harvest L_pri from T1's MAS, not from spec.
     si, ci, t1_comp = _find_magnetic_in_stage_role(
         tas, "isolation", "isolated_buck enrichment (T1)"
     )
+    t1_full_mas = _read_full_mas_root(t1_comp, "isolated_buck T1 MAS")
+    L_pri = _harvest_inductance(t1_full_mas, "isolated_buck T1 MAS")
     mas = _read_mas(t1_comp, "isolated_buck T1 MAS")
     A_e, _, b_sat = _mas_isat_inputs(mas, "isolated_buck T1 MAS")
     N_pri = _winding_turns_by_name(mas, "pri", "isolated_buck T1 MAS")
@@ -1521,7 +1525,6 @@ def _enrich_isolated_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     where = "isolated_buck_boost spec"
     vmin, vmax = _vin_extremes(spec, where)
     vout, iout, fsw = _operating_point(spec, where)
-    L_pri = _required_inductance(spec, "desiredInductance", where)
 
     if vout <= 0:
         raise EnrichmentError(
@@ -1529,6 +1532,12 @@ def _enrich_isolated_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
             "the positive magnitude |Vout_pri| (the sign is implied — this "
             "topology produces a negative primary rail)"
         )
+
+    si, ci, t1_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "isolated_buck_boost enrichment (T1)"
+    )
+    t1_full_mas = _read_full_mas_root(t1_comp, "isolated_buck_boost T1 MAS")
+    L_pri = _harvest_inductance(t1_full_mas, "isolated_buck_boost T1 MAS")
 
     d_max = vout / (vmin + vout)
     d_min = vout / (vmax + vout)
@@ -1539,9 +1548,6 @@ def _enrich_isolated_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     iL_avg_max = iout / (1.0 - d_max)
     ipeak_worst = iL_avg_max + ripple_worst / 2.0
 
-    si, ci, t1_comp = _find_magnetic_in_stage_role(
-        tas, "isolation", "isolated_buck_boost enrichment (T1)"
-    )
     mas = _read_mas(t1_comp, "isolated_buck_boost T1 MAS")
     A_e, _, b_sat = _mas_isat_inputs(mas, "isolated_buck_boost T1 MAS")
     N_pri = _winding_turns_by_name(mas, "pri", "isolated_buck_boost T1 MAS")
@@ -1636,7 +1642,6 @@ def _enrich_push_pull(tas: dict, spec: Mapping[str, Any]) -> None:
     where = "push_pull spec"
     vmin, vmax = _vin_extremes(spec, where)
     vout, iout, fsw = _operating_point(spec, where)
-    L_out = _required_inductance(spec, "desiredInductance", where)
 
     # T1 lives in the isolation stage; read the dominant turns ratio.
     # n = N_pri_top / N_sec_top — assume the two primary halves and
@@ -1661,10 +1666,13 @@ def _enrich_push_pull(tas: dict, spec: Mapping[str, Any]) -> None:
             "(more primary turns) or raise Vin_min."
         )
 
-    # L_out lives in the outputRectifier stage.
+    # L_out lives in the outputRectifier stage. Harvest L from its
+    # OWN MAS — see PSFB enricher for rationale.
     so, co, lout_comp = _find_magnetic_in_stage_role(
         tas, "outputRectifier", "push_pull enrichment (L_out)"
     )
+    lout_full_mas = _read_full_mas_root(lout_comp, "push_pull L_out MAS")
+    L_out = _harvest_inductance(lout_full_mas, "push_pull L_out MAS")
     lout_mas = _read_mas(lout_comp, "push_pull L_out MAS")
     A_e, N_lout, b_sat = _mas_isat_inputs(lout_mas, "push_pull L_out MAS")
 
@@ -1763,7 +1771,6 @@ def _enrich_asymmetric_half_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     where = "asymmetric_half_bridge spec"
     vmin, vmax = _vin_extremes(spec, where)
     vout, iout, fsw = _operating_point(spec, where)
-    L_out = _required_inductance(spec, "desiredInductance", where)
 
     _, _, t1_comp = _find_magnetic_in_stage_role(
         tas, "isolation", "asymmetric_half_bridge enrichment (T1)"
@@ -1790,10 +1797,15 @@ def _enrich_asymmetric_half_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     d_eff_max = 2.0 * d_max
     d_eff_min = 2.0 * d_min
 
-    # Output choke (lives in outputRectifier stage)
+    # Output choke (lives in outputRectifier stage). Harvest L from
+    # its OWN MAS — see PSFB enricher for rationale.
     so, co, lout_comp = _find_magnetic_in_stage_role(
         tas, "outputRectifier", "asymmetric_half_bridge enrichment (L_out)"
     )
+    lout_full_mas = _read_full_mas_root(
+        lout_comp, "asymmetric_half_bridge L_out MAS"
+    )
+    L_out = _harvest_inductance(lout_full_mas, "asymmetric_half_bridge L_out MAS")
     lout_mas = _read_mas(lout_comp, "asymmetric_half_bridge L_out MAS")
     A_e, N_lout, b_sat = _mas_isat_inputs(
         lout_mas, "asymmetric_half_bridge L_out MAS"
@@ -1897,7 +1909,6 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
     where = "weinberg spec"
     vmin, vmax = _vin_extremes(spec, where)
     vout, iout, fsw = _operating_point(spec, where)
-    L = _required_inductance(spec, "desiredInductance", where)
 
     # T1 turns ratio (n = N_sec / N_pri).
     _, _, t1_comp = _find_magnetic_in_stage_role(
@@ -1923,10 +1934,13 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
             f"{vmin} V — degenerate (per-switch duty cannot reach 100 %)."
         )
 
-    # L1 (input coupled inductor) — lineFilter stage.
+    # L1 (input coupled inductor) — lineFilter stage. Harvest L from
+    # its OWN MAS — see PSFB enricher for rationale.
     si, ci, l1_comp = _find_magnetic_in_stage_role(
         tas, "lineFilter", "weinberg enrichment (L1)"
     )
+    l1_full_mas = _read_full_mas_root(l1_comp, "weinberg L1 MAS")
+    L = _harvest_inductance(l1_full_mas, "weinberg L1 MAS")
     l1_mas = _read_mas(l1_comp, "weinberg L1 MAS")
     A_e, _, b_sat = _mas_isat_inputs(l1_mas, "weinberg L1 MAS")
     # L1 has two symmetric windings (a, b); use winding "a" turns.
@@ -2195,13 +2209,13 @@ def _enrich_llc(tas: dict, spec: Mapping[str, Any]) -> None:
     where = "llc spec"
     vmin, vmax = _vin_extremes(spec, where)
     vout, iout, fsw = _operating_point(spec, where)
-    L_r = _required_inductance(spec, "desiredInductance", where)
-    L_m = _required_inductance(spec, "desiredMagnetizingInductance", where)
 
     # T1 in the isolation stage — windings pri / sec1 / sec2 (CT).
     _, _, t1_comp = _find_magnetic_in_stage_role(
         tas, "isolation", "llc enrichment (T1)"
     )
+    t1_full_mas = _read_full_mas_root(t1_comp, "llc T1 MAS")
+    L_m = _harvest_inductance(t1_full_mas, "llc T1 MAS")
     t1_mas = _read_mas(t1_comp, "llc T1 MAS")
     N_pri  = _winding_turns_by_name(t1_mas, "pri",  "llc T1 MAS")
     N_sec1 = _winding_turns_by_name(t1_mas, "sec1", "llc T1 MAS")
@@ -2211,6 +2225,8 @@ def _enrich_llc(tas: dict, spec: Mapping[str, Any]) -> None:
     si, ci, lr_comp = _find_magnetic_in_stage_role(
         tas, "inverter", "llc enrichment (L_r)"
     )
+    lr_full_mas = _read_full_mas_root(lr_comp, "llc L_r MAS")
+    L_r = _harvest_inductance(lr_full_mas, "llc L_r MAS")
     lr_mas = _read_mas(lr_comp, "llc L_r MAS")
     A_e, N_lr, b_sat = _mas_isat_inputs(lr_mas, "llc L_r MAS")
 
@@ -2226,7 +2242,14 @@ def _enrich_llc(tas: dict, spec: Mapping[str, Any]) -> None:
     i_mag_pk = vmax / (8.0 * L_m_worst * fsw)
 
     ipeak_worst = M_max * i_load_pk + i_mag_pk
-    isat = b_sat * float(N_lr) * float(A_e) / L_r
+
+    op = _require(spec, ("operatingPoints",), "llc spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        lr_full_mas, L_r, b_sat=b_sat, N=int(N_lr), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="llc (series-resonant inductor)",
+    )
 
     tas["duty"]     = 0.5
     tas["duty_min"] = 0.5
@@ -2235,13 +2258,7 @@ def _enrich_llc(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched = dict(lr_comp)
     enriched["isat"]        = round(isat, 6)
     enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = {
-        "method": "B_sat * N * A_e / L_r (llc v0.1, series-resonant inductor)",
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N_lr),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L_r,
-    }
+    enriched["isat_provenance"] = isat_prov
     enriched["ipeak_provenance"] = {
         "method": (
             "M_max * (pi/2) * (Iout/n)  +  Vin_max / (8 * Lm_worst * fsw)  "
@@ -2510,7 +2527,6 @@ def _enrich_dual_active_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     where = "dual_active_bridge spec"
     vmin, vmax = _vin_extremes(spec, where)
     vout, iout, fsw = _operating_point(spec, where)
-    L_r = _required_inductance(spec, "desiredInductance", where)
 
     # T1 turns (n = N_pri / N_sec for DAB convention; reflected
     # secondary voltage on the primary side = n · Vout).
@@ -2525,6 +2541,14 @@ def _enrich_dual_active_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     N_sec = _winding_turns_by_name(t1_mas, "sec0", "dual_active_bridge T1 MAS")
     n = float(N_pri) / float(N_sec)
     nV2 = n * vout
+
+    # L_r in isolation stage. Harvest L_r from its OWN MAS (must come
+    # before the duty solve since it depends on L_r).
+    si, ci, lr_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "dual_active_bridge enrichment (L_r)"
+    )
+    lr_full_mas = _read_full_mas_root(lr_comp, "dual_active_bridge L_r MAS")
+    L_r = _harvest_inductance(lr_full_mas, "dual_active_bridge L_r MAS")
 
     def _solve_d(vin: float) -> float:
         k = 2.0 * fsw * L_r * iout / (n * vin)
@@ -2543,16 +2567,18 @@ def _enrich_dual_active_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     d_at_vmin = _solve_d(vmin)   # largest d (worst case for peak)
     d_at_vmax = _solve_d(vmax)   # smallest d
 
-    # L_r in isolation stage (first magnetic encountered before T1).
-    si, ci, lr_comp = _find_magnetic_in_stage_role(
-        tas, "isolation", "dual_active_bridge enrichment (L_r)"
-    )
     lr_mas = _read_mas(lr_comp, "dual_active_bridge L_r MAS")
     A_e, N_lr, b_sat = _mas_isat_inputs(lr_mas, "dual_active_bridge L_r MAS")
 
     L_r_worst = 0.8 * L_r
     ipeak_worst = (vmin + nV2) * d_at_vmin / (4.0 * fsw * L_r_worst)
-    isat = b_sat * float(N_lr) * float(A_e) / L_r
+    op = _require(spec, ("operatingPoints",), "dual_active_bridge spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        lr_full_mas, L_r, b_sat=b_sat, N=int(N_lr), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="dual_active_bridge (series commutation inductor)",
+    )
 
     tas["duty"]     = 0.5
     tas["duty_min"] = 0.5
@@ -2561,16 +2587,7 @@ def _enrich_dual_active_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched = dict(lr_comp)
     enriched["isat"]        = round(isat, 6)
     enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = {
-        "method": (
-            "B_sat * N * A_e / L_r "
-            "(dual_active_bridge v0.1, series commutation inductor)"
-        ),
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N_lr),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L_r,
-    }
+    enriched["isat_provenance"] = isat_prov
     enriched["ipeak_provenance"] = {
         "method": (
             "(Vin + n·Vout) · d / (4 · fsw · L_r_worst) evaluated at "
@@ -2664,8 +2681,6 @@ def _enrich_clllc(tas: dict, spec: Mapping[str, Any]) -> None:
     where = "clllc spec"
     vmin, vmax = _vin_extremes(spec, where)
     vout, iout, fsw = _operating_point(spec, where)
-    L_r1 = _required_inductance(spec, "desiredInductance", where)
-    L_m  = _required_inductance(spec, "desiredMagnetizingInductance", where)
 
     # T1 turns (n = N_pri / N_sec for the FB primary-step-down convention).
     # T1 shares the ``isolation`` stage with L_r1 / L_r2 (stencil order
@@ -2674,6 +2689,8 @@ def _enrich_clllc(tas: dict, spec: Mapping[str, Any]) -> None:
     t1_comp = _find_named_magnetic_in_stage_role(
         tas, "isolation", "T1", "clllc enrichment (T1)"
     )
+    t1_full_mas = _read_full_mas_root(t1_comp, "clllc T1 MAS")
+    L_m = _harvest_inductance(t1_full_mas, "clllc T1 MAS")
     t1_mas = _read_mas(t1_comp, "clllc T1 MAS")
     N_pri = _winding_turns_by_name(t1_mas, "pri",  "clllc T1 MAS")
     N_sec = _winding_turns_by_name(t1_mas, "sec0", "clllc T1 MAS")
@@ -2692,6 +2709,8 @@ def _enrich_clllc(tas: dict, spec: Mapping[str, Any]) -> None:
             f"stage to be 'L_r1' (primary tank inductor), found "
             f"{lr1_comp.get('name')!r}.  Check stencil ordering."
         )
+    lr1_full_mas = _read_full_mas_root(lr1_comp, "clllc L_r1 MAS")
+    L_r1 = _harvest_inductance(lr1_full_mas, "clllc L_r1 MAS")
     lr1_mas = _read_mas(lr1_comp, "clllc L_r1 MAS")
     A_e, N_lr1, b_sat = _mas_isat_inputs(lr1_mas, "clllc L_r1 MAS")
 
@@ -2703,7 +2722,13 @@ def _enrich_clllc(tas: dict, spec: Mapping[str, Any]) -> None:
     i_mag_pk = vmax / (4.0 * L_m_worst * fsw)
 
     ipeak_worst = M_max * i_load_pk + i_mag_pk
-    isat = b_sat * float(N_lr1) * float(A_e) / L_r1
+    op = _require(spec, ("operatingPoints",), "clllc spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        lr1_full_mas, L_r1, b_sat=b_sat, N=int(N_lr1), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="clllc (primary tank inductor)",
+    )
 
     tas["duty"]     = 0.5
     tas["duty_min"] = 0.5
@@ -2712,13 +2737,7 @@ def _enrich_clllc(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched = dict(lr1_comp)
     enriched["isat"]        = round(isat, 6)
     enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = {
-        "method": "B_sat * N * A_e / L_r1 (clllc v0.1, primary tank inductor)",
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N_lr1),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L_r1,
-    }
+    enriched["isat_provenance"] = isat_prov
     enriched["ipeak_provenance"] = {
         "method": (
             "M_max * (pi/2) * (Iout/n)  +  Vin_max / (4 * Lm_worst * fsw)  "
