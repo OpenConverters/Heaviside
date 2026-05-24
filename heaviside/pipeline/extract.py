@@ -380,6 +380,78 @@ def _read_mas(comp: Mapping[str, Any], where: str) -> Mapping[str, Any]:
     )
 
 
+def _read_full_mas_root(comp: Mapping[str, Any], where: str) -> Mapping[str, Any]:
+    """Return the FULL MAS root for ``comp`` — the document MKF returned
+    *including* ``inputs`` / ``outputs`` envelopes, not just the
+    ``magnetic`` device sub-doc that :func:`_read_mas` yields.
+
+    Needed when harvesting the inductance MKF *actually achieved*
+    (``outputs[*].inductance.magnetizingInductance.magnetizingInductance.nominal``)
+    or any other simulation-derived figure of merit.
+    """
+    data = comp.get("data")
+    if isinstance(data, Mapping) and "outputs" in data:
+        return data
+    mas = comp.get("mas")
+    if isinstance(mas, Mapping) and "outputs" in mas:
+        return mas
+    raise EnrichmentError(
+        f"{where}: magnetic component {comp.get('name')!r} has no full "
+        "MAS root (no 'outputs' envelope) — bridge attach phase must run "
+        "with the full pipeline (not stencil-only) before enrichment"
+    )
+
+
+def _harvest_inductance(full_mas: Mapping[str, Any], where: str) -> float:
+    """Return the inductance MKF *actually achieved* for this magnetic.
+
+    Source of truth, in order:
+      1. ``outputs[*].inductance.magnetizingInductance.magnetizingInductance.nominal``
+         — the simulation-derived L of the wound + gapped core.
+      2. ``inputs.designRequirements.magnetizingInductance.nominal``
+         — fast-mode candidates that skip the simulator may only have
+         this; still authoritative because MKF picked a core to honour it.
+
+    Raises :class:`EnrichmentError` if neither yields a positive scalar
+    — per the "no silent fallbacks" rule. Mirrors
+    ``heaviside.bridge._harvest_authoritative_inductance`` for the
+    extras / per-component case (the bridge helper applies to the main
+    magnetic only).
+    """
+    outputs = full_mas.get("outputs")
+    if isinstance(outputs, list):
+        for op in outputs:
+            if not isinstance(op, Mapping):
+                continue
+            ind = op.get("inductance")
+            if not isinstance(ind, Mapping):
+                continue
+            mi_outer = ind.get("magnetizingInductance")
+            if not isinstance(mi_outer, Mapping):
+                continue
+            mi_inner = mi_outer.get("magnetizingInductance")
+            if not isinstance(mi_inner, Mapping):
+                continue
+            nominal = mi_inner.get("nominal")
+            if isinstance(nominal, (int, float)) and nominal > 0:
+                return float(nominal)
+    mi = (
+        full_mas.get("inputs", {})
+                .get("designRequirements", {})
+                .get("magnetizingInductance", {})
+    )
+    if isinstance(mi, Mapping):
+        nominal = mi.get("nominal")
+        if isinstance(nominal, (int, float)) and nominal > 0:
+            return float(nominal)
+    raise EnrichmentError(
+        f"{where}: MAS has no usable inductance — neither "
+        "outputs[*].inductance.magnetizingInductance.magnetizingInductance.nominal "
+        "nor inputs.designRequirements.magnetizingInductance.nominal has a "
+        "positive scalar"
+    )
+
+
 def _mas_isat_inputs(
     mas: Mapping[str, Any], where: str, *, winding_index: int = 0,
 ) -> tuple[float, int, float]:
@@ -2269,7 +2341,6 @@ def _enrich_phase_shifted_full_bridge(tas: dict, spec: Mapping[str, Any]) -> Non
     where = "phase_shifted_full_bridge spec"
     vmin, vmax = _vin_extremes(spec, where)
     vout, iout, fsw = _operating_point(spec, where)
-    L_out = _required_inductance(spec, "desiredInductance", where)
 
     # T1 in the isolation stage — windings pri / sec0.
     _, _, t1_comp = _find_magnetic_in_stage_role(
@@ -2294,9 +2365,21 @@ def _enrich_phase_shifted_full_bridge(tas: dict, spec: Mapping[str, Any]) -> Non
     d_eff_max = _solve_d_eff(vmin)     # largest overlap at Vin_min
     d_eff_min = _solve_d_eff(vmax)     # smallest overlap at Vin_max
 
-    # L_out0 (output choke) — lives in outputRectifier stage.
+    # L_out0 (output choke) — lives in outputRectifier stage. Harvest
+    # its inductance from its OWN MAS (the L MKF actually achieved with
+    # the picked core + gap), never from a spec hint. The spec field
+    # ``desiredInductance`` is a request; MKF may pick something
+    # different to satisfy ripple / window constraints, and trusting
+    # the spec here is what made the old enricher compute isat against
+    # a 100× wrong L for the centre-tapped rectifier output choke.
     so, co, lout_comp = _find_magnetic_in_stage_role(
         tas, "outputRectifier", "phase_shifted_full_bridge enrichment (L_out0)"
+    )
+    lout_full_mas = _read_full_mas_root(
+        lout_comp, "phase_shifted_full_bridge L_out0 MAS"
+    )
+    L_out = _harvest_inductance(
+        lout_full_mas, "phase_shifted_full_bridge L_out0 MAS"
     )
     lout_mas = _read_mas(lout_comp, "phase_shifted_full_bridge L_out0 MAS")
     A_e, N_lout, b_sat = _mas_isat_inputs(
@@ -2309,7 +2392,15 @@ def _enrich_phase_shifted_full_bridge(tas: dict, spec: Mapping[str, Any]) -> Non
     # output choke sees that as its on-fraction directly (no 2× factor).
     ripple_worst = vout * (1.0 - d_eff_min) / (L_worst * fsw_eff)
     ipeak_worst = iout + ripple_worst / 2.0
-    isat = b_sat * float(N_lout) * float(A_e) / L_out
+
+    # isat: delegate to MKF (PyOM) per "all magnetics math lives in MKF".
+    op_spec = spec.get("operatingPoints") or [{}]
+    t_amb = float(op_spec[0].get("ambientTemperature", 25.0)) if isinstance(op_spec[0], Mapping) else 25.0
+    isat, isat_prov = _compute_isat_authoritative(
+        lout_full_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
+        temperature_c=max(t_amb, 100.0),
+        topology_label="phase_shifted_full_bridge (output choke)",
+    )
 
     tas["duty"]     = round(d_eff_max, 6)
     tas["duty_min"] = round(d_eff_min, 6)
@@ -2318,16 +2409,7 @@ def _enrich_phase_shifted_full_bridge(tas: dict, spec: Mapping[str, Any]) -> Non
     enriched = dict(lout_comp)
     enriched["isat"]        = round(isat, 6)
     enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = {
-        "method": (
-            "B_sat * N * A_e / L_out "
-            "(phase_shifted_full_bridge v0.1, output choke)"
-        ),
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N_lout),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L_out,
-    }
+    enriched["isat_provenance"] = isat_prov
     enriched["ipeak_provenance"] = {
         "method": (
             "Iout + ripple_worst/2 (buck-shaped on secondary at "

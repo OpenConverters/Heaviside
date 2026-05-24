@@ -159,14 +159,18 @@ def _extract_spec(test_path: Path) -> dict | None:
                     op["outputCurrents"] = iouts[: len(turns)]
     lm = _extract_module_literal(tree, "MAGNETIZING_INDUCTANCE")
     if isinstance(lm, (int, float)) and lm > 0:
-        # The fixtures' SPEC dicts ship a small `desiredInductance`
-        # (often 22 µH, holdover from a buck-style test). Real flyback /
-        # forward / push-pull / etc. designs use the much larger
-        # MAGNETIZING_INDUCTANCE constant (typically 0.5–10 mH) which
-        # the decompose tests pass separately. Overwrite — not setdefault
-        # — so the corpus design pass sees a realistic magnetising L.
+        # MAGNETIZING_INDUCTANCE in the fixture is the *transformer's*
+        # magnetising L (typically 0.5–10 mH). Stamp it as
+        # ``desiredMagnetizingInductance`` so MKF designs T1 against it.
+        # Do NOT clobber ``desiredInductance``: in forward-family /
+        # PSFB / DAB / Vienna / iso-buck-{,boost} the two fields refer
+        # to *different* magnetics — the output choke has its own
+        # (much smaller) L. Overwriting it with the transformer's L_m
+        # made the enricher compute the output choke's isat against
+        # a 100× wrong inductance. Single-magnetic topologies
+        # (flyback) already setdefault desiredInductance from their
+        # own SPEC dict, so leaving it alone is safe everywhere.
         spec["desiredMagnetizingInductance"] = float(lm)
-        spec["desiredInductance"] = float(lm)
 
     return spec
 
