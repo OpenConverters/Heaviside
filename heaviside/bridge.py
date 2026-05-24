@@ -789,38 +789,71 @@ class ConverterComponents:
 
 
 def _harvest_authoritative_inductance(mas: Mapping[str, Any]) -> float:
-    """Return the inductance MKF used to size this magnetic (henries).
+    """Return the inductance MKF *actually achieved* with the picked
+    magnetic (henries).
 
-    Reads ``inputs.designRequirements.magnetizingInductance`` from the
-    MAS envelope returned by ``design_magnetics_from_converter``. MKF's
-    per-topology ``process_design_requirements()`` populates one of the
-    three fields (``nominal`` / ``minimum`` / ``maximum``) depending on
-    the topology's design rule:
+    Source of truth: ``mas.outputs[0].inductance.magnetizingInductance.magnetizingInductance.nominal``
+    — the simulation-derived inductance of the wound + gapped core.
+    This is what stress / sim / analyst should use as L, because it
+    matches the magnetic that's actually in the TAS.
 
-      * Flyback / energy-storing isolated → ``nominal`` (a target L
-        derived from V·s + ripple ratio + duty cycle).
-      * Buck / boost → ``minimum`` (the smallest L that keeps the
-        ripple under spec; any L above is acceptable).
-      * Resonant topologies (LLC/LCC) → varies by tank.
+    Why not ``designRequirements.magnetizingInductance``: that field
+    is the *target / constraint*, not the achieved value. For
+    flyback / iso-buck-boost MKF sets ``nominal`` to the user's
+    desiredInductance (matches reality only if a candidate that hits
+    exactly that L is picked). For buck/boost MKF sets only
+    ``minimum`` — the smallest L that keeps ripple under spec —
+    which is typically 4–20× *below* the L the picked magnetic
+    actually has. Stress derivations using the minimum compute
+    massively inflated ripple/ipeak and falsely fail the
+    inductor_isat_margin gate.
 
-    Whichever field is populated is the L MKF actually used to choose
-    the core. Throws if none of the three is populated — per CLAUDE.md
-    "no silent fallback".
+    Falls back to ``designRequirements`` only when ``outputs`` is
+    missing or unusable (e.g. fast-mode candidates that skip the
+    simulator). Throws if neither source yields a positive number
+    — per CLAUDE.md no-silent-fallback rule.
     """
+    # 1. Primary source: outputs[*].inductance.magnetizingInductance.magnetizingInductance.nominal
+    outputs = mas.get("outputs")
+    if isinstance(outputs, list):
+        for op in outputs:
+            if not isinstance(op, Mapping):
+                continue
+            ind = op.get("inductance")
+            if not isinstance(ind, Mapping):
+                continue
+            mi_outer = ind.get("magnetizingInductance")
+            if not isinstance(mi_outer, Mapping):
+                continue
+            mi_inner = mi_outer.get("magnetizingInductance")
+            if not isinstance(mi_inner, Mapping):
+                continue
+            nominal = mi_inner.get("nominal")
+            if isinstance(nominal, (int, float)) and nominal > 0:
+                return float(nominal)
+
+    # 2. Fallback for fast-mode / older PyOM responses without a full
+    #    outputs envelope: read the design-requirements constraint.
+    #    Order: nominal → minimum → maximum. Buck/boost only set
+    #    minimum and its value is a *floor*, not the L actually used,
+    #    so this branch is best-effort.
     mi = (
         mas.get("inputs", {})
            .get("designRequirements", {})
            .get("magnetizingInductance", {})
     )
-    for key in ("nominal", "minimum", "maximum"):
-        value = mi.get(key)
-        if isinstance(value, (int, float)) and value > 0:
-            return float(value)
+    if isinstance(mi, Mapping):
+        for key in ("nominal", "minimum", "maximum"):
+            value = mi.get(key)
+            if isinstance(value, (int, float)) and value > 0:
+                return float(value)
+
     raise BridgeError(
-        "MKF returned a magnetic without a usable "
-        "designRequirements.magnetizingInductance "
-        f"(nominal/minimum/maximum all unset or non-positive). Got: {mi!r}. "
-        "This is the L MKF used to size the core; Heaviside cannot continue."
+        "MKF returned a magnetic without a usable inductance — neither "
+        "outputs[*].inductance.magnetizingInductance.magnetizingInductance.nominal "
+        "nor designRequirements.magnetizingInductance has a positive scalar. "
+        f"outputs sample: {mas.get('outputs')!r}, "
+        f"designRequirements.magnetizingInductance: {mi!r}"
     )
 
 
