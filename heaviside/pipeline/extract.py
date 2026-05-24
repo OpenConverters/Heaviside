@@ -212,33 +212,70 @@ def _compute_isat_authoritative(
     topology_label: str = "",
 ) -> tuple[float, dict[str, Any]]:
     """Return ``(isat, provenance)`` using PyOM's
-    ``calculate_saturation_current`` with the analytical
-    ``B_sat * N * A_e / L`` formula as fallback when PyOM rejects the
-    MAS (e.g. minimal test fixtures missing 'bobbin').
+    ``calculate_saturation_current_at_operating_point`` so that L is
+    evaluated under the same DC-bias / temperature conditions that
+    ``stress`` uses for I_peak. Falls back to the no-OP overload
+    ``calculate_saturation_current`` (nameplate I_sat at μ_init) if
+    the MAS has no usable operating point, and finally to the
+    analytical formula if both PyOM calls reject the input.
 
     TODO (project rule, see ~/.claude/CLAUDE.md): the analytical
-    fallback violates "all magnetics math lives in MKF". Existing
-    test fixtures rely on it because they don't carry a complete MAS
-    shape; cleaning that up is downstream work. Production runs hit
-    the PyOM path.
+    fallback violates "all magnetics math lives in MKF". It exists
+    for unit-test fixtures that ship minimal MAS shapes PyOM
+    rejects. Production runs always hit one of the PyOM paths.
 
     ``topology_label`` (e.g. ``"isolated_buck"``) is embedded in the
     provenance ``method`` string so per-topology extract tests can
     grep for the source.
     """
     suffix = f" [{topology_label}]" if topology_label else ""
-    method = f"PyOM.calculate_saturation_current{suffix}"
-    try:
-        from PyOpenMagnetics import PyOpenMagnetics as _P
-        isat = float(_P.calculate_saturation_current(dict(mas), float(temperature_c)))
-        if not (isat > 0):
-            raise ValueError(f"PyOM returned non-positive isat: {isat!r}")
-    except Exception as exc:
+    method = ""
+    isat = -1.0
+    last_error = ""
+
+    # 1. Operating-point-aware PyOM call (best — matches stress derivation).
+    op = None
+    inputs = mas.get("inputs") if isinstance(mas, Mapping) else None
+    if isinstance(inputs, Mapping):
+        ops = inputs.get("operatingPoints")
+        if isinstance(ops, list) and ops and isinstance(ops[0], Mapping):
+            op = ops[0]
+    if op is not None:
+        try:
+            from PyOpenMagnetics import PyOpenMagnetics as _P
+            isat = float(_P.calculate_saturation_current_at_operating_point(
+                dict(mas.get("magnetic", mas)),
+                dict(op),
+                float(temperature_c),
+            ))
+            if not (isat > 0):
+                raise ValueError(f"PyOM returned non-positive isat: {isat!r}")
+            method = f"PyOM.calculate_saturation_current_at_operating_point{suffix}"
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+
+    # 2. Nameplate (no-OP) PyOM call.
+    if method == "":
+        try:
+            from PyOpenMagnetics import PyOpenMagnetics as _P
+            isat = float(_P.calculate_saturation_current(
+                dict(mas.get("magnetic", mas)) if "magnetic" in mas else dict(mas),
+                float(temperature_c),
+            ))
+            if not (isat > 0):
+                raise ValueError(f"PyOM returned non-positive isat: {isat!r}")
+            method = f"PyOM.calculate_saturation_current{suffix} (nameplate, no op-pt)"
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+
+    # 3. Analytical fallback (test fixtures only).
+    if method == "":
         isat = float(b_sat) * float(N) * float(A_e) / float(L)
         method = (
-            f"analytical fallback (B_sat * N * A_e / L){suffix}; PyOM failed: "
-            f"{type(exc).__name__}: {exc}"
+            f"analytical fallback (B_sat * N * A_e / L){suffix}; "
+            f"PyOM failed: {last_error}"
         )
+
     provenance: dict[str, Any] = {
         "method": method,
         "temperature_c": float(temperature_c),
