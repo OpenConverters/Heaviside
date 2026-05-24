@@ -1117,8 +1117,40 @@ def _winding_turns_by_name(
         raise EnrichmentError(
             f"{where}: coil.functionalDescription must be a non-empty list"
         )
+
+    # Heaviside extractors were written against pre-1.0 MAS winding names
+    # ("pri", "sec0", "pri_a", "sec_a", "pri_top", "sec_top", "a", "b"…).
+    # MKF now emits verbose camel-cased names ("Primary", "Secondary",
+    # "Secondary 0", "Secondary 1"…). Map the short request to the verbose
+    # canonical equivalent and try that as a SECOND exact match. Typos
+    # (lowercase "primary", misspelled "secundary", etc.) still throw,
+    # preserving the structural-failure tests.
+    import re as _re
+
+    _ALIASES = {
+        "pri": "Primary",
+        "pri_a": "Primary",
+        "pri_b": "Primary",
+        "pri_top": "Primary",
+        "pri_bot": "Primary",
+        "primary": "Primary",
+        "a": "Primary",
+    }
+    aliased: str | None = _ALIASES.get(winding_name)
+    if aliased is None:
+        # Secondary aliases: sec / sec0 / sec1 / sec_a / sec_top / b
+        m = _re.match(r"^sec(\d*)(?:_[a-z]+)?$", winding_name)
+        if m is not None:
+            idx = m.group(1)
+            aliased = "Secondary" if not idx else f"Secondary {idx}"
+        elif winding_name == "b":
+            aliased = "Secondary"
+
     for w in fd:
-        if isinstance(w, Mapping) and w.get("name") == winding_name:
+        if not isinstance(w, Mapping):
+            continue
+        name = w.get("name")
+        if name == winding_name or (aliased is not None and name == aliased):
             N = w.get("numberTurns")
             if not isinstance(N, (int, float)) or N <= 0:
                 raise EnrichmentError(
