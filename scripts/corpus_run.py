@@ -142,6 +142,20 @@ def _extract_spec(test_path: Path) -> dict | None:
     turns = _extract_module_literal(tree, "TURNS_RATIOS")
     if isinstance(turns, list) and turns:
         spec.setdefault("desiredTurnsRatios", turns)
+        # Several fixtures ship N outputs with only 1 entry in TURNS_RATIOS
+        # (the decompose tests render one secondary only). When MKF
+        # designs the magnetic it expects N+1 windings ⇔ N turns ratios
+        # and SIGSEGVs on mismatch. Trim outputs to match the turns
+        # ratio count when they disagree.
+        ops = spec.get("operatingPoints")
+        if isinstance(ops, list) and ops and isinstance(ops[0], dict):
+            for op in ops:
+                vouts = op.get("outputVoltages")
+                iouts = op.get("outputCurrents")
+                if isinstance(vouts, list) and len(vouts) > len(turns):
+                    op["outputVoltages"] = vouts[: len(turns)]
+                if isinstance(iouts, list) and len(iouts) > len(turns):
+                    op["outputCurrents"] = iouts[: len(turns)]
     lm = _extract_module_literal(tree, "MAGNETIZING_INDUCTANCE")
     if isinstance(lm, (int, float)) and lm > 0:
         # The fixtures' SPEC dicts ship a small `desiredInductance`
