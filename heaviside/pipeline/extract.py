@@ -1146,11 +1146,22 @@ def _winding_turns_by_name(
         elif winding_name == "b":
             aliased = "Secondary"
 
+    # Center-tapped rectifiers split the secondary into halves named
+    # "Secondary <N>a" and "Secondary <N>b" (PSFB, PSHB, push-pull centerTap).
+    # When the caller asks for "sec<N>" but only the split halves exist, fall
+    # back to the "a" half — the two halves are equal by construction and the
+    # turns-ratio downstream checks N_pri/N_sec_half against the spec.
+    aliased_split: str | None = None
+    if aliased is not None and aliased.startswith("Secondary"):
+        aliased_split = aliased + "a" if " " in aliased else "Secondary 0a"
+
     for w in fd:
         if not isinstance(w, Mapping):
             continue
         name = w.get("name")
-        if name == winding_name or (aliased is not None and name == aliased):
+        if (name == winding_name
+                or (aliased is not None and name == aliased)
+                or (aliased_split is not None and name == aliased_split)):
             N = w.get("numberTurns")
             if not isinstance(N, (int, float)) or N <= 0:
                 raise EnrichmentError(

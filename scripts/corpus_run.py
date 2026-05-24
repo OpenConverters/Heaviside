@@ -30,6 +30,7 @@ import ast
 import json
 import re
 import subprocess
+import os
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -288,7 +289,11 @@ def _render_report(rows: list[CorpusRow]) -> str:
 
 def main() -> int:
     rows: list[CorpusRow] = []
+    _filter = os.environ.get("CORPUS_TOPOLOGIES", "").strip()
+    _allowed = {t.strip() for t in _filter.split(",") if t.strip()} if _filter else None
     for topology, stem in TEST_FILE_BY_TOPOLOGY.items():
+        if _allowed is not None and topology not in _allowed:
+            continue
         test_path = REGRESSION_DIR / f"{stem}.py"
         if not test_path.exists():
             rows.append(CorpusRow(topology=topology, status="NO_SPEC",
