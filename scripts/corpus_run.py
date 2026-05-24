@@ -77,14 +77,45 @@ class CorpusRow:
     error: str = ""
 
 
+def _extract_module_literal(tree: ast.AST, target_name: str) -> Any:
+    """Return the literal value of a top-level ``<target_name> = ...``
+    assignment (Assign or AnnAssign). ``None`` if missing or non-literal."""
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            if not (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)):
+                continue
+            name = node.targets[0].id
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            if not isinstance(node.target, ast.Name) or node.value is None:
+                continue
+            name = node.target.id
+            value = node.value
+        else:
+            continue
+        if name != target_name:
+            continue
+        try:
+            return ast.literal_eval(value)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
 def _extract_spec(test_path: Path) -> dict | None:
     """Grab the first top-level ``SPEC`` / ``<NAME>_SPEC`` dict literal
     in the file via AST parsing — no module import, no side effects.
 
-    Handles both plain ``SPEC = {...}`` (``ast.Assign``) and the more
-    common ``SPEC: dict[str, object] = {...}`` form (``ast.AnnAssign``).
+    Also pulls neighbouring ``TURNS_RATIOS`` / ``MAGNETIZING_INDUCTANCE``
+    module constants and stamps them into the returned spec under
+    ``desiredTurnsRatios`` / ``desiredMagnetizingInductance`` (if not
+    already present). The regression decompose tests pass those values
+    to ``decompose_from_spec`` separately, so they're stored as module
+    constants outside the SPEC dict — corpus_run.py needs them folded in
+    so per-topology validators / MKF design dispatch see the full spec.
     """
     tree = ast.parse(test_path.read_text())
+    spec: dict | None = None
     for node in tree.body:
         if isinstance(node, ast.Assign):
             if not (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)):
@@ -101,10 +132,28 @@ def _extract_spec(test_path: Path) -> dict | None:
         if not (name == "SPEC" or name.endswith("_SPEC")):
             continue
         try:
-            return ast.literal_eval(value)
+            spec = ast.literal_eval(value)
+            break
         except (ValueError, TypeError):
             continue
-    return None
+    if spec is None:
+        return None
+
+    turns = _extract_module_literal(tree, "TURNS_RATIOS")
+    if isinstance(turns, list) and turns:
+        spec.setdefault("desiredTurnsRatios", turns)
+    lm = _extract_module_literal(tree, "MAGNETIZING_INDUCTANCE")
+    if isinstance(lm, (int, float)) and lm > 0:
+        # The fixtures' SPEC dicts ship a small `desiredInductance`
+        # (often 22 µH, holdover from a buck-style test). Real flyback /
+        # forward / push-pull / etc. designs use the much larger
+        # MAGNETIZING_INDUCTANCE constant (typically 0.5–10 mH) which
+        # the decompose tests pass separately. Overwrite — not setdefault
+        # — so the corpus design pass sees a realistic magnetising L.
+        spec["desiredMagnetizingInductance"] = float(lm)
+        spec["desiredInductance"] = float(lm)
+
+    return spec
 
 
 _VERDICT_RE = re.compile(
@@ -137,7 +186,7 @@ def _enrich_for_realism(spec: dict) -> dict:
     return out
 
 
-def _run_one(topology: str, spec: dict, timeout_s: float = 300.0) -> CorpusRow:
+def _run_one(topology: str, spec: dict, timeout_s: float = 600.0) -> CorpusRow:
     spec = _enrich_for_realism(spec)
     row = CorpusRow(topology=topology, status="CRASH")
     with tempfile.NamedTemporaryFile(
