@@ -40,7 +40,14 @@ SPEC: dict[str, object] = {
     ],
 }
 MAGNETIZING_INDUCTANCE = 1e-3
-TURNS_RATIOS = [4.0]
+# MKF push-pull turnsRatios layout (see PushPull.cpp):
+#   [0] pri-top:pri-bot (= 1 for symmetric centre-tapped primary)
+#   [1] pri:sec-top     (main step-down — used by t1 calc and deck)
+#   [2] pri:sec-bot     (other half, typically equal to [1])
+# Bridge design and SPICE deck both index turnsRatios[1] for the main
+# ratio; fewer entries cause an out-of-bounds read (UB) that trips the
+# "T1 cannot be larger than period/2" check with garbage numbers.
+TURNS_RATIOS = [1.0, 4.0, 4.0]
 
 
 def _maybe_update(path: Path, content: str) -> None:

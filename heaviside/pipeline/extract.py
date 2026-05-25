@@ -1218,14 +1218,37 @@ def _winding_turns_by_name(
         elif winding_name == "b":
             aliased = "Secondary"
 
-    # Center-tapped rectifiers split the secondary into halves named
-    # "Secondary <N>a" and "Secondary <N>b" (PSFB, PSHB, push-pull centerTap).
-    # When the caller asks for "sec<N>" but only the split halves exist, fall
-    # back to the "a" half — the two halves are equal by construction and the
-    # turns-ratio downstream checks N_pri/N_sec_half against the spec.
-    aliased_split: str | None = None
+    # Center-tapped rectifiers split the secondary into halves. Two
+    # naming conventions exist:
+    #   * "Secondary <N>a" / "Secondary <N>b" — PSFB, PSHB, push-pull
+    #     centerTap (single-character suffix).
+    #   * "Secondary <N> Half 1" / "Secondary <N> Half 2" — LLC, CLLLC
+    #     (resonant family; uses the verbose "Half" tag).
+    # When the caller asks for "sec<N>" but only split halves exist,
+    # fall back to the first half — the two halves are equal by
+    # construction and downstream checks compare N_pri/N_sec_half to
+    # the spec'd turns ratio.
+    aliased_splits: list[str] = []
     if aliased is not None and aliased.startswith("Secondary"):
-        aliased_split = aliased + "a" if " " in aliased else "Secondary 0a"
+        if " " in aliased:
+            aliased_splits.append(aliased + "a")
+            aliased_splits.append(aliased + " Half 1")
+        else:
+            aliased_splits.append("Secondary 0a")
+            aliased_splits.append("Secondary 0 Half 1")
+        # Some emitters (CLLLC) drop the trailing index when there's
+        # only one secondary, naming it bare "Secondary" — accept that
+        # too when the caller asked for sec0.
+        if aliased == "Secondary 0":
+            aliased_splits.append("Secondary")
+    # Primary-side splits — push-pull emits 'Primary Half 1'/'Half 2'
+    # for the centre-tapped primary. Aliases pri / pri_top / pri_bot
+    # map to "Primary" via the table above; accept the split halves
+    # as fallbacks too (they're equal by construction so the first
+    # half's turn count is the correct ratio reference).
+    if aliased == "Primary":
+        aliased_splits.append("Primary Half 1")
+        aliased_splits.append("Primary Halfa")
 
     for w in fd:
         if not isinstance(w, Mapping):
@@ -1233,7 +1256,7 @@ def _winding_turns_by_name(
         name = w.get("name")
         if (name == winding_name
                 or (aliased is not None and name == aliased)
-                or (aliased_split is not None and name == aliased_split)):
+                or (aliased_splits and name in aliased_splits)):
             N = w.get("numberTurns")
             if not isinstance(N, (int, float)) or N <= 0:
                 raise EnrichmentError(
