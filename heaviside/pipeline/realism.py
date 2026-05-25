@@ -560,6 +560,7 @@ def evaluate_tas(
     # analyst wins when both are present.
     eta = None
     eta_source = None
+    eta_invalid_reason: str | None = None
     if isinstance(sim, Mapping):
         for v in sim.values():
             if isinstance(v, Mapping):
@@ -571,20 +572,38 @@ def evaluate_tas(
         if eta is None:
             for v in sim.values():
                 if isinstance(v, Mapping):
-                    cand = (v.get("efficiency") or v.get("efficiency_pct")
-                            or v.get("efficiency_percent"))
+                    cand = v.get("efficiency")
                     if isinstance(cand, (int, float)):
                         eta = float(cand)
-                        if eta > 1.5:  # percent form
-                            eta /= 100.0
                         eta_source = "sim"
+                        # Refuse to interpret physically impossible
+                        # ratios (eta > 1, eta < 0). These come from
+                        # sim runners that mismeasure pin/pout —
+                        # typically when the deck has multiple input
+                        # rails (e.g. Vienna 3-phase) and only one is
+                        # probed. Per CLAUDE.md, don't paper over the
+                        # broken sim by clamping or /100-ing the
+                        # value; surface it as UNAVAILABLE so the
+                        # design isn't falsely failed.
+                        if not (0.0 < eta < 1.0):
+                            eta_invalid_reason = (
+                                f"sim reported efficiency={eta!r} (pin={v.get('pin')!r}, "
+                                f"pout={v.get('pout')!r}, total_losses={v.get('total_losses')!r}) "
+                                "— physically impossible (must be a ratio in (0,1)). "
+                                "Sim runner is mismeasuring pin or pout; cannot "
+                                "evaluate efficiency_sanity until that's fixed"
+                            )
+                            eta = None
                         break
     if eta is None:
-        checks.append(_unavailable(
-            "efficiency_sanity",
-            "no tas.simulation_results.*.efficiency{_analyst,} — "
-            "simulation/analyst agent has not run",
-        ))
+        if eta_invalid_reason is not None:
+            checks.append(_unavailable("efficiency_sanity", eta_invalid_reason))
+        else:
+            checks.append(_unavailable(
+                "efficiency_sanity",
+                "no tas.simulation_results.*.efficiency{_analyst,} — "
+                "simulation/analyst agent has not run",
+            ))
     else:
         result = check_efficiency_sanity(eta)
         checks.append(CheckResult(

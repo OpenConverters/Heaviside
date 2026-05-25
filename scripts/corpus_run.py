@@ -103,7 +103,18 @@ def _extract_module_literal(tree: ast.AST, target_name: str) -> Any:
     return None
 
 
-def _extract_spec(test_path: Path) -> dict | None:
+_NO_TRIM_TOPOLOGIES = frozenset({
+    # MKF semantics: these topologies expect N+1 output rails (1
+    # primary + N secondary) for N turns ratios. The fixture ships
+    # both rails; the generic "trim outputs to len(turns_ratios)"
+    # below would drop the primary and PyMKF would then throw
+    # 'requires at least 2 output voltages (primary + secondary)'.
+    "isolated_buck",
+    "isolated_buck_boost",
+})
+
+
+def _extract_spec(test_path: Path, topology: str | None = None) -> dict | None:
     """Grab the first top-level ``SPEC`` / ``<NAME>_SPEC`` dict literal
     in the file via AST parsing — no module import, no side effects.
 
@@ -147,16 +158,19 @@ def _extract_spec(test_path: Path) -> dict | None:
         # (the decompose tests render one secondary only). When MKF
         # designs the magnetic it expects N+1 windings ⇔ N turns ratios
         # and SIGSEGVs on mismatch. Trim outputs to match the turns
-        # ratio count when they disagree.
-        ops = spec.get("operatingPoints")
-        if isinstance(ops, list) and ops and isinstance(ops[0], dict):
-            for op in ops:
-                vouts = op.get("outputVoltages")
-                iouts = op.get("outputCurrents")
-                if isinstance(vouts, list) and len(vouts) > len(turns):
-                    op["outputVoltages"] = vouts[: len(turns)]
-                if isinstance(iouts, list) and len(iouts) > len(turns):
-                    op["outputCurrents"] = iouts[: len(turns)]
+        # ratio count when they disagree — except for iso-buck-family
+        # which deliberately ships primary + secondary rails with one
+        # turns ratio.
+        if topology not in _NO_TRIM_TOPOLOGIES:
+            ops = spec.get("operatingPoints")
+            if isinstance(ops, list) and ops and isinstance(ops[0], dict):
+                for op in ops:
+                    vouts = op.get("outputVoltages")
+                    iouts = op.get("outputCurrents")
+                    if isinstance(vouts, list) and len(vouts) > len(turns):
+                        op["outputVoltages"] = vouts[: len(turns)]
+                    if isinstance(iouts, list) and len(iouts) > len(turns):
+                        op["outputCurrents"] = iouts[: len(turns)]
     lm = _extract_module_literal(tree, "MAGNETIZING_INDUCTANCE")
     if isinstance(lm, (int, float)) and lm > 0:
         # MAGNETIZING_INDUCTANCE in the fixture is the *transformer's*
@@ -303,7 +317,7 @@ def main() -> int:
             rows.append(CorpusRow(topology=topology, status="NO_SPEC",
                                   error=f"{test_path} missing"))
             continue
-        spec = _extract_spec(test_path)
+        spec = _extract_spec(test_path, topology=topology)
         if spec is None:
             rows.append(CorpusRow(topology=topology, status="NO_SPEC",
                                   error=f"no SPEC dict literal in {test_path.name}"))

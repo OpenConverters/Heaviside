@@ -268,9 +268,33 @@ def cached_call(
     # couldn't later read back through json.load.
     canonical = _canonicalise(result, f"{fn_name}.result")
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(canonical, fh, sort_keys=True, separators=(",", ":"),
-                  ensure_ascii=False)
-    os.replace(tmp, path)
+    # Use a per-process unique tmp filename. The corpus runner fans
+    # out one subprocess per topology and several can land on the same
+    # cache key concurrently (e.g. shared CoreAdviser inputs). With a
+    # shared "<path>.json.tmp" name both processes would race:
+    # process A's os.replace(tmp, path) wins, then process B's
+    # os.replace fails with FileNotFoundError because A removed the
+    # shared tmp out from under it. PID + monotonic-ns suffix keeps
+    # the writes disjoint; os.replace is atomic so the last write
+    # still wins, and any "lost" canonical results are identical by
+    # construction.
+    import tempfile
+    fd, tmp_str = tempfile.mkstemp(
+        prefix=path.stem + ".",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(canonical, fh, sort_keys=True,
+                      separators=(",", ":"), ensure_ascii=False)
+        os.replace(tmp_str, path)
+    except Exception:
+        # Clean up the tmp file if the replace failed; suppress
+        # secondary errors so the original exception propagates.
+        try:
+            os.unlink(tmp_str)
+        except OSError:
+            pass
+        raise
     return canonical
