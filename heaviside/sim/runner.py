@@ -187,9 +187,20 @@ _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
         # Cuk-family: vout node is named vout_load_node (load is past
         # a 0V ammeter). Same convention used by sepic/zeta variants.
         ("v(vin_dc)",  "i(vin_sense)", "v(vout_load_node)",  "i(vout_sense)"),
+        # Forward-family (single-switch / two-switch / active-clamp):
+        # MUST probe i(vin) for iin rather than i(vpri_sense), because
+        # the reset return path runs D1 → Lpri → D2 → Vin (bypassing
+        # the primary sense source). Probing vpri_sense averages only
+        # the switch-conduction direction and overestimates pin by ~2×,
+        # falsely failing efficiency_sanity. i(vin) is the source's
+        # net branch current and correctly includes reset returns.
+        # Listed before the flyback-family candidate so forward decks
+        # match this entry first (they save both i(vin) and i(vpri_sense)).
+        ("v(vin_dc)",  "i(vin)",       "v(vout0)",            "i(vsec_sense0)"),
         # Flyback-family: secondary is named vout0, sec_sense0 for the
         # first output rail (multi-output isolated topologies tag with
-        # the rail index).
+        # the rail index). Flyback has no reset return path so
+        # vpri_sense is equivalent to vin and accepted as the iin source.
         ("v(vin_dc)",  "i(vpri_sense)","v(vout0)",            "i(vsec_sense0)"),
         # Boost-family fallback: use vl_sense for both iin and iout,
         # then override iout = vout / Rload after the .meas pass.
