@@ -96,6 +96,11 @@ _TESTBENCH_EXACT: frozenset[str] = frozenset({
     # Phase-shifted full bridge: same story, one synthetic body diode
     # per switch (DA pairs with SA, DB with SB, DC with SC, DD with SD).
     "DA", "DB", "DC", "DD",
+    # Active-clamp forward body diodes — synthetic anti-parallel diodes
+    # on S1 and S_clamp to model the parasitic MOSFET body diode that
+    # ngspice's SW1 model lacks. Both are intrinsic to the real MOSFETs
+    # and not separate BOM components.
+    "D_S1_body", "D_Sclamp_body",
 })
 
 # Refdeses dropped if they match any of these case-sensitive prefixes.
@@ -106,8 +111,10 @@ _TESTBENCH_PREFIXES: tuple[str, ...] = (
                                  # Rsn1_o1, Csn1_o1, Rsn2_o1, …)
     "Rdcr_",                     # DCR parasitic resistors on inductors
     "Rco_esr", "Rcs_esr", "Rcc_esr", "Rc1_esr", "R_cb_esr", "R_co_esr",  # cap ESR parasitics
+    "Rout",                      # output cap ESR per-output (Rout0_esr, Rout1_esr, …)
     "Resr_",                     # generic ESR (LLC etc.)
     "Rload", "R_load",           # load resistors (Rload, R_load_o1, …)
+    "Rpri_esr", "Rsec_esr",      # primary/secondary winding ESR parasitics
     "Rsec",                      # secondary winding DCR
     "Rlout", "R_lo_dcr",         # output choke DCR (two_switch_forward, AHB, …)
     "Rdc_supply_dummy", "Rbus_HV_dummy", "Rdc_sec", "Rphase_dummy",
