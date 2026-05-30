@@ -36,6 +36,7 @@ from heaviside.agents.llm_call import (
 from heaviside.pipeline.cre import (
     CREOutcome,
     CREState,
+    ReferenceClaims,
     ReferenceSpec,
 )
 
@@ -354,6 +355,63 @@ def _stage4_review(
 # ---------------------------------------------------------------------------
 
 
+def _stage2_7_extract_claims(state: CREState) -> CREState:
+    """Extract performance claims from the competitor agent's output."""
+    if not state.ref_spec:
+        return state
+    # Claims are already partially in ref_spec (efficiency_target)
+    # and in the competitor agent's 'performance' block.
+    # Re-call the competitor with a focused claims-extraction prompt.
+    if not state.pdf_text:
+        return state
+
+    try:
+        data = call_agent_json(
+            "competitor",
+            f"Extract ONLY the performance claims from this reference design PDF. "
+            f"Focus on: efficiency at various load points, output ripple, thermal rise, "
+            f"regulation specs, waveform descriptions.\n\n"
+            f"REFERENCE DESIGN PDF CONTENT:\n\n{state.pdf_text[:50_000]}",
+            max_tokens=4096,
+            max_retries=1,
+        )
+    except LLMCallError as exc:
+        state.diagnostics.append(f"claims extraction failed: {exc}")
+        return state
+
+    perf = data.get("performance", {})
+
+    # Build efficiency dict
+    eff_dict: dict[str, float] = {}
+    for entry in perf.get("efficiency_curve", []):
+        load = entry.get("load_pct", 0)
+        eff = entry.get("efficiency", 0)
+        if load and eff:
+            eff_dict[f"{load}%"] = eff
+    if not eff_dict and perf.get("efficiency"):
+        eff_dict["full_load"] = float(perf["efficiency"])
+
+    state.ref_claims = ReferenceClaims(
+        efficiency=eff_dict,
+        vout_ripple_mv=perf.get("output_ripple_mv"),
+        vin_ripple_mv=perf.get("input_ripple_mv"),
+        vout_measured=perf.get("vout_measured"),
+        thermal_rise_c=perf.get("thermal_rise_c"),
+        load_regulation_pct=perf.get("load_regulation_pct"),
+        line_regulation_pct=perf.get("line_regulation_pct"),
+        waveform_descriptions=perf.get("waveforms", []),
+    )
+    logger.info("CRE stage 2.7: extracted %d efficiency points, ripple=%s mV",
+                 len(eff_dict), state.ref_claims.vout_ripple_mv)
+    return state
+
+
+def _stage2_8_testbench(state: CREState) -> CREState:
+    """Run the virtual test bench: rebuild and simulate the reference converter."""
+    from heaviside.pipeline.cre_testbench import run_testbench
+    return run_testbench(state)
+
+
 def run_cre_pipeline(
     reference: str,
     *,
@@ -371,7 +429,12 @@ def run_cre_pipeline(
     state = _stage1_competitor(state)
     state = _stage2_reverse_engineer(state)
     state = _stage2_5_verify_mpns(state)
-    state = _stage3_design(state)
+    state = _stage2_7_extract_claims(state)
+    state = _stage2_8_testbench(state)
+
+    # Stage 3 (competing design) only if testbench passed or was skipped
+    if not state.passed and state.ref_spec and state.ref_spec.vout > 0:
+        state = _stage3_design(state)
     state = _stage4_review(state)
 
     outcome = CREOutcome.from_state(state)
