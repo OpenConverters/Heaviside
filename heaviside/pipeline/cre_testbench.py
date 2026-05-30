@@ -449,8 +449,8 @@ def run_testbench(state: CREState) -> CREState:
     for attempt in range(1, _MAX_TESTBENCH_LOOPS + 1):
         state.attempt = attempt
         try:
-            from heaviside.sim.runner import simulate_closed_loop, SimError
-            sim_result = simulate_closed_loop(netlist, spec.vout)
+            from heaviside.sim.runner import simulate_closed_loop
+            sim_result = simulate_closed_loop(netlist, vout_target=spec.vout)
         except Exception as exc:
             state.diagnostics.append(f"testbench: simulation failed (attempt {attempt}): {exc}")
             break
