@@ -364,17 +364,41 @@ def run_testbench(state: CREState) -> CREState:
     turns_ratios = [spec.turns_ratio] if spec.turns_ratio else [1.0]
     topology = spec.topology.lower().replace(" ", "_").replace("-", "_")
 
-    # Clamp Vin to valid range for the topology (MKF rejects D>1)
     vin_min = converter_json["inputVoltage"]["minimum"]
     vin_nom = converter_json["inputVoltage"]["nominal"]
     vin_max = converter_json["inputVoltage"]["maximum"]
     vout = converter_json["operatingPoints"][0]["outputVoltages"][0]
-    if "buck" in topology and vin_min > 0 and vin_min < vout * 1.5:
-        converter_json["inputVoltage"]["minimum"] = vout * 1.5
+
+    # Validate extracted voltages — surface problems, don't hide them
+    if vin_nom <= 0 and vin_max <= 0:
+        state.diagnostics.append(
+            f"testbench: extracted Vin_nom={vin_nom} and Vin_max={vin_max} — "
+            f"both zero or negative. Cannot simulate without valid input voltage."
+        )
+        return state
     if vin_nom <= 0:
-        converter_json["inputVoltage"]["nominal"] = vin_max * 0.8 if vin_max > 0 else vout * 2
+        converter_json["inputVoltage"]["nominal"] = vin_max * 0.8
+        state.diagnostics.append(
+            f"testbench: Vin_nom not extracted, using Vin_max×0.8 = "
+            f"{converter_json['inputVoltage']['nominal']:.1f}V"
+        )
     if vin_max <= 0:
-        converter_json["inputVoltage"]["maximum"] = converter_json["inputVoltage"]["nominal"] * 1.2
+        converter_json["inputVoltage"]["maximum"] = vin_nom * 1.2
+    if vin_min <= 0:
+        converter_json["inputVoltage"]["minimum"] = converter_json["inputVoltage"]["nominal"] * 0.8
+
+    # For buck: if Vin_min < Vout, simulate at Vin_nom instead
+    # (the real IC may support 100% duty but MKF does not model that)
+    if "buck" in topology:
+        vin_for_sim = converter_json["inputVoltage"]["minimum"]
+        if vin_for_sim < vout * 1.2:
+            converter_json["inputVoltage"]["minimum"] = converter_json["inputVoltage"]["nominal"]
+            state.diagnostics.append(
+                f"testbench: Vin_min={vin_min:.1f}V < Vout×1.2={vout*1.2:.1f}V — "
+                f"IC likely has 100% duty mode. Simulating at Vin_nom="
+                f"{converter_json['inputVoltage']['nominal']:.1f}V instead "
+                f"(MKF does not model pass-through mode)."
+            )
 
     topology = _normalize_topology(topology)
     if not topology:
