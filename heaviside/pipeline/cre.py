@@ -54,8 +54,7 @@ class ReferenceSpec:
             "diodeVoltageDrop": 0.7,
             "currentRippleRatio": 0.3,
         }
-        if self.efficiency_target is not None:
-            spec["efficiency"] = self.efficiency_target
+        spec["efficiency"] = self.efficiency_target or 0.9
         if self.turns_ratio is not None:
             spec["desiredTurnsRatios"] = [self.turns_ratio]
         spec.update(self.extra)

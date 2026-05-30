@@ -45,6 +45,61 @@ _ROLE_TO_STENCIL: dict[str, str] = {
     "controller": "U1",
 }
 
+_TOPOLOGY_ALIASES: dict[str, str] = {
+    "synchronous_buck": "buck",
+    "synchronous buck": "buck",
+    "sync_buck": "buck",
+    "dual_phase_buck": "buck",
+    "dual-phase buck": "buck",
+    "half_bridge_llc": "llc",
+    "half-bridge llc": "llc",
+    "half_bridge": "asymmetric_half_bridge",
+    "full_bridge": "phase_shifted_full_bridge",
+    "phase_shift_full_bridge": "phase_shifted_full_bridge",
+    "psfb": "phase_shifted_full_bridge",
+    "quasi_resonant_flyback": "flyback",
+    "qr_flyback": "flyback",
+    "active_clamp_flyback": "flyback",
+    "single_stage_pfc_flyback": "flyback",
+    "hybrid_flyback": "flyback",
+    "forward": "single_switch_forward",
+    "pfc": "power_factor_correction",
+    "totem_pole_pfc": "power_factor_correction",
+    "bridgeless_pfc": "power_factor_correction",
+    "dab": "dual_active_bridge",
+}
+
+
+def _normalize_topology(raw: str) -> str | None:
+    """Map an LLM-extracted topology name to a Heaviside canonical name."""
+    from heaviside.topologies import TOPOLOGIES
+    canonical = {t.name for t in TOPOLOGIES}
+
+    # Direct match
+    cleaned = raw.lower().replace(" ", "_").replace("-", "_")
+    if cleaned in canonical:
+        return cleaned
+
+    # Alias lookup
+    if cleaned in _TOPOLOGY_ALIASES:
+        return _TOPOLOGY_ALIASES[cleaned]
+
+    # Fuzzy: check if any canonical name is a substring
+    for name in canonical:
+        if name in cleaned or cleaned in name:
+            return name
+
+    # Multi-stage topologies (e.g. "pfc + llc"): try the last stage
+    if "+" in raw or "," in raw:
+        parts = re.split(r"[+,]", raw)
+        for part in reversed(parts):
+            result = _normalize_topology(part.strip())
+            if result:
+                return result
+
+    return None
+
+
 _STENCIL_COMPONENT_TYPES = {
     "S1": "mosfet", "S2": "mosfet",
     "D1": "diode", "D2": "diode",
@@ -308,6 +363,25 @@ def run_testbench(state: CREState) -> CREState:
     converter_json = spec.to_heaviside_spec()
     turns_ratios = [spec.turns_ratio] if spec.turns_ratio else [1.0]
     topology = spec.topology.lower().replace(" ", "_").replace("-", "_")
+
+    # Clamp Vin to valid range for the topology (MKF rejects D>1)
+    vin_min = converter_json["inputVoltage"]["minimum"]
+    vin_nom = converter_json["inputVoltage"]["nominal"]
+    vin_max = converter_json["inputVoltage"]["maximum"]
+    vout = converter_json["operatingPoints"][0]["outputVoltages"][0]
+    if "buck" in topology and vin_min > 0 and vin_min < vout * 1.5:
+        converter_json["inputVoltage"]["minimum"] = vout * 1.5
+    if vin_nom <= 0:
+        converter_json["inputVoltage"]["nominal"] = vin_max * 0.8 if vin_max > 0 else vout * 2
+    if vin_max <= 0:
+        converter_json["inputVoltage"]["maximum"] = converter_json["inputVoltage"]["nominal"] * 1.2
+
+    topology = _normalize_topology(topology)
+    if not topology:
+        state.diagnostics.append(
+            f"testbench: cannot map topology '{spec.topology}' to a Heaviside stencil"
+        )
+        return state
 
     try:
         from heaviside.decomposer.api import decompose_from_spec
