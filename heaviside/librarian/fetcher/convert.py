@@ -59,8 +59,39 @@ __all__ = [
     "convert_mouser_to_tas_igbt",
     "convert_mouser_to_tas_mosfet",
     "convert_mouser_to_tas_resistor",
+    "detect_category",
     "parse_si_value",
 ]
+
+
+def detect_category(product: dict[str, Any], distributor: str) -> str | None:
+    """Best-effort category detection from a distributor product payload.
+
+    Returns one of ``mosfets``, ``diodes``, ``igbts``, ``capacitors``,
+    ``resistors``, ``magnetics``, or ``None`` if unrecognised.
+    """
+    if distributor == "digikey":
+        family = (product.get("Category", {}).get("Value", "")
+                  + " " + product.get("Family", {}).get("Value", "")).lower()
+    elif distributor == "mouser":
+        family = (product.get("Category", "") + " "
+                  + product.get("ProductDetailUrl", "")).lower()
+    else:
+        family = ""
+
+    if any(k in family for k in ("mosfet", "transistor fet")):
+        return "mosfets"
+    if any(k in family for k in ("igbt",)):
+        return "igbts"
+    if any(k in family for k in ("diode", "rectifier", "schottky", "tvs", "zener")):
+        return "diodes"
+    if any(k in family for k in ("capacitor", "mlcc", "electrolytic", "film cap")):
+        return "capacitors"
+    if any(k in family for k in ("resistor", "sense resistor", "chip resistor")):
+        return "resistors"
+    if any(k in family for k in ("inductor", "transformer", "choke", "ferrite", "magnetic")):
+        return "magnetics"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +267,22 @@ def _extract_required_numeric(
             f"electrical.{field}",
             detail=f"unparseable value {raw!r}: {exc}",
         ) from exc
+
+
+def _extract_optional_numeric(
+    *,
+    params: dict[str, str],
+    candidates: tuple[tuple[str, str], ...],
+) -> float | None:
+    """Like _extract_required_numeric but returns None if the field is absent."""
+    looked = _lookup_param(params, candidates)
+    if looked is None:
+        return None
+    raw, _unit = looked
+    try:
+        return parse_si_value(raw)
+    except ValueError:
+        return None
 
 
 def _extract_gate_threshold(
@@ -791,12 +838,18 @@ def _build_diode_envelope(
     params: dict[str, str], distributor_block: dict[str, Any],
     datasheet_url: str, status: str,
 ) -> dict[str, Any]:
+    _DIODE_OPTIONAL = {"forwardVoltage", "reverseRecoveryCharge"}
     electrical: dict[str, Any] = {}
     for field, candidates in DIGIKEY_DIODE_PARAM_MAP.items():
-        electrical[field] = _extract_required_numeric(
-            source=source, mpn=mpn, params=params, field=field,
-            candidates=candidates,
-        )
+        if field in _DIODE_OPTIONAL:
+            val = _extract_optional_numeric(params=params, candidates=candidates)
+            if val is not None:
+                electrical[field] = val
+        else:
+            electrical[field] = _extract_required_numeric(
+                source=source, mpn=mpn, params=params, field=field,
+                candidates=candidates,
+            )
     technology = _resolve_semi_technology(description, mpn)
     subtype = _resolve_diode_subtype(description)
     case = params.get("Supplier Device Package") or params.get("Package / Case")
@@ -1254,12 +1307,12 @@ def _build_capacitor_envelope(
         source=source, mpn=mpn, params=params, field="ratedVoltage",
         candidates=DIGIKEY_CAPACITOR_PARAM_MAP["ratedVoltage"],
     )
-    esr = _extract_required_numeric(
-        source=source, mpn=mpn, params=params, field="esr",
+    esr = _extract_optional_numeric(
+        params=params,
         candidates=DIGIKEY_CAPACITOR_PARAM_MAP["esr"],
     )
-    ripple = _extract_required_numeric(
-        source=source, mpn=mpn, params=params, field="rippleCurrent",
+    ripple = _extract_optional_numeric(
+        params=params,
         candidates=DIGIKEY_CAPACITOR_PARAM_MAP["rippleCurrent"],
     )
     case = params.get("Package / Case") or params.get("Supplier Device Package")
@@ -1300,8 +1353,8 @@ def _build_capacitor_envelope(
                     "electrical": {
                         "capacitance": {"nominal": capacitance},
                         "ratedVoltage": rated_voltage,
-                        "esr": esr,
-                        "rippleCurrent": ripple,
+                        **({"esr": esr} if esr is not None else {}),
+                        **({"rippleCurrent": ripple} if ripple is not None else {}),
                     },
                     "mechanical": {
                         # CAS allows dimensions to be empty — when the
