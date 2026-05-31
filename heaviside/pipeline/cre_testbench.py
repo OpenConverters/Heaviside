@@ -525,8 +525,8 @@ def _get_controller_rdson(ref_bom: list[dict[str, Any]]) -> float | None:
         return None
 
     mpn_upper = ic_mpn.upper().strip()
-    # Also try base MPN without package suffix
-    base_upper = re.sub(r"[A-Z]{2,3}(-[A-Z0-9]+)?$", "", mpn_upper)
+    # Strip ordering suffix: LT7153SPAV#TRMPBF → LT7153SPAV → match LT7153SP
+    mpn_base = mpn_upper.split("#")[0].split("/")[0]
 
     with open(tas_path, "rb") as f:
         for raw_line in f:
@@ -537,7 +537,8 @@ def _get_controller_rdson(ref_bom: list[dict[str, Any]]) -> float | None:
             except json.JSONDecodeError:
                 continue
             name = (rec.get("name", "") or rec.get("partNumber", "")).upper().strip()
-            if name == mpn_upper or name == base_upper or mpn_upper in name:
+            if (name == mpn_upper or name == mpn_base
+                    or mpn_base.startswith(name) or name.startswith(mpn_base)):
                 elec = rec.get("electrical", {})
                 hs = elec.get("rdsOnHighSide")
                 ls = elec.get("rdsOnLowSide")
