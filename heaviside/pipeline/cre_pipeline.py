@@ -464,26 +464,48 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
     ic_datasheet_text = ""
     urls_to_try = [datasheet_url] if datasheet_url else []
 
-    # Also scan the eval board PDF text for IC datasheet URLs
+    # Scan eval board PDF text for embedded datasheet URLs
     if state.pdf_text:
         import re as _re2
-        pdf_urls_in_text = _re2.findall(
-            r"https?://[^\s\"<>]+\.pdf",
-            state.pdf_text,
-        )
-        for pu in pdf_urls_in_text:
+        for pu in _re2.findall(r"https?://[^\s\"<>]+\.pdf", state.pdf_text):
             if pu not in urls_to_try:
                 urls_to_try.append(pu)
 
-    # Try known datasheet CDN patterns (Mouser, manufacturer sites)
-    base_mpn = ic_mpn.rstrip("0123456789").rstrip("-")
+    # If we have the Digi-Key search result MPN, try Mouser CDN pattern.
+    # Mouser CDN: /datasheet/2/{mfr_id}/{mpn}-{doc_id}.pdf
+    # Common manufacturer IDs: 277=MPS, 609=ADI/LTC, 196=TI, 345=Infineon
+    _MOUSER_MFR_IDS = {
+        "monolithic power": "277", "mps": "277",
+        "analog devices": "609", "linear technology": "609",
+        "texas instruments": "196", "ti": "196",
+        "infineon": "345", "infineon technologies": "345",
+        "onsemi": "308", "on semiconductor": "308",
+        "microchip": "579", "renesas": "814",
+        "stmicroelectronics": "389", "st": "389",
+        "maxim": "700", "maxim integrated": "700",
+    }
+    # Get manufacturer name from the Digi-Key search result
     import re as _re2
     base_mpn = _re2.sub(r"[A-Z]{2,3}(-[A-Z0-9]+)?$", "", ic_mpn)
-    if base_mpn:
-        for pattern in [
-            f"https://www.mouser.com/datasheet/2/277/{base_mpn}-*.pdf",
-        ]:
-            pass  # Can't glob URLs; rely on Digi-Key + PDF text scan
+    try:
+        from heaviside.librarian.fetcher.auth import load_credentials as _lc2
+        from heaviside.librarian.fetcher.digikey import DigiKeyClient as _DKC2
+        _c2 = _lc2(require_digikey=True)
+        with _DKC2(_c2.digikey) as _cl2:
+            _sr = _cl2.search(base_mpn or ic_mpn, limit=1)
+            for _p in _sr.get("Products", [])[:1]:
+                mfr_name = (_p.get("Manufacturer", {}).get("Value", "") or "").lower()
+                search_mpn = _p.get("ManufacturerPartNumber", "")
+                for mfr_key, mfr_id in _MOUSER_MFR_IDS.items():
+                    if mfr_key in mfr_name:
+                        mouser_url = (
+                            f"https://www.mouser.com/datasheet/2/{mfr_id}/"
+                            f"{search_mpn}.pdf"
+                        )
+                        urls_to_try.append(mouser_url)
+                        break
+    except Exception:
+        pass
 
     for url in urls_to_try:
         if not url:
@@ -520,9 +542,13 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
             logger.debug("CRE stage 2.65: download from %s failed: %s", url[:60], exc)
 
     if not ic_datasheet_text:
+        urls_tried = [u[:80] for u in urls_to_try if u]
         state.diagnostics.append(
-            f"Rds_on not in eval board PDF and IC datasheet for {ic_mpn} "
-            f"not available — switch loss will use estimate"
+            f"Rds_on not in eval board PDF. IC datasheet for {ic_mpn} "
+            f"could not be downloaded (JS-protected or blocked). "
+            f"URLs tried: {urls_tried}. "
+            f"To fix: download the IC datasheet PDF manually, extract "
+            f"Rds_on (HS/LS), and add to TAS controllers."
         )
         return state
 

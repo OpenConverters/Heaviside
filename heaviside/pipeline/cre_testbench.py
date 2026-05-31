@@ -503,6 +503,52 @@ def _rewrite_ron(deck: str, new_ron: float) -> str:
     )
 
 
+def _get_controller_rdson(ref_bom: list[dict[str, Any]]) -> float | None:
+    """Look up the controller IC's Rds_on from TAS controllers database.
+
+    Returns average of HS+LS Rds_on in ohms, or None if not found.
+    """
+    import json
+    from pathlib import Path
+
+    tas_path = Path(__file__).resolve().parents[2] / "TAS" / "data" / "controllers.ndjson"
+    if not tas_path.exists():
+        return None
+
+    ic_mpn = None
+    for comp in ref_bom:
+        if comp.get("role") == "controller":
+            ic_mpn = comp.get("mpn", comp.get("part", ""))
+            if ic_mpn:
+                break
+    if not ic_mpn:
+        return None
+
+    mpn_upper = ic_mpn.upper().strip()
+    # Also try base MPN without package suffix
+    base_upper = re.sub(r"[A-Z]{2,3}(-[A-Z0-9]+)?$", "", mpn_upper)
+
+    with open(tas_path, "rb") as f:
+        for raw_line in f:
+            if not raw_line.strip():
+                continue
+            try:
+                rec = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            name = (rec.get("name", "") or rec.get("partNumber", "")).upper().strip()
+            if name == mpn_upper or name == base_upper or mpn_upper in name:
+                elec = rec.get("electrical", {})
+                hs = elec.get("rdsOnHighSide")
+                ls = elec.get("rdsOnLowSide")
+                if hs and isinstance(hs, (int, float)):
+                    avg = (hs + (ls or hs)) / 2
+                    logger.info("testbench: found controller %s Rds_on in TAS: "
+                                "HS=%.1fmΩ LS=%.1fmΩ", ic_mpn, hs*1000, (ls or hs)*1000)
+                    return avg
+    return None
+
+
 def _get_inductor_dcr(ref_bom: list[dict[str, Any]]) -> float | None:
     """Look up the main inductor's DCR from TAS magnetics database.
 
@@ -916,7 +962,7 @@ def run_testbench(state: CREState) -> CREState:
         or has_sync_role
         or pdf_says_sync
     )
-    # Use Rds_on from PDF/datasheet extraction — no heuristic fallback
+    # Use Rds_on from PDF/datasheet extraction or TAS controllers
     if spec.rdson_hs and spec.rdson_ls:
         ron = (spec.rdson_hs + spec.rdson_ls) / 2 / 1000  # mΩ → Ω
         logger.info("testbench: Rds_on from datasheet: HS=%.1fmΩ LS=%.1fmΩ",
@@ -925,11 +971,17 @@ def run_testbench(state: CREState) -> CREState:
         ron = spec.rdson_hs / 1000
         logger.info("testbench: Rds_on from datasheet: %.1fmΩ", spec.rdson_hs)
     else:
-        state.diagnostics.append(
-            "testbench: Rds_on not available — IC datasheet extraction "
-            "failed or was skipped. Cannot simulate accurate efficiency."
-        )
-        return state
+        # Try TAS controllers database as last resort
+        ron_from_tas = _get_controller_rdson(state.ref_bom)
+        if ron_from_tas:
+            ron = ron_from_tas
+            logger.info("testbench: Rds_on from TAS controllers: %.1fmΩ", ron * 1000)
+        else:
+            state.diagnostics.append(
+                "testbench: Rds_on not available — IC datasheet extraction "
+                "failed and controller not in TAS. Cannot simulate."
+            )
+            return state
 
     if is_sync and "buck" in topology:
         netlist_ideal = _convert_to_sync_buck(netlist_ideal, ron=ron)
