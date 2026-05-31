@@ -183,17 +183,24 @@ def parse_component_value(value_str: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def _convert_to_sync_buck(deck: str) -> str:
-    """Replace the freewheeling diode with a complementary sync rectifier switch.
+def _convert_to_sync_buck(deck: str, ron: float = 0.05) -> str:
+    """Replace SW1+diode with behavioral ideal switches.
 
-    MKF generates a non-sync buck (diode D1). For synchronous buck designs,
-    the diode drop (~0.65V) dominates losses. Replace D1 with a second
-    voltage-controlled switch driven by an inverted PWM signal.
+    The ngspice SW model has a VH hysteresis region that creates
+    artificial switching-transition losses proportional to I×V×fsw.
+    For high-current converters, this dominates over conduction loss
+    and produces unrealistic efficiency.
+
+    Fix: replace both SW1 and D1 with behavioral current sources
+    (B elements) that act as ideal controlled resistors:
+
+        I = V(across) / (gate_high ? RON : ROFF)
+
+    This gives instantaneous switching with zero transition loss,
+    matching real MOSFET behavior (where switching loss comes from
+    Coss/Ciss charge, not resistance transition).
     """
-    if "DIDEAL" not in deck:
-        return deck
-
-    # Extract the PULSE parameters from the existing PWM source
+    # Extract PULSE timing
     pulse_match = re.search(
         r"PULSE\((\s*[\d.eE+\-]+\s+[\d.eE+\-]+\s+[\d.eE+\-]+\s+"
         r"[\d.eE+\-]+\s+[\d.eE+\-]+\s+)([\d.eE+\-]+)(\s+)([\d.eE+\-]+)\s*\)",
@@ -204,45 +211,56 @@ def _convert_to_sync_buck(deck: str) -> str:
 
     ton = float(pulse_match.group(2))
     tper = float(pulse_match.group(4))
-    # Dead time: 2% of period to avoid shoot-through
     t_dead = tper * 0.02
     ton_sr = tper - ton - 2 * t_dead
     if ton_sr <= 0:
         return deck
 
-    # Extract D1 node connections: D1 <anode> <cathode> DIDEAL
+    # Extract S1 connections
+    s1_match = re.search(r"^S1\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+SW1",
+                         deck, re.MULTILINE)
+    if not s1_match:
+        return deck
+    hs_drain = s1_match.group(1)   # vin_dc
+    hs_source = s1_match.group(2)  # sw
+
+    # Extract D1 connections
     d1_match = re.search(r"^D1\s+(\S+)\s+(\S+)\s+DIDEAL", deck, re.MULTILINE)
     if not d1_match:
         return deck
-    anode = d1_match.group(1)   # 0 (ground)
-    cathode = d1_match.group(2) # sw node
+    anode = d1_match.group(1)   # 0
+    cathode = d1_match.group(2) # sw
 
-    # Build the sync rectifier: inverted PWM + SW2 + body diode
-    tr_tf = "1.000000e-08"
-    sr_block = (
-        f"\n* Synchronous Rectifier (replaces D1)\n"
-        f"Vpwm_sr pwm_sr_ctrl 0 PULSE(0 5 {ton + t_dead:.6e} "
-        f"{tr_tf} {tr_tf} {ton_sr:.6e} {tper:.6e})\n"
-        f"S2 {cathode} {anode} pwm_sr_ctrl 0 SW1\n"
-        f"Rsnub_s2 {cathode} {anode} 10000.000000\n"
-        f"Csnub_s2 {cathode} {anode} 1.000000e-10\n"
-        f"* Body diode — freewheels during dead time\n"
+    roff = 1e9
+
+    # The low-side gate is the complement of the high-side, derived
+    # dynamically so it tracks when simulate_closed_loop adjusts D.
+    switch_block = (
+        f"* Behavioral ideal switches (zero transition loss)\n"
+        f"Bs1 {hs_drain} {hs_source} "
+        f"I=V({hs_drain},{hs_source})/(V(pwm_ctrl)>2.5 ? {ron:.6e} : {roff:.1e})\n"
+        f"\n"
+        f"* Low-side: complement of high-side (auto-tracks duty changes)\n"
+        f"Bs2 {cathode} {anode} "
+        f"I=V({cathode},{anode})/(V(pwm_ctrl)<2.5 ? {ron:.6e} : {roff:.1e})\n"
+        f"\n"
+        f"* Body diode for dead-time freewheeling\n"
         f".model DBODY D(IS=1e-8 RS=0.005 N=1.5 BV=100)\n"
         f"Dbody2 {anode} {cathode} DBODY\n"
     )
 
-    # Remove the diode D1 and its model
+    # Remove SW model, S1, snubbers, diode, D1
+    deck = re.sub(r"^\* PWM High-side Switch\n", "", deck, flags=re.MULTILINE)
+    deck = re.sub(r"^\.model\s+SW1\s+SW\s+.*?\n", "", deck, flags=re.MULTILINE)
+    deck = re.sub(r"^S1\s+.*?\n", "", deck, flags=re.MULTILINE)
+    deck = re.sub(r"^Rsnub_s1\s+.*?\n", "", deck, flags=re.MULTILINE)
+    deck = re.sub(r"^Csnub_s1\s+.*?\n", "", deck, flags=re.MULTILINE)
     deck = re.sub(r"^\* Freewheeling Diode\n", "", deck, flags=re.MULTILINE)
     deck = re.sub(r"^\.model\s+DIDEAL\s+D\(.*?\)\n", "", deck, flags=re.MULTILINE)
-    deck = re.sub(r"^D1\s+.*?\n", sr_block, deck, flags=re.MULTILINE)
+    deck = re.sub(r"^D1\s+.*?\n", switch_block, deck, flags=re.MULTILINE)
 
-    # Add i(Vpwm_sr) to .save if present
-    deck = deck.replace(
-        "i(Vin_sense)",
-        "i(Vin_sense) i(Vpwm_sr)",
-    )
-
-    logger.info("testbench: converted to sync buck (D1 → S2)")
+    logger.info("testbench: converted to sync buck with behavioral switches "
+                "(RON=%.2fmΩ)", ron * 1000)
     return deck
 
 
@@ -465,7 +483,7 @@ def _estimate_ron(iout: float, fsw: float = 0) -> float:
     """
     if iout <= 0:
         return 0.05
-    ron_base = 0.15 / (iout ** 1.3)
+    ron_base = 0.2 / (iout ** 1.3)
     # SW model switching loss compensation: at high current × high freq,
     # the SW model's VH transition dissipates extra power. Subtract an
     # equivalent RON to keep total loss realistic.
@@ -533,13 +551,7 @@ def _rewrite_fsw(deck: str, new_fsw: float) -> str:
 # Comparison
 # ---------------------------------------------------------------------------
 
-# Ideal-switch SPICE sim vs real bench measurement gap is 5-15pp
-# for moderate current (1-10A). For high current (>10A), the ngspice
-# SW model adds artificial switching-transition losses that widen the
-# gap to 15-20pp.
-_EFFICIENCY_TOLERANCE_PP = 15.0
-_EFFICIENCY_TOLERANCE_HIGH_CURRENT_PP = 20.0
-_HIGH_CURRENT_THRESHOLD_A = 10.0
+_EFFICIENCY_TOLERANCE_PP = 3.0
 _VOUT_TOLERANCE_PCT = 5.0
 
 
@@ -562,21 +574,12 @@ def _build_comparison(
     claimed_vout = ref_claims.vout_measured or (ref_spec.vout if ref_spec else 0.0)
     vout_err = abs(sim_vout - claimed_vout) / claimed_vout * 100 if claimed_vout else 0.0
 
-    # High-current converters get wider tolerance (SW model limitation)
-    iout_spec = getattr(ref_spec, "iout", 0) if ref_spec else 0
-    eff_tol = (
-        _EFFICIENCY_TOLERANCE_HIGH_CURRENT_PP
-        if iout_spec > _HIGH_CURRENT_THRESHOLD_A
-        else _EFFICIENCY_TOLERANCE_PP
-    )
-
     mismatches: list[dict[str, Any]] = []
-    if claimed_eff and eff_delta > eff_tol:
+    if claimed_eff and eff_delta > _EFFICIENCY_TOLERANCE_PP:
         mismatches.append({
             "param": "efficiency",
             "sim": sim_eff, "claimed": claimed_eff,
             "delta_pp": eff_delta,
-            "tolerance_pp": eff_tol,
         })
     if claimed_vout and vout_err > _VOUT_TOLERANCE_PCT:
         mismatches.append({
@@ -838,13 +841,16 @@ def run_testbench(state: CREState) -> CREState:
         or has_sync_role
         or pdf_says_sync
     )
-    if is_sync and "buck" in topology:
-        netlist_ideal = _convert_to_sync_buck(netlist_ideal)
-
     # Scale switch RON to match the converter's current rating
     estimated_ron = _estimate_ron(spec.iout, spec.fsw)
-    netlist_ideal = _rewrite_ron(netlist_ideal, estimated_ron)
-    logger.info("testbench: RON scaled to %.2fmΩ for Iout=%.1fA fsw=%.0fkHz",
+
+    if is_sync and "buck" in topology:
+        netlist_ideal = _convert_to_sync_buck(netlist_ideal, ron=estimated_ron)
+    else:
+        netlist_ideal = _rewrite_ron(netlist_ideal, estimated_ron)
+        # Non-sync: also patch the SW1 model RON for the high-side switch
+
+    logger.info("testbench: RON=%.2fmΩ for Iout=%.1fA fsw=%.0fkHz",
                 estimated_ron * 1000, spec.iout, spec.fsw / 1000)
 
     phase1 = _simulate_netlist(
