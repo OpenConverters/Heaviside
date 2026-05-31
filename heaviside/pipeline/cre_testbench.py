@@ -256,6 +256,15 @@ def _rewrite_component_value(deck: str, refdes: str, new_value: float) -> str:
     return new_deck
 
 
+def _rewrite_rload(deck: str, new_rload: float) -> str:
+    """Replace the Rload value to set a different output current."""
+    pattern = re.compile(
+        r"^(\s*Rload\s+\S+\s+\S+\s+)([\d.eE+\-]+)(.*?)$",
+        re.MULTILINE | re.IGNORECASE,
+    )
+    return pattern.sub(rf"\g<1>{new_rload:.6f}\3", deck)
+
+
 def _rewrite_vin(deck: str, new_vin: float) -> str:
     """Replace the Vin DC source value."""
     pattern = re.compile(
@@ -392,6 +401,39 @@ def _diagnose_mismatch(comparison: SimComparison, state: CREState) -> str:
 # ---------------------------------------------------------------------------
 
 _MAX_TESTBENCH_LOOPS = 3
+
+
+def _build_load_points(
+    claims: ReferenceClaims,
+    spec: Any,
+) -> list[dict[str, Any]]:
+    """Build a list of load points to simulate from efficiency claims.
+
+    Each entry has: label, iout, efficiency (claimed).
+    """
+    points: list[dict[str, Any]] = []
+    iout_max = spec.iout if spec else 1.0
+
+    for label, eff in (claims.efficiency or {}).items():
+        # Parse load percentage from label
+        pct_match = re.search(r"([\d.]+)\s*%", label)
+        if pct_match:
+            pct = float(pct_match.group(1)) / 100.0
+            iout = iout_max * pct
+        elif "full" in label.lower():
+            iout = iout_max
+        else:
+            iout = iout_max
+        points.append({"label": label, "iout": max(iout, 0.01), "efficiency": eff})
+
+    if not points and iout_max > 0:
+        points.append({
+            "label": "full_load",
+            "iout": iout_max,
+            "efficiency": claims.efficiency.get("full_load", 0),
+        })
+
+    return sorted(points, key=lambda p: p["iout"])
 
 
 def _build_converter_json(state: CREState) -> tuple[dict[str, Any], str] | None:
@@ -621,43 +663,59 @@ def run_testbench(state: CREState) -> CREState:
 
     state.netlist = netlist_bom
     state.tas = tas
-    state.attempt = 2
 
-    phase2 = _simulate_netlist(
-        netlist_bom, spec.vout, state.ref_claims, spec, "bom",
-    )
-    if phase2 is None:
-        state.diagnostics.append("testbench: BOM simulation failed")
-        if comp_ideal.passed:
-            state.passed = True
-        _learn_from_testbench(state)
-        return state
+    # ------------------------------------------------------------------
+    # Phase 2: Simulate at each claimed efficiency operating point
+    # ------------------------------------------------------------------
+    load_points = _build_load_points(state.ref_claims, spec)
+    all_bom_passed = True
 
-    sim_bom, comp_bom = phase2
-    state.comparisons.append(comp_bom)
-    state.sim_result = {
-        "phase": "bom",
-        "vin": sim_bom.vin, "iin": sim_bom.iin,
-        "vout": sim_bom.vout, "iout": sim_bom.iout,
-        "pin": sim_bom.pin, "pout": sim_bom.pout,
-        "efficiency": sim_bom.efficiency,
-        "total_losses": sim_bom.total_losses,
-    }
+    for lp in load_points:
+        label = lp["label"]
+        iout = lp["iout"]
+        claimed_eff = lp["efficiency"]
+        rload = spec.vout / iout if iout > 0 else spec.vout / spec.iout
 
-    if comp_bom.passed:
+        nl_lp = _rewrite_rload(netlist_bom, rload)
+        lp_claims = ReferenceClaims(
+            efficiency={label: claimed_eff} if claimed_eff else {},
+            vout_measured=state.ref_claims.vout_measured,
+        )
+        result = _simulate_netlist(nl_lp, spec.vout, lp_claims, spec, f"bom@{label}")
+        if result is None:
+            state.diagnostics.append(f"testbench: BOM sim failed at {label}")
+            all_bom_passed = False
+            continue
+
+        sim_lp, comp_lp = result
+        state.comparisons.append(comp_lp)
+        state.sim_result = {
+            "phase": f"bom@{label}",
+            "vin": sim_lp.vin, "iout": sim_lp.iout,
+            "vout": sim_lp.vout,
+            "efficiency": sim_lp.efficiency,
+            "total_losses": sim_lp.total_losses,
+        }
+        if not comp_lp.passed:
+            all_bom_passed = False
+
+    if all_bom_passed and load_points:
         state.passed = True
+    elif not load_points:
+        # No claimed load points — fall back to single full-load sim
+        phase2 = _simulate_netlist(
+            netlist_bom, spec.vout, state.ref_claims, spec, "bom",
+        )
+        if phase2:
+            sim_bom, comp_bom = phase2
+            state.comparisons.append(comp_bom)
+            state.passed = comp_bom.passed
     else:
-        # Diagnose BOM-specific mismatch
-        diagnosis = _diagnose_mismatch(comp_bom, state)
-        comp_bom.diagnosis = diagnosis
-        state.diagnostics.append(f"testbench diagnosis: {diagnosis[:200]}")
-        state.lessons.append({
-            "attempt": 2,
-            "ideal_efficiency": sim_ideal.efficiency,
-            "bom_efficiency": sim_bom.efficiency,
-            "mismatches": comp_bom.mismatches,
-            "diagnosis": diagnosis[:200],
-        })
+        failed = [c for c in state.comparisons[1:] if not c.passed]
+        if failed:
+            diagnosis = _diagnose_mismatch(failed[0], state)
+            failed[0].diagnosis = diagnosis
+            state.diagnostics.append(f"testbench diagnosis: {diagnosis[:200]}")
 
     _learn_from_testbench(state)
     return state
