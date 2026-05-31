@@ -682,7 +682,7 @@ def _stage2_7_extract_claims(state: CREState) -> CREState:
         state.diagnostics.append(f"claims extraction failed: {exc}")
         return state
 
-    perf = data.get("performance", {})
+    perf = data.get("performance") or {}
 
     # Build efficiency dict
     eff_dict: dict[str, float] = {}
