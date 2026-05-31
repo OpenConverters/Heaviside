@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import time
 import traceback
 from pathlib import Path
+
+if not os.environ.get("MOONSHOT_API_KEY"):
+    os.environ["MOONSHOT_API_KEY"] = "sk-viKudfa58QW8GjUm8aYxkfv5hmz0i5Y3HRdMKKpphPUupleQ"
 
 # Ensure heaviside is importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

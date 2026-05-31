@@ -121,11 +121,11 @@ def _patch_spice_defaults(netlist: str, cfg: dict[str, Any]) -> str:
         rf"\g<1>{diode_is:.6e}\g<2>{diode_rs:.6e}",
         netlist, flags=re.IGNORECASE,
     )
-    # Add realistic RON to SW models (ngspice default is 1Ω)
+    # Add realistic RON and reduced VH to SW models
     sw_ron = cfg.get("switchRON", 0.05)
     netlist = re.sub(
-        r"(\.model\s+SW\d+\s+SW\s+VT=[\d.]+\s+VH=[\d.]+)",
-        rf"\1 RON={sw_ron:.6f}",
+        r"(\.model\s+SW\d+\s+SW\s+)VT=[\d.]+\s+VH=[\d.]+",
+        rf"\1VT=2.500000 VH=0.100000 RON={sw_ron:.6f}",
         netlist, flags=re.IGNORECASE,
     )
     return netlist
