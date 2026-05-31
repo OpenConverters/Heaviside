@@ -992,20 +992,22 @@ def run_testbench(state: CREState) -> CREState:
         )
         return state
 
-    # Detect multi-phase: each phase handles Iout/N_phases
+    # Detect multi-phase from topology string OR PDF text
     raw_topo_full = spec.topology.lower()
+    pdf_lower = (state.pdf_text or "").lower()
     n_phases = 1
-    if "dual" in raw_topo_full or "2-phase" in raw_topo_full:
+    if any(k in raw_topo_full for k in ("dual", "2-phase", "two-phase")):
         n_phases = 2
-    elif "polyphase" in raw_topo_full or "poly" in raw_topo_full:
-        # Check PDF text for phase count
-        pdf_lower = (state.pdf_text or "").lower()
-        if "dual-phase" in pdf_lower or "2x" in pdf_lower or "two-phase" in pdf_lower:
-            n_phases = 2
-        elif "4-phase" in pdf_lower or "four-phase" in pdf_lower:
-            n_phases = 4
-        else:
-            n_phases = 2  # polyphase default
+    elif any(k in raw_topo_full for k in ("polyphase", "poly", "multi")):
+        n_phases = 2
+    # Also check PDF text (LLM may not include phase info in topology)
+    if n_phases == 1 and any(k in pdf_lower for k in (
+        "dual-phase", "dual phase", "2-phase", "two-phase",
+        "polyphase", "2xlt", "2×lt",
+    )):
+        n_phases = 2
+    if n_phases == 1 and ("4-phase" in pdf_lower or "four-phase" in pdf_lower):
+        n_phases = 4
 
     if n_phases > 1:
         # Rewrite Rload to simulate one phase at Iout/N
