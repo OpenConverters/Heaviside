@@ -541,14 +541,69 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
         except Exception as exc:
             logger.debug("CRE stage 2.65: download from %s failed: %s", url[:60], exc)
 
+    # Last resort: web search for a direct PDF link
+    if not ic_datasheet_text:
+        import re as _re3
+        base_search = _re3.sub(r"[A-Z]{2,3}(-[A-Z0-9]+)?$", "", ic_mpn) or ic_mpn
+        try:
+            import httpx as _httpx2
+            import urllib.parse as _up
+            ddg_resp = _httpx2.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": f"{base_search} datasheet pdf"},
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=15, follow_redirects=True,
+            )
+            if ddg_resp.status_code == 200:
+                import re as _re4
+                for uddg in _re4.findall(r"uddg=([^&\"]+)", ddg_resp.text):
+                    decoded = _up.unquote(uddg)
+                    if decoded.endswith(".pdf") and decoded not in urls_to_try:
+                        urls_to_try.append(decoded)
+                logger.info("CRE stage 2.65: web search found %d PDF URLs",
+                             sum(1 for u in urls_to_try if u.endswith(".pdf")))
+        except Exception as exc:
+            logger.debug("CRE stage 2.65: web search failed: %s", exc)
+
+        # Retry download with newly found URLs
+        for url in urls_to_try:
+            if not url or ic_datasheet_text:
+                continue
+            try:
+                import httpx
+                resp = httpx.get(
+                    url, timeout=30.0, follow_redirects=True,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                ct = resp.headers.get("content-type", "")
+                if resp.status_code == 200 and (
+                    "pdf" in ct or len(resp.content) > 50_000
+                ):
+                    import tempfile
+                    from heaviside.pipeline.pdf_extract import extract_pdf_text
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+                        f.write(resp.content)
+                        tmp_path = f.name
+                    from pathlib import Path
+                    import os
+                    try:
+                        ic_datasheet_text = extract_pdf_text(Path(tmp_path))
+                    finally:
+                        os.unlink(tmp_path)
+                    if ic_datasheet_text:
+                        logger.info(
+                            "CRE stage 2.65: downloaded IC datasheet via web search "
+                            "(%d chars) from %s", len(ic_datasheet_text), url[:60],
+                        )
+            except Exception:
+                pass
+
     if not ic_datasheet_text:
         urls_tried = [u[:80] for u in urls_to_try if u]
         state.diagnostics.append(
             f"Rds_on not in eval board PDF. IC datasheet for {ic_mpn} "
-            f"could not be downloaded (JS-protected or blocked). "
-            f"URLs tried: {urls_tried}. "
-            f"To fix: download the IC datasheet PDF manually, extract "
-            f"Rds_on (HS/LS), and add to TAS controllers."
+            f"could not be downloaded. URLs tried: {urls_tried}. "
+            f"Add Rds_on to TAS controllers for this IC."
         )
         return state
 
