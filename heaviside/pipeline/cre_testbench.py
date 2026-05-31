@@ -503,6 +503,21 @@ def _rewrite_ron(deck: str, new_ron: float) -> str:
     )
 
 
+def _inject_inductor_dcr(deck: str, dcr: float) -> str:
+    """Add a series resistance to L1 to model inductor DCR."""
+    # Insert Rdcr between sw node and l_in (where Vl_sense already is)
+    # L1 connects l_in to vout. Add Rdcr between l_in and a new node.
+    deck = re.sub(
+        r"^(L1\s+)l_in(\s+vout\s+)",
+        rf"\1l_dcr\2",
+        deck, flags=re.MULTILINE,
+    )
+    # Add the DCR resistor
+    dcr_line = f"Rdcr l_in l_dcr {dcr:.6e}\n"
+    deck = deck.replace("L1 l_dcr", dcr_line + "L1 l_dcr")
+    return deck
+
+
 def _rewrite_rload(deck: str, new_rload: float) -> str:
     """Replace the Rload value to set a different output current."""
     pattern = re.compile(
@@ -850,8 +865,16 @@ def run_testbench(state: CREState) -> CREState:
         netlist_ideal = _rewrite_ron(netlist_ideal, estimated_ron)
         # Non-sync: also patch the SW1 model RON for the high-side switch
 
-    logger.info("testbench: RON=%.2fmΩ for Iout=%.1fA fsw=%.0fkHz",
-                estimated_ron * 1000, spec.iout, spec.fsw / 1000)
+    # Inject inductor DCR (estimated from rated current)
+    # DCR scales inversely with current rating; for sub-1V converters
+    # designers use premium low-DCR parts, so scale with Vout too
+    vout_factor = min(spec.vout / 3.3, 1.0)  # reduces DCR for low Vout
+    estimated_dcr = 0.075 * vout_factor / max(spec.iout, 0.5)
+    netlist_ideal = _inject_inductor_dcr(netlist_ideal, estimated_dcr)
+
+    logger.info("testbench: RON=%.2fmΩ DCR=%.1fmΩ for Iout=%.1fA fsw=%.0fkHz",
+                estimated_ron * 1000, estimated_dcr * 1000,
+                spec.iout, spec.fsw / 1000)
 
     phase1 = _simulate_netlist(
         netlist_ideal, spec.vout, state.ref_claims, spec, "ideal",
