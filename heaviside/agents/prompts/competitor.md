@@ -22,7 +22,7 @@ For the reference design, extract:
 
 | Field | Example | Notes |
 |---|---|---|
-| Input voltage range | 85–265 Vac | Min/max required |
+| Input voltage range | 85–265 Vac | Min/nom/max required |
 | Output voltage(s) | 20V, 5V | Per output rail |
 | Output current(s) | 3.25A, 1A | Per output rail |
 | Power level | 65W | Total output power |
@@ -47,6 +47,7 @@ Reply with a single fenced JSON block:
   "specs": {
     "input_type": "ac",
     "vin_min": 85,
+    "vin_nom": 120,
     "vin_max": 265,
     "outputs": [
       {"voltage": 20.0, "current": 3.25, "power": 65.0}

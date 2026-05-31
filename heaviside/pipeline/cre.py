@@ -156,7 +156,7 @@ class CREOutcome:
             comparisons=tuple(state.comparisons),
             design_outcome=state.design_outcome,
             review_verdicts=tuple(state.review_verdicts),
-            lessons=list(state.lessons),
+            lessons=tuple(state.lessons),
             passed=state.passed,
             diagnostics=tuple(state.diagnostics),
         )

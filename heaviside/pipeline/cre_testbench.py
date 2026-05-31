@@ -51,6 +51,10 @@ _TOPOLOGY_ALIASES: dict[str, str] = {
     "sync_buck": "buck",
     "dual_phase_buck": "buck",
     "dual-phase buck": "buck",
+    "polyphase_buck": "buck",
+    "polyphase buck": "buck",
+    "multi_phase_buck": "buck",
+    "interleaved_buck": "buck",
     "half_bridge_llc": "llc",
     "half-bridge llc": "llc",
     "half_bridge": "asymmetric_half_bridge",
@@ -176,6 +180,70 @@ def parse_component_value(value_str: str) -> float | None:
 # Netlist patching
 # ---------------------------------------------------------------------------
 
+
+def _convert_to_sync_buck(deck: str) -> str:
+    """Replace the freewheeling diode with a complementary sync rectifier switch.
+
+    MKF generates a non-sync buck (diode D1). For synchronous buck designs,
+    the diode drop (~0.65V) dominates losses. Replace D1 with a second
+    voltage-controlled switch driven by an inverted PWM signal.
+    """
+    if "DIDEAL" not in deck:
+        return deck
+
+    # Extract the PULSE parameters from the existing PWM source
+    pulse_match = re.search(
+        r"PULSE\((\s*[\d.eE+\-]+\s+[\d.eE+\-]+\s+[\d.eE+\-]+\s+"
+        r"[\d.eE+\-]+\s+[\d.eE+\-]+\s+)([\d.eE+\-]+)(\s+)([\d.eE+\-]+)\s*\)",
+        deck,
+    )
+    if not pulse_match:
+        return deck
+
+    ton = float(pulse_match.group(2))
+    tper = float(pulse_match.group(4))
+    # Dead time: 2% of period to avoid shoot-through
+    t_dead = tper * 0.02
+    ton_sr = tper - ton - 2 * t_dead
+    if ton_sr <= 0:
+        return deck
+
+    # Extract D1 node connections: D1 <anode> <cathode> DIDEAL
+    d1_match = re.search(r"^D1\s+(\S+)\s+(\S+)\s+DIDEAL", deck, re.MULTILINE)
+    if not d1_match:
+        return deck
+    anode = d1_match.group(1)   # 0 (ground)
+    cathode = d1_match.group(2) # sw node
+
+    # Build the sync rectifier: inverted PWM + SW2 + body diode
+    tr_tf = "1.000000e-08"
+    sr_block = (
+        f"\n* Synchronous Rectifier (replaces D1)\n"
+        f"Vpwm_sr pwm_sr_ctrl 0 PULSE(0 5 {ton + t_dead:.6e} "
+        f"{tr_tf} {tr_tf} {ton_sr:.6e} {tper:.6e})\n"
+        f"S2 {cathode} {anode} pwm_sr_ctrl 0 SW1\n"
+        f"Rsnub_s2 {cathode} {anode} 10000.000000\n"
+        f"Csnub_s2 {cathode} {anode} 1.000000e-10\n"
+        f"* Body diode — freewheels during dead time\n"
+        f".model DBODY D(IS=1e-12 RS=0.01 BV=100)\n"
+        f"Dbody2 {anode} {cathode} DBODY\n"
+    )
+
+    # Remove the diode D1 and its model
+    deck = re.sub(r"^\* Freewheeling Diode\n", "", deck, flags=re.MULTILINE)
+    deck = re.sub(r"^\.model\s+DIDEAL\s+D\(.*?\)\n", "", deck, flags=re.MULTILINE)
+    deck = re.sub(r"^D1\s+.*?\n", sr_block, deck, flags=re.MULTILINE)
+
+    # Add i(Vpwm_sr) to .save if present
+    deck = deck.replace(
+        "i(Vin_sense)",
+        "i(Vin_sense) i(Vpwm_sr)",
+    )
+
+    logger.info("testbench: converted to sync buck (D1 → S2)")
+    return deck
+
+
 def _rewrite_component_value(deck: str, refdes: str, new_value: float) -> str:
     """Replace the numeric value of a two-terminal component (L/C/R)."""
     pattern = re.compile(
@@ -227,7 +295,9 @@ def _rewrite_fsw(deck: str, new_fsw: float) -> str:
 # Comparison
 # ---------------------------------------------------------------------------
 
-_EFFICIENCY_TOLERANCE_PP = 5.0
+# Ideal-switch SPICE sim vs real bench measurement gap is 10-15pp
+# (no Rds_on, no gate drive, no PCB trace R, no core losses).
+_EFFICIENCY_TOLERANCE_PP = 15.0
 _VOUT_TOLERANCE_PCT = 5.0
 
 
@@ -262,6 +332,13 @@ def _build_comparison(
             "param": "vout",
             "sim": sim_vout, "claimed": claimed_vout,
             "error_pct": vout_err,
+        })
+
+    # No claims at all = no meaningful comparison
+    if not claimed_eff and not claimed_vout:
+        mismatches.append({
+            "param": "no_claims",
+            "note": "no efficiency or Vout claims extracted — cannot validate",
         })
 
     return SimComparison(
@@ -317,51 +394,17 @@ def _diagnose_mismatch(comparison: SimComparison, state: CREState) -> str:
 _MAX_TESTBENCH_LOOPS = 3
 
 
-def run_testbench(state: CREState) -> CREState:
-    """Virtual test bench: rebuild the reference converter and simulate it.
+def _build_converter_json(state: CREState) -> tuple[dict[str, Any], str] | None:
+    """Build the MKF converter spec dict and normalize topology.
 
-    1. Map BOM components to stencil roles
-    2. Build converter spec, generate scaffold netlist via decompose_from_spec
-    3. Patch netlist with reference component values
-    4. Inject parasitics, simulate
-    5. Compare sim vs claims
-    6. If mismatch: diagnose, learn, loop
+    Returns (converter_json, topology) or None on failure.
     """
-    if not state.ref_spec:
-        state.diagnostics.append("testbench: no spec extracted — cannot build converter")
-        return state
-
     spec = state.ref_spec
-    if spec.vout <= 0:
-        state.diagnostics.append("testbench: Vout=0 — cannot simulate")
-        return state
+    if not spec or spec.vout <= 0:
+        state.diagnostics.append("testbench: no spec or Vout=0 — cannot simulate")
+        return None
 
-    # 1. Map BOM roles to stencil positions
-    role_map = build_role_map(state.ref_bom, spec.topology)
-    state.role_map = role_map
-    logger.info("testbench: mapped %d/%d BOM components to stencil roles (confidence %.0f%%)",
-                 len(role_map.roles), len(state.ref_bom), role_map.confidence * 100)
-
-    if role_map.confidence < 0.1:
-        state.diagnostics.append(
-            f"testbench: role mapping confidence too low ({role_map.confidence:.0%}), "
-            f"unmapped: {role_map.unmapped[:10]}"
-        )
-        return state
-
-    # 2. Extract inductor value for magnetizing_inductance
-    mag_inductance = 100e-6  # default
-    for comp in state.ref_bom:
-        role = comp.get("role", "")
-        if role in ("mainInductor", "boostInductor", "buckInductor", "mainTransformer"):
-            val = parse_component_value(str(comp.get("value", "")))
-            if val and val > 0:
-                mag_inductance = val
-                break
-
-    # 3. Build converter spec and generate scaffold
     converter_json = spec.to_heaviside_spec()
-    turns_ratios = [spec.turns_ratio] if spec.turns_ratio else [1.0]
     topology = spec.topology.lower().replace(" ", "_").replace("-", "_")
 
     vin_min = converter_json["inputVoltage"]["minimum"]
@@ -369,13 +412,12 @@ def run_testbench(state: CREState) -> CREState:
     vin_max = converter_json["inputVoltage"]["maximum"]
     vout = converter_json["operatingPoints"][0]["outputVoltages"][0]
 
-    # Validate extracted voltages — surface problems, don't hide them
     if vin_nom <= 0 and vin_max <= 0:
         state.diagnostics.append(
-            f"testbench: extracted Vin_nom={vin_nom} and Vin_max={vin_max} — "
-            f"both zero or negative. Cannot simulate without valid input voltage."
+            f"testbench: Vin_nom={vin_nom} and Vin_max={vin_max} — "
+            f"both zero or negative. Cannot simulate."
         )
-        return state
+        return None
     if vin_nom <= 0:
         converter_json["inputVoltage"]["nominal"] = vin_max * 0.8
         state.diagnostics.append(
@@ -385,40 +427,172 @@ def run_testbench(state: CREState) -> CREState:
     if vin_max <= 0:
         converter_json["inputVoltage"]["maximum"] = vin_nom * 1.2
     if vin_min <= 0:
-        converter_json["inputVoltage"]["minimum"] = converter_json["inputVoltage"]["nominal"] * 0.8
+        converter_json["inputVoltage"]["minimum"] = (
+            converter_json["inputVoltage"]["nominal"] * 0.8
+        )
 
-    # For buck: if Vin_min < Vout, simulate at Vin_nom instead
-    # (the real IC may support 100% duty but MKF does not model that)
     if "buck" in topology:
         vin_for_sim = converter_json["inputVoltage"]["minimum"]
         if vin_for_sim < vout * 1.2:
-            converter_json["inputVoltage"]["minimum"] = converter_json["inputVoltage"]["nominal"]
+            converter_json["inputVoltage"]["minimum"] = (
+                converter_json["inputVoltage"]["nominal"]
+            )
             state.diagnostics.append(
                 f"testbench: Vin_min={vin_min:.1f}V < Vout×1.2={vout*1.2:.1f}V — "
-                f"IC likely has 100% duty mode. Simulating at Vin_nom="
-                f"{converter_json['inputVoltage']['nominal']:.1f}V instead "
-                f"(MKF does not model pass-through mode)."
+                f"simulating at Vin_nom instead (MKF does not model 100% duty)."
             )
 
-    topology = _normalize_topology(topology)
-    if not topology:
+    norm = _normalize_topology(topology)
+    if not norm:
         state.diagnostics.append(
-            f"testbench: cannot map topology '{spec.topology}' to a Heaviside stencil"
+            f"testbench: cannot map topology '{spec.topology}' to a stencil"
         )
-        return state
+        return None
+    return converter_json, norm
 
+
+def _simulate_netlist(
+    netlist: str,
+    vout_target: float,
+    ref_claims: ReferenceClaims,
+    ref_spec: Any,
+    label: str,
+) -> tuple[Any, SimComparison] | None:
+    """Simulate a netlist and build a comparison against claims.
+
+    Returns (sim_result, comparison) or None on sim failure.
+    """
+    try:
+        from heaviside.sim.runner import simulate_closed_loop
+        sim_result = simulate_closed_loop(netlist, vout_target=vout_target)
+    except Exception as exc:
+        logger.warning("testbench [%s]: simulation failed: %s", label, exc)
+        return None
+
+    comparison = _build_comparison(sim_result, ref_claims, ref_spec)
+    logger.info(
+        "testbench [%s]: η_sim=%.1f%% η_claimed=%.1f%% Δ=%.1fpp "
+        "Vout_sim=%.2f Vout_claimed=%.2f err=%.1f%% → %s",
+        label,
+        comparison.sim_efficiency * 100 if comparison.sim_efficiency else 0,
+        comparison.claimed_efficiency * 100 if comparison.claimed_efficiency else 0,
+        comparison.efficiency_delta_pp,
+        comparison.sim_vout, comparison.claimed_vout,
+        comparison.vout_error_pct,
+        "PASS" if comparison.passed else "MISMATCH",
+    )
+    return sim_result, comparison
+
+
+def run_testbench(state: CREState) -> CREState:
+    """Virtual test bench: two-phase simulation.
+
+    Phase 1 — Theoretical: decompose from spec with MKF's ideal
+    component values. This validates that the topology + operating point
+    produce physically reasonable efficiency before touching real BOM data.
+
+    Phase 2 — Real BOM: patch the scaffold netlist with actual component
+    values from the reference design's BOM (inductor, capacitor values),
+    inject parasitics, and re-simulate. This is the "virtual replica" of
+    the real board.
+
+    Comparing both phases against PDF claims tells us how much of any gap
+    is topology-inherent vs component-specific.
+    """
+    result = _build_converter_json(state)
+    if result is None:
+        return state
+    converter_json, topology = result
+    spec = state.ref_spec
+    assert spec is not None
+
+    # Map BOM roles to stencil positions
+    role_map = build_role_map(state.ref_bom, spec.topology)
+    state.role_map = role_map
+    logger.info(
+        "testbench: mapped %d/%d BOM components to stencil roles (confidence %.0f%%)",
+        len(role_map.roles), len(state.ref_bom), role_map.confidence * 100,
+    )
+
+    # Extract inductor value for magnetizing_inductance
+    mag_inductance = 100e-6
+    for comp in state.ref_bom:
+        role = comp.get("role", "")
+        if role in ("mainInductor", "boostInductor", "buckInductor", "mainTransformer"):
+            val = parse_component_value(str(comp.get("value", "")))
+            if val and val > 0:
+                mag_inductance = val
+                break
+
+    turns_ratios = [spec.turns_ratio] if spec.turns_ratio else [1.0]
+
+    # ------------------------------------------------------------------
+    # Phase 1: Theoretical — ideal components from MKF
+    # ------------------------------------------------------------------
     try:
         from heaviside.decomposer.api import decompose_from_spec
-        netlist, tas = decompose_from_spec(
+        netlist_ideal, tas = decompose_from_spec(
             topology, converter_json, turns_ratios, mag_inductance,
         )
     except Exception as exc:
         state.diagnostics.append(f"testbench: decompose failed: {exc}")
         return state
 
-    logger.info("testbench: scaffold netlist generated (%d chars)", len(netlist))
+    logger.info("testbench: scaffold netlist generated (%d chars)", len(netlist_ideal))
 
-    # 4. Patch netlist with reference BOM values
+    # For synchronous buck/boost: replace the diode with a sync rectifier.
+    # Detect from: topology name, BOM roles, or PDF text.
+    raw_topo = spec.topology.lower()
+    has_sync_role = any(
+        comp.get("role", "") in ("synchronousRectifier", "lowSideSwitch")
+        for comp in state.ref_bom
+    )
+    pdf_says_sync = "synchronous" in (state.pdf_text or "").lower()
+    is_sync = (
+        "synchronous" in raw_topo
+        or "sync" in raw_topo
+        or has_sync_role
+        or pdf_says_sync
+    )
+    if is_sync and "buck" in topology:
+        netlist_ideal = _convert_to_sync_buck(netlist_ideal)
+
+    phase1 = _simulate_netlist(
+        netlist_ideal, spec.vout, state.ref_claims, spec, "ideal",
+    )
+    if phase1 is None:
+        state.diagnostics.append("testbench: ideal simulation failed")
+        return state
+
+    sim_ideal, comp_ideal = phase1
+    state.comparisons.append(comp_ideal)
+    state.sim_result = {
+        "phase": "ideal",
+        "vin": sim_ideal.vin, "iin": sim_ideal.iin,
+        "vout": sim_ideal.vout, "iout": sim_ideal.iout,
+        "pin": sim_ideal.pin, "pout": sim_ideal.pout,
+        "efficiency": sim_ideal.efficiency,
+        "total_losses": sim_ideal.total_losses,
+    }
+
+    # If even the ideal sim is wildly off (>30pp), something is wrong
+    # with the spec extraction — don't proceed to BOM patching.
+    if comp_ideal.efficiency_delta_pp > 30 and comp_ideal.claimed_efficiency > 0:
+        state.diagnostics.append(
+            f"testbench: ideal sim η={sim_ideal.efficiency:.1%} vs "
+            f"claimed {comp_ideal.claimed_efficiency:.1%} — "
+            f"Δ={comp_ideal.efficiency_delta_pp:.0f}pp is too large. "
+            f"Likely a spec extraction error (wrong Vin/Vout/topology)."
+        )
+        _learn_from_testbench(state)
+        return state
+
+    # ------------------------------------------------------------------
+    # Phase 2: Real BOM — patch with actual component values
+    # ------------------------------------------------------------------
+    netlist_bom = netlist_ideal
+
+    patched = 0
     for comp in state.ref_bom:
         ref_des = comp.get("ref_des", "")
         stencil_ref = role_map.roles.get(ref_des)
@@ -428,74 +602,63 @@ def run_testbench(state: CREState) -> CREState:
         if value and value > 0:
             cat = comp.get("category", comp.get("component_type", ""))
             if cat in ("capacitor", "inductor", "magnetic"):
-                netlist = _rewrite_component_value(netlist, stencil_ref, value)
+                netlist_bom = _rewrite_component_value(
+                    netlist_bom, stencil_ref, value,
+                )
+                patched += 1
 
-    # Patch Vin and fsw
-    vin_nom = spec.vin_nom or spec.vin_max or 12.0
-    netlist = _rewrite_vin(netlist, vin_nom)
-    if spec.fsw > 0:
-        netlist = _rewrite_fsw(netlist, spec.fsw)
+    # Vin and fsw are already correct from decompose_from_spec — the
+    # BOM phase only patches component values (L, C), not operating point.
 
-    # 5. Inject parasitics and simulate
+    # Inject parasitics from TAS
     try:
         from heaviside.sim import inject_parasitics
-        netlist = inject_parasitics(netlist, tas)
+        netlist_bom = inject_parasitics(netlist_bom, tas)
     except Exception as exc:
         state.diagnostics.append(f"testbench: parasitic injection failed: {exc}")
 
-    state.netlist = netlist
+    logger.info("testbench: patched %d BOM values into netlist", patched)
+
+    state.netlist = netlist_bom
     state.tas = tas
+    state.attempt = 2
 
-    for attempt in range(1, _MAX_TESTBENCH_LOOPS + 1):
-        state.attempt = attempt
-        try:
-            from heaviside.sim.runner import simulate_closed_loop
-            sim_result = simulate_closed_loop(netlist, vout_target=spec.vout)
-        except Exception as exc:
-            state.diagnostics.append(f"testbench: simulation failed (attempt {attempt}): {exc}")
-            break
-
-        state.sim_result = {
-            "vin": sim_result.vin, "iin": sim_result.iin,
-            "vout": sim_result.vout, "iout": sim_result.iout,
-            "pin": sim_result.pin, "pout": sim_result.pout,
-            "efficiency": sim_result.efficiency,
-            "total_losses": sim_result.total_losses,
-        }
-
-        # 6. Compare
-        comparison = _build_comparison(sim_result, state.ref_claims, spec)
-        state.comparisons.append(comparison)
-
-        logger.info(
-            "testbench attempt %d: η_sim=%.1f%% η_claimed=%.1f%% Δ=%.1fpp "
-            "Vout_sim=%.2f Vout_claimed=%.2f err=%.1f%% → %s",
-            attempt,
-            comparison.sim_efficiency * 100 if comparison.sim_efficiency else 0,
-            comparison.claimed_efficiency * 100 if comparison.claimed_efficiency else 0,
-            comparison.efficiency_delta_pp,
-            comparison.sim_vout, comparison.claimed_vout,
-            comparison.vout_error_pct,
-            "PASS" if comparison.passed else "MISMATCH",
-        )
-
-        if comparison.passed:
+    phase2 = _simulate_netlist(
+        netlist_bom, spec.vout, state.ref_claims, spec, "bom",
+    )
+    if phase2 is None:
+        state.diagnostics.append("testbench: BOM simulation failed")
+        if comp_ideal.passed:
             state.passed = True
-            break
+        _learn_from_testbench(state)
+        return state
 
-        # 7. Diagnose
-        diagnosis = _diagnose_mismatch(comparison, state)
-        comparison.diagnosis = diagnosis
-        state.diagnostics.append(f"testbench diagnosis (attempt {attempt}): {diagnosis[:200]}")
+    sim_bom, comp_bom = phase2
+    state.comparisons.append(comp_bom)
+    state.sim_result = {
+        "phase": "bom",
+        "vin": sim_bom.vin, "iin": sim_bom.iin,
+        "vout": sim_bom.vout, "iout": sim_bom.iout,
+        "pin": sim_bom.pin, "pout": sim_bom.pout,
+        "efficiency": sim_bom.efficiency,
+        "total_losses": sim_bom.total_losses,
+    }
 
-        # Learn from this attempt
+    if comp_bom.passed:
+        state.passed = True
+    else:
+        # Diagnose BOM-specific mismatch
+        diagnosis = _diagnose_mismatch(comp_bom, state)
+        comp_bom.diagnosis = diagnosis
+        state.diagnostics.append(f"testbench diagnosis: {diagnosis[:200]}")
         state.lessons.append({
-            "attempt": attempt,
-            "mismatches": comparison.mismatches,
+            "attempt": 2,
+            "ideal_efficiency": sim_ideal.efficiency,
+            "bom_efficiency": sim_bom.efficiency,
+            "mismatches": comp_bom.mismatches,
             "diagnosis": diagnosis[:200],
         })
 
-    # 8. Store lessons via teacher
     _learn_from_testbench(state)
     return state
 

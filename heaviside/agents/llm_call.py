@@ -105,11 +105,22 @@ def call_llm(
 
     data = response.json()
     try:
-        return data["choices"][0]["message"]["content"]
+        msg = data["choices"][0]["message"]
+        content = msg.get("content") or ""
+        # kimi-k2.5 reasoning models may put the real output in
+        # reasoning_content with an empty content field
+        if not content:
+            content = msg.get("reasoning_content") or ""
     except (KeyError, IndexError) as exc:
         raise LLMCallError(
             f"unexpected response shape: {json.dumps(data)[:300]}"
         ) from exc
+    if not content:
+        raise LLMCallError(
+            f"LLM returned empty content (finish_reason="
+            f"{data['choices'][0].get('finish_reason', '?')})"
+        )
+    return content
 
 
 def call_agent(

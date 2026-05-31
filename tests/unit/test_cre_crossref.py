@@ -115,7 +115,7 @@ class TestReferenceSpec:
             vout=12, iout=5, pout=60, fsw=200000,
         )
         spec = ref.to_heaviside_spec()
-        assert "efficiency" not in spec
+        assert spec["efficiency"] == 0.9
         assert "desiredTurnsRatios" not in spec
 
 

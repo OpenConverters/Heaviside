@@ -113,11 +113,19 @@ def _stage1_competitor(state: CREState) -> CREState:
             return default
 
     try:
+        vin_min = _f(specs.get("vin_min"), 85.0 if specs.get("input_type") == "ac" else 0.0)
+        vin_nom = _f(specs.get("vin_nom"))
+        vin_max = _f(specs.get("vin_max"))
+        # Compute vin_nom from min/max if not extracted
+        if vin_nom <= 0 and vin_max > 0 and vin_min > 0:
+            vin_nom = (vin_min + vin_max) / 2
+        elif vin_nom <= 0 and vin_max > 0:
+            vin_nom = vin_max * 0.75
         ref = ReferenceSpec(
             topology=specs.get("topology", "unknown"),
-            vin_min=_f(specs.get("vin_min"), 85.0 if specs.get("input_type") == "ac" else 0.0),
-            vin_nom=_f(specs.get("vin_nom")),
-            vin_max=_f(specs.get("vin_max")),
+            vin_min=vin_min,
+            vin_nom=vin_nom,
+            vin_max=vin_max,
             vout=_f(_first_output_field(specs, "voltage", specs.get("vout"))),
             iout=_f(_first_output_field(specs, "current", specs.get("iout"))),
             pout=_f(_first_output_field(specs, "power", specs.get("pout"))),

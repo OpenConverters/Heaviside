@@ -29,16 +29,37 @@ class DecomposerError(RuntimeError):
     """Raised when MKF→TAS decomposition fails at any stage."""
 
 
+_HAS_SPICE_CONFIG: bool = False
+
+
 def _import_pyom() -> Any:
+    global _HAS_SPICE_CONFIG
+
+    # Prefer the vendor build (has bridge_simulation_mode) over the PyPI
+    # wheel. The vendor .so lives at a known path relative to this repo.
+    import importlib, importlib.util, sys
+    from pathlib import Path
+
+    vendor_so = (
+        Path(__file__).resolve().parents[2]
+        / "vendor" / "PyOpenMagnetics" / "build"
+        / "cp312-cp312-linux_x86_64"
+        / "PyOpenMagnetics.cpython-312-x86_64-linux-gnu.so"
+    )
+    if vendor_so.exists():
+        spec = importlib.util.spec_from_file_location(
+            "PyOpenMagnetics", str(vendor_so),
+        )
+        if spec and spec.loader:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _ext = mod
+            doc = (mod.generate_ngspice_circuit.__doc__ or "")
+            _HAS_SPICE_CONFIG = "spice_config" in doc
+            return _ext
+
     from PyOpenMagnetics import PyOpenMagnetics as _ext
 
-    # The PyPI PyOpenMagnetics wheels (1.3.10, 1.3.12) ship a 6-arg
-    # generate_ngspice_circuit binding without bridge_simulation_mode.
-    # Heaviside's decomposer needs the 7-arg binding from the vendor build
-    # (vendor/PyOpenMagnetics, currently 1.3.11) so bridge topologies emit
-    # real switches instead of behavioural PULSE sources. Detect the
-    # mismatch here and throw a clear message rather than letting a TypeError
-    # surface deep in a stencil run.
     doc = (_ext.generate_ngspice_circuit.__doc__ or "")
     if "bridge_simulation_mode" not in doc:
         raise DecomposerError(
@@ -50,14 +71,7 @@ def _import_pyom() -> Any:
             "`python -m build --wheel` inside vendor/PyOpenMagnetics first). "
             "See HANDOFF.md for the 1.3.12 upstream regression details."
         )
-    if "spice_config" not in doc:
-        raise DecomposerError(
-            "PyOpenMagnetics.generate_ngspice_circuit lacks the "
-            "spice_config parameter — your wheel predates the "
-            "SpiceSimulationConfig binding. Rebuild the upstream PyMKF "
-            "wheel (1.3.13+) from /home/alf/OpenMagnetics/PyMKF with "
-            "LOCAL_MKF_DIR=1 and reinstall."
-        )
+    _HAS_SPICE_CONFIG = "spice_config" in doc
     return _ext
 
 
@@ -77,7 +91,44 @@ DEFAULT_SPICE_CONFIG: dict[str, Any] = {
     "snubC": 100e-12,
     "diodeIS": 1e-12,
     "diodeRS": 0.05,
+    "switchRON": 0.05,
 }
+
+
+def _patch_spice_defaults(netlist: str, cfg: dict[str, Any]) -> str:
+    """Post-process a netlist to apply realistic snubber/diode values.
+
+    Used when the PyOM binding lacks the spice_config parameter.
+    """
+    import re
+    snub_r = cfg.get("snubR", 10_000.0)
+    snub_c = cfg.get("snubC", 100e-12)
+    diode_is = cfg.get("diodeIS", 1e-12)
+    diode_rs = cfg.get("diodeRS", 0.05)
+
+    netlist = re.sub(
+        r"^(Rsnub_\w+\s+\S+\s+\S+\s+)[\d.eE+\-]+",
+        rf"\g<1>{snub_r:.6f}",
+        netlist, flags=re.MULTILINE,
+    )
+    netlist = re.sub(
+        r"^(Csnub_\w+\s+\S+\s+\S+\s+)[\d.eE+\-]+",
+        rf"\g<1>{snub_c:.6e}",
+        netlist, flags=re.MULTILINE,
+    )
+    netlist = re.sub(
+        r"(\.model\s+DIDEAL\s+D\(IS=)[\d.eE+\-]+(\s+RS=)[\d.eE+\-]+",
+        rf"\g<1>{diode_is:.6e}\g<2>{diode_rs:.6e}",
+        netlist, flags=re.IGNORECASE,
+    )
+    # Add realistic RON to SW models (ngspice default is 1Ω)
+    sw_ron = cfg.get("switchRON", 0.05)
+    netlist = re.sub(
+        r"(\.model\s+SW\d+\s+SW\s+VT=[\d.]+\s+VH=[\d.]+)",
+        rf"\1 RON={sw_ron:.6f}",
+        netlist, flags=re.IGNORECASE,
+    )
+    return netlist
 
 
 def generate_netlist(
@@ -111,7 +162,7 @@ def generate_netlist(
     cfg = dict(DEFAULT_SPICE_CONFIG)
     if spice_config:
         cfg.update(dict(spice_config))
-    result = pyom.generate_ngspice_circuit(
+    args: list[Any] = [
         topology,
         dict(converter_json),
         list(turns_ratios),
@@ -119,8 +170,14 @@ def generate_netlist(
         int(vin_index),
         int(op_index),
         str(bridge_simulation_mode),
-        cfg,
-    )
+    ]
+    if _HAS_SPICE_CONFIG:
+        args.append(cfg)
+    result = pyom.generate_ngspice_circuit(*args)
+    # When the binding lacks spice_config, post-process the netlist to
+    # apply realistic defaults (MKF bakes in lossy snubber/diode values).
+    if not _HAS_SPICE_CONFIG and isinstance(result, dict) and "netlist" in result:
+        result["netlist"] = _patch_spice_defaults(result["netlist"], cfg)
     if not isinstance(result, dict):
         raise DecomposerError(
             f"generate_ngspice_circuit returned {type(result).__name__}, "
