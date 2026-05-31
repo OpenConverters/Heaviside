@@ -589,7 +589,10 @@ def _get_inductor_dcr(ref_bom: list[dict[str, Any]]) -> float | None:
                 .get("manufacturerInfo", {})
                 .get("reference", "")
             )
-            if ref.upper().strip() == mpn_upper:
+            ref_upper = ref.upper().strip()
+            if (ref_upper == mpn_upper
+                    or ref_upper.startswith(mpn_upper)
+                    or mpn_upper.startswith(ref_upper)):
                 dcr_block = (
                     rec.get("magnetic", {})
                     .get("manufacturerInfo", {})
