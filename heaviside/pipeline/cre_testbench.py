@@ -1123,7 +1123,7 @@ def run_testbench(state: CREState) -> CREState:
 
     for lp in load_points:
         label = lp["label"]
-        iout = lp["iout"]
+        iout = lp["iout"] / n_phases  # per-phase current
         claimed_eff = lp["efficiency"]
         rload = spec.vout / iout if iout > 0 else spec.vout / spec.iout
 
