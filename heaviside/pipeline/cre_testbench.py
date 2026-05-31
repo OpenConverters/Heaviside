@@ -876,7 +876,10 @@ def _simulate_netlist(
     """
     try:
         from heaviside.sim.runner import simulate_closed_loop
-        sim_result = simulate_closed_loop(netlist, vout_target=vout_target)
+        sim_result = simulate_closed_loop(
+            netlist, vout_target=vout_target,
+            tolerance=0.03, max_iterations=16,
+        )
     except Exception as exc:
         logger.warning("testbench [%s]: simulation failed: %s", label, exc)
         return None
