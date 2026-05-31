@@ -33,6 +33,8 @@ class ReferenceSpec:
     efficiency_target: float | None = None
     isolation_required: bool = False
     turns_ratio: float | None = None
+    rdson_hs: float | None = None
+    rdson_ls: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_heaviside_spec(self) -> dict[str, Any]:

@@ -916,14 +916,25 @@ def run_testbench(state: CREState) -> CREState:
         or has_sync_role
         or pdf_says_sync
     )
-    # Scale switch RON to match the converter's current rating
-    estimated_ron = _estimate_ron(spec.iout, spec.fsw)
+    # Use Rds_on from PDF extraction if available; fall back to estimate
+    if spec.rdson_hs and spec.rdson_ls:
+        ron = (spec.rdson_hs + spec.rdson_ls) / 2 / 1000  # mΩ → Ω
+        logger.info("testbench: using extracted Rds_on: HS=%.1fmΩ LS=%.1fmΩ → avg=%.1fmΩ",
+                     spec.rdson_hs, spec.rdson_ls, ron * 1000)
+    elif spec.rdson_hs:
+        ron = spec.rdson_hs / 1000
+        logger.info("testbench: using extracted Rds_on: HS=%.1fmΩ", spec.rdson_hs)
+    else:
+        ron = _estimate_ron(spec.iout, spec.fsw)
+        state.diagnostics.append(
+            f"testbench: Rds_on not extracted from PDF — using estimate "
+            f"{ron*1000:.1f}mΩ for Iout={spec.iout:.0f}A"
+        )
 
     if is_sync and "buck" in topology:
-        netlist_ideal = _convert_to_sync_buck(netlist_ideal, ron=estimated_ron)
+        netlist_ideal = _convert_to_sync_buck(netlist_ideal, ron=ron)
     else:
-        netlist_ideal = _rewrite_ron(netlist_ideal, estimated_ron)
-        # Non-sync: also patch the SW1 model RON for the high-side switch
+        netlist_ideal = _rewrite_ron(netlist_ideal, ron)
 
     # Inject inductor DCR from TAS data (no heuristic estimates)
     inductor_dcr = _get_inductor_dcr(state.ref_bom)
@@ -935,8 +946,8 @@ def run_testbench(state: CREState) -> CREState:
             "simulation uses ideal inductor (no winding loss)"
         )
 
-    logger.info("testbench: RON=%.2fmΩ DCR=%s for Iout=%.1fA fsw=%.0fkHz",
-                estimated_ron * 1000,
+    logger.info("testbench: RON=%.2fmΩ DCR=%s Iout=%.1fA fsw=%.0fkHz",
+                ron * 1000,
                 f"{inductor_dcr*1000:.1f}mΩ" if inductor_dcr else "N/A",
                 spec.iout, spec.fsw / 1000)
 

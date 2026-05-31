@@ -133,6 +133,8 @@ def _stage1_competitor(state: CREState) -> CREState:
             efficiency_target=_float_or_none(data.get("performance", {}).get("efficiency")),
             isolation_required=bool(specs.get("isolation_required", False)),
             turns_ratio=_float_or_none(specs.get("turns_ratio")),
+            rdson_hs=_float_or_none(specs.get("rdson_hs_mohm")),
+            rdson_ls=_float_or_none(specs.get("rdson_ls_mohm")),
         )
         # Validate critical fields — zeros mean the LLM didn't extract them
         missing = []

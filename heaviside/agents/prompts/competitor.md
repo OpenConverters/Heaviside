@@ -30,6 +30,7 @@ For the reference design, extract:
 | Switching frequency | 65 kHz | Nominal or range |
 | Efficiency | 93% @ full load | MEASURED vs CLAIMED — flag which |
 | Key components | Q1: IPA60R190P6, U1: UCC28780 | Power path MPNs |
+| Switch Rds(on) | 1.2 mΩ (HS), 0.55 mΩ (LS) | From IC electrical specs table |
 | Physical size | 75 × 42 mm | Board dimensions if available |
 
 ## Output Schema
@@ -55,7 +56,9 @@ Reply with a single fenced JSON block:
     "topology": "flyback",
     "switching_frequency": 65000,
     "isolation_required": true,
-    "turns_ratio": 5.0
+    "turns_ratio": 5.0,
+    "rdson_hs_mohm": 120,
+    "rdson_ls_mohm": 55
   },
   "performance": {
     "efficiency": 0.93,
