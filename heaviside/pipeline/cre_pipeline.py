@@ -285,8 +285,8 @@ def _fetch_missing_magnetics(state: CREState) -> None:
         return
 
     try:
-        creds = load_credentials()
-        client = DigiKeyClient(creds)
+        creds = load_credentials(require_digikey=True)
+        client = DigiKeyClient(creds.digikey)
     except Exception as exc:
         logger.warning("CRE stage 2.6: cannot init Digi-Key client: %s", exc)
         for comp in missing_magnetics:
@@ -439,20 +439,65 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
     try:
         from heaviside.librarian.fetcher.auth import load_credentials
         from heaviside.librarian.fetcher.digikey import DigiKeyClient
-        creds = load_credentials()
-        with DigiKeyClient(creds) as client:
-            product = client.get_product(ic_mpn)
-            datasheet_url = product.get("PrimaryDatasheet", "")
+        creds = load_credentials(require_digikey=True)
+        with DigiKeyClient(creds.digikey) as client:
+            # Try exact MPN first, then search with base part number
+            try:
+                product = client.get_product(ic_mpn)
+                datasheet_url = product.get("PrimaryDatasheet", "")
+            except Exception:
+                # Strip package suffix and search (e.g. MP1653FGTF → MP1653F)
+                import re as _re
+                base_mpn = _re.sub(r"[A-Z]{2,3}(-[A-Z0-9]+)?$", "", ic_mpn)
+                if base_mpn and base_mpn != ic_mpn:
+                    results = client.search(base_mpn, limit=3)
+                    for p in results.get("Products", []):
+                        ds = p.get("PrimaryDatasheet", "")
+                        if ds:
+                            datasheet_url = ds
+                            logger.info("CRE stage 2.65: found datasheet via search for %s", base_mpn)
+                            break
     except Exception as exc:
         logger.debug("CRE stage 2.65: Digi-Key lookup for %s failed: %s", ic_mpn, exc)
 
     # Download and extract text from the IC datasheet
     ic_datasheet_text = ""
-    if datasheet_url:
+    urls_to_try = [datasheet_url] if datasheet_url else []
+
+    # Also scan the eval board PDF text for IC datasheet URLs
+    if state.pdf_text:
+        import re as _re2
+        pdf_urls_in_text = _re2.findall(
+            r"https?://[^\s\"<>]+\.pdf",
+            state.pdf_text,
+        )
+        for pu in pdf_urls_in_text:
+            if pu not in urls_to_try:
+                urls_to_try.append(pu)
+
+    # Try known datasheet CDN patterns (Mouser, manufacturer sites)
+    base_mpn = ic_mpn.rstrip("0123456789").rstrip("-")
+    import re as _re2
+    base_mpn = _re2.sub(r"[A-Z]{2,3}(-[A-Z0-9]+)?$", "", ic_mpn)
+    if base_mpn:
+        for pattern in [
+            f"https://www.mouser.com/datasheet/2/277/{base_mpn}-*.pdf",
+        ]:
+            pass  # Can't glob URLs; rely on Digi-Key + PDF text scan
+
+    for url in urls_to_try:
+        if not url:
+            continue
         try:
             import httpx
-            resp = httpx.get(datasheet_url, timeout=30.0, follow_redirects=True)
-            if resp.status_code == 200 and len(resp.content) > 1000:
+            resp = httpx.get(
+                url, timeout=30.0, follow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            ct = resp.headers.get("content-type", "")
+            if resp.status_code == 200 and (
+                "pdf" in ct or len(resp.content) > 50_000
+            ):
                 import tempfile
                 from heaviside.pipeline.pdf_extract import extract_pdf_text
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -464,10 +509,15 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
                     ic_datasheet_text = extract_pdf_text(Path(tmp_path))
                 finally:
                     os.unlink(tmp_path)
-                logger.info("CRE stage 2.65: downloaded IC datasheet for %s (%d chars)",
-                             ic_mpn, len(ic_datasheet_text))
+                if ic_datasheet_text:
+                    logger.info(
+                        "CRE stage 2.65: downloaded IC datasheet for %s "
+                        "(%d chars) from %s",
+                        ic_mpn, len(ic_datasheet_text), url[:60],
+                    )
+                    break
         except Exception as exc:
-            logger.debug("CRE stage 2.65: datasheet download failed: %s", exc)
+            logger.debug("CRE stage 2.65: download from %s failed: %s", url[:60], exc)
 
     if not ic_datasheet_text:
         state.diagnostics.append(
@@ -525,12 +575,24 @@ def _stage2_7_extract_claims(state: CREState) -> CREState:
     if not state.pdf_text:
         return state
 
+    # Also request Rds_on if still missing
+    rdson_prompt = ""
+    if state.ref_spec and not state.ref_spec.rdson_hs:
+        rdson_prompt = (
+            "\n\nALSO: extract the internal MOSFET Rds(on) for the main "
+            "switching IC. Look for 'RDS(ON)', 'on-resistance', 'low-Rds', "
+            "'internal MOSFET', or similar in the features list or electrical "
+            "characteristics. Report as rdson_hs_mohm and rdson_ls_mohm in "
+            "the specs block. If the PDF mentions values like '63mΩ and 36mΩ' "
+            "or '130mΩ/65mΩ', extract those."
+        )
+
     try:
         data = call_agent_json(
             "competitor",
             f"Extract ONLY the performance claims from this reference design PDF. "
             f"Focus on: efficiency at various load points, output ripple, thermal rise, "
-            f"regulation specs, waveform descriptions.\n\n"
+            f"regulation specs, waveform descriptions.{rdson_prompt}\n\n"
             f"REFERENCE DESIGN PDF CONTENT:\n\n{state.pdf_text[:50_000]}",
             max_tokens=4096,
             max_retries=1,
@@ -561,6 +623,24 @@ def _stage2_7_extract_claims(state: CREState) -> CREState:
         line_regulation_pct=perf.get("line_regulation_pct"),
         waveform_descriptions=perf.get("waveforms", []),
     )
+    # Extract Rds_on if the LLM found it
+    specs = data.get("specs", {})
+    rdson_hs = _float_or_none(specs.get("rdson_hs_mohm"))
+    rdson_ls = _float_or_none(specs.get("rdson_ls_mohm"))
+    if rdson_hs and state.ref_spec and not state.ref_spec.rdson_hs:
+        old = state.ref_spec
+        state.ref_spec = ReferenceSpec(
+            topology=old.topology, vin_min=old.vin_min, vin_nom=old.vin_nom,
+            vin_max=old.vin_max, vout=old.vout, iout=old.iout, pout=old.pout,
+            fsw=old.fsw, efficiency_target=old.efficiency_target,
+            isolation_required=old.isolation_required,
+            turns_ratio=old.turns_ratio,
+            rdson_hs=rdson_hs, rdson_ls=rdson_ls or rdson_hs,
+            extra=old.extra,
+        )
+        logger.info("CRE stage 2.7: extracted Rds_on from PDF: HS=%.1fmΩ LS=%.1fmΩ",
+                     rdson_hs, rdson_ls or rdson_hs)
+
     logger.info("CRE stage 2.7: extracted %d efficiency points, ripple=%s mV",
                  len(eff_dict), state.ref_claims.vout_ripple_mv)
     return state
