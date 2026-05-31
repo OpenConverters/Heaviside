@@ -417,6 +417,104 @@ def _stage4_review(
 # ---------------------------------------------------------------------------
 
 
+def _stage2_65_extract_rdson(state: CREState) -> CREState:
+    """If Rds_on wasn't extracted from the eval board PDF, fetch the IC
+    datasheet and extract it from there."""
+    if not state.ref_spec or (state.ref_spec.rdson_hs and state.ref_spec.rdson_ls):
+        return state
+
+    # Find the controller IC MPN from the BOM
+    ic_mpn = None
+    for comp in state.ref_bom:
+        role = comp.get("role", "")
+        if role == "controller":
+            ic_mpn = comp.get("mpn", comp.get("part", ""))
+            if ic_mpn:
+                break
+    if not ic_mpn:
+        return state
+
+    # Try to get the IC datasheet URL from Digi-Key
+    datasheet_url = None
+    try:
+        from heaviside.librarian.fetcher.auth import load_credentials
+        from heaviside.librarian.fetcher.digikey import DigiKeyClient
+        creds = load_credentials()
+        with DigiKeyClient(creds) as client:
+            product = client.get_product(ic_mpn)
+            datasheet_url = product.get("PrimaryDatasheet", "")
+    except Exception as exc:
+        logger.debug("CRE stage 2.65: Digi-Key lookup for %s failed: %s", ic_mpn, exc)
+
+    # Download and extract text from the IC datasheet
+    ic_datasheet_text = ""
+    if datasheet_url:
+        try:
+            import httpx
+            resp = httpx.get(datasheet_url, timeout=30.0, follow_redirects=True)
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                import tempfile
+                from heaviside.pipeline.pdf_extract import extract_pdf_text
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+                    f.write(resp.content)
+                    tmp_path = f.name
+                from pathlib import Path
+                import os
+                try:
+                    ic_datasheet_text = extract_pdf_text(Path(tmp_path))
+                finally:
+                    os.unlink(tmp_path)
+                logger.info("CRE stage 2.65: downloaded IC datasheet for %s (%d chars)",
+                             ic_mpn, len(ic_datasheet_text))
+        except Exception as exc:
+            logger.debug("CRE stage 2.65: datasheet download failed: %s", exc)
+
+    if not ic_datasheet_text:
+        state.diagnostics.append(
+            f"Rds_on not in eval board PDF and IC datasheet for {ic_mpn} "
+            f"not available — switch loss will use estimate"
+        )
+        return state
+
+    # Ask LLM to extract Rds_on from the IC datasheet
+    try:
+        data = call_agent_json(
+            "competitor",
+            f"Extract ONLY the internal MOSFET Rds(on) specifications from this "
+            f"IC datasheet for {ic_mpn}. Look in the Electrical Characteristics "
+            f"table for RDS(ON) high-side and low-side values.\n\n"
+            f"Reply with JSON: {{\"specs\": {{\"rdson_hs_mohm\": <value>, "
+            f"\"rdson_ls_mohm\": <value>}}}}\n\n"
+            f"IC DATASHEET TEXT:\n\n{ic_datasheet_text[:80_000]}",
+            max_tokens=2048,
+            max_retries=1,
+        )
+    except LLMCallError as exc:
+        state.diagnostics.append(f"Rds_on extraction from IC datasheet failed: {exc}")
+        return state
+
+    specs = data.get("specs", {})
+    rdson_hs = _float_or_none(specs.get("rdson_hs_mohm"))
+    rdson_ls = _float_or_none(specs.get("rdson_ls_mohm"))
+
+    if rdson_hs:
+        old = state.ref_spec
+        state.ref_spec = ReferenceSpec(
+            topology=old.topology, vin_min=old.vin_min, vin_nom=old.vin_nom,
+            vin_max=old.vin_max, vout=old.vout, iout=old.iout, pout=old.pout,
+            fsw=old.fsw, efficiency_target=old.efficiency_target,
+            isolation_required=old.isolation_required,
+            turns_ratio=old.turns_ratio,
+            rdson_hs=rdson_hs, rdson_ls=rdson_ls or rdson_hs,
+            extra=old.extra,
+        )
+        logger.info("CRE stage 2.65: extracted Rds_on from %s datasheet: "
+                     "HS=%.1fmΩ LS=%.1fmΩ",
+                     ic_mpn, rdson_hs, rdson_ls or rdson_hs)
+
+    return state
+
+
 def _stage2_7_extract_claims(state: CREState) -> CREState:
     """Extract performance claims from the competitor agent's output."""
     if not state.ref_spec:
@@ -491,6 +589,7 @@ def run_cre_pipeline(
     state = _stage1_competitor(state)
     state = _stage2_reverse_engineer(state)
     state = _stage2_5_verify_mpns(state)
+    state = _stage2_65_extract_rdson(state)
     state = _stage2_7_extract_claims(state)
     state = _stage2_8_testbench(state)
 

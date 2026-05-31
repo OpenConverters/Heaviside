@@ -916,20 +916,20 @@ def run_testbench(state: CREState) -> CREState:
         or has_sync_role
         or pdf_says_sync
     )
-    # Use Rds_on from PDF extraction if available; fall back to estimate
+    # Use Rds_on from PDF/datasheet extraction — no heuristic fallback
     if spec.rdson_hs and spec.rdson_ls:
         ron = (spec.rdson_hs + spec.rdson_ls) / 2 / 1000  # mΩ → Ω
-        logger.info("testbench: using extracted Rds_on: HS=%.1fmΩ LS=%.1fmΩ → avg=%.1fmΩ",
-                     spec.rdson_hs, spec.rdson_ls, ron * 1000)
+        logger.info("testbench: Rds_on from datasheet: HS=%.1fmΩ LS=%.1fmΩ",
+                     spec.rdson_hs, spec.rdson_ls)
     elif spec.rdson_hs:
         ron = spec.rdson_hs / 1000
-        logger.info("testbench: using extracted Rds_on: HS=%.1fmΩ", spec.rdson_hs)
+        logger.info("testbench: Rds_on from datasheet: %.1fmΩ", spec.rdson_hs)
     else:
-        ron = _estimate_ron(spec.iout, spec.fsw)
         state.diagnostics.append(
-            f"testbench: Rds_on not extracted from PDF — using estimate "
-            f"{ron*1000:.1f}mΩ for Iout={spec.iout:.0f}A"
+            "testbench: Rds_on not available — IC datasheet extraction "
+            "failed or was skipped. Cannot simulate accurate efficiency."
         )
+        return state
 
     if is_sync and "buck" in topology:
         netlist_ideal = _convert_to_sync_buck(netlist_ideal, ron=ron)
