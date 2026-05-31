@@ -273,8 +273,8 @@ def _inject_waveform_meas(deck: str, vout_target: float) -> str:
         return deck
     fsw = 1.0 / tper
 
-    # Extend sim to 200 cycles for full settling, measure last 20
-    n_settle = 200
+    # Extend sim to 500 cycles for full settling, measure last 20
+    n_settle = 500
     n_meas = 20
     t_stop = tper * (n_settle + n_meas)
     t_start = tper * n_settle
@@ -927,6 +927,12 @@ def run_testbench(state: CREState) -> CREState:
                 cout_val = val
                 break
 
+    # Extract actual L and Cout from the netlist (post-patching)
+    l_match = re.search(r"^L1\s+\S+\s+\S+\s+([\d.eE+\-]+)", netlist_bom, re.MULTILINE)
+    cout_match = re.search(r"^Cout\s+\S+\s+\S+\s+([\d.eE+\-]+)", netlist_bom, re.MULTILINE)
+    actual_l = float(l_match.group(1)) if l_match else mag_inductance
+    actual_cout = float(cout_match.group(1)) if cout_match else cout_val
+
     wf = _extract_waveforms(netlist_bom, spec.vout)
     if wf:
         logger.info(
@@ -936,7 +942,7 @@ def run_testbench(state: CREState) -> CREState:
         )
 
         analytical = _compute_analytical_waveforms(
-            spec, mag_inductance, cout_val, topology,
+            spec, actual_l, actual_cout, topology,
         )
         wf_checks = _check_waveforms(wf, analytical)
 
