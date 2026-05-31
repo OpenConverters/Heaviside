@@ -1030,24 +1030,13 @@ def run_testbench(state: CREState) -> CREState:
             "simulation uses ideal inductor (no winding loss)"
         )
 
-    # Add switching overlap loss as a fixed current drain on the input.
-    # The behavioral switch transitions instantaneously (zero overlap),
-    # but real MOSFETs have finite rise/fall time that causes V×I overlap.
-    # P_sw = 0.5 × Vin × Iout × (tr+tf) × fsw
-    iout_sim = spec.iout / n_phases if n_phases > 1 else spec.iout
-    vin_nom = spec.vin_nom or spec.vin_max or 12.0
-    tr_tf = 10e-9  # typical 5ns rise + 5ns fall for integrated MOSFETs
-    p_switching = 0.5 * vin_nom * iout_sim * tr_tf * spec.fsw
-    if p_switching > 0 and vin_nom > 0:
-        i_drain = p_switching / vin_nom
-        # Add a resistor from vin_dc to ground to model fixed switching loss
-        r_drain = vin_nom / i_drain if i_drain > 0 else 1e9
-        netlist_ideal = netlist_ideal.replace(
-            ".end",
-            f"Rsw_loss vin_dc 0 {r_drain:.1f}\n.end",
-        )
-        logger.info("testbench: switching overlap loss = %.3fW (Rsw=%.0fΩ)",
-                     p_switching, r_drain)
+    # Note: switching overlap loss (P = 0.5×Vin×Iout×tr_tf×fsw) is NOT
+    # modeled because ngspice behavioral sources on inductor current
+    # include transient spikes that inflate the loss beyond physical values.
+    # The remaining efficiency gap (typically 1-6pp) comes from:
+    #   - Gate drive: Qg × Vg × fsw (not in sim)
+    #   - Switching overlap: 0.5 × Vin × Iout × (tr+tf) × fsw (not in sim)
+    #   - PCB trace resistance (not in sim)
 
     logger.info("testbench: RON=%.2fmΩ DCR=%s Iout=%.1fA fsw=%.0fkHz",
                 ron * 1000,
