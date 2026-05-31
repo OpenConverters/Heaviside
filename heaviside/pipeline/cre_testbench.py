@@ -258,17 +258,37 @@ def _rewrite_component_value(deck: str, refdes: str, new_value: float) -> str:
     return new_deck
 
 
-def _inject_waveform_meas(deck: str) -> str:
-    """Add .meas directives for waveform characteristics (ripple, Vpp)."""
-    # Find the steady-state window from existing .tran
-    tran_match = re.search(
-        r"\.tran\s+\S+\s+(\S+)\s+(\S+)",
-        deck, re.IGNORECASE,
-    )
-    if not tran_match:
+def _inject_waveform_meas(deck: str, vout_target: float) -> str:
+    """Add .meas directives and extend the sim window for waveform measurement.
+
+    Extends the .tran window to ensure the LC filter has fully settled
+    before measuring ripple. Measures over the last 20 switching cycles.
+    """
+    # Extract switching frequency from PULSE period
+    pulse_match = re.search(r"PULSE\([^)]*\s([\d.eE+\-]+)\s*\)", deck)
+    if not pulse_match:
         return deck
-    t_stop = float(tran_match.group(1))
-    t_start = float(tran_match.group(2))
+    tper = float(pulse_match.group(1))
+    if tper <= 0:
+        return deck
+    fsw = 1.0 / tper
+
+    # Extend sim to 200 cycles for full settling, measure last 20
+    n_settle = 200
+    n_meas = 20
+    t_stop = tper * (n_settle + n_meas)
+    t_start = tper * n_settle
+    tstep = tper / 50
+
+    # Replace .tran with extended window
+    deck = re.sub(
+        r"^\.tran\s+.*$",
+        f".tran {tstep:.6e} {t_stop:.6e} {t_start:.6e} UIC",
+        deck, flags=re.MULTILINE | re.IGNORECASE,
+    )
+    # Add .ic for output voltage
+    if ".ic" not in deck.lower():
+        deck = deck.replace(".end", f".ic v(vout)={vout_target}\n.end")
 
     meas = [
         "",
@@ -281,7 +301,6 @@ def _inject_waveform_meas(deck: str) -> str:
         f".meas tran il_min min i(Vl_sense) FROM={t_start:.6e} TO={t_stop:.6e}",
         "",
     ]
-    # Splice before .end
     lines = deck.splitlines()
     out: list[str] = []
     for line in lines:
@@ -311,11 +330,92 @@ class WaveformCharacteristics:
     il_avg_a: float = 0.0
 
 
+@dataclass
+class WaveformAnalytical:
+    """Analytically expected waveform values from specs + BOM."""
+    il_ripple_a: float = 0.0
+    vout_ripple_mv: float = 0.0
+    vsw_vpp: float = 0.0
+
+
+def _compute_analytical_waveforms(
+    spec: Any,
+    inductance: float,
+    cout: float,
+    topology: str,
+) -> WaveformAnalytical:
+    """Compute expected ripple from component values and operating point."""
+    vin = spec.vin_nom or spec.vin_max or 12.0
+    vout = spec.vout
+    fsw = spec.fsw
+    if vin <= 0 or vout <= 0 or fsw <= 0 or inductance <= 0:
+        return WaveformAnalytical()
+
+    if "buck" in topology:
+        d = vout / vin
+        il_ripple = vin * d * (1 - d) / (inductance * fsw)
+        vsw_vpp = vin
+    elif "boost" in topology:
+        d = 1 - vin / vout if vout > vin else 0.5
+        il_ripple = vin * d / (inductance * fsw)
+        vsw_vpp = vout
+    else:
+        il_ripple = vin * 0.5 / (inductance * fsw)
+        vsw_vpp = vin
+
+    vout_ripple_mv = 0.0
+    if cout > 0:
+        vout_ripple_mv = il_ripple / (8 * fsw * cout) * 1000
+
+    return WaveformAnalytical(
+        il_ripple_a=il_ripple,
+        vout_ripple_mv=vout_ripple_mv,
+        vsw_vpp=vsw_vpp,
+    )
+
+
+_WAVEFORM_RATIO_BOUND = 0.5  # sim must be within 0.5× to 2× of analytical
+
+
+def _check_waveforms(
+    sim: WaveformCharacteristics,
+    analytical: WaveformAnalytical,
+) -> list[dict[str, Any]]:
+    """Compare sim waveforms against analytical, flag if outside 0.5×–2×."""
+    issues: list[dict[str, Any]] = []
+    checks = [
+        ("IL_ripple", sim.il_ripple_a, analytical.il_ripple_a, "A"),
+        ("Vout_ripple", sim.vout_ripple_mv, analytical.vout_ripple_mv, "mV"),
+        ("Vsw_pp", sim.vsw_vpp, analytical.vsw_vpp, "V"),
+    ]
+    for name, sim_val, ana_val, unit in checks:
+        if ana_val <= 0 or sim_val <= 0:
+            continue
+        ratio = sim_val / ana_val
+        passed = _WAVEFORM_RATIO_BOUND <= ratio <= 1 / _WAVEFORM_RATIO_BOUND
+        issues.append({
+            "param": name,
+            "sim": round(sim_val, 3),
+            "analytical": round(ana_val, 3),
+            "ratio": round(ratio, 2),
+            "unit": unit,
+            "passed": passed,
+        })
+        if not passed:
+            logger.warning(
+                "testbench waveform %s: sim=%.3f%s analytical=%.3f%s "
+                "ratio=%.2f — outside [%.1f×, %.1f×]",
+                name, sim_val, unit, ana_val, unit, ratio,
+                _WAVEFORM_RATIO_BOUND, 1 / _WAVEFORM_RATIO_BOUND,
+            )
+    return issues
+
+
 def _extract_waveforms(netlist: str, vout_target: float) -> WaveformCharacteristics | None:
     """Run simulation with waveform measurements and extract characteristics."""
     import subprocess, tempfile, os
 
-    deck = _inject_waveform_meas(netlist)
+    deck = _inject_waveform_meas(netlist, vout_target)
 
     ngspice = shutil.which("ngspice")
     if not ngspice:
@@ -814,8 +914,19 @@ def run_testbench(state: CREState) -> CREState:
             state.diagnostics.append(f"testbench diagnosis: {diagnosis[:200]}")
 
     # ------------------------------------------------------------------
-    # Phase 3: Waveform characterization at full load
+    # Phase 3: Waveform characterization + analytical cross-check
     # ------------------------------------------------------------------
+
+    # Extract Cout from BOM for analytical calc
+    cout_val = 1e-4  # default
+    for comp in state.ref_bom:
+        role = comp.get("role", "")
+        if role == "outputCapacitor":
+            val = parse_component_value(str(comp.get("value", "")))
+            if val and val > 0:
+                cout_val = val
+                break
+
     wf = _extract_waveforms(netlist_bom, spec.vout)
     if wf:
         logger.info(
@@ -823,6 +934,12 @@ def run_testbench(state: CREState) -> CREState:
             "IL_ripple=%.2fA IL_avg=%.2fA",
             wf.vout_ripple_mv, wf.vsw_vpp, wf.il_ripple_a, wf.il_avg_a,
         )
+
+        analytical = _compute_analytical_waveforms(
+            spec, mag_inductance, cout_val, topology,
+        )
+        wf_checks = _check_waveforms(wf, analytical)
+
         state.sim_result = state.sim_result or {}
         if isinstance(state.sim_result, dict):
             state.sim_result["waveforms"] = {
@@ -830,15 +947,26 @@ def run_testbench(state: CREState) -> CREState:
                 "vsw_vpp": round(wf.vsw_vpp, 1),
                 "il_ripple_a": round(wf.il_ripple_a, 2),
                 "il_avg_a": round(wf.il_avg_a, 2),
+                "analytical": {
+                    "vout_ripple_mv": round(analytical.vout_ripple_mv, 1),
+                    "il_ripple_a": round(analytical.il_ripple_a, 2),
+                    "vsw_vpp": round(analytical.vsw_vpp, 1),
+                },
+                "checks": wf_checks,
             }
-        # Compare against claimed ripple if available
-        if state.ref_claims.vout_ripple_mv:
-            claimed_rip = state.ref_claims.vout_ripple_mv
-            sim_rip = wf.vout_ripple_mv
-            rip_err = abs(sim_rip - claimed_rip) / claimed_rip * 100 if claimed_rip else 0
+
+        wf_failed = [c for c in wf_checks if not c["passed"]]
+        if wf_failed:
+            for f in wf_failed:
+                state.diagnostics.append(
+                    f"testbench waveform {f['param']}: sim={f['sim']}{f['unit']} "
+                    f"analytical={f['analytical']}{f['unit']} ratio={f['ratio']}× "
+                    f"— outside [0.5×, 2×]"
+                )
+        else:
             logger.info(
-                "testbench ripple: sim=%.1fmV claimed=%.1fmV err=%.0f%%",
-                sim_rip, claimed_rip, rip_err,
+                "testbench waveforms: all %d checks within [0.5×, 2×] of analytical",
+                len(wf_checks),
             )
 
     _learn_from_testbench(state)
