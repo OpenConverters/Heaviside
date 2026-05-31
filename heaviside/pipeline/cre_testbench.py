@@ -969,26 +969,46 @@ def run_testbench(state: CREState) -> CREState:
         or has_sync_role
         or pdf_says_sync
     )
-    # Use Rds_on from PDF/datasheet extraction or TAS controllers
-    if spec.rdson_hs and spec.rdson_ls:
+    # Rds_on priority: TAS controllers (verified) > PDF extraction (may be wrong variant)
+    ron_from_tas = _get_controller_rdson(state.ref_bom)
+    if ron_from_tas:
+        ron = ron_from_tas
+    elif spec.rdson_hs and spec.rdson_ls:
         ron = (spec.rdson_hs + spec.rdson_ls) / 2 / 1000  # mΩ → Ω
-        logger.info("testbench: Rds_on from datasheet: HS=%.1fmΩ LS=%.1fmΩ",
+        logger.info("testbench: Rds_on from PDF extraction: HS=%.1fmΩ LS=%.1fmΩ",
                      spec.rdson_hs, spec.rdson_ls)
     elif spec.rdson_hs:
         ron = spec.rdson_hs / 1000
-        logger.info("testbench: Rds_on from datasheet: %.1fmΩ", spec.rdson_hs)
+        logger.info("testbench: Rds_on from PDF extraction: %.1fmΩ", spec.rdson_hs)
     else:
-        # Try TAS controllers database as last resort
-        ron_from_tas = _get_controller_rdson(state.ref_bom)
-        if ron_from_tas:
-            ron = ron_from_tas
-            logger.info("testbench: Rds_on from TAS controllers: %.1fmΩ", ron * 1000)
+        state.diagnostics.append(
+            "testbench: Rds_on not available — not in TAS controllers "
+            "and IC datasheet extraction failed. Cannot simulate."
+        )
+        return state
+
+    # Detect multi-phase: each phase handles Iout/N_phases
+    raw_topo_full = spec.topology.lower()
+    n_phases = 1
+    if "dual" in raw_topo_full or "2-phase" in raw_topo_full:
+        n_phases = 2
+    elif "polyphase" in raw_topo_full or "poly" in raw_topo_full:
+        # Check PDF text for phase count
+        pdf_lower = (state.pdf_text or "").lower()
+        if "dual-phase" in pdf_lower or "2x" in pdf_lower or "two-phase" in pdf_lower:
+            n_phases = 2
+        elif "4-phase" in pdf_lower or "four-phase" in pdf_lower:
+            n_phases = 4
         else:
-            state.diagnostics.append(
-                "testbench: Rds_on not available — IC datasheet extraction "
-                "failed and controller not in TAS. Cannot simulate."
-            )
-            return state
+            n_phases = 2  # polyphase default
+
+    if n_phases > 1:
+        # Rewrite Rload to simulate one phase at Iout/N
+        iout_per_phase = spec.iout / n_phases
+        rload_per_phase = spec.vout / iout_per_phase if iout_per_phase > 0 else spec.vout
+        netlist_ideal = _rewrite_rload(netlist_ideal, rload_per_phase)
+        logger.info("testbench: %d-phase converter — simulating one phase at %.1fA "
+                     "(total %.1fA)", n_phases, iout_per_phase, spec.iout)
 
     if is_sync and "buck" in topology:
         netlist_ideal = _convert_to_sync_buck(netlist_ideal, ron=ron)
