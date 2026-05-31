@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
+from dataclasses import dataclass
 from typing import Any
 
 from heaviside.pipeline.cre import (
@@ -254,6 +256,100 @@ def _rewrite_component_value(deck: str, refdes: str, new_value: float) -> str:
     if count == 0:
         logger.warning("testbench: refdes %s not found in deck", refdes)
     return new_deck
+
+
+def _inject_waveform_meas(deck: str) -> str:
+    """Add .meas directives for waveform characteristics (ripple, Vpp)."""
+    # Find the steady-state window from existing .tran
+    tran_match = re.search(
+        r"\.tran\s+\S+\s+(\S+)\s+(\S+)",
+        deck, re.IGNORECASE,
+    )
+    if not tran_match:
+        return deck
+    t_stop = float(tran_match.group(1))
+    t_start = float(tran_match.group(2))
+
+    meas = [
+        "",
+        "* waveform characterization (CRE testbench)",
+        f".meas tran vout_max max v(vout) FROM={t_start:.6e} TO={t_stop:.6e}",
+        f".meas tran vout_min min v(vout) FROM={t_start:.6e} TO={t_stop:.6e}",
+        f".meas tran vsw_max max v(sw) FROM={t_start:.6e} TO={t_stop:.6e}",
+        f".meas tran vsw_min min v(sw) FROM={t_start:.6e} TO={t_stop:.6e}",
+        f".meas tran il_max max i(Vl_sense) FROM={t_start:.6e} TO={t_stop:.6e}",
+        f".meas tran il_min min i(Vl_sense) FROM={t_start:.6e} TO={t_stop:.6e}",
+        "",
+    ]
+    # Splice before .end
+    lines = deck.splitlines()
+    out: list[str] = []
+    for line in lines:
+        if line.strip().lower() == ".end":
+            out.extend(meas)
+        out.append(line)
+    return "\n".join(out) + "\n"
+
+
+def _parse_waveform_meas(stdout: str) -> dict[str, float]:
+    """Parse waveform .meas results from ngspice output."""
+    results: dict[str, float] = {}
+    pattern = re.compile(r"^\s*(vout_max|vout_min|vsw_max|vsw_min|il_max|il_min)\s*=\s*([-+]?[\d.]+(?:[eE][-+]?\d+)?)")
+    for line in stdout.splitlines():
+        m = pattern.match(line)
+        if m:
+            results[m.group(1)] = float(m.group(2))
+    return results
+
+
+@dataclass
+class WaveformCharacteristics:
+    """Waveform measurements from simulation."""
+    vout_ripple_mv: float = 0.0
+    vsw_vpp: float = 0.0
+    il_ripple_a: float = 0.0
+    il_avg_a: float = 0.0
+
+
+def _extract_waveforms(netlist: str, vout_target: float) -> WaveformCharacteristics | None:
+    """Run simulation with waveform measurements and extract characteristics."""
+    import subprocess, tempfile, os
+
+    deck = _inject_waveform_meas(netlist)
+
+    ngspice = shutil.which("ngspice")
+    if not ngspice:
+        return None
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".cir", delete=False) as f:
+        f.write(deck)
+        cir_path = f.name
+    try:
+        result = subprocess.run(
+            [ngspice, "-b", cir_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return None
+        meas = _parse_waveform_meas(result.stdout)
+    except Exception:
+        return None
+    finally:
+        os.unlink(cir_path)
+
+    vout_max = meas.get("vout_max", 0)
+    vout_min = meas.get("vout_min", 0)
+    vsw_max = meas.get("vsw_max", 0)
+    vsw_min = meas.get("vsw_min", 0)
+    il_max = meas.get("il_max", 0)
+    il_min = meas.get("il_min", 0)
+
+    return WaveformCharacteristics(
+        vout_ripple_mv=(vout_max - vout_min) * 1000,
+        vsw_vpp=vsw_max - vsw_min,
+        il_ripple_a=il_max - il_min,
+        il_avg_a=(il_max + il_min) / 2,
+    )
 
 
 def _rewrite_rload(deck: str, new_rload: float) -> str:
@@ -716,6 +812,34 @@ def run_testbench(state: CREState) -> CREState:
             diagnosis = _diagnose_mismatch(failed[0], state)
             failed[0].diagnosis = diagnosis
             state.diagnostics.append(f"testbench diagnosis: {diagnosis[:200]}")
+
+    # ------------------------------------------------------------------
+    # Phase 3: Waveform characterization at full load
+    # ------------------------------------------------------------------
+    wf = _extract_waveforms(netlist_bom, spec.vout)
+    if wf:
+        logger.info(
+            "testbench waveforms: Vout_ripple=%.1fmV Vsw_pp=%.1fV "
+            "IL_ripple=%.2fA IL_avg=%.2fA",
+            wf.vout_ripple_mv, wf.vsw_vpp, wf.il_ripple_a, wf.il_avg_a,
+        )
+        state.sim_result = state.sim_result or {}
+        if isinstance(state.sim_result, dict):
+            state.sim_result["waveforms"] = {
+                "vout_ripple_mv": round(wf.vout_ripple_mv, 1),
+                "vsw_vpp": round(wf.vsw_vpp, 1),
+                "il_ripple_a": round(wf.il_ripple_a, 2),
+                "il_avg_a": round(wf.il_avg_a, 2),
+            }
+        # Compare against claimed ripple if available
+        if state.ref_claims.vout_ripple_mv:
+            claimed_rip = state.ref_claims.vout_ripple_mv
+            sim_rip = wf.vout_ripple_mv
+            rip_err = abs(sim_rip - claimed_rip) / claimed_rip * 100 if claimed_rip else 0
+            logger.info(
+                "testbench ripple: sim=%.1fmV claimed=%.1fmV err=%.0f%%",
+                sim_rip, claimed_rip, rip_err,
+            )
 
     _learn_from_testbench(state)
     return state
