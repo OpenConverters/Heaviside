@@ -503,6 +503,66 @@ def _rewrite_ron(deck: str, new_ron: float) -> str:
     )
 
 
+def _get_inductor_dcr(ref_bom: list[dict[str, Any]]) -> float | None:
+    """Look up the main inductor's DCR from TAS magnetics database.
+
+    Returns DCR in ohms, or None if the inductor MPN is not in TAS.
+    """
+    import json
+    from pathlib import Path
+
+    tas_path = Path(__file__).resolve().parents[2] / "TAS" / "data" / "magnetics.ndjson"
+    if not tas_path.exists():
+        return None
+
+    # Find the main inductor MPN from the BOM
+    inductor_mpn = None
+    for comp in ref_bom:
+        role = comp.get("role", "")
+        if role in ("mainInductor", "boostInductor", "buckInductor"):
+            inductor_mpn = comp.get("mpn", comp.get("part", ""))
+            if inductor_mpn:
+                break
+    if not inductor_mpn:
+        return None
+
+    mpn_upper = inductor_mpn.upper().strip()
+    with open(tas_path, "rb") as f:
+        for raw_line in f:
+            if raw_line[:3] == b"\xef\xbb\xbf":
+                raw_line = raw_line[3:]
+            if not raw_line.strip():
+                continue
+            try:
+                rec = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            ref = (
+                rec.get("magnetic", {})
+                .get("manufacturerInfo", {})
+                .get("reference", "")
+            )
+            if ref.upper().strip() == mpn_upper:
+                dcr_block = (
+                    rec.get("magnetic", {})
+                    .get("manufacturerInfo", {})
+                    .get("datasheetInfo", {})
+                    .get("electrical", {})
+                    .get("dcResistance", {})
+                )
+                dcr_max = dcr_block.get("maximum")
+                if isinstance(dcr_max, (int, float)) and dcr_max > 0:
+                    logger.info(
+                        "testbench: found inductor %s DCR=%.1fmΩ in TAS",
+                        inductor_mpn, dcr_max * 1000,
+                    )
+                    return float(dcr_max)
+    logger.warning(
+        "testbench: inductor %s not found in TAS magnetics", inductor_mpn,
+    )
+    return None
+
+
 def _inject_inductor_dcr(deck: str, dcr: float) -> str:
     """Add a series resistance to L1 to model inductor DCR."""
     # Insert Rdcr between sw node and l_in (where Vl_sense already is)
@@ -865,15 +925,19 @@ def run_testbench(state: CREState) -> CREState:
         netlist_ideal = _rewrite_ron(netlist_ideal, estimated_ron)
         # Non-sync: also patch the SW1 model RON for the high-side switch
 
-    # Inject inductor DCR (estimated from rated current)
-    # DCR scales inversely with current rating; for sub-1V converters
-    # designers use premium low-DCR parts, so scale with Vout too
-    vout_factor = min(spec.vout / 3.3, 1.0)  # reduces DCR for low Vout
-    estimated_dcr = 0.075 * vout_factor / max(spec.iout, 0.5)
-    netlist_ideal = _inject_inductor_dcr(netlist_ideal, estimated_dcr)
+    # Inject inductor DCR from TAS data (no heuristic estimates)
+    inductor_dcr = _get_inductor_dcr(state.ref_bom)
+    if inductor_dcr is not None:
+        netlist_ideal = _inject_inductor_dcr(netlist_ideal, inductor_dcr)
+    else:
+        state.diagnostics.append(
+            "testbench: inductor DCR not available in TAS — "
+            "simulation uses ideal inductor (no winding loss)"
+        )
 
-    logger.info("testbench: RON=%.2fmΩ DCR=%.1fmΩ for Iout=%.1fA fsw=%.0fkHz",
-                estimated_ron * 1000, estimated_dcr * 1000,
+    logger.info("testbench: RON=%.2fmΩ DCR=%s for Iout=%.1fA fsw=%.0fkHz",
+                estimated_ron * 1000,
+                f"{inductor_dcr*1000:.1f}mΩ" if inductor_dcr else "N/A",
                 spec.iout, spec.fsw / 1000)
 
     phase1 = _simulate_netlist(

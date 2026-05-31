@@ -1411,3 +1411,138 @@ def convert_mouser_to_tas_capacitor(product: dict[str, Any]) -> dict[str, Any]:
         datasheet_url=product.get("DataSheetUrl") or "",
         status="production",
     )
+
+
+# ---------------------------------------------------------------------------
+# Magnetic / inductor converter
+# ---------------------------------------------------------------------------
+
+DIGIKEY_MAGNETIC_PARAM_MAP: dict[str, tuple[tuple[str, str], ...]] = {
+    "inductance": (
+        ("Inductance", "H"),
+        ("Inductance @ Frequency", "H"),
+    ),
+    "dcResistance": (
+        ("DC Resistance (DCR)", "Ω"),
+        ("DC Resistance (DCR) (Max)", "Ω"),
+        ("DCR (Max)", "Ω"),
+    ),
+    "ratedCurrent": (
+        ("Current Rating (Amps)", "A"),
+        ("Current Rating", "A"),
+    ),
+    "saturationCurrent": (
+        ("Current - Saturation (Isat)", "A"),
+        ("Current - Saturation", "A"),
+        ("Saturation Current", "A"),
+    ),
+    "selfResonantFrequency": (
+        ("Frequency - Self Resonant", "Hz"),
+        ("Self-Resonant Frequency", "Hz"),
+    ),
+}
+
+
+def _build_magnetic_envelope(
+    *,
+    source: str,
+    mpn: str,
+    manufacturer: str,
+    params: dict[str, str],
+    distributor_block: dict[str, Any],
+    datasheet_url: str,
+    status: str,
+    description: str = "",
+) -> dict[str, Any]:
+    """Build a TAS ``{"magnetic": {...}}`` envelope from parsed parameters."""
+    inductance = _extract_required_numeric(
+        source=source, mpn=mpn, params=params,
+        field="inductance",
+        candidates=DIGIKEY_MAGNETIC_PARAM_MAP["inductance"],
+    )
+    dcr = _extract_required_numeric(
+        source=source, mpn=mpn, params=params,
+        field="dcResistance",
+        candidates=DIGIKEY_MAGNETIC_PARAM_MAP["dcResistance"],
+    )
+    rated_current = _extract_optional_numeric(
+        params=params,
+        candidates=DIGIKEY_MAGNETIC_PARAM_MAP["ratedCurrent"],
+    )
+    isat = _extract_optional_numeric(
+        params=params,
+        candidates=DIGIKEY_MAGNETIC_PARAM_MAP["saturationCurrent"],
+    )
+    srf = _extract_optional_numeric(
+        params=params,
+        candidates=DIGIKEY_MAGNETIC_PARAM_MAP["selfResonantFrequency"],
+    )
+
+    # Tolerance: parse from params or default ±20%
+    tol = _extract_optional_numeric(
+        params=params,
+        candidates=(("Tolerance", "%"),),
+    )
+    tol_frac = abs(tol) / 100 if tol else 0.2
+
+    electrical: dict[str, Any] = {
+        "inductance": {
+            "nominal": inductance,
+            "minimum": inductance * (1 - tol_frac),
+            "maximum": inductance * (1 + tol_frac),
+        },
+        "dcResistance": {"maximum": dcr},
+    }
+    if rated_current is not None:
+        electrical["ratedCurrent"] = rated_current
+    if isat is not None:
+        electrical["saturationCurrentPeak"] = isat
+    if srf is not None:
+        electrical["selfResonantFrequency"] = srf
+
+    # Detect shielding and material from params
+    shielded = params.get("Shielding", "").lower() in ("shielded", "yes")
+    material = params.get("Core Material", params.get("Material", ""))
+
+    return {
+        "magnetic": {
+            "manufacturerInfo": {
+                "name": manufacturer,
+                "reference": mpn,
+                "status": status,
+                "datasheetUrl": datasheet_url,
+                "datasheetInfo": {
+                    "part": {
+                        "description": description,
+                        "shielded": shielded,
+                        **({"material": material} if material else {}),
+                    },
+                    "electrical": electrical,
+                },
+            },
+            "distributorsInfo": [distributor_block],
+        },
+    }
+
+
+def convert_digikey_to_tas_magnetic(
+    product: dict[str, Any], *, distributor: str = "Digi-Key",
+) -> dict[str, Any]:
+    """Convert a Digi-Key inductor/magnetic payload into a TAS
+    ``{"magnetic": {...}}`` envelope.
+
+    Required parameters: inductance, dcResistance.
+    Optional: ratedCurrent, saturationCurrent, selfResonantFrequency.
+    """
+    source = "digikey"
+    mpn = _mpn_or_raise(source, product)
+    manufacturer = _digikey_manufacturer(source, mpn, product)
+    params = _extract_digikey_params(source, mpn, product)
+    status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
+    return _build_magnetic_envelope(
+        source=source, mpn=mpn, manufacturer=manufacturer, params=params,
+        distributor_block=_digikey_distributor_block(source, mpn, product, distributor),
+        datasheet_url=product.get("PrimaryDatasheet") or "",
+        status=status,
+        description=_digikey_description(product),
+    )

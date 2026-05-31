@@ -254,7 +254,59 @@ def _stage2_5_verify_mpns(state: CREState) -> CREState:
             comp["in_tas"] = False
 
     logger.info("CRE stage 2.5: %d / %d MPNs found in TAS", found, len(state.ref_bom))
+
+    # Fetch missing inductors/magnetics from Digi-Key — their DCR is
+    # required for accurate simulation (no heuristic estimates allowed).
+    _fetch_missing_magnetics(state)
+
     return state
+
+
+def _fetch_missing_magnetics(state: CREState) -> None:
+    """Fetch missing inductor MPNs from Digi-Key and persist to TAS."""
+    try:
+        from heaviside.librarian.fetcher.auth import load_credentials
+        from heaviside.librarian.fetcher.convert import convert_digikey_to_tas_magnetic
+        from heaviside.librarian.fetcher.digikey import DigiKeyClient
+        from heaviside.librarian.tas import add_component, component_exists
+    except ImportError as exc:
+        logger.debug("librarian not available for magnetic fetch: %s", exc)
+        return
+
+    missing_magnetics = [
+        comp for comp in state.ref_bom
+        if comp.get("role", "") in ("mainInductor", "boostInductor", "buckInductor")
+        and comp.get("mpn")
+        and not comp.get("in_tas", False)
+    ]
+    if not missing_magnetics:
+        return
+
+    try:
+        creds = load_credentials()
+        client = DigiKeyClient(creds)
+    except Exception as exc:
+        logger.warning("CRE stage 2.6: cannot init Digi-Key client: %s", exc)
+        for comp in missing_magnetics:
+            state.diagnostics.append(
+                f"inductor {comp['mpn']} not in TAS and Digi-Key unavailable: {exc}"
+            )
+        return
+
+    with client:
+        for comp in missing_magnetics:
+            mpn = comp["mpn"]
+            try:
+                product = client.get_product(mpn)
+                tas_record = convert_digikey_to_tas_magnetic(product)
+                add_component("magnetics", tas_record)
+                comp["in_tas"] = True
+                logger.info("CRE stage 2.6: fetched and persisted inductor %s to TAS", mpn)
+            except Exception as exc:
+                state.diagnostics.append(
+                    f"failed to fetch inductor {mpn} from Digi-Key: {exc}"
+                )
+                logger.warning("CRE stage 2.6: inductor %s fetch failed: %s", mpn, exc)
 
 
 # ---------------------------------------------------------------------------
