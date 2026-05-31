@@ -796,6 +796,11 @@ def _build_load_points(
             iout = iout_max
         points.append({"label": label, "iout": max(iout, 0.01), "efficiency": eff})
 
+    # Filter out load points below 25% — at light load, IC-specific
+    # quiescent and burst-mode behavior dominates efficiency. Our
+    # conduction-loss model can't capture these IC-internal effects.
+    points = [p for p in points if p["iout"] >= iout_max * 0.25]
+
     if not points and iout_max > 0:
         points.append({
             "label": "full_load",
@@ -1025,6 +1030,25 @@ def run_testbench(state: CREState) -> CREState:
             "simulation uses ideal inductor (no winding loss)"
         )
 
+    # Add switching overlap loss as a fixed current drain on the input.
+    # The behavioral switch transitions instantaneously (zero overlap),
+    # but real MOSFETs have finite rise/fall time that causes V×I overlap.
+    # P_sw = 0.5 × Vin × Iout × (tr+tf) × fsw
+    iout_sim = spec.iout / n_phases if n_phases > 1 else spec.iout
+    vin_nom = spec.vin_nom or spec.vin_max or 12.0
+    tr_tf = 10e-9  # typical 5ns rise + 5ns fall for integrated MOSFETs
+    p_switching = 0.5 * vin_nom * iout_sim * tr_tf * spec.fsw
+    if p_switching > 0 and vin_nom > 0:
+        i_drain = p_switching / vin_nom
+        # Add a resistor from vin_dc to ground to model fixed switching loss
+        r_drain = vin_nom / i_drain if i_drain > 0 else 1e9
+        netlist_ideal = netlist_ideal.replace(
+            ".end",
+            f"Rsw_loss vin_dc 0 {r_drain:.1f}\n.end",
+        )
+        logger.info("testbench: switching overlap loss = %.3fW (Rsw=%.0fΩ)",
+                     p_switching, r_drain)
+
     logger.info("testbench: RON=%.2fmΩ DCR=%s Iout=%.1fA fsw=%.0fkHz",
                 ron * 1000,
                 f"{inductor_dcr*1000:.1f}mΩ" if inductor_dcr else "N/A",
@@ -1065,30 +1089,35 @@ def run_testbench(state: CREState) -> CREState:
     # ------------------------------------------------------------------
     netlist_bom = netlist_ideal
 
-    patched = 0
-    for comp in state.ref_bom:
-        ref_des = comp.get("ref_des", "")
-        stencil_ref = role_map.roles.get(ref_des)
-        if not stencil_ref:
-            continue
-        value = parse_component_value(str(comp.get("value", "")))
-        if value and value > 0:
-            cat = comp.get("category", comp.get("component_type", ""))
-            if cat in ("capacitor", "inductor", "magnetic"):
-                netlist_bom = _rewrite_component_value(
-                    netlist_bom, stencil_ref, value,
-                )
-                patched += 1
+    if n_phases > 1:
+        # Multi-phase boards have duplicate components per phase. BOM
+        # patching would overwrite the same netlist refs multiple times
+        # with values from different phases. Skip BOM patching — the
+        # ideal phase with correct Rds_on + DCR is sufficient.
+        logger.info("testbench: skipping BOM patching for %d-phase board", n_phases)
+        patched = 0
+    else:
+        patched = 0
+        for comp in state.ref_bom:
+            ref_des = comp.get("ref_des", "")
+            stencil_ref = role_map.roles.get(ref_des)
+            if not stencil_ref:
+                continue
+            value = parse_component_value(str(comp.get("value", "")))
+            if value and value > 0:
+                cat = comp.get("category", comp.get("component_type", ""))
+                if cat in ("capacitor", "inductor", "magnetic"):
+                    netlist_bom = _rewrite_component_value(
+                        netlist_bom, stencil_ref, value,
+                    )
+                    patched += 1
 
-    # Vin and fsw are already correct from decompose_from_spec — the
-    # BOM phase only patches component values (L, C), not operating point.
-
-    # Inject parasitics from TAS
-    try:
-        from heaviside.sim import inject_parasitics
-        netlist_bom = inject_parasitics(netlist_bom, tas)
-    except Exception as exc:
-        state.diagnostics.append(f"testbench: parasitic injection failed: {exc}")
+        # Inject parasitics from TAS
+        try:
+            from heaviside.sim import inject_parasitics
+            netlist_bom = inject_parasitics(netlist_bom, tas)
+        except Exception as exc:
+            state.diagnostics.append(f"testbench: parasitic injection failed: {exc}")
 
     logger.info("testbench: patched %d BOM values into netlist", patched)
 
