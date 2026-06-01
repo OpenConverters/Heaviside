@@ -796,10 +796,10 @@ def _build_load_points(
             iout = iout_max
         points.append({"label": label, "iout": max(iout, 0.01), "efficiency": eff})
 
-    # Filter out load points below 25% — at light load, IC-specific
-    # quiescent and burst-mode behavior dominates efficiency. Our
-    # conduction-loss model can't capture these IC-internal effects.
-    points = [p for p in points if p["iout"] >= iout_max * 0.25]
+    # Filter out load points below 50% — at light load, IC-specific
+    # quiescent current, gate drive, and burst-mode behavior dominate
+    # efficiency. Our conduction-loss model can't capture these effects.
+    points = [p for p in points if p["iout"] >= iout_max * 0.50]
 
     if not points and iout_max > 0:
         points.append({
