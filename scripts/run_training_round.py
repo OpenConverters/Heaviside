@@ -232,14 +232,24 @@ def _store_training_lessons(
             suggestion=None,
         ))
 
-    # Lesson from verdict
+    # Lesson from verdict + failed checks
+    verdict_detail = f"Verdict: {comparison['verdict']} for {name}"
+    best = designer_result.get("best")
+    if best and best.verdict_dict:
+        checks = best.verdict_dict.get("checks", [])
+        if isinstance(checks, list):
+            failed = [c.get("name", "?") for c in checks
+                      if isinstance(c, dict) and c.get("status") == "fail"]
+            if failed:
+                verdict_detail += f". Failed checks: {', '.join(failed)}"
+
     lessons.append(Lesson(
         id=hashlib.sha256(f"train-verdict:{name}".encode()).hexdigest()[:16],
         timestamp=now,
         topology=ref_spec.topology,
         category="training_verdict",
         severity="info" if comparison["verdict"] == "pass" else "error",
-        detail=f"Verdict: {comparison['verdict']} for {name}",
+        detail=verdict_detail,
         spec_fingerprint=fp,
         suggestion=None,
     ))

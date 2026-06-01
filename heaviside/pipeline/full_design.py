@@ -671,23 +671,57 @@ def full_design(
     """
     stage1 = stage1_topology_screen(spec, selector_fn=selector_fn)
 
-    # Query lesson store: warn (don't block) on topologies with recent failures
+    # Query lesson store: use training lessons to reorder topologies
     from heaviside.pipeline.teacher import load_lessons
     prior_failures = load_lessons(category="realism_fail", severity="error", max_age_days=30)
     prior_design_failures = load_lessons(category="design_failure", severity="error", max_age_days=30)
+    training_topo = load_lessons(category="training_topology_match", max_age_days=90)
+    training_verdict = load_lessons(category="training_verdict", max_age_days=90)
+    training_eta = load_lessons(category="training_efficiency_gap", max_age_days=90)
+
+    # Build topology preference from training: topologies that matched
+    # reference designs AND passed verdict get priority
+    preferred_topos: list[str] = []
     warned_topos: set[str] = set()
+    for l in training_topo:
+        if l.severity == "info" and l.topology:  # info = matched
+            preferred_topos.append(l.topology)
     for l in (*prior_failures, *prior_design_failures):
         if l.topology in stage1.reconciliation.chosen:
             warned_topos.add(l.topology)
+
+    # Reorder: preferred topologies first, warned last
+    chosen = list(stage1.reconciliation.chosen)
+    if preferred_topos:
+        seen = set()
+        reordered = []
+        for t in preferred_topos:
+            t_norm = t.lower().replace(" ", "_")
+            for c in chosen:
+                if c == t_norm and c not in seen:
+                    reordered.append(c)
+                    seen.add(c)
+        for c in chosen:
+            if c not in seen:
+                reordered.append(c)
+                seen.add(c)
+        chosen = reordered
+        logger.info(
+            "Teacher: reordered topologies from training lessons — "
+            "preferred: %s", ", ".join(preferred_topos[:5]),
+        )
     if warned_topos:
         logger.warning(
-            "Teacher: %d topologies have recent failure lessons: %s — "
-            "proceeding anyway (lessons are advisory, not blocking)",
+            "Teacher: %d topologies have recent failure lessons: %s",
             len(warned_topos), ", ".join(sorted(warned_topos)),
         )
 
+    # Log training efficiency insights
+    for l in training_eta[:5]:
+        logger.info("Teacher (training): %s", l.detail)
+
     stage2 = stage2_pick_magnetics(
-        spec, stage1.reconciliation.chosen,
+        spec, tuple(chosen),
         n_candidates=n_candidates_per_topology,
         pick_criteria=pick_criteria,
         core_mode=core_mode,
