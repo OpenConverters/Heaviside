@@ -59,6 +59,19 @@ class ReferenceSpec:
         spec["efficiency"] = self.efficiency_target or 0.9
         if self.turns_ratio is not None:
             spec["desiredTurnsRatios"] = [self.turns_ratio]
+        # Compute desiredInductance for MKF magnetic design
+        if self.fsw > 0 and self.iout > 0 and self.vin_nom > 0 and self.vout > 0:
+            ripple_ratio = 0.3
+            delta_il = self.iout * ripple_ratio
+            vin = self.vin_nom
+            vout = self.vout
+            if vin > vout:  # buck
+                l_desired = (vin - vout) * vout / (delta_il * self.fsw * vin)
+            else:  # boost
+                d = 1 - vin / vout
+                l_desired = vin * d / (delta_il * self.fsw)
+            if l_desired > 0:
+                spec["desiredInductance"] = l_desired
         spec.update(self.extra)
         return spec
 
