@@ -1269,8 +1269,146 @@ def _learn_from_testbench(state: CREState) -> None:
         logger.info("testbench: persisted %d lessons (%d new)", len(lessons), written)
 
 
+def extract_component_stress(
+    state: CREState,
+) -> dict[str, "SimDerivedStress"]:
+    """Extract per-component V/I stress from CRE simulation results.
+
+    Maps simulation waveforms to each BOM component via the role map.
+    Returns a dict keyed by ref_des. Components without a role mapping
+    or without simulation data get no entry (not estimated).
+    """
+    from heaviside.pipeline.crossref import SimDerivedStress
+    import math
+
+    result: dict[str, SimDerivedStress] = {}
+
+    if not state.ref_spec or not state.role_map:
+        return result
+    sr = state.sim_result
+    if not isinstance(sr, dict) or "waveforms" not in sr:
+        return result
+
+    wf = sr["waveforms"]
+    checks = wf.get("checks", [])
+    if any(not c.get("passed", True) for c in checks):
+        logger.warning("extract_component_stress: waveform cross-check "
+                       "failed — skipping stress extraction")
+        return result
+
+    spec = state.ref_spec
+    vin = spec.vin_nom or spec.vin_max or 12.0
+    vout = spec.vout
+    iout = spec.iout
+    fsw = spec.fsw
+
+    il_avg = wf.get("il_avg_a", 0)
+    il_ripple = wf.get("il_ripple_a", 0)
+    vout_ripple_mv = wf.get("vout_ripple_mv", 0)
+    vsw_vpp = wf.get("vsw_vpp", 0)
+
+    il_peak = il_avg + il_ripple / 2
+    il_rms = math.sqrt(il_avg ** 2 + (il_ripple / math.sqrt(12)) ** 2)
+
+    # Duty cycle from topology
+    topo = spec.topology.lower()
+    if "boost" in topo:
+        d = 1 - vin / vout if vout > vin else 0.5
+    else:
+        d = vout / vin if vin > 0 else 0.5
+
+    # Stencil role → stress values
+    _ROLE_STRESS: dict[str, dict[str, float | None]] = {
+        "outputCapacitor": {
+            "v_dc": vout,
+            "v_peak": vout + vout_ripple_mv / 2000,
+            "i_rms": il_ripple / math.sqrt(12) if il_ripple else None,
+        },
+        "inputCapacitor": {
+            "v_dc": vin,
+            "v_peak": vin,
+            "i_rms": iout * math.sqrt(d * (1 - d)) if iout and d else None,
+        },
+        "mainInductor": {
+            "i_avg": il_avg,
+            "i_peak": il_peak,
+            "i_rms": il_rms,
+        },
+        "boostInductor": {
+            "i_avg": il_avg,
+            "i_peak": il_peak,
+            "i_rms": il_rms,
+        },
+        "buckInductor": {
+            "i_avg": il_avg,
+            "i_peak": il_peak,
+            "i_rms": il_rms,
+        },
+        "primarySwitch": {
+            "v_peak": vsw_vpp or vin,
+            "v_dc": vin,
+            "i_peak": il_peak,
+            "i_avg": il_avg * d if il_avg else None,
+        },
+        "highSideSwitch": {
+            "v_peak": vsw_vpp or vin,
+            "v_dc": vin,
+            "i_peak": il_peak,
+            "i_avg": il_avg * d if il_avg else None,
+        },
+        "lowSideSwitch": {
+            "v_peak": vsw_vpp or vin,
+            "v_dc": vin,
+            "i_peak": il_peak,
+            "i_avg": il_avg * (1 - d) if il_avg else None,
+        },
+        "synchronousRectifier": {
+            "v_peak": vsw_vpp or vin,
+            "v_dc": vin,
+            "i_peak": il_peak,
+            "i_avg": il_avg * (1 - d) if il_avg else None,
+        },
+        "outputRectifier": {
+            "v_peak": vsw_vpp or vin,
+            "v_dc": vin,
+            "i_peak": il_peak,
+            "i_avg": il_avg * (1 - d) if il_avg else None,
+        },
+        "freewheelDiode": {
+            "v_peak": vsw_vpp or vin,
+            "v_dc": vin,
+            "i_peak": il_peak,
+            "i_avg": il_avg * (1 - d) if il_avg else None,
+        },
+    }
+
+    for comp in state.ref_bom:
+        ref_des = comp.get("ref_des", "")
+        role = comp.get("role", "")
+        if not ref_des or not role:
+            continue
+        stress_vals = _ROLE_STRESS.get(role)
+        if not stress_vals:
+            continue
+
+        result[ref_des] = SimDerivedStress(
+            ref_des=ref_des,
+            role=role,
+            v_peak=stress_vals.get("v_peak"),
+            v_dc=stress_vals.get("v_dc"),
+            i_peak=stress_vals.get("i_peak"),
+            i_avg=stress_vals.get("i_avg"),
+            i_rms=stress_vals.get("i_rms"),
+        )
+
+    logger.info("extract_component_stress: %d/%d components have stress data",
+                 len(result), len(state.ref_bom))
+    return result
+
+
 __all__ = [
     "build_role_map",
+    "extract_component_stress",
     "parse_component_value",
     "run_testbench",
 ]

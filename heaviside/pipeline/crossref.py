@@ -12,6 +12,25 @@ from enum import StrEnum
 from typing import Any
 
 
+@dataclass(frozen=True, slots=True)
+class SimDerivedStress:
+    """Per-component electrical stress derived from CRE simulation.
+
+    Populated by ``extract_component_stress()`` after the CRE testbench
+    runs. Fields are ``None`` when the simulation didn't measure that
+    quantity for this component.
+    """
+
+    ref_des: str
+    role: str
+    v_peak: float | None = None
+    v_dc: float | None = None
+    i_peak: float | None = None
+    i_avg: float | None = None
+    i_rms: float | None = None
+    p_dissipated: float | None = None
+
+
 class SubstitutionStatus(StrEnum):
     EXACT = "exact"
     RECOMMENDED = "recommended"
@@ -57,6 +76,7 @@ class CrossRefState:
     reviewer_log: str = ""
     attempt: int = 0
     passed: bool = False
+    stress_by_ref: dict[str, SimDerivedStress] = field(default_factory=dict)
     diagnostics: list[str] = field(default_factory=list)
 
 
@@ -114,5 +134,6 @@ __all__ = [
     "CrossRefComponent",
     "CrossRefOutcome",
     "CrossRefState",
+    "SimDerivedStress",
     "SubstitutionStatus",
 ]
