@@ -118,8 +118,10 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         ref = comp.get("ref_des", comp.get("name", "?"))
         cat = comp.get("component_type", comp.get("category", ""))
         all_candidates = mfr_cache.get(cat, [])
+        stress = state.stress_by_ref.get(ref)
         state.candidates_by_ref[ref] = _rank_candidates(
             comp, cat, all_candidates, max_results=50,
+            stress=stress,
         )
 
     total = sum(len(v) for v in state.candidates_by_ref.values())
@@ -327,11 +329,18 @@ def _extract_package(env: dict[str, Any], category: str) -> str:
         return ""
 
 
+VOLTAGE_DERATING_FACTOR = 1.25
+DIODE_VOLTAGE_DERATING = 1.50
+SATURATION_MARGIN = 0.90
+CURRENT_DERATING_FACTOR = 1.25
+
+
 def _rank_candidates(
     comp: dict[str, Any],
     category: str,
     all_candidates: list[dict[str, Any]],
     max_results: int = 50,
+    stress: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Rank and filter TAS candidates by relevance to the BOM component."""
     from heaviside.pipeline.value_parse import (
@@ -407,7 +416,46 @@ def _rank_candidates(
                         voltage_penalty = 0.2  # slight penalty for overkill
             except (KeyError, TypeError, ValueError):
                 pass
-        score = val_dist + pkg_penalty + voltage_penalty
+        # Stress-based penalties (from CRE simulation)
+        stress_penalty = 0.0
+        if stress:
+            try:
+                if category == "capacitor":
+                    cand_elec = cand.get("capacitor", {}).get("manufacturerInfo", {}).get("datasheetInfo", {}).get("electrical", {})
+                    v_rated = cand_elec.get("ratedVoltage")
+                    if v_rated and stress.v_peak and float(v_rated) < stress.v_peak * VOLTAGE_DERATING_FACTOR:
+                        stress_penalty += 5.0
+                    i_ripple = cand_elec.get("rippleCurrent")
+                    if i_ripple and stress.i_rms and float(i_ripple) < stress.i_rms:
+                        stress_penalty += 3.0
+                elif category == "magnetic":
+                    cand_elec = cand.get("magnetic", {}).get("manufacturerInfo", {}).get("datasheetInfo", {}).get("electrical", {})
+                    isat = cand_elec.get("saturationCurrentPeak")
+                    if isat and stress.i_peak and float(isat) < stress.i_peak:
+                        stress_penalty += 5.0
+                    i_rated = cand_elec.get("ratedCurrent")
+                    if i_rated and stress.i_rms and float(i_rated) < stress.i_rms:
+                        stress_penalty += 3.0
+                elif category == "mosfet":
+                    cand_elec = cand.get("semiconductor", {}).get("mosfet", {}).get("manufacturerInfo", {}).get("datasheetInfo", {}).get("electrical", {})
+                    vds = cand_elec.get("drainSourceVoltage")
+                    if vds and stress.v_peak and float(vds) < stress.v_peak * VOLTAGE_DERATING_FACTOR:
+                        stress_penalty += 5.0
+                    id_cont = cand_elec.get("continuousDrainCurrent")
+                    if id_cont and stress.i_peak and float(id_cont) < stress.i_peak * CURRENT_DERATING_FACTOR:
+                        stress_penalty += 3.0
+                elif category == "diode":
+                    cand_elec = cand.get("semiconductor", {}).get("diode", {}).get("manufacturerInfo", {}).get("datasheetInfo", {}).get("electrical", {})
+                    vrrm = cand_elec.get("reverseVoltage")
+                    if vrrm and stress.v_peak and float(vrrm) < stress.v_peak * DIODE_VOLTAGE_DERATING:
+                        stress_penalty += 5.0
+                    if_avg = cand_elec.get("forwardCurrent")
+                    if if_avg and stress.i_avg and float(if_avg) < stress.i_avg:
+                        stress_penalty += 3.0
+            except (KeyError, TypeError, ValueError):
+                pass
+
+        score = val_dist + pkg_penalty + voltage_penalty + stress_penalty
         scored.append((score, cand))
 
     scored.sort(key=lambda x: x[0])
@@ -1140,13 +1188,20 @@ def run_crossref_pipeline(
     target_manufacturer: str,
     *,
     circuit_context: str | None = None,
+    stress_by_ref: dict[str, Any] | None = None,
     verbose: bool = False,
 ) -> CrossRefOutcome:
-    """Run the full CR pipeline end-to-end."""
+    """Run the full CR pipeline end-to-end.
+
+    When ``stress_by_ref`` is provided (from CRE simulation), candidates
+    are ranked and guardrails are applied using actual per-component
+    voltage and current stress instead of static BOM specs.
+    """
     state = CrossRefState(
         source_bom=_normalize_bom(source_bom),
         target_manufacturer=target_manufacturer,
         circuit_context=circuit_context,
+        stress_by_ref=stress_by_ref or {},
     )
 
     state = _stage1_prefetch(state)
@@ -1187,4 +1242,70 @@ def run_crossref_pipeline(
     return outcome
 
 
-__all__ = ["CrossRefPipelineError", "run_crossref_pipeline"]
+def run_crossref_with_cre(
+    reference: str,
+    target_manufacturer: str,
+    *,
+    pdf_path: Path | None = None,
+    verbose: bool = False,
+) -> CrossRefOutcome:
+    """CRE-fronted cross-reference: simulate first, then crossref with stress.
+
+    Runs CRE stages 0→2.8 to extract specs, BOM, and simulate the
+    reference design. Then extracts per-component V/I stress from the
+    simulation and feeds it into the CR pipeline for stress-informed
+    ranking, guardrails, and scoring.
+    """
+    from heaviside.pipeline.cre import CREState
+    from heaviside.pipeline.cre_pipeline import (
+        _stage0_extract_pdf,
+        _stage1_competitor,
+        _stage2_reverse_engineer,
+        _stage2_5_verify_mpns,
+        _stage2_65_extract_rdson,
+        _stage2_7_extract_claims,
+        _stage2_8_testbench,
+    )
+    from heaviside.pipeline.cre_testbench import extract_component_stress
+
+    # --- CRE stages: extract and simulate ---
+    cre_state = CREState(reference=reference, pdf_path=pdf_path)
+    cre_state = _stage0_extract_pdf(cre_state)
+    cre_state = _stage1_competitor(cre_state)
+    cre_state = _stage2_reverse_engineer(cre_state)
+    cre_state = _stage2_5_verify_mpns(cre_state)
+    cre_state = _stage2_65_extract_rdson(cre_state)
+    cre_state = _stage2_7_extract_claims(cre_state)
+    cre_state = _stage2_8_testbench(cre_state)
+
+    # --- Bridge: extract per-component stress ---
+    stress_by_ref = extract_component_stress(cre_state)
+    logger.info("CRE→CR bridge: %d components have simulation stress data",
+                 len(stress_by_ref))
+
+    # --- CR pipeline with stress data ---
+    source_bom = _normalize_bom(cre_state.ref_bom)
+
+    # Build circuit context from CRE spec
+    ctx = ""
+    if cre_state.ref_spec:
+        s = cre_state.ref_spec
+        ctx = (
+            f"Topology: {s.topology}, Vin={s.vin_nom}V, "
+            f"Vout={s.vout}V, Iout={s.iout}A, fsw={s.fsw/1e3:.0f}kHz"
+        )
+
+    return run_crossref_pipeline(
+        source_bom,
+        target_manufacturer,
+        circuit_context=ctx,
+        stress_by_ref=stress_by_ref,
+        verbose=verbose,
+    )
+
+
+__all__ = [
+    "CrossRefPipelineError",
+    "run_crossref_pipeline",
+    "run_crossref_with_cre",
+]
