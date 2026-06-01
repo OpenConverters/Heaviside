@@ -1276,6 +1276,7 @@ def run_crossref_with_cre(
     target_manufacturer: str,
     *,
     pdf_path: Path | None = None,
+    source_bom_override: list[dict[str, Any]] | None = None,
     verbose: bool = False,
 ) -> CrossRefOutcome:
     """CRE-fronted cross-reference: simulate first, then crossref with stress.
@@ -1284,6 +1285,10 @@ def run_crossref_with_cre(
     reference design. Then extracts per-component V/I stress from the
     simulation and feeds it into the CR pipeline for stress-informed
     ranking, guardrails, and scoring.
+
+    When ``source_bom_override`` is provided (e.g. from a pre-extracted
+    Proteus BOM), the CR pipeline uses that instead of the CRE-extracted
+    BOM. The CRE BOM is still used for simulation (power-path components).
     """
     from heaviside.pipeline.cre import CREState
     from heaviside.pipeline.cre_pipeline import (
@@ -1313,7 +1318,14 @@ def run_crossref_with_cre(
                  len(stress_by_ref))
 
     # --- CR pipeline with stress data ---
-    source_bom = _normalize_bom(cre_state.ref_bom)
+    # Use pre-extracted BOM if provided (more complete than LLM extraction),
+    # otherwise use the CRE-extracted BOM.
+    if source_bom_override:
+        source_bom = _normalize_bom(source_bom_override)
+        logger.info("CRE→CR: using provided BOM (%d components) instead of "
+                     "CRE-extracted (%d)", len(source_bom), len(cre_state.ref_bom))
+    else:
+        source_bom = _normalize_bom(cre_state.ref_bom)
 
     # Build circuit context from CRE spec
     ctx = ""

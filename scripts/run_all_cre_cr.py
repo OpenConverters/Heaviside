@@ -39,6 +39,9 @@ GOLDEN_DESIGNS = [
 ]
 
 
+PROTEUS_CR_DIR = Path("/home/alf/OpenConverters/Proteus/tests/reference_designs/crossref_wurth")
+
+
 def run_one(name: str) -> dict:
     from heaviside.pipeline.crossref_pipeline import run_crossref_with_cre
 
@@ -46,11 +49,18 @@ def run_one(name: str) -> dict:
     if not pdf.exists():
         return {"name": name, "error": f"PDF not found: {pdf}"}
 
+    # Use Proteus BOM when available (more complete than LLM extraction)
+    proteus_bom_path = PROTEUS_CR_DIR / name / "bom_full.json"
+    source_bom = None
+    if proteus_bom_path.exists():
+        source_bom = json.loads(proteus_bom_path.read_text())
+
     t0 = time.time()
     outcome = run_crossref_with_cre(
         name,
         "Würth Elektronik",
         pdf_path=pdf,
+        source_bom_override=source_bom,
     )
     elapsed = time.time() - t0
 
