@@ -1008,7 +1008,9 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
     Heaviside-native and Proteus-style BOMs."""
     _FIELD_MAP = {
         "type": "component_type",
+        "category": "component_type",
         "part": "original_mpn",
+        "mpn": "original_mpn",
     }
     out: list[dict[str, Any]] = []
     for comp in bom:
