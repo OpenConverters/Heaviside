@@ -699,6 +699,86 @@ def _stage4_guardrails(state: CrossRefState) -> CrossRefState:
         state.diagnostics.append("guardrails module not available — skipping")
     except Exception as exc:
         state.diagnostics.append(f"guardrails failed: {exc}")
+    # Retry hallucinated MPNs caught by G5/G5b
+    g5_fires = [f for f in fire_log if f.get("guardrail_id", "").startswith("5")]
+    if g5_fires:
+        state = _stage4b_retry_hallucinations(state, g5_fires)
+    return state
+
+
+def _stage4b_retry_hallucinations(
+    state: CrossRefState,
+    g5_fires: list[dict[str, Any]],
+) -> CrossRefState:
+    """Retry crossref for components where G5/G5b caught hallucinated MPNs.
+
+    Instead of giving up, re-ask the LLM with explicit instructions to
+    pick ONLY from the pre-ranked TAS candidates.
+    """
+    failed_refs = {f["ref_des"] for f in g5_fires}
+    if not failed_refs:
+        return state
+
+    retry_bom = []
+    for comp in state.source_bom:
+        ref = comp.get("ref_des", comp.get("name", "?"))
+        if ref not in failed_refs:
+            continue
+        entry = dict(comp)
+        candidates = state.candidates_by_ref.get(ref, [])
+        if candidates:
+            entry["_tas_candidates"] = [
+                _summarize_candidate(c, comp.get("component_type", ""))
+                for c in candidates[:10]
+            ]
+        retry_bom.append(entry)
+
+    if not retry_bom:
+        return state
+
+    retry_msg = json.dumps({
+        "source_bom": retry_bom,
+        "target_manufacturer": state.target_manufacturer,
+        "circuit_context": state.circuit_context,
+        "IMPORTANT": (
+            "Your previous response contained hallucinated MPNs (product "
+            "family descriptions like 'WCAP-MLCC-4700nF-160V' instead of "
+            "real catalogue MPNs). You MUST pick substitute MPNs ONLY from "
+            "the _tas_candidates list provided for each component. If no "
+            "candidate fits, set status to 'no_substitute'. Do NOT invent "
+            "or construct MPN strings."
+        ),
+    }, indent=2)
+
+    try:
+        data = call_agent_json(
+            "cross-referencer", retry_msg, max_tokens=8192, max_retries=1,
+        )
+    except LLMCallError as exc:
+        state.diagnostics.append(f"G5 retry failed: {exc}")
+        return state
+
+    retried = data.get("crossref", [])
+    logger.info("CR stage 4b: retried %d G5-failed components, got %d results",
+                 len(failed_refs), len(retried))
+
+    # Merge retried results back into crossref_result
+    retried_by_ref = {r.get("ref_des"): r for r in retried}
+    for i, row in enumerate(state.crossref_result):
+        ref = row.get("ref_des")
+        if ref in retried_by_ref:
+            retry_row = retried_by_ref[ref]
+            pn = (retry_row.get("substitute_pn") or "").strip()
+            status = retry_row.get("status", "no_substitute")
+            if pn and pn != "no_substitute" and status in ("recommended", "partial"):
+                state.crossref_result[i] = retry_row
+                state.crossref_result[i]["notes"] = (
+                    f"(G5 retry: replaced hallucinated MPN) "
+                    + retry_row.get("notes", "")
+                )
+                logger.info("CR stage 4b: %s recovered → %s (%s)",
+                             ref, pn, status)
+
     return state
 
 
