@@ -1032,6 +1032,7 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "part": "original_mpn",
         "mpn": "original_mpn",
     }
+    import re as _re
     out: list[dict[str, Any]] = []
     for comp in bom:
         row = dict(comp)
@@ -1045,6 +1046,12 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
         val = row.get("value", "")
         if val and cat:
             row["value"] = _humanize_value(val, cat)
+        # Extract rated_voltage from notes if not explicitly set
+        if not row.get("rated_voltage") and not row.get("voltage"):
+            notes = str(row.get("notes", ""))
+            v_match = _re.search(r"(\d+\.?\d*)\s*V\b", notes)
+            if v_match:
+                row["rated_voltage"] = v_match.group(0)
         out.append(row)
     return out
 
