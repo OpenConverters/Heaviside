@@ -64,6 +64,9 @@ def run_one(name: str) -> dict:
     if proteus_bom_path.exists():
         source_bom = json.loads(proteus_bom_path.read_text())
 
+    from heaviside.agents.llm_call import reset_token_usage
+    reset_token_usage()
+
     t0 = time.time()
     outcome = run_crossref_with_cre(
         name,
@@ -81,6 +84,12 @@ def run_one(name: str) -> dict:
     n_keep = sum(1 for c in outcome.components if c.status.value == "keep_original")
     coverage = (n_recommended + n_exact + n_partial) / n_total if n_total else 0
 
+    # Get actual token usage
+    from heaviside.agents.llm_call import get_token_usage
+    usage = get_token_usage()
+    # kimi-k2.5 pricing: $0.002/1K input, $0.01/1K output
+    est_cost = (usage["input"] * 0.002 + usage["output"] * 0.01) / 1000
+
     return {
         "name": name,
         "passed": outcome.passed,
@@ -93,6 +102,7 @@ def run_one(name: str) -> dict:
         "keep_original": n_keep,
         "coverage": round(coverage, 2),
         "guardrails": len(outcome.guardrail_log),
+        "est_cost_usd": round(est_cost, 2),
     }
 
 
@@ -110,7 +120,7 @@ def main():
             print(f"  → {r['total']} components: {r['recommended']}R {r['exact']}E "
                   f"{r['partial']}P {r['no_substitute']}N {r['keep_original']}K "
                   f"| coverage={r['coverage']:.0%} | {r['guardrails']} guardrails "
-                  f"| {r['elapsed_s']}s")
+                  f"| {r['elapsed_s']}s | ~${r.get('est_cost_usd', 0):.2f}", flush=True)
         except Exception as exc:
             traceback.print_exc()
             results.append({"name": name, "error": str(exc)})
@@ -119,15 +129,25 @@ def main():
     print(f"\n{'='*70}")
     print("CRE→CR SUMMARY")
     print(f"{'='*70}")
-    print(f"{'Design':<45s} {'Total':>5} {'R':>3} {'E':>3} {'P':>3} {'N':>3} {'K':>3} {'Cov':>5} {'GR':>3}")
-    print("-" * 80)
+    print(f"{'Design':<40s} {'Total':>5} {'R':>3} {'E':>3} {'P':>3} {'N':>3} {'K':>3} {'Cov':>5} {'GR':>3} {'Time':>6} {'Cost':>6}")
+    print("-" * 90)
+    total_time = 0
+    total_cost = 0
     for r in results:
         if "error" in r:
-            print(f"{r['name'][:44]:<45s} ERROR: {r['error'][:30]}")
+            print(f"{r['name'][:39]:<40s} ERROR: {r['error'][:45]}")
             continue
-        print(f"{r['name'][:44]:<45s} {r['total']:5d} {r['recommended']:3d} "
+        t = r.get('elapsed_s', 0)
+        c = r.get('est_cost_usd', 0)
+        total_time += t
+        total_cost += c
+        print(f"{r['name'][:39]:<40s} {r['total']:5d} {r['recommended']:3d} "
               f"{r['exact']:3d} {r['partial']:3d} {r['no_substitute']:3d} "
-              f"{r['keep_original']:3d} {r['coverage']:4.0%} {r['guardrails']:3d}")
+              f"{r['keep_original']:3d} {r['coverage']:4.0%} {r['guardrails']:3d} "
+              f"{t:5.0f}s ${c:.2f}")
+    print("-" * 90)
+    print(f"{'TOTAL':<40s} {'':>5} {'':>3} {'':>3} {'':>3} {'':>3} {'':>3} {'':>5} {'':>3} "
+          f"{total_time:5.0f}s ${total_cost:.2f}")
 
 
 if __name__ == "__main__":

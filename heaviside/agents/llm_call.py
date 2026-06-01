@@ -20,6 +20,20 @@ logger = logging.getLogger(__name__)
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
+_TOTAL_TOKENS: dict[str, int] = {"input": 0, "output": 0, "calls": 0}
+
+
+def get_token_usage() -> dict[str, int]:
+    """Return cumulative token usage since process start."""
+    return dict(_TOTAL_TOKENS)
+
+
+def reset_token_usage() -> None:
+    """Reset token counters."""
+    _TOTAL_TOKENS["input"] = 0
+    _TOTAL_TOKENS["output"] = 0
+    _TOTAL_TOKENS["calls"] = 0
+
 
 class LLMCallError(RuntimeError):
     """Raised when an LLM call fails (no API key, bad response, etc.)."""
@@ -104,6 +118,13 @@ def call_llm(
         )
 
     data = response.json()
+
+    # Track token usage for cost reporting
+    usage = data.get("usage", {})
+    _TOTAL_TOKENS["input"] += usage.get("prompt_tokens", 0)
+    _TOTAL_TOKENS["output"] += usage.get("completion_tokens", 0)
+    _TOTAL_TOKENS["calls"] += 1
+
     try:
         msg = data["choices"][0]["message"]
         content = msg.get("content") or ""
