@@ -535,6 +535,22 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
                 _summarize_candidate(c, comp.get("component_type", ""))
                 for c in candidates[:10]
             ]
+        # Inject simulation stress data into the LLM prompt
+        stress = state.stress_by_ref.get(ref)
+        if stress:
+            stress_info: dict[str, Any] = {}
+            if stress.v_peak is not None:
+                stress_info["V_peak"] = f"{stress.v_peak:.1f}V"
+                stress_info["V_rated_min"] = f"{stress.v_peak * VOLTAGE_DERATING_FACTOR:.1f}V"
+            if stress.i_peak is not None:
+                stress_info["I_peak"] = f"{stress.i_peak:.2f}A"
+            if stress.i_rms is not None:
+                stress_info["I_rms"] = f"{stress.i_rms:.2f}A"
+            if stress.i_avg is not None:
+                stress_info["I_avg"] = f"{stress.i_avg:.2f}A"
+            if stress_info:
+                entry["_sim_stress"] = stress_info
+
         bom_for_llm.append(entry)
 
     if not bom_for_llm:
@@ -674,6 +690,7 @@ def _stage4_guardrails(state: CrossRefState) -> CrossRefState:
             {"crossref": state.crossref_result},
             state.source_bom,
             state.target_manufacturer,
+            stress_by_ref=state.stress_by_ref or None,
         )
         state.crossref_result = corrected.get("crossref", state.crossref_result)
         state.guardrail_log.extend(fire_log)
@@ -694,7 +711,10 @@ def _stage5_score(state: CrossRefState) -> CrossRefState:
     """Score matches and annotate sourcing data."""
     try:
         from heaviside.pipeline.match_score import annotate_match_scores
-        annotate_match_scores(state.crossref_result, state.source_bom)
+        annotate_match_scores(
+            state.crossref_result, state.source_bom,
+            stress_by_ref=state.stress_by_ref or None,
+        )
     except ImportError:
         state.diagnostics.append("match_score module not available — skipping")
     except Exception as exc:
