@@ -110,13 +110,13 @@ def _run_designer(spec: Mapping[str, Any], ref_topology: str) -> dict[str, Any]:
         return {
             "stage1": stage1,
             "stage2": stage2,
-            "outcomes": outcomes,
+            "outcomes": list(outcomes),
             "best": outcomes[0] if outcomes else None,
         }
     except FullDesignError as exc:
-        return {"error": str(exc), "best": None}
+        return {"error": str(exc), "outcomes": [], "best": None}
     except Exception as exc:
-        return {"error": str(exc), "best": None}
+        return {"error": str(exc), "outcomes": [], "best": None}
 
 
 def _compare(ref_spec, ref_claims, designer_result: dict) -> dict[str, Any]:
@@ -142,9 +142,15 @@ def _compare(ref_spec, ref_claims, designer_result: dict) -> dict[str, Any]:
     # Efficiency comparison
     designer_eta = None
     if best.verdict_dict:
-        checks = best.verdict_dict.get("checks", {})
-        eff_check = checks.get("efficiency", {})
-        designer_eta = eff_check.get("value")
+        checks = best.verdict_dict.get("checks", [])
+        if isinstance(checks, list):
+            for chk in checks:
+                if isinstance(chk, dict) and "efficiency" in chk.get("name", ""):
+                    designer_eta = chk.get("value")
+                    break
+        elif isinstance(checks, dict):
+            eff_check = checks.get("efficiency", checks.get("efficiency_sanity", {}))
+            designer_eta = eff_check.get("value") if isinstance(eff_check, dict) else None
 
     ref_eta = None
     if ref_claims and ref_claims.efficiency:
