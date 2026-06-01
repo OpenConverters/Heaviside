@@ -36,7 +36,15 @@ GOLDEN_DESIGNS = [
     "lt80603evkit",
     "lt83401-lt83402",
     "um3491-getting-started-with-steval0606yadj-evaluation-board-based-on-dcp0606qtry-automotive-6-v--6-a-stepdown-converter-stmicroelectronics",
+    "infineon-eval-7136u-gan",
 ]
+
+PROTEUS_CR_DIR = Path("/home/alf/OpenConverters/Proteus/tests/reference_designs/crossref_wurth")
+
+# Map design names to their Proteus CR directory names (some differ)
+_CR_DIR_MAP = {
+    "infineon-eval-7136u-gan": "infineon-eval-7136u-100v-ganc-half-bridge-evaluation-board-with-100v-coolgan-power-transistor-and-eicedriver-1edn7136u-gatedriver-userguide-usermanual-en",
+}
 
 
 PROTEUS_CR_DIR = Path("/home/alf/OpenConverters/Proteus/tests/reference_designs/crossref_wurth")
@@ -50,7 +58,8 @@ def run_one(name: str) -> dict:
         return {"name": name, "error": f"PDF not found: {pdf}"}
 
     # Use Proteus BOM when available (more complete than LLM extraction)
-    proteus_bom_path = PROTEUS_CR_DIR / name / "bom_full.json"
+    cr_dir_name = _CR_DIR_MAP.get(name, name)
+    proteus_bom_path = PROTEUS_CR_DIR / cr_dir_name / "bom_full.json"
     source_bom = None
     if proteus_bom_path.exists():
         source_bom = json.loads(proteus_bom_path.read_text())
