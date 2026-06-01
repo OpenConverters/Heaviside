@@ -15,12 +15,14 @@ Stage 2 — Per-topology fast Pareto magnetic pick (parallel):
   For each viable topology, ask MKF for N fast-mode candidates and
   pick one with magnetic_picker (deterministic or LLM).
 
-Stage 3 — Realize (TODO):
-  Ideal-component sim → fsw sweep → slow-mode magnetic redesign
-  with parasitics → extras → final realism gate.
+Stage 3 — Realize:
+  design_converter_components → decompose → attach magnetics →
+  assemble_bom_from_tas (select real FET/diode/cap) →
+  enrich → inject parasitics → simulate with real Rds_on/Vf/ESR →
+  analyst + realism gate.
 
-Stage 4 — Rank (TODO):
-  Compose Pareto across survivors (efficiency, size, BOM cost, etc.).
+Stage 4 — Rank:
+  Compose across survivors by (verdict, scoring).
 
 Public surface
 --------------
@@ -103,24 +105,13 @@ _AGENT_JSON_RE = re.compile(
 
 
 def _default_topology_selector(spec: Mapping[str, Any]) -> tuple[list[str], str]:
-    """Default LLM-path: invoke the Strands ``topology-selector`` agent
-    and parse its JSON block. Falls back to the static-screen result
-    (with a warning) if the agent layer can't be reached.
-    """
-    try:
-        from heaviside.agents import load_agent  # local import: Strands optional
-    except Exception as exc:  # pragma: no cover — strands missing
-        logger.warning(
-            "topology-selector agent unavailable (%s) — using static screen "
-            "as agent-path stand-in (Jaccard disagreement will read 0)", exc,
-        )
-        names = feasible_topology_names(spec)
-        return names, "agent unavailable; mirrored static screen"
+    """Default LLM-path: call the topology-selector LLM agent.
 
-    agent = load_agent("topology-selector")
-    response = agent(json.dumps(dict(spec)))
-    text = str(response.message if hasattr(response, "message") else response)
-    return _parse_topology_selector_response(text)
+    Uses the OpenAI-compatible API (Moonshot/Kimi by default). Falls
+    back to the static screen if no API key is configured.
+    """
+    from heaviside.agents.topology_selector_llm import topology_selector_with_fallback
+    return topology_selector_with_fallback(spec)
 
 
 def _parse_topology_selector_response(text: str) -> tuple[list[str], str]:
@@ -257,7 +248,7 @@ def stage2_pick_magnetics(
     *,
     n_candidates: int = 5,
     pick_criteria: str = "lowest_losses",
-    core_mode: str = "available cores",
+    core_mode: str = "standard cores",
     parallel: bool = True,
     max_workers: int | None = None,
 ) -> Stage2Result:
@@ -339,18 +330,321 @@ def stage2_pick_magnetics(
 
 
 @dataclass(frozen=True, slots=True)
-class DesignOutcome:
-    """Full per-topology outcome after all stages.
+class GatekeeperVerdict:
+    """Analytical adversarial review of a realized design (Ray + Nicola)."""
+    approved: bool
+    objections: tuple[str, ...]
+    warnings: tuple[str, ...]
 
-    For the v0.1 pipeline only Stage 1 & 2 are populated; Stage 3
-    fields stay ``None`` until that stage lands.
-    """
+
+@dataclass(frozen=True, slots=True)
+class DesignOutcome:
+    """Full per-topology outcome after all stages."""
     pick: TopologyPick
-    # Stage 3 placeholders — populated when realize() is wired.
     tas: dict[str, Any] | None = None
     verdict_dict: dict[str, Any] | None = None
+    gatekeeper: GatekeeperVerdict | None = None
+    report: str | None = None
     fsw_optimal: float | None = None
     diagnostics: tuple[str, ...] = field(default_factory=tuple)
+
+
+# ---------------------------------------------------------------------------
+# Stage 3 — realize (decompose → simulate → realism gate)
+# ---------------------------------------------------------------------------
+
+
+def stage3_realize(
+    pick: TopologyPick,
+    spec: Mapping[str, Any],
+) -> DesignOutcome:
+    """Take a Stage 2 TopologyPick and run it through the full pipeline.
+
+    1. design_converter_components (slow-path magnetic + extras)
+    2. decompose_from_spec → TAS + ideal netlist
+    3. attach_components_to_tas (magnetics from MKF)
+    4. assemble_bom_from_tas (select real FET/diode/cap from TAS DB)
+    5. enrich_tas_for_realism
+    6. inject_parasitics into netlist (Rds_on, Vf, ESR)
+    7. simulate with real parasitics (closed-loop or steady-state)
+    8. stamp_simulation_results + run_analyst
+    9. evaluate_tas → verdict
+    """
+    from heaviside import bridge as _bridge
+    from heaviside.bridge import BridgeError
+    from heaviside.catalogue import SelectionError, assemble_bom_from_tas
+    from heaviside.decomposer import decompose_from_spec
+    from heaviside.decomposer.api import DecomposerError
+    from heaviside.pipeline import enrich_tas_for_realism, evaluate_tas
+    from heaviside.pipeline.analyst import AnalystError, run_analyst
+    from heaviside.sim import SimError, simulate_closed_loop, simulate_steady_state, stamp_simulation_results
+    from heaviside.sim.parasitics import inject_parasitics
+
+    topology = pick.topology.name
+    spec_dict = dict(spec)
+    diagnostics: list[str] = []
+
+    try:
+        components = _bridge.design_converter_components(
+            topology, spec_dict, max_results=1, use_ngspice=False,
+        )
+    except (BridgeError, Exception) as exc:
+        return DesignOutcome(
+            pick=pick,
+            diagnostics=(f"component design failed: {exc}",),
+        )
+
+    magnetizing_inductance = components.L_authoritative
+    spec_dict["desiredInductance"] = magnetizing_inductance
+    spec_dict["desiredMagnetizingInductance"] = magnetizing_inductance
+
+    turns_ratios: list[float] = []
+    dr = components.main_magnetic.mas.get("inputs", {}).get("designRequirements", {})
+    for tr in dr.get("turnsRatios", []):
+        if isinstance(tr, dict):
+            v = tr.get("nominal") or tr.get("minimum") or tr.get("maximum")
+            if v is not None:
+                turns_ratios.append(float(v))
+        elif isinstance(tr, (int, float)):
+            turns_ratios.append(float(tr))
+
+    try:
+        netlist, tas = decompose_from_spec(
+            topology, spec_dict,
+            turns_ratios=turns_ratios,
+            magnetizing_inductance=magnetizing_inductance,
+        )
+    except DecomposerError as exc:
+        return DesignOutcome(
+            pick=pick, diagnostics=(f"decompose failed: {exc}",),
+        )
+
+    try:
+        _bridge.attach_components_to_tas(tas, components, topology=topology)
+    except Exception as exc:
+        diagnostics.append(f"attach failed: {exc}")
+
+    # --- Component selection: stamp real FET/diode/cap from TAS DB ---
+    try:
+        assemble_bom_from_tas(tas, topology=topology, spec=spec_dict)
+    except SelectionError as exc:
+        diagnostics.append(f"BOM selection partial: {exc}")
+    except Exception as exc:
+        diagnostics.append(f"BOM assembly skipped: {exc}")
+
+    try:
+        tas = enrich_tas_for_realism(tas, topology=topology, spec=spec_dict)
+    except Exception as exc:
+        return DesignOutcome(
+            pick=pick, tas=tas,
+            diagnostics=(*diagnostics, f"enrichment failed: {exc}"),
+        )
+
+    # --- Inject real parasitics into the netlist ---
+    realistic_netlist = inject_parasitics(netlist, tas)
+
+    try:
+        ops = spec_dict.get("operatingPoints") or [{}]
+        first_op = ops[0] if isinstance(ops[0], dict) else {}
+        vouts = first_op.get("outputVoltages")
+        vout_target = (
+            float(vouts[0])
+            if isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))
+            else None
+        )
+        sim_result = None
+        if vout_target is not None:
+            try:
+                sim_result = simulate_closed_loop(
+                    realistic_netlist, vout_target=vout_target,
+                )
+            except SimError:
+                pass
+        if sim_result is None:
+            sim_result = simulate_steady_state(realistic_netlist)
+        stamp_simulation_results(tas, sim_result)
+    except (SimError, DecomposerError) as exc:
+        diagnostics.append(f"sim skipped: {exc}")
+
+    try:
+        run_analyst(topology, tas, spec_dict)
+    except AnalystError as exc:
+        diagnostics.append(f"analyst skipped: {exc}")
+
+    report = evaluate_tas(tas, topology=topology, spec=spec_dict)
+    verdict_dict = {
+        "verdict": report.verdict.value,
+        "summary": report.summary,
+        "checks": [
+            {"name": c.name, "status": c.status.value, "value": c.value, "margin": c.margin}
+            for c in report.checks
+        ],
+    }
+
+    return DesignOutcome(
+        pick=pick,
+        tas=tas,
+        verdict_dict=verdict_dict,
+        diagnostics=tuple(diagnostics),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stage 3b — Gatekeepers (analytical Ray + Nicola)
+# ---------------------------------------------------------------------------
+
+
+_TIGHT_MARGIN_CHECKS = {
+    "inductor_isat_margin": 0.3,
+    "efficiency_sanity": 0.05,
+    "fet_voltage_derating": 0.2,
+    "diode_voltage_derating": 0.2,
+    "capacitor_voltage_derating": 0.5,
+    "duty_cycle_bounds": 0.1,
+    "output_voltage_regulation": 0.02,
+    "thermal_limit": 20.0,
+}
+
+
+def stage3b_gatekeeper(outcome: DesignOutcome) -> GatekeeperVerdict:
+    """Analytical adversarial review — challenges the design on tight margins.
+
+    Ray's role: block on any FAIL or dangerously tight margin.
+    Nicola's role: warn on missing checks (UNAVAILABLE) and cross-domain concerns.
+    """
+    if outcome.verdict_dict is None:
+        return GatekeeperVerdict(
+            approved=False,
+            objections=("no realism verdict — design did not complete",),
+            warnings=(),
+        )
+
+    checks = outcome.verdict_dict.get("checks", [])
+    verdict = outcome.verdict_dict.get("verdict", "")
+    objections: list[str] = []
+    warnings: list[str] = []
+
+    if verdict == "fail":
+        fails = [c["name"] for c in checks if c["status"] == "fail"]
+        objections.append(f"realism gate FAIL: {', '.join(fails)}")
+
+    for c in checks:
+        name = c["name"]
+        margin = c.get("margin")
+        status = c["status"]
+
+        if status == "unavailable":
+            warnings.append(f"{name}: UNAVAILABLE — not yet enriched")
+            continue
+
+        if status == "pass" and margin is not None:
+            threshold = _TIGHT_MARGIN_CHECKS.get(name)
+            if threshold is not None and margin < threshold:
+                warnings.append(
+                    f"{name}: margin={margin:.4f} < {threshold} — tight, "
+                    "review under worst-case conditions"
+                )
+
+    n_unavail = sum(1 for c in checks if c["status"] == "unavailable")
+    n_total = len(checks)
+    if n_unavail > n_total * 0.5:
+        warnings.append(
+            f"{n_unavail}/{n_total} checks UNAVAILABLE — design is "
+            "only partially validated"
+        )
+
+    return GatekeeperVerdict(
+        approved=len(objections) == 0,
+        objections=tuple(objections),
+        warnings=tuple(warnings),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stage 4 — Report generation
+# ---------------------------------------------------------------------------
+
+
+def generate_report(outcome: DesignOutcome) -> str:
+    """Generate a text report for a single design outcome."""
+    lines: list[str] = []
+    topo = outcome.pick.topology.name
+    lines.append(f"# Design Report: {topo}")
+    lines.append("")
+
+    lines.append("## Magnetic")
+    mag = outcome.pick.main_magnetic
+    core_name = mag.mas.get("magnetic", {}).get("core", {}).get("name", "?")
+    lines.append(f"- Core: {core_name}")
+    coil = mag.mas.get("magnetic", {}).get("coil", {})
+    for w in coil.get("functionalDescription", []):
+        lines.append(f"- {w.get('name', '?')}: N={w.get('numberTurns', '?')}")
+    lines.append(f"- Scoring (total losses): {mag.scoring:.4f}")
+    lines.append("")
+
+    # BOM section: show selected real components
+    if outcome.tas:
+        bom_entries: list[str] = []
+        for stage in outcome.tas.get("topology", {}).get("stages", []):
+            for comp in stage.get("circuit", {}).get("components", []):
+                if not isinstance(comp, dict):
+                    continue
+                prov = comp.get("selection_provenance")
+                if not isinstance(prov, dict):
+                    continue
+                cat = prov.get("category", "?")
+                mpn = prov.get("mpn", "?")
+                mfr = prov.get("manufacturer", "?")
+                tb = prov.get("tiebreaker", "?")
+                alts = prov.get("alternatives_considered", 0)
+                margins = prov.get("margins", {})
+                margin_str = ", ".join(
+                    f"{k}={v:.2f}" for k, v in margins.items()
+                    if isinstance(v, (int, float)) and v != float("inf")
+                )
+                bom_entries.append(
+                    f"- [{cat.upper()}] {mpn} ({mfr}) — "
+                    f"picked by {tb}, {alts} alternatives"
+                    + (f", margins: {margin_str}" if margin_str else "")
+                )
+        if bom_entries:
+            lines.append("## BOM (Selected Components)")
+            lines.extend(bom_entries)
+            lines.append("")
+
+    if outcome.verdict_dict:
+        v = outcome.verdict_dict
+        lines.append(f"## Realism Gate: {v['verdict'].upper()}")
+        s = v.get("summary", {})
+        lines.append(f"- pass={s.get('pass',0)} fail={s.get('fail',0)} "
+                      f"unavailable={s.get('unavailable',0)} n/a={s.get('not_applicable',0)}")
+        lines.append("")
+        for c in v.get("checks", []):
+            status = c["status"]
+            name = c["name"]
+            val = c.get("value")
+            margin = c.get("margin")
+            detail = f"value={val} margin={margin}" if val is not None else ""
+            lines.append(f"  [{status:4s}] {name}: {detail}")
+        lines.append("")
+
+    if outcome.gatekeeper:
+        gk = outcome.gatekeeper
+        status = "APPROVED" if gk.approved else "BLOCKED"
+        lines.append(f"## Gatekeeper Review: {status}")
+        for obj in gk.objections:
+            lines.append(f"  [OBJECTION] {obj}")
+        for w in gk.warnings:
+            lines.append(f"  [WARNING]   {w}")
+        lines.append("")
+
+    if outcome.diagnostics:
+        lines.append("## Diagnostics")
+        for d in outcome.diagnostics:
+            lines.append(f"  - {d}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -363,16 +657,35 @@ def full_design(
     *,
     n_candidates_per_topology: int = 5,
     pick_criteria: str = "lowest_losses",
-    core_mode: str = "available cores",
+    core_mode: str = "standard cores",
     parallel: bool = True,
     max_workers: int | None = None,
     selector_fn: TopologySelectorFn | None = None,
 ) -> tuple[Stage1Result, Stage2Result, tuple[DesignOutcome, ...]]:
-    """Run Stage 1 (dual-path topology screen) and Stage 2 (parallel
-    magnetic pick). Stage 3 (realize) and Stage 4 (rank) are stubbed
-    — the v0.1 outcome list mirrors the Stage 2 picks one-for-one.
+    """Run Stage 1 → Stage 2 → Stage 3 → rank by verdict.
+
+    Stage 1: dual-path topology screen (static + LLM).
+    Stage 2: parallel fast-Pareto magnetic pick per topology.
+    Stage 3: realize each pick (decompose → simulate → realism gate).
+    Stage 4: rank survivors by realism verdict + scoring.
     """
     stage1 = stage1_topology_screen(spec, selector_fn=selector_fn)
+
+    # Query lesson store: warn (don't block) on topologies with recent failures
+    from heaviside.pipeline.teacher import load_lessons
+    prior_failures = load_lessons(category="realism_fail", severity="error", max_age_days=30)
+    prior_design_failures = load_lessons(category="design_failure", severity="error", max_age_days=30)
+    warned_topos: set[str] = set()
+    for l in (*prior_failures, *prior_design_failures):
+        if l.topology in stage1.reconciliation.chosen:
+            warned_topos.add(l.topology)
+    if warned_topos:
+        logger.warning(
+            "Teacher: %d topologies have recent failure lessons: %s — "
+            "proceeding anyway (lessons are advisory, not blocking)",
+            len(warned_topos), ", ".join(sorted(warned_topos)),
+        )
+
     stage2 = stage2_pick_magnetics(
         spec, stage1.reconciliation.chosen,
         n_candidates=n_candidates_per_topology,
@@ -381,5 +694,106 @@ def full_design(
         parallel=parallel,
         max_workers=max_workers,
     )
-    outcomes = tuple(DesignOutcome(pick=p) for p in stage2.picks)
-    return stage1, stage2, outcomes
+
+    outcomes: list[DesignOutcome] = []
+    for pick in stage2.picks:
+        logger.info("Stage 3: realizing %s", pick.topology.name)
+        outcome = stage3_realize(pick, spec)
+        v = outcome.verdict_dict
+        verdict = v["verdict"] if v else "no_verdict"
+        logger.info("Stage 3: %s → %s", pick.topology.name, verdict)
+
+        gk = stage3b_gatekeeper(outcome)
+        gk_status = "APPROVED" if gk.approved else "BLOCKED"
+        logger.info("Stage 3b: %s → %s (%d objections, %d warnings)",
+                     pick.topology.name, gk_status, len(gk.objections), len(gk.warnings))
+
+        outcome = DesignOutcome(
+            pick=outcome.pick,
+            tas=outcome.tas,
+            verdict_dict=outcome.verdict_dict,
+            gatekeeper=gk,
+            report=generate_report(DesignOutcome(
+                pick=outcome.pick, tas=outcome.tas,
+                verdict_dict=outcome.verdict_dict, gatekeeper=gk,
+                diagnostics=outcome.diagnostics,
+            )),
+            fsw_optimal=outcome.fsw_optimal,
+            diagnostics=outcome.diagnostics,
+        )
+        outcomes.append(outcome)
+
+    outcomes.sort(key=_outcome_sort_key)
+
+    # Stage 4: Ray + Nicola adversarial review of best design
+    if outcomes and outcomes[0].verdict_dict:
+        outcomes[0] = _stage4_adversarial_review(outcomes[0])
+
+    # Stage 5: Teacher — analyze failures and store lessons
+    from heaviside.pipeline.teacher import review_design_run, summarize_lessons
+    lessons = review_design_run(outcomes, spec)
+    if lessons:
+        logger.info("Stage 5 (teacher): %s", summarize_lessons(lessons))
+
+    return stage1, stage2, tuple(outcomes)
+
+
+def _stage4_adversarial_review(outcome: DesignOutcome) -> DesignOutcome:
+    """Run Ray (engineering) and Nicola (quality) on the best design."""
+    try:
+        from heaviside.agents.llm_call import call_agent, extract_json_block, LLMCallError
+    except ImportError:
+        return outcome
+
+    review_input = {
+        "verdict": outcome.verdict_dict,
+        "topology": outcome.pick.topology.name,
+        "diagnostics": list(outcome.diagnostics),
+    }
+    if outcome.report:
+        review_input["report"] = outcome.report[:10000]
+
+    import json
+    review_verdicts: list[dict] = []
+    reviewer_log = ""
+
+    for reviewer_name in ("ray", "nicola"):
+        try:
+            raw = call_agent(
+                reviewer_name,
+                f"CONVERTER DESIGN REVIEW\n\n{json.dumps(review_input, indent=2)}",
+                max_tokens=8192,
+            )
+            reviewer_log += f"\n--- {reviewer_name.upper()} ---\n{raw}\n"
+            try:
+                verdict_data = extract_json_block(raw)
+                verdict_data["reviewer"] = reviewer_name
+                review_verdicts.append(verdict_data)
+                verdict = verdict_data.get("verdict", "").upper()
+                logger.info("Stage 4 (%s): %s", reviewer_name, verdict)
+            except LLMCallError:
+                logger.warning("Stage 4 (%s): could not parse verdict", reviewer_name)
+        except LLMCallError as exc:
+            logger.warning("Stage 4 (%s): failed: %s", reviewer_name, exc)
+
+    return DesignOutcome(
+        pick=outcome.pick,
+        tas=outcome.tas,
+        verdict_dict=outcome.verdict_dict,
+        gatekeeper=outcome.gatekeeper,
+        report=outcome.report,
+        fsw_optimal=outcome.fsw_optimal,
+        diagnostics=(*outcome.diagnostics, f"ray+nicola: {len(review_verdicts)} reviews"),
+    )
+
+
+def _outcome_sort_key(o: DesignOutcome) -> tuple[int, float]:
+    """PASS first, then by magnetic scoring (lower = better losses)."""
+    v = o.verdict_dict
+    if v and v["verdict"] == "pass":
+        rank = 0
+    elif v and v["verdict"] == "fail":
+        rank = 1
+    else:
+        rank = 2
+    return (rank, o.pick.main_magnetic.scoring)
