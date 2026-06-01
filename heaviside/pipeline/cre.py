@@ -59,8 +59,10 @@ class ReferenceSpec:
         spec["efficiency"] = self.efficiency_target or 0.9
         if self.turns_ratio is not None:
             spec["desiredTurnsRatios"] = [self.turns_ratio]
-        # For buck: ensure Vin_min > Vout (MKF requires D < 1)
-        if self.vout > 0 and spec["inputVoltage"]["minimum"] <= self.vout:
+        # For buck/step-down: ensure Vin_min > Vout (MKF requires D < 1)
+        topo_lower = self.topology.lower()
+        is_step_down = any(k in topo_lower for k in ("buck", "forward", "half-bridge"))
+        if is_step_down and self.vout > 0 and spec["inputVoltage"]["minimum"] <= self.vout:
             spec["inputVoltage"]["minimum"] = self.vout * 1.2
 
         # Compute desiredInductance for MKF magnetic design
