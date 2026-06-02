@@ -501,10 +501,13 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
         from pathlib import Path
         from heaviside.pipeline.crossref_pipeline import run_crossref_with_cre
 
-        name = (req.url.rsplit("/", 1)[-1].split("?")[0] or "design")[:50]
+        url = req.url.strip()
+        if not url.lower().startswith(("http://", "https://")):
+            url = "https://" + url  # forgive a pasted bare URL
+        name = (url.rsplit("/", 1)[-1].split("?")[0] or "design")[:50]
         update(f"Downloading {name}…")
         resp = httpx.get(
-            req.url, follow_redirects=True, timeout=90.0,
+            url, follow_redirects=True, timeout=90.0,
             headers={"User-Agent": "Mozilla/5.0 (Heaviside crossref)"},
         )
         resp.raise_for_status()
@@ -607,6 +610,68 @@ def delete_job(job_id: str) -> dict[str, Any]:
 # Streams the NDJSON and early-stops once `limit` matches are found, so even
 # the 130k-row capacitor file responds promptly for a typed query.
 # ---------------------------------------------------------------------------
+
+
+_MANUFACTURER_CACHE: dict[str, Any] | None = None
+
+
+def _manufacturer_counts() -> dict[str, Any]:
+    """Per-manufacturer component counts across the whole catalogue.
+
+    Scans every TAS/data/*.ndjson once and caches it — the corpus is static for
+    the life of the process. Manufacturer name lives at
+    ``env[root].manufacturerInfo.name`` in every category.
+    """
+    global _MANUFACTURER_CACHE
+    if _MANUFACTURER_CACHE is not None:
+        return _MANUFACTURER_CACHE
+
+    from collections import Counter
+    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.catalogue.selector import _tas_data_dir
+
+    roots = {
+        "mosfets.ndjson": "semiconductor", "diodes.ndjson": "semiconductor",
+        "igbts.ndjson": "semiconductor", "capacitors.ndjson": "capacitor",
+        "resistors.ndjson": "resistor", "magnetics.ndjson": "magnetic",
+    }
+    counts: Counter[str] = Counter()
+    total = 0
+    data_dir = _tas_data_dir()
+    for filename, root in roots.items():
+        path = data_dir / filename
+        if not path.is_file():
+            continue
+        for _lineno, env in iter_envelopes(path):
+            node = env.get(root)
+            if root == "semiconductor" and isinstance(node, dict) and node:
+                node = next(iter(node.values()), None)
+            mi = node.get("manufacturerInfo") if isinstance(node, dict) else None
+            name = mi.get("name") if isinstance(mi, dict) else None
+            if isinstance(name, str) and name.strip():
+                counts[name.strip()] += 1
+                total += 1
+
+    _MANUFACTURER_CACHE = {"total": total, "counts": counts}
+    return _MANUFACTURER_CACHE
+
+
+@app.get("/manufacturers")
+def manufacturers(min_pct: float = 1.0) -> dict[str, Any]:
+    """Vendors holding > min_pct of all catalogued components — the meaningful
+    set of cross-reference targets (vendors we can actually source from).
+
+    Default 1%: a whole-DB 5% cut is Vishay-dominated and would drop Würth and
+    every magnetics/semiconductor vendor, so 1% is the practical floor.
+    """
+    data = _manufacturer_counts()
+    total = data["total"]
+    threshold = total * min_pct / 100.0
+    leaders = [
+        {"name": n, "count": c, "pct": round(100 * c / total, 1)}
+        for n, c in data["counts"].most_common() if c >= threshold
+    ]
+    return {"total": total, "min_pct": min_pct, "manufacturers": leaders}
 
 
 def _fmt_eng(value: float | None, unit: str) -> str | None:
