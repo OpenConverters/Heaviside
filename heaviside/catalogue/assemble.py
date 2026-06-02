@@ -291,6 +291,84 @@ def _buck_target_capacitance(
     return ripple_current_pp / (8.0 * fsw * delta_v)
 
 
+# Input-capacitor ripple budget: target 1% input-voltage ripple.
+_DEFAULT_VIN_RIPPLE_FRACTION: float = 0.01
+
+
+def _has_component(tas: dict[str, Any], name: str) -> bool:
+    """True if a component with this refdes already exists in the TAS."""
+    for stage in tas.get("topology", {}).get("stages", []):
+        for comp in stage.get("circuit", {}).get("components", []):
+            if isinstance(comp, dict) and comp.get("name") == name:
+                return True
+    return False
+
+
+def _add_input_capacitor(
+    tas: dict[str, Any],
+    *,
+    topology: str,
+    spec: Mapping[str, Any],
+    tiebreaker: CapacitorTiebreaker,
+) -> bool:
+    """Synthesize and stamp an input bulk capacitor (Cin) for buck-family
+    converters. MKF's power-stage decks omit Cin, so the designer BOM is
+    missing it; every real buck needs input decoupling. Returns True if a
+    Cin was added.
+
+    Buck input-cap stress (worst case across Vin range):
+      * v_working = Vin_max
+      * I_Cin_rms = Iout * sqrt(D*(1-D)), maximized near D=0.5
+      * C_in = Iout * D * (1-D) / (fsw * ΔVin), ΔVin = 1% * Vin_nom
+    """
+    if "buck" not in topology.lower():
+        return False  # only buck-family today; other topologies deferred
+    if _has_component(tas, "Cin"):
+        return False
+
+    vin = spec.get("inputVoltage") or {}
+    vin_nom = vin.get("nominal") if isinstance(vin, Mapping) else None
+    vin_max = vin.get("maximum") if isinstance(vin, Mapping) else None
+    ops = spec.get("operatingPoints") or [{}]
+    op = ops[0] if isinstance(ops[0], Mapping) else {}
+    vouts = op.get("outputVoltages") or [None]
+    iouts = op.get("outputCurrents") or [None]
+    fsw = op.get("switchingFrequency")
+    vout = vouts[0] if vouts else None
+    iout = iouts[0] if iouts else None
+    if not all(isinstance(x, (int, float)) and x > 0
+               for x in (vin_nom, vin_max, vout, iout, fsw)):
+        return False
+
+    d = float(vout) / float(vin_nom)
+    if not (0.0 < d < 1.0):
+        return False
+    i_ripple = float(iout) * (d * (1.0 - d)) ** 0.5
+    delta_v = _DEFAULT_VIN_RIPPLE_FRACTION * float(vin_nom)
+    target_c = float(iout) * d * (1.0 - d) / (float(fsw) * delta_v)
+
+    stresses = ComponentStresses(
+        vds_stress=None, id_stress=None, vr_stress=None, if_avg_stress=None,
+        v_working=float(vin_max), i_ripple=i_ripple,
+    )
+    cap_c = _capacitor_constraints_from_stress(stresses, target_capacitance=target_c)
+    sel = select_capacitor(cap_c, tiebreaker=tiebreaker)
+
+    comp: dict[str, Any] = {
+        "name": "Cin",
+        "data": "TAS/data/capacitors.ndjson?placeholder=Cin",
+    }
+    _stamp_capacitor(comp, sel, stress_v=float(vin_max), stress_ripple=i_ripple)
+
+    # Append to the first stage that has a components list.
+    for stage in tas.get("topology", {}).get("stages", []):
+        circuit = stage.get("circuit")
+        if isinstance(circuit, dict) and isinstance(circuit.get("components"), list):
+            circuit["components"].append(comp)
+            return True
+    return False
+
+
 def assemble_bom_from_tas(
     tas: dict[str, Any],
     *,
@@ -342,14 +420,11 @@ def assemble_bom_from_tas(
     if stresses.vr_stress is not None and stresses.if_avg_stress is not None:
         diode_c = _diode_constraints_from_stress(stresses)
 
-    # Capacitor constraints + selection. Topology-aware target
-    # capacitance: buck/boost/cuk/flyback use the same delta_V budget
-    # formula with the ripple-current value already topology-derived
-    # in stress.py.
+    # Capacitor constraints + selection. The ΔV budget formula is
+    # topology-agnostic: the stress deriver provides v_working and
+    # i_ripple per topology; we size C_out for 1% output ripple.
     cap_c: CapacitorConstraints | None = None
-    if topology in {"buck", "boost", "cuk", "flyback"} and (
-        stresses.v_working is not None and stresses.i_ripple is not None
-    ):
+    if stresses.v_working is not None and stresses.i_ripple is not None:
         # ripple_current_pp ≈ i_ripple_rms * 2*sqrt(3) for triangular
         # waveforms; for the discontinuous waveforms of boost/flyback
         # this is a conservative overestimate (which is what we want
@@ -388,6 +463,11 @@ def assemble_bom_from_tas(
                     stress_v=stresses.v_working,
                     stress_ripple=stresses.i_ripple,
                 )
+
+    # Synthesize auxiliary BOM components MKF's power-stage deck omits.
+    _add_input_capacitor(
+        tas, topology=topology, spec=spec, tiebreaker=capacitor_tiebreaker,
+    )
 
     return tas
 
