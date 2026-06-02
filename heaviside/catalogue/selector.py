@@ -908,6 +908,120 @@ def select_controller(
     )
 
 
+# ---------------------------------------------------------------------------
+# Resistor selector
+# ---------------------------------------------------------------------------
+#
+# Used for feedback-divider sizing (Rtop/Rbot) and other fixed-value
+# resistors. TAS resistors.ndjson is a nested CAS envelope:
+# resistor.manufacturerInfo.datasheetInfo.{part, electrical{resistance,
+# tolerance, powerRating}}. ~117k rows; selection is nearest-value with a
+# tolerance preference.
+
+
+@dataclass(frozen=True, slots=True)
+class Resistor:
+    mpn: str
+    manufacturer: str
+    resistance: float        # electrical.resistance.nominal (ohms)
+    tolerance: float         # fractional (0.01 = 1%)
+    power_rating: float      # watts
+    case: str
+    status: str
+    raw_envelope: Mapping[str, Any]
+
+    @classmethod
+    def from_envelope(cls, env: Mapping[str, Any]) -> Resistor | None:
+        try:
+            res = env["resistor"]
+            mi = res["manufacturerInfo"]
+            di = mi["datasheetInfo"]
+            elec = di["electrical"]
+            part = di.get("part") or {}
+        except (KeyError, TypeError):
+            return None
+        mpn = mi.get("reference") or part.get("partNumber")
+        manufacturer = mi.get("name")
+        if not isinstance(mpn, str):
+            return None
+        if not isinstance(manufacturer, str):
+            manufacturer = ""
+        r_field = elec.get("resistance")
+        r_nom = r_field.get("nominal") if isinstance(r_field, Mapping) else r_field
+        if not isinstance(r_nom, (int, float)) or r_nom <= 0:
+            return None
+        tol = elec.get("tolerance")
+        tol = float(tol) if isinstance(tol, (int, float)) and tol > 0 else 0.05
+        pw = elec.get("powerRating")
+        pw = float(pw) if isinstance(pw, (int, float)) and pw > 0 else 0.0
+        case = part.get("case") if isinstance(part.get("case"), str) else ""
+        status = mi.get("status") if isinstance(mi.get("status"), str) else "unknown"
+        return cls(
+            mpn=mpn, manufacturer=manufacturer, resistance=float(r_nom),
+            tolerance=tol, power_rating=pw, case=case, status=status,
+            raw_envelope=env,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ResistorConstraints:
+    target_ohms: float
+    max_tolerance: float = 0.01   # prefer ≤1% for feedback dividers
+    max_value_deviation: float = 0.05  # accept within ±5% of target
+
+
+@dataclass(frozen=True, slots=True)
+class ResistorSelection:
+    chosen: Resistor
+    constraints: ResistorConstraints
+    deviation: float              # signed (chosen - target) / target
+    alternatives_considered: int
+
+
+def select_resistor(
+    c: ResistorConstraints,
+    *,
+    tas_data_dir: Path | None = None,
+) -> ResistorSelection:
+    """Pick the resistor nearest ``target_ohms`` within tolerance + deviation
+    bounds. Prefers tighter tolerance, then smallest |deviation|."""
+    root = tas_data_dir if tas_data_dir is not None else _tas_data_dir()
+    path = root / "resistors.ndjson"
+
+    best: Resistor | None = None
+    best_key: tuple[float, float] | None = None
+    rejection: Counter[str] = Counter()
+    total = 0
+    considered = 0
+
+    for _lineno, env in iter_envelopes(path):
+        total += 1
+        r = Resistor.from_envelope(env)
+        if r is None:
+            rejection["unreadable_row"] += 1
+            continue
+        if r.tolerance > c.max_tolerance:
+            rejection["tolerance_loose"] += 1
+            continue
+        dev = abs(r.resistance - c.target_ohms) / c.target_ohms
+        if dev > c.max_value_deviation:
+            rejection["value_far"] += 1
+            continue
+        considered += 1
+        key = (r.tolerance, dev)
+        if best_key is None or key < best_key:
+            best_key = key
+            best = r
+
+    if best is None:
+        raise SelectionError(c, rejection, total)
+    return ResistorSelection(
+        chosen=best, constraints=c,
+        deviation=(best.resistance - c.target_ohms) / c.target_ohms,
+        alternatives_considered=considered,
+    )
+
+
 # CatalogueReadError is exported only via the package surface; not in
 # selector.__all__ because the selector's own contract is SelectionError.
 __all__ = [
@@ -926,9 +1040,13 @@ __all__ = [
     "MosfetConstraints",
     "MosfetSelection",
     "MosfetTiebreaker",
+    "Resistor",
+    "ResistorConstraints",
+    "ResistorSelection",
     "SelectionError",
     "select_capacitor",
     "select_controller",
     "select_diode",
     "select_mosfet",
+    "select_resistor",
 ]

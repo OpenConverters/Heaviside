@@ -27,11 +27,14 @@ from heaviside.catalogue.selector import (
     MosfetConstraints,
     MosfetSelection,
     MosfetTiebreaker,
+    ResistorConstraints,
+    ResistorSelection,
     SelectionError,
     select_capacitor,
     select_controller,
     select_diode,
     select_mosfet,
+    select_resistor,
 )
 from heaviside.pipeline.stress import ComponentStresses, derive_stresses
 
@@ -507,8 +510,113 @@ def assemble_bom_from_tas(
 
     # Synthesize auxiliary BOM components MKF's power-stage deck omits.
     _add_input_capacitor(tas, topology=topology, spec=spec)
+    _add_feedback_divider(tas, topology=topology, spec=spec)
 
     return tas
+
+
+# Standard bottom-leg resistor for the feedback divider. 10kΩ is the
+# textbook choice: low enough for bias-current error to be negligible,
+# high enough to keep divider current in the µA range.
+_FB_BOTTOM_OHMS: float = 10_000.0
+
+
+def _controller_vref(tas: dict[str, Any]) -> float | None:
+    """Read the stamped controller's feedback reference voltage from TAS.
+
+    Returns None if no controller is stamped or it carries no
+    ``feedbackReferenceVoltage`` (TAS controllers mostly lack it — it
+    must be populated by datasheet extraction). We never guess Vref.
+    """
+    for stage in tas.get("topology", {}).get("stages", []):
+        for comp in stage.get("circuit", {}).get("components", []):
+            if not isinstance(comp, dict):
+                continue
+            data = comp.get("data")
+            if isinstance(data, dict):
+                vref = data.get("feedbackReferenceVoltage")
+                if isinstance(vref, (int, float)) and vref > 0:
+                    return float(vref)
+    return None
+
+
+def _add_feedback_divider(
+    tas: dict[str, Any], *, topology: str, spec: Mapping[str, Any],
+) -> bool:
+    """Synthesize the output-voltage feedback divider (Rfb_top / Rfb_bot).
+
+    Vout = Vref · (1 + Rtop/Rbot). With Rbot fixed at 10kΩ,
+    Rtop = Rbot · (Vout/Vref − 1). Selects real TAS resistors for both.
+
+    Requires the controller's Vref (from TAS, populated by datasheet
+    extraction). If Vref is unknown we SKIP and record a diagnostic —
+    we do not guess a reference voltage (CLAUDE.md: no heuristics).
+    """
+    if _has_component(tas, "Rfb_top"):
+        return False
+    vref = _controller_vref(tas)
+    if vref is None:
+        tas.setdefault("diagnostics", []).append(
+            "feedback divider not sized: controller Vref absent from TAS "
+            "(needs datasheet extraction — populate feedbackReferenceVoltage)"
+        )
+        return False
+
+    ops = spec.get("operatingPoints") or [{}]
+    op = ops[0] if isinstance(ops[0], Mapping) else {}
+    vouts = op.get("outputVoltages") or [None]
+    vout = vouts[0] if vouts else None
+    if not (isinstance(vout, (int, float)) and vout > vref):
+        return False
+
+    r_bot = _FB_BOTTOM_OHMS
+    r_top = r_bot * (float(vout) / vref - 1.0)
+    try:
+        sel_bot = select_resistor(ResistorConstraints(target_ohms=r_bot))
+        sel_top = select_resistor(ResistorConstraints(target_ohms=r_top))
+    except SelectionError:
+        tas.setdefault("diagnostics", []).append(
+            f"feedback divider not sized: no TAS resistor near "
+            f"Rtop={r_top:.0f}Ω / Rbot={r_bot:.0f}Ω"
+        )
+        return False
+
+    added = False
+    for stage in tas.get("topology", {}).get("stages", []):
+        circuit = stage.get("circuit")
+        if isinstance(circuit, dict) and isinstance(circuit.get("components"), list):
+            for ref, sel, target in (
+                ("Rfb_top", sel_top, r_top), ("Rfb_bot", sel_bot, r_bot),
+            ):
+                comp: dict[str, Any] = {
+                    "name": ref,
+                    "data": sel.chosen.raw_envelope,
+                    "mpn": sel.chosen.mpn,
+                    "manufacturer": sel.chosen.manufacturer,
+                    "value": _humanize_ohms(sel.chosen.resistance),
+                    "selection_provenance": {
+                        "category": "resistor",
+                        "mpn": sel.chosen.mpn,
+                        "manufacturer": sel.chosen.manufacturer,
+                        "target_ohms": target,
+                        "chosen_ohms": sel.chosen.resistance,
+                        "deviation": sel.deviation,
+                        "vref": vref,
+                        "vout": float(vout),
+                    },
+                }
+                circuit["components"].append(comp)
+            added = True
+            break
+    return added
+
+
+def _humanize_ohms(r: float) -> str:
+    if r >= 1e6:
+        return f"{r/1e6:.2f}M"
+    if r >= 1e3:
+        return f"{r/1e3:.2f}k"
+    return f"{r:.1f}"
 
 
 def _select_controller_for_tas(
