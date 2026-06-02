@@ -799,6 +799,7 @@ class Controller:
     fsw_max_khz: float
     integrated_fet: bool
     integrated_driver: bool
+    vref: float | None        # feedbackReferenceVoltage (volts), if known
     datasheet_url: str
     raw_envelope: Mapping[str, Any]
 
@@ -817,6 +818,8 @@ class Controller:
         fmin, fmax = fsw.get("min"), fsw.get("max")
         if not all(isinstance(x, (int, float)) for x in (vmin, vmax, fmin, fmax)):
             return None
+        vref_raw = env.get("feedbackReferenceVoltage")
+        vref = float(vref_raw) if isinstance(vref_raw, (int, float)) and vref_raw > 0 else None
         return cls(
             mpn=mpn,
             manufacturer=manufacturer,
@@ -827,6 +830,7 @@ class Controller:
             fsw_max_khz=float(fmax),
             integrated_fet=bool(env.get("integratedFET", False)),
             integrated_driver=bool(env.get("integratedDriver", False)),
+            vref=vref,
             datasheet_url=env.get("datasheetUrl") if isinstance(env.get("datasheetUrl"), str) else "",
             raw_envelope=env,
         )
@@ -894,13 +898,17 @@ def select_controller(
     #  1. Real switching controllers (fsw_min > 0) over gate-driver-like
     #     parts that declare fsw_min=0 (those are drivers tagged with the
     #     topology, not regulators).
-    #  2. Target fsw sitting centrally in the range (max distance to the
+    #  2. Controllers with a known Vref — we can fully specify the design
+    #     (feedback divider) only when Vref is available. Both data-
+    #     completeness and a valid engineering choice.
+    #  3. Target fsw sitting centrally in the range (max distance to the
     #     nearest fsw edge) — most robust margin against fsw drift.
-    #  3. Widest Vin range as a final, deterministic discriminator.
-    def _key(x: Controller) -> tuple[int, float, float]:
+    #  4. Widest Vin range as a final, deterministic discriminator.
+    def _key(x: Controller) -> tuple[int, int, float, float]:
         real_ctrl = 1 if x.fsw_min_khz > 0 else 0
+        has_vref = 1 if x.vref is not None else 0
         edge_dist = min(c.fsw_khz - x.fsw_min_khz, x.fsw_max_khz - c.fsw_khz)
-        return (real_ctrl, edge_dist, x.vin_max - x.vin_min)
+        return (real_ctrl, has_vref, edge_dist, x.vin_max - x.vin_min)
 
     winner = max(passing, key=_key)
     return ControllerSelection(
