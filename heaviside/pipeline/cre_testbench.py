@@ -59,7 +59,15 @@ _TOPOLOGY_ALIASES: dict[str, str] = {
     "interleaved_buck": "buck",
     "half_bridge_llc": "llc",
     "half-bridge llc": "llc",
-    "half_bridge": "asymmetric_half_bridge",
+    # A bare "half-bridge" on an eval board is almost always the
+    # NON-ISOLATED GaN/Si half-bridge power stage used as a synchronous
+    # buck (two switches + output inductor, no transformer) — e.g.
+    # Infineon EVAL-7136U. Map it to buck so it produces a valid design;
+    # asymmetric_half_bridge (isolated, transformer) is MKF-rejected here
+    # and yields no design. A genuinely isolated half-bridge SMPS would
+    # carry a turns_ratio and needs separate upstream disambiguation.
+    "half_bridge": "buck",
+    "half-bridge": "buck",
     "full_bridge": "phase_shifted_full_bridge",
     "phase_shift_full_bridge": "phase_shifted_full_bridge",
     "psfb": "phase_shifted_full_bridge",
