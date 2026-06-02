@@ -344,7 +344,6 @@ def _add_input_capacitor(
     *,
     topology: str,
     spec: Mapping[str, Any],
-    tiebreaker: CapacitorTiebreaker,
 ) -> bool:
     """Synthesize and stamp an input bulk capacitor (Cin) for buck-family
     converters. MKF's power-stage decks omit Cin, so the designer BOM is
@@ -387,7 +386,11 @@ def _add_input_capacitor(
         v_working=float(vin_max), i_ripple=i_ripple,
     )
     cap_c = _capacitor_constraints_from_stress(stresses, target_capacitance=target_c)
-    sel = select_capacitor(cap_c, tiebreaker=tiebreaker)
+    # Input bulk cap differs from the output cap: it absorbs the chopped
+    # input current, so prioritise capacitance (bulk hold-up) rather than
+    # the output cap's LOWEST_ESR. This also stops Cin and C_out landing
+    # on the identical part.
+    sel = select_capacitor(cap_c, tiebreaker=CapacitorTiebreaker.HIGHEST_CAPACITANCE)
 
     comp: dict[str, Any] = {
         "name": "Cin",
@@ -503,9 +506,7 @@ def assemble_bom_from_tas(
     _select_controller_for_tas(tas, topology=topology, spec=spec)
 
     # Synthesize auxiliary BOM components MKF's power-stage deck omits.
-    _add_input_capacitor(
-        tas, topology=topology, spec=spec, tiebreaker=capacitor_tiebreaker,
-    )
+    _add_input_capacitor(tas, topology=topology, spec=spec)
 
     return tas
 
