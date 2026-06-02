@@ -42,9 +42,15 @@ def _extract_inductance_henries(comp: dict) -> float | None:
     return None
 
 
-def extract_designer_bom(tas: dict) -> list[dict[str, Any]]:
+def extract_designer_bom(tas: dict, spec: dict | None = None) -> list[dict[str, Any]]:
     """Build a CR-format BOM from the designer's TAS power stage."""
     from heaviside.pipeline.realism import _iter_components, _categorise
+
+    spec_L = None
+    if isinstance(spec, dict):
+        dl = spec.get("desiredInductance")
+        if isinstance(dl, (int, float)) and dl > 0:
+            spec_L = float(dl)
 
     bom: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -60,7 +66,7 @@ def extract_designer_bom(tas: dict) -> list[dict[str, Any]]:
         value = ""
         rated_voltage = ""
         if cat == "magnetic":
-            L = _extract_inductance_henries(comp)
+            L = _extract_inductance_henries(comp) or spec_L
             if L:
                 value = f"{L*1e6:.2f}uH"
         elif cat == "capacitor":
@@ -113,7 +119,7 @@ def run_one(name: str) -> dict[str, Any]:
     best = outcomes[0]
 
     # 3. Extract designer BOM
-    designer_bom = extract_designer_bom(best.tas)
+    designer_bom = extract_designer_bom(best.tas, spec_dict)
     addressable = [c for c in designer_bom if c["category"] in ("magnetic", "capacitor", "resistor")]
 
     # 4. Cross-reference the designed BOM to Würth
