@@ -89,9 +89,52 @@ def _stage0_extract_pdf(state: CREState) -> CREState:
 # ---------------------------------------------------------------------------
 
 
+def _canonical_topology_names() -> list[str]:
+    from heaviside.topologies import TOPOLOGIES
+    return sorted(t.name for t in TOPOLOGIES)
+
+
+def _resolve_canonical_topology(raw: str) -> str:
+    """Map an extracted topology string to a Heaviside canonical name.
+
+    1. Already canonical (in the TOPOLOGIES registry) → use as-is.
+    2. Otherwise run the deterministic alias/fuzzy normalizer.
+    3. If neither resolves, return the raw string unchanged (full_design's
+       static screen will still attempt a feasibility match).
+    """
+    from heaviside.pipeline.cre_testbench import _normalize_topology
+    if not raw:
+        return raw
+    canonical = set(_canonical_topology_names())
+    cleaned = raw.strip().lower().replace(" ", "_").replace("-", "_")
+    if cleaned in canonical:
+        return cleaned
+    norm = _normalize_topology(raw)
+    return norm if norm else raw
+
+
 def _stage1_competitor(state: CREState) -> CREState:
     """Extract structured specs from the reference design."""
     user_msg = f"Reference design: {state.reference}\n\n"
+    # Constrain topology to the canonical registry, with the isolated-vs-
+    # non-isolated disambiguation that a bare name can't carry. This folds
+    # canonical-name selection into the existing extraction call (uses full
+    # PDF context); the result is still validated/normalized below.
+    _canon = _canonical_topology_names()
+    user_msg += (
+        "For the \"topology\" field, choose the SINGLE closest match from "
+        f"this canonical list (use these exact strings):\n{', '.join(_canon)}\n"
+        "Disambiguation rules:\n"
+        "- A NON-ISOLATED half-bridge/full-bridge step-DOWN power stage "
+        "(two switches + output inductor, no transformer, e.g. a GaN POL or "
+        "sync-buck eval board) is \"buck\".\n"
+        "- Only use isolated names (asymmetric_half_bridge, "
+        "phase_shifted_full_bridge, llc, flyback, *_forward, push_pull, dual_"
+        "active_bridge, etc.) when the design has a TRANSFORMER / galvanic "
+        "isolation (set isolation_required=true and give turns_ratio).\n"
+        "- \"synchronous\", \"polyphase\", \"multiphase\", \"interleaved\" buck "
+        "are all \"buck\".\n\n"
+    )
     if state.pdf_text:
         user_msg += f"REFERENCE DESIGN PDF CONTENT:\n\n{state.pdf_text[:100_000]}"
     else:
@@ -121,8 +164,13 @@ def _stage1_competitor(state: CREState) -> CREState:
             vin_nom = (vin_min + vin_max) / 2
         elif vin_nom <= 0 and vin_max > 0:
             vin_nom = vin_max * 0.75
+        raw_topology = specs.get("topology", "unknown")
+        resolved_topology = _resolve_canonical_topology(raw_topology)
+        if resolved_topology != raw_topology:
+            logger.info("CRE stage 1: topology %r → canonical %r",
+                         raw_topology, resolved_topology)
         ref = ReferenceSpec(
-            topology=specs.get("topology", "unknown"),
+            topology=resolved_topology,
             vin_min=vin_min,
             vin_nom=vin_nom,
             vin_max=vin_max,
