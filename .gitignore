@@ -12,6 +12,7 @@ dist/
 
 # Virtualenvs
 .venv/
+.venv-web/
 venv/
 env/
 ENV/
@@ -57,3 +58,7 @@ results/
 # Locks (TAS librarian)
 .locks/
 *.lock
+knowledge/lessons.ndjson
+
+# Playwright MCP scratch output
+.playwright-mcp/
