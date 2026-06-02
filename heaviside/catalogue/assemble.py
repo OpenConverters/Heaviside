@@ -19,13 +19,17 @@ from heaviside.catalogue.selector import (
     CapacitorConstraints,
     CapacitorSelection,
     CapacitorTiebreaker,
+    ControllerConstraints,
+    ControllerSelection,
     DiodeConstraints,
     DiodeSelection,
     DiodeTiebreaker,
     MosfetConstraints,
     MosfetSelection,
     MosfetTiebreaker,
+    SelectionError,
     select_capacitor,
+    select_controller,
     select_diode,
     select_mosfet,
 )
@@ -270,6 +274,37 @@ def _is_capacitor_placeholder(comp: Mapping[str, Any]) -> bool:
     return _is_placeholder(comp, "capacitors.ndjson")
 
 
+def _is_controller_placeholder(comp: Mapping[str, Any]) -> bool:
+    return _is_placeholder(comp, "controllers.ndjson")
+
+
+def _stamp_controller(comp: dict[str, Any], sel: ControllerSelection) -> None:
+    """Stamp the U1 placeholder with a selected controller IC.
+
+    Controllers have no per-component stress (they don't carry the power
+    path), so we record selection provenance only. Vref/Vfb is not in TAS
+    — feedback-divider sizing needs datasheet extraction, not this step.
+    """
+    ctrl = sel.chosen
+    comp["data"] = ctrl.raw_envelope
+    comp["mpn"] = ctrl.mpn
+    comp["manufacturer"] = ctrl.manufacturer
+    comp["selection_provenance"] = {
+        "category": "controller",
+        "mpn": ctrl.mpn,
+        "manufacturer": ctrl.manufacturer,
+        "constraints": {
+            "topology": sel.constraints.topology,
+            "vin_nom": sel.constraints.vin_nom,
+            "fsw_khz": sel.constraints.fsw_khz,
+            "integrated_fet": sel.constraints.integrated_fet,
+        },
+        "vin_range": [ctrl.vin_min, ctrl.vin_max],
+        "fsw_range_khz": [ctrl.fsw_min_khz, ctrl.fsw_max_khz],
+        "alternatives_considered": sel.alternatives_considered,
+    }
+
+
 # Target output-capacitance ripple budget. Textbook small-signal buck:
 #   ΔV_out = ΔI_L / (8 * fsw * C_out)
 # Picking ΔV_out / V_out = 1 % gives the C_out target. The selector then
@@ -464,12 +499,55 @@ def assemble_bom_from_tas(
                     stress_ripple=stresses.i_ripple,
                 )
 
+    # Stamp the controller placeholder (U1) with a real IC.
+    _select_controller_for_tas(tas, topology=topology, spec=spec)
+
     # Synthesize auxiliary BOM components MKF's power-stage deck omits.
     _add_input_capacitor(
         tas, topology=topology, spec=spec, tiebreaker=capacitor_tiebreaker,
     )
 
     return tas
+
+
+def _select_controller_for_tas(
+    tas: dict[str, Any], *, topology: str, spec: Mapping[str, Any],
+) -> bool:
+    """Stamp any controller placeholder with a real IC from TAS.
+
+    Prefers external-FET controllers (integratedFET=False) because the
+    decomposer's buck deck uses discrete Q1/D1 — a monolithic controller
+    would duplicate the switch. Best-effort: if no controller matches
+    (e.g. fsw out of every controller's range), leaves the placeholder
+    and records a diagnostic in the TAS rather than failing the design.
+    """
+    vin = spec.get("inputVoltage") or {}
+    vin_nom = vin.get("nominal") if isinstance(vin, Mapping) else None
+    ops = spec.get("operatingPoints") or [{}]
+    op = ops[0] if isinstance(ops[0], Mapping) else {}
+    fsw = op.get("switchingFrequency")
+    if not (isinstance(vin_nom, (int, float)) and vin_nom > 0
+            and isinstance(fsw, (int, float)) and fsw > 0):
+        return False
+
+    constraints = ControllerConstraints(
+        topology=topology,
+        vin_nom=float(vin_nom),
+        fsw_khz=float(fsw) / 1000.0,
+        integrated_fet=False,  # discrete Q1/D1 in the deck → external-FET ctrl
+    )
+    try:
+        sel = select_controller(constraints)
+    except SelectionError:
+        return False
+
+    stamped = False
+    for stage in tas.get("topology", {}).get("stages", []):
+        for comp in stage.get("circuit", {}).get("components", []):
+            if isinstance(comp, dict) and _is_controller_placeholder(comp):
+                _stamp_controller(comp, sel)
+                stamped = True
+    return stamped
 
 
 __all__ = ["assemble_bom_from_tas"]

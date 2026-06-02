@@ -775,6 +775,139 @@ def select_capacitor(
     )
 
 
+# ---------------------------------------------------------------------------
+# Controller selector
+# ---------------------------------------------------------------------------
+#
+# TAS controllers.ndjson is a FLAT schema (not the nested CAS envelope used
+# by Q/D/C): top-level name, manufacturer, topologies[], vinRange{min,max}
+# (volts), switchingFrequencyRange{min,max} (kHz), integratedFET,
+# integratedDriver. No Vref/Vfb data is published — feedback-divider sizing
+# must come from datasheet extraction, not this selector.
+
+
+@dataclass(frozen=True, slots=True)
+class Controller:
+    """Subset of a TAS controller envelope (flat schema)."""
+
+    mpn: str
+    manufacturer: str
+    topologies: tuple[str, ...]
+    vin_min: float
+    vin_max: float
+    fsw_min_khz: float
+    fsw_max_khz: float
+    integrated_fet: bool
+    integrated_driver: bool
+    datasheet_url: str
+    raw_envelope: Mapping[str, Any]
+
+    @classmethod
+    def from_envelope(cls, env: Mapping[str, Any]) -> Controller | None:
+        mpn = env.get("name")
+        manufacturer = env.get("manufacturer")
+        if not isinstance(mpn, str) or not isinstance(manufacturer, str):
+            return None
+        topos = env.get("topologies")
+        if not isinstance(topos, list):
+            return None
+        vin = env.get("vinRange") or {}
+        fsw = env.get("switchingFrequencyRange") or {}
+        vmin, vmax = vin.get("min"), vin.get("max")
+        fmin, fmax = fsw.get("min"), fsw.get("max")
+        if not all(isinstance(x, (int, float)) for x in (vmin, vmax, fmin, fmax)):
+            return None
+        return cls(
+            mpn=mpn,
+            manufacturer=manufacturer,
+            topologies=tuple(str(t).lower() for t in topos),
+            vin_min=float(vmin),
+            vin_max=float(vmax),
+            fsw_min_khz=float(fmin),
+            fsw_max_khz=float(fmax),
+            integrated_fet=bool(env.get("integratedFET", False)),
+            integrated_driver=bool(env.get("integratedDriver", False)),
+            datasheet_url=env.get("datasheetUrl") if isinstance(env.get("datasheetUrl"), str) else "",
+            raw_envelope=env,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ControllerConstraints:
+    """Controller selection constraints derived from the converter spec."""
+
+    topology: str            # normalized topology name (e.g. "buck")
+    vin_nom: float           # nominal input voltage (volts) — must be in range
+    fsw_khz: float           # switching frequency (kHz) — must be in range
+    integrated_fet: bool | None  # True/False to require; None = don't care
+
+
+@dataclass(frozen=True, slots=True)
+class ControllerSelection:
+    chosen: Controller
+    constraints: ControllerConstraints
+    alternatives_considered: int
+
+
+def select_controller(
+    c: ControllerConstraints,
+    *,
+    tas_data_dir: Path | None = None,
+) -> ControllerSelection:
+    """Pick a controller IC matching topology, Vin range, and fsw range.
+
+    Tiebreaker: widest fsw-range headroom around the target (most robust
+    margin), then widest Vin range. Raises SelectionError if none match.
+    """
+    root = tas_data_dir if tas_data_dir is not None else _tas_data_dir()
+    path = root / "controllers.ndjson"
+
+    topo = c.topology.lower()
+    passing: list[Controller] = []
+    rejection: Counter[str] = Counter()
+    total = 0
+
+    for _lineno, env in iter_envelopes(path):
+        total += 1
+        ctrl = Controller.from_envelope(env)
+        if ctrl is None:
+            rejection["unreadable_row"] += 1
+            continue
+        if topo not in ctrl.topologies and "any" not in ctrl.topologies and "all" not in ctrl.topologies:
+            rejection["topology"] += 1
+            continue
+        if not (ctrl.vin_min <= c.vin_nom <= ctrl.vin_max):
+            rejection["vin_out_of_range"] += 1
+            continue
+        if not (ctrl.fsw_min_khz <= c.fsw_khz <= ctrl.fsw_max_khz):
+            rejection["fsw_out_of_range"] += 1
+            continue
+        if c.integrated_fet is not None and ctrl.integrated_fet != c.integrated_fet:
+            rejection["integrated_fet_mismatch"] += 1
+            continue
+        passing.append(ctrl)
+
+    if not passing:
+        raise SelectionError(c, rejection, total)
+
+    # Tiebreaker, in priority order:
+    #  1. Real switching controllers (fsw_min > 0) over gate-driver-like
+    #     parts that declare fsw_min=0 (those are drivers tagged with the
+    #     topology, not regulators).
+    #  2. Target fsw sitting centrally in the range (max distance to the
+    #     nearest fsw edge) — most robust margin against fsw drift.
+    #  3. Widest Vin range as a final, deterministic discriminator.
+    def _key(x: Controller) -> tuple[int, float, float]:
+        real_ctrl = 1 if x.fsw_min_khz > 0 else 0
+        edge_dist = min(c.fsw_khz - x.fsw_min_khz, x.fsw_max_khz - c.fsw_khz)
+        return (real_ctrl, edge_dist, x.vin_max - x.vin_min)
+
+    winner = max(passing, key=_key)
+    return ControllerSelection(
+        chosen=winner, constraints=c, alternatives_considered=len(passing),
+    )
+
+
 # CatalogueReadError is exported only via the package surface; not in
 # selector.__all__ because the selector's own contract is SelectionError.
 __all__ = [
@@ -782,6 +915,9 @@ __all__ = [
     "CapacitorConstraints",
     "CapacitorSelection",
     "CapacitorTiebreaker",
+    "Controller",
+    "ControllerConstraints",
+    "ControllerSelection",
     "Diode",
     "DiodeConstraints",
     "DiodeSelection",
@@ -792,6 +928,7 @@ __all__ = [
     "MosfetTiebreaker",
     "SelectionError",
     "select_capacitor",
+    "select_controller",
     "select_diode",
     "select_mosfet",
 ]
