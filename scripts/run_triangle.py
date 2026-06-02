@@ -58,16 +58,25 @@ def extract_designer_bom(tas: dict) -> list[dict[str, Any]]:
         mpn = prov.get("mpn") or comp.get("mpn") or ""
         mfr = prov.get("manufacturer") or comp.get("manufacturer") or ""
         value = ""
+        rated_voltage = ""
         if cat == "magnetic":
             L = _extract_inductance_henries(comp)
             if L:
                 value = f"{L*1e6:.2f}uH"
+        elif cat == "capacitor":
+            c = comp.get("capacitance")
+            if isinstance(c, (int, float)) and c > 0:
+                value = f"{c*1e6:.2f}uF" if c >= 1e-6 else f"{c*1e9:.1f}nF"
+            v = comp.get("v_rated")
+            if isinstance(v, (int, float)) and v > 0:
+                rated_voltage = f"{v:.0f}V"
         bom.append({
             "ref_des": ref,
             "category": cat,
             "mpn": mpn,
             "manufacturer": mfr,
             "value": value,
+            "rated_voltage": rated_voltage,
         })
     return bom
 
