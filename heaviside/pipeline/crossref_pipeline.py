@@ -881,16 +881,16 @@ def _persist_digikey_product(product: dict[str, Any], hint_type: str = "") -> No
 
 
 def _stage6_otto(state: CrossRefState) -> CrossRefState:
-    """Run Otto to challenge no_substitute items (Würth only).
+    """Run Otto to challenge no_substitute items (manufacturer-agnostic).
 
-    Otto is a pushy Würth salesman — his diagnoses are valuable
-    (why the search missed parts) but his MPNs are often hallucinated.
-    We collect his diagnoses and feed them back to the cross-referencer
-    as hints for a broader search, rather than using his MPNs directly.
+    Otto is a pushy field-sales engineer for the TARGET manufacturer — his
+    diagnoses are valuable (why the search missed parts: too-narrow
+    footprint/value filtering) but his MPNs are often hallucinated. We
+    collect his diagnoses and feed them back to the cross-referencer as
+    hints for a broader search, rather than using his MPNs directly. The
+    target manufacturer is passed into his prompt so he challenges for
+    whichever maker is the target (Würth, TI, Vishay, …).
     """
-    if "wurth" not in state.target_manufacturer.lower():
-        return state
-
     no_subs = [
         row for row in state.crossref_result
         if row.get("status") == "no_substitute"
@@ -909,7 +909,10 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
         otto_tokens = 8192 + len(trimmed) * 256
         raw = call_agent(
             "otto",
-            json.dumps({"no_substitute_items": trimmed}, indent=2),
+            json.dumps({
+                "target_manufacturer": state.target_manufacturer,
+                "no_substitute_items": trimmed,
+            }, indent=2),
             max_tokens=min(otto_tokens, 16384),
         )
         data = extract_json_block(raw)

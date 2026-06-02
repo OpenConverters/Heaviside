@@ -208,10 +208,30 @@ def _build_bom_by_ref(source_bom: list[dict]) -> dict[str, dict]:
 # Individual guardrails
 # ---------------------------------------------------------------------------
 
-_WURTH_MPN_PREFIX_RE = re.compile(
-    r"^([78]\d{8,11}|WSM\d{4}\w+|WR\d{2}\w+|860\d{8,9}|FT\d{8})$",
-    re.IGNORECASE,
-)
+def _normalize_manufacturer_name(name: str) -> str:
+    """Lowercase, drop non-alphanumerics and common suffixes for matching.
+
+    'Würth Elektronik' / 'Wurth Elektronik eiSos' / 'WE' all collapse so a
+    BOM-extracted manufacturer can be compared to the target regardless of
+    spelling/casing/legal-suffix noise."""
+    import unicodedata
+    n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    n = n.lower()
+    for suffix in ("elektronik", "electronics", "electronic", "eisos",
+                   "technologies", "technology", "semiconductor",
+                   "semiconductors", "incorporated", "inc", "corporation",
+                   "corp", "gmbh", "ltd", "llc", "co", "limited"):
+        n = n.replace(suffix, " ")
+    return "".join(ch for ch in n if ch.isalnum())
+
+
+def _manufacturer_matches(a: str, b: str) -> bool:
+    """True if two manufacturer names refer to the same maker (either
+    normalized form contains the other; guards against empty/too-short)."""
+    na, nb = _normalize_manufacturer_name(a), _normalize_manufacturer_name(b)
+    if len(na) < 3 or len(nb) < 3:
+        return False
+    return na in nb or nb in na
 
 
 def _g0_already_target_manufacturer(
@@ -224,21 +244,28 @@ def _g0_already_target_manufacturer(
     """G0: If the original_pn is already the target manufacturer's part
     AND exists in TAS, force status='exact' with substitute_pn=original_pn.
 
-    Pre-empts the LLM hallucinating 'no_substitute' for parts that ARE
-    already the target manufacturer (e.g. 74437349100 is Wurth WE-MAPI).
+    Manufacturer-AGNOSTIC: looks the original MPN up in TAS and compares
+    the part's catalogued manufacturer to the target — no per-manufacturer
+    MPN-pattern regex. Pre-empts the LLM hallucinating 'no_substitute' for
+    parts that ARE already the target manufacturer (e.g. 74437349100 is
+    Würth WE-MAPI; LM5146 is TI; etc.).
     """
     for comp in comps:
         orig_pn = (comp.get("original_pn") or "").strip()
-        if not orig_pn:
-            continue
-        # Check if MPN looks like a target manufacturer part.
-        if not _WURTH_MPN_PREFIX_RE.match(orig_pn):
-            continue
-        # Verify the part exists in TAS.
-        if not _mpn_exists_in_tas(orig_pn, tas_data_dir=tas_data_dir):
+        if not orig_pn or orig_pn == "no_substitute":
             continue
         prev_status = comp.get("status")
         if prev_status in ("exact", "already_target"):
+            continue
+        # Authoritative check: is this MPN in TAS, and is its catalogued
+        # manufacturer the target? Works for ANY manufacturer.
+        part = _lookup_tas_part(
+            orig_pn, comp.get("component_type", ""), tas_data_dir=tas_data_dir,
+        )
+        part_mfr = (part or {}).get("manufacturer")
+        if not part or not isinstance(part_mfr, str):
+            continue
+        if not _manufacturer_matches(part_mfr, target_manufacturer):
             continue
         comp["status"] = "exact"
         comp["substitute_pn"] = orig_pn
@@ -251,7 +278,8 @@ def _g0_already_target_manufacturer(
         ref = comp.get("ref_des", "?")
         fires.append(_make_fire(
             "0", ref, prev_status, "exact",
-            f"original_pn {orig_pn} matches {target_manufacturer} + present in catalogue",
+            f"original_pn {orig_pn} catalogued as {part_mfr} (matches target) "
+            f"+ present in catalogue",
         ))
 
 
@@ -497,11 +525,14 @@ def _g5_substitute_existence(
             continue
         ref = str(comp.get("ref_des", "") or "").split(",")[0].strip()
 
-        # 5a: Format check — reject obvious non-MPN strings.
+        # 5a: Format check — reject obvious non-MPN strings (product-family
+        # descriptions like 'WCAP-MLCC-4700nF-160V'). Manufacturer-agnostic
+        # carve-out: if the description-looking string is actually a real
+        # catalogued MPN (present in TAS), keep it — don't reject on format.
         looks_like_description = (
             "-" in pn and any(unit in pn for unit in ("nF", "uF", "V", "Ohm"))
         )
-        if looks_like_description and not _WURTH_MPN_PREFIX_RE.match(pn):
+        if looks_like_description and not _mpn_exists_in_tas(pn, tas_data_dir=tas_data_dir):
             prev_status = comp.get("status")
             comp["status"] = "no_substitute"
             comp["substitute_pn"] = "no_substitute"
@@ -544,7 +575,9 @@ def _g6_voltage_inadequacy_in_notes(
     capacitor meets original 100V rating').
     """
     _VOLTAGE_INADEQUATE = [
-        re.compile(r"no w[uü]rth.{0,80}meets? original.{0,40}rating", re.I | re.S),
+        # Manufacturer-agnostic: "no <any manufacturer> ... meets original
+        # ... rating" (the LLM names whatever target it was given).
+        re.compile(r"\bno\b.{0,40}meets? original.{0,40}rating", re.I | re.S),
         re.compile(r"highest available.{0,30}\d+\.?\d*\s*v.{0,40}orig", re.I | re.S),
         re.compile(r"voltage rating fail", re.I),
         re.compile(r"voltage.{0,30}inadequate", re.I),
