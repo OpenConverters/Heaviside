@@ -525,8 +525,14 @@ def _boost_op_budget(
     vin = _spec_vin_nominal(spec)
     duty = 1.0 - vin / vout
     iin = iout * vout / vin  # inductor avg = input avg for boost
+    # The output diode conducts the INDUCTOR current during the OFF
+    # interval; the generic budget multiplies sec_current by (1-duty),
+    # so passing iin yields the correct average diode current
+    # (1-duty)*iin = iout (a boost diode carries the full output charge).
+    # Passing iout here would triple-undercount the diode conduction
+    # loss and inflate efficiency past the realism sanity ceiling.
     return _compute_generic_loss_budget(
-        tas, spec, duty=duty, pri_current=iin, sec_current=iout,
+        tas, spec, duty=duty, pri_current=iin, sec_current=iin,
         op_index=op_index,
     )
 
@@ -575,6 +581,662 @@ def run_flyback_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
     _run_generic_analyst(tas, spec, _flyback_op_budget)
 
 
+# ---------------------------------------------------------------------------
+# Helper: MOSFET / diode loss for a single named device
+# ---------------------------------------------------------------------------
+
+
+def _mosfet_loss(
+    comp: dict[str, Any] | None,
+    name: str,
+    *,
+    duty: float,
+    i_on: float,
+    vds_off: float,
+    fsw: float,
+    zvs: bool = False,
+) -> dict[str, float | None]:
+    """Return ``{name_conduction: ..., name_switching: ...}`` for one MOSFET."""
+    if comp is None:
+        return {}
+    budget: dict[str, float | None] = {}
+    rds_on = comp.get("rds_on")
+    qg = comp.get("qg_total")
+    if isinstance(rds_on, (int, float)) and rds_on > 0:
+        budget[f"{name}_conduction"] = float(duty) * (i_on ** 2) * float(rds_on)
+    else:
+        budget[f"{name}_conduction"] = None
+    if zvs:
+        budget[f"{name}_switching"] = 0.0
+    elif isinstance(qg, (int, float)) and qg > 0:
+        budget[f"{name}_switching"] = vds_off * i_on * float(qg) * fsw / _GATE_DRIVE_CURRENT_A
+    else:
+        budget[f"{name}_switching"] = None
+    return budget
+
+
+def _diode_loss(
+    comp: dict[str, Any] | None,
+    name: str,
+    *,
+    duty_off: float,
+    i_fwd: float,
+    vr: float,
+    fsw: float,
+) -> dict[str, float | None]:
+    """Return ``{name_conduction: ..., name_switching: ...}`` for one diode."""
+    if comp is None:
+        return {}
+    budget: dict[str, float | None] = {}
+    vf = comp.get("vf_typ")
+    qrr = comp.get("qrr")
+    if isinstance(vf, (int, float)) and vf >= 0:
+        budget[f"{name}_conduction"] = float(duty_off) * i_fwd * float(vf)
+    else:
+        budget[f"{name}_conduction"] = None
+    if isinstance(qrr, (int, float)) and qrr >= 0:
+        budget[f"{name}_switching"] = 0.5 * vr * float(qrr) * fsw
+    else:
+        budget[f"{name}_switching"] = None
+    return budget
+
+
+def _cap_esr_loss(
+    comp: dict[str, Any] | None,
+    name: str,
+) -> dict[str, float | None]:
+    """Return ``{name_esr: ...}`` for a capacitor."""
+    if comp is None:
+        return {}
+    esr = comp.get("esr")
+    ripple_rms = comp.get("ripple_current_stress")
+    if (
+        isinstance(esr, (int, float)) and esr >= 0
+        and isinstance(ripple_rms, (int, float)) and ripple_rms >= 0
+    ):
+        return {f"{name}_esr": (ripple_rms ** 2) * float(esr)}
+    return {f"{name}_esr": None}
+
+
+def _inductor_loss_keyed(
+    comp: dict[str, Any] | None,
+    name: str,
+) -> dict[str, float | None]:
+    """Return ``{name_core: ..., name_dcr: ...}`` for any inductor/xfmr."""
+    if comp is None:
+        return {}
+    raw = _inductor_loss_from_mas(comp)
+    return {f"{name}_core": raw.get("L1_core"), f"{name}_dcr": raw.get("L1_dcr")}
+
+
+# ---------------------------------------------------------------------------
+# SEPIC
+# ---------------------------------------------------------------------------
+
+
+def _sepic_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    duty = vout / (vin + vout) if (vin + vout) > 0 else 0.0
+    iin = iout * vout / vin if vin > 0 else 0.0
+    vds_off = vin + vout
+
+    budget: dict[str, float | None] = {}
+    budget.update(_mosfet_loss(
+        _find_named(tas, "Q1"), "Q1",
+        duty=duty, i_on=iin, vds_off=vds_off, fsw=fsw,
+    ))
+    budget.update(_diode_loss(
+        _find_named(tas, "D1"), "D1",
+        duty_off=(1.0 - duty), i_fwd=iout, vr=vds_off, fsw=fsw,
+    ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L2"), "L2"))
+    budget.update(_cap_esr_loss(_find_named(tas, "C1"), "C1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_sepic_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """SEPIC loss budget + Tj across every operating point."""
+    _run_generic_analyst(tas, spec, _sepic_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Zeta
+# ---------------------------------------------------------------------------
+
+
+def _zeta_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    duty = vout / (vin + vout) if (vin + vout) > 0 else 0.0
+    iin = iout * vout / vin if vin > 0 else 0.0
+    vds_off = vin + vout
+
+    budget: dict[str, float | None] = {}
+    budget.update(_mosfet_loss(
+        _find_named(tas, "Q1"), "Q1",
+        duty=duty, i_on=iin, vds_off=vds_off, fsw=fsw,
+    ))
+    budget.update(_diode_loss(
+        _find_named(tas, "D1"), "D1",
+        duty_off=(1.0 - duty), i_fwd=iout, vr=vds_off, fsw=fsw,
+    ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L2"), "L2"))
+    budget.update(_cap_esr_loss(_find_named(tas, "C1"), "C1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_zeta_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """Zeta loss budget + Tj across every operating point."""
+    _run_generic_analyst(tas, spec, _zeta_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Four-switch buck-boost
+# ---------------------------------------------------------------------------
+
+
+def _four_switch_buck_boost_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    # Buck mode when Vin > Vout, boost mode otherwise
+    if vin > vout:
+        duty = vout / vin if vin > 0 else 0.0
+    else:
+        duty = 1.0 - vin / vout if vout > 0 else 0.0
+    il = max(iout, iout * vout / vin) if vin > 0 else iout
+
+    budget: dict[str, float | None] = {}
+    for qname in ("Q1", "Q2", "Q3", "Q4"):
+        q = _find_named(tas, qname)
+        budget.update(_mosfet_loss(
+            q, qname,
+            duty=duty, i_on=il, vds_off=max(vin, vout), fsw=fsw,
+        ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_four_switch_buck_boost_analyst(
+    tas: dict[str, Any], spec: Mapping[str, Any],
+) -> None:
+    """Four-switch buck-boost loss budget + Tj across every operating point."""
+    _run_generic_analyst(tas, spec, _four_switch_buck_boost_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Single-switch forward
+# ---------------------------------------------------------------------------
+
+
+def _turns_ratio(spec: Mapping[str, Any]) -> float:
+    ratios = spec.get("desiredTurnsRatios") or [1.0]
+    return float(ratios[0])
+
+
+def _single_switch_forward_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    n = _turns_ratio(spec)
+    duty = vout * n / vin if vin > 0 else 0.0
+    duty = min(duty, 0.5)  # forward converter limit
+    ipri = iout / n
+    vds_off = 2.0 * vin  # reset voltage
+
+    budget: dict[str, float | None] = {}
+    budget.update(_mosfet_loss(
+        _find_named(tas, "Q1"), "Q1",
+        duty=duty, i_on=ipri, vds_off=vds_off, fsw=fsw,
+    ))
+    budget.update(_diode_loss(
+        _find_named(tas, "D1"), "D1",
+        duty_off=duty, i_fwd=iout, vr=vout, fsw=fsw,
+    ))
+    budget.update(_diode_loss(
+        _find_named(tas, "D2"), "D2",
+        duty_off=(1.0 - duty), i_fwd=iout, vr=vout, fsw=fsw,
+    ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_single_switch_forward_analyst(
+    tas: dict[str, Any], spec: Mapping[str, Any],
+) -> None:
+    """Single-switch forward loss budget + Tj."""
+    _run_generic_analyst(tas, spec, _single_switch_forward_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Two-switch forward
+# ---------------------------------------------------------------------------
+
+
+def _two_switch_forward_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    n = _turns_ratio(spec)
+    duty = vout * n / vin if vin > 0 else 0.0
+    duty = min(duty, 0.5)
+    ipri = iout / n
+    vds_off = vin  # clamped to Vin by body diodes
+
+    budget: dict[str, float | None] = {}
+    # Two primary MOSFETs share the same current
+    for qname in ("Q1", "Q2"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, qname), qname,
+            duty=duty, i_on=ipri, vds_off=vds_off, fsw=fsw,
+        ))
+    # D1, D2: body/clamp diodes (conduct during reset, duty_off ~ 1-duty)
+    for dname in ("D1", "D2"):
+        budget.update(_diode_loss(
+            _find_named(tas, dname), dname,
+            duty_off=(1.0 - duty), i_fwd=ipri, vr=vin, fsw=fsw,
+        ))
+    # D_out: output rectifier
+    budget.update(_diode_loss(
+        _find_named(tas, "D_out"), "D_out",
+        duty_off=duty, i_fwd=iout, vr=vout, fsw=fsw,
+    ))
+    # D_fw: freewheeling diode
+    budget.update(_diode_loss(
+        _find_named(tas, "D_fw"), "D_fw",
+        duty_off=(1.0 - duty), i_fwd=iout, vr=vout, fsw=fsw,
+    ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_two_switch_forward_analyst(
+    tas: dict[str, Any], spec: Mapping[str, Any],
+) -> None:
+    """Two-switch forward loss budget + Tj."""
+    _run_generic_analyst(tas, spec, _two_switch_forward_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Active-clamp forward
+# ---------------------------------------------------------------------------
+
+
+def _active_clamp_forward_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    n = _turns_ratio(spec)
+    duty = vout * n / vin if vin > 0 else 0.0
+    ipri = iout / n
+    vds_off = vin / (1.0 - duty) if duty < 1.0 else vin
+
+    budget: dict[str, float | None] = {}
+    budget.update(_mosfet_loss(
+        _find_named(tas, "Q1"), "Q1",
+        duty=duty, i_on=ipri, vds_off=vds_off, fsw=fsw,
+    ))
+    budget.update(_mosfet_loss(
+        _find_named(tas, "Q_clamp"), "Q_clamp",
+        duty=(1.0 - duty), i_on=ipri, vds_off=vds_off, fsw=fsw,
+    ))
+    budget.update(_diode_loss(
+        _find_named(tas, "D1"), "D1",
+        duty_off=duty, i_fwd=iout, vr=vout, fsw=fsw,
+    ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_active_clamp_forward_analyst(
+    tas: dict[str, Any], spec: Mapping[str, Any],
+) -> None:
+    """Active-clamp forward loss budget + Tj."""
+    _run_generic_analyst(tas, spec, _active_clamp_forward_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Push-pull
+# ---------------------------------------------------------------------------
+
+
+def _push_pull_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    n = _turns_ratio(spec)
+    duty = vout * n / (2.0 * vin) if vin > 0 else 0.0
+    ipri = iout / n
+    vds_off = 2.0 * vin
+
+    budget: dict[str, float | None] = {}
+    for qname in ("Q1", "Q2"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, qname), qname,
+            duty=duty, i_on=ipri, vds_off=vds_off, fsw=fsw,
+        ))
+    # Output rectifiers: each conducts for duty, off for 0.5-duty
+    for dname in ("D1", "D2"):
+        budget.update(_diode_loss(
+            _find_named(tas, dname), dname,
+            duty_off=duty, i_fwd=iout, vr=2.0 * vout, fsw=fsw,
+        ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_push_pull_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """Push-pull loss budget + Tj."""
+    _run_generic_analyst(tas, spec, _push_pull_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Asymmetric half-bridge
+# ---------------------------------------------------------------------------
+
+
+def _asymmetric_half_bridge_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    n = _turns_ratio(spec)
+    duty = vout * n / vin if vin > 0 else 0.0
+    ipri = iout / n
+
+    budget: dict[str, float | None] = {}
+    for qname in ("Q1", "Q2"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, qname), qname,
+            duty=duty, i_on=ipri, vds_off=vin, fsw=fsw,
+        ))
+    for dname in ("D1", "D2"):
+        budget.update(_diode_loss(
+            _find_named(tas, dname), dname,
+            duty_off=duty, i_fwd=iout, vr=vout, fsw=fsw,
+        ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_asymmetric_half_bridge_analyst(
+    tas: dict[str, Any], spec: Mapping[str, Any],
+) -> None:
+    """Asymmetric half-bridge loss budget + Tj."""
+    _run_generic_analyst(tas, spec, _asymmetric_half_bridge_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Phase-shifted full bridge
+# ---------------------------------------------------------------------------
+
+
+def _phase_shifted_full_bridge_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    n = _turns_ratio(spec)
+    duty = vout * n / vin if vin > 0 else 0.0
+    ipri = iout / n
+
+    budget: dict[str, float | None] = {}
+    for qname in ("Q1", "Q2", "Q3", "Q4"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, qname), qname,
+            duty=0.5, i_on=ipri, vds_off=vin, fsw=fsw,
+        ))
+    for dname in ("D1", "D2"):
+        budget.update(_diode_loss(
+            _find_named(tas, dname), dname,
+            duty_off=duty, i_fwd=iout, vr=vout, fsw=fsw,
+        ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_phase_shifted_full_bridge_analyst(
+    tas: dict[str, Any], spec: Mapping[str, Any],
+) -> None:
+    """Phase-shifted full bridge loss budget + Tj."""
+    _run_generic_analyst(tas, spec, _phase_shifted_full_bridge_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Weinberg
+# ---------------------------------------------------------------------------
+
+
+def _weinberg_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    n = _turns_ratio(spec)
+    duty = vout * n / (2.0 * vin) if vin > 0 else 0.0
+    ipri = iout / n
+    vds_off = 2.0 * vin
+
+    budget: dict[str, float | None] = {}
+    for qname in ("Q1", "Q2"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, qname), qname,
+            duty=duty, i_on=ipri, vds_off=vds_off, fsw=fsw,
+        ))
+    for dname in ("D1", "D2"):
+        budget.update(_diode_loss(
+            _find_named(tas, dname), dname,
+            duty_off=duty, i_fwd=iout, vr=2.0 * vout, fsw=fsw,
+        ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_weinberg_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """Weinberg loss budget + Tj."""
+    _run_generic_analyst(tas, spec, _weinberg_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# LLC (and CLLC, CLLLC — same loss structure)
+# ---------------------------------------------------------------------------
+
+
+def _llc_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    n = _turns_ratio(spec)
+    # Half-bridge: each switch conducts ~50% of the period
+    ipri = iout / n
+    # RMS approximation for sinusoidal resonant current ~ pi/2*sqrt(2) * Iavg
+    # Simplified: use Ipri as a conservative proxy for RMS
+    irms_pri = ipri
+
+    budget: dict[str, float | None] = {}
+    # ZVS: switching losses are 0
+    for qname in ("Q1", "Q2"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, qname), qname,
+            duty=0.5, i_on=irms_pri, vds_off=vin, fsw=fsw, zvs=True,
+        ))
+    # Secondary rectifiers: each conducts ~50%, forward current ~ Iout
+    for dname in ("D1", "D2"):
+        budget.update(_diode_loss(
+            _find_named(tas, dname), dname,
+            duty_off=0.5, i_fwd=iout, vr=2.0 * vout, fsw=fsw,
+        ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "Lr"), "Lr"))
+    # Cr (resonant cap) ESR loss
+    budget.update(_cap_esr_loss(_find_named(tas, "Cr"), "Cr"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_llc_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """LLC loss budget + Tj."""
+    _run_generic_analyst(tas, spec, _llc_op_budget)
+
+
+def run_cllc_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """CLLC loss budget + Tj (same structure as LLC)."""
+    _run_generic_analyst(tas, spec, _llc_op_budget)
+
+
+def run_clllc_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
+    """CLLLC loss budget + Tj (same structure as LLC)."""
+    _run_generic_analyst(tas, spec, _llc_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Dual active bridge
+# ---------------------------------------------------------------------------
+
+
+def _dual_active_bridge_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    n = _turns_ratio(spec)
+    ipri = iout / n
+
+    budget: dict[str, float | None] = {}
+    # Primary full-bridge Q1-Q4 (ZVS, each conducts ~50%)
+    for qname in ("Q1", "Q2", "Q3", "Q4"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, qname), qname,
+            duty=0.5, i_on=ipri, vds_off=vin, fsw=fsw, zvs=True,
+        ))
+    # Secondary full-bridge Q5-Q8 (sync rect, ZVS, each conducts ~50%)
+    for qname in ("Q5", "Q6", "Q7", "Q8"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, qname), qname,
+            duty=0.5, i_on=iout, vds_off=vout, fsw=fsw, zvs=True,
+        ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_dual_active_bridge_analyst(
+    tas: dict[str, Any], spec: Mapping[str, Any],
+) -> None:
+    """Dual active bridge loss budget + Tj."""
+    _run_generic_analyst(tas, spec, _dual_active_bridge_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Isolated buck
+# ---------------------------------------------------------------------------
+
+
+def _isolated_buck_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    n = _turns_ratio(spec)
+    duty = vout * n / vin if vin > 0 else 0.0
+    ipri = iout / n
+
+    budget: dict[str, float | None] = {}
+    # Half-bridge primary: Q1, Q2
+    for qname in ("Q1", "Q2"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, qname), qname,
+            duty=duty, i_on=ipri, vds_off=vin, fsw=fsw,
+        ))
+    budget.update(_diode_loss(
+        _find_named(tas, "D1"), "D1",
+        duty_off=(1.0 - duty), i_fwd=iout, vr=vout, fsw=fsw,
+    ))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
+    budget.update(_cap_esr_loss(cout, "C_out"))
+    return budget
+
+
+def run_isolated_buck_analyst(
+    tas: dict[str, Any], spec: Mapping[str, Any],
+) -> None:
+    """Isolated buck loss budget + Tj."""
+    _run_generic_analyst(tas, spec, _isolated_buck_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Isolated buck-boost (flyback family)
+# ---------------------------------------------------------------------------
+
+
+def run_isolated_buck_boost_analyst(
+    tas: dict[str, Any], spec: Mapping[str, Any],
+) -> None:
+    """Isolated buck-boost loss budget + Tj (same as flyback)."""
+    _run_generic_analyst(tas, spec, _flyback_op_budget)
+
+
+# ---------------------------------------------------------------------------
+# Per-topology analyst dispatch
+# ---------------------------------------------------------------------------
+
 # Per-topology analyst dispatch. Add new topologies here as their loss
 # formulas are wired.
 _ANALYSTS: dict[str, Any] = {
@@ -582,6 +1244,22 @@ _ANALYSTS: dict[str, Any] = {
     "boost": run_boost_analyst,
     "cuk": run_cuk_analyst,
     "flyback": run_flyback_analyst,
+    "sepic": run_sepic_analyst,
+    "zeta": run_zeta_analyst,
+    "four_switch_buck_boost": run_four_switch_buck_boost_analyst,
+    "single_switch_forward": run_single_switch_forward_analyst,
+    "two_switch_forward": run_two_switch_forward_analyst,
+    "active_clamp_forward": run_active_clamp_forward_analyst,
+    "push_pull": run_push_pull_analyst,
+    "asymmetric_half_bridge": run_asymmetric_half_bridge_analyst,
+    "phase_shifted_full_bridge": run_phase_shifted_full_bridge_analyst,
+    "weinberg": run_weinberg_analyst,
+    "llc": run_llc_analyst,
+    "cllc": run_cllc_analyst,
+    "clllc": run_clllc_analyst,
+    "dual_active_bridge": run_dual_active_bridge_analyst,
+    "isolated_buck": run_isolated_buck_analyst,
+    "isolated_buck_boost": run_isolated_buck_boost_analyst,
 }
 
 
@@ -598,9 +1276,25 @@ __all__ = [
     "AnalystError",
     "compute_buck_loss_budget",
     "run_analyst",
+    "run_active_clamp_forward_analyst",
+    "run_asymmetric_half_bridge_analyst",
     "run_boost_analyst",
     "run_buck_analyst",
+    "run_cllc_analyst",
+    "run_clllc_analyst",
     "run_cuk_analyst",
+    "run_dual_active_bridge_analyst",
     "run_flyback_analyst",
+    "run_four_switch_buck_boost_analyst",
+    "run_isolated_buck_analyst",
+    "run_isolated_buck_boost_analyst",
+    "run_llc_analyst",
+    "run_phase_shifted_full_bridge_analyst",
+    "run_push_pull_analyst",
+    "run_sepic_analyst",
+    "run_single_switch_forward_analyst",
+    "run_two_switch_forward_analyst",
+    "run_weinberg_analyst",
+    "run_zeta_analyst",
     "stamp_junction_temperatures",
 ]
