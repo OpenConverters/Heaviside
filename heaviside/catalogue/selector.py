@@ -69,6 +69,7 @@ class Mosfet:
     qg_total: float           # totalGateCharge (coulombs)
     vgs_threshold_max: float  # gateThresholdVoltage.maximum (volts)
     rth_ja: float | None      # thermalResistanceJunctionAmbient (K/W)
+    rth_jc: float | None      # thermalResistanceJunctionCase (K/W)
     tj_max: float | None      # junctionTemperatureMax (°C)
     case: str                 # package code from part.case
     technology: str           # Si / SiC / GaN
@@ -137,6 +138,8 @@ class Mosfet:
         thermal = di.get("thermal") or {}
         rth_ja_raw = thermal.get("thermalResistanceJunctionAmbient")
         rth_ja = float(rth_ja_raw) if isinstance(rth_ja_raw, (int, float)) and rth_ja_raw > 0 else None
+        rth_jc_raw = thermal.get("thermalResistanceJunctionCase")
+        rth_jc = float(rth_jc_raw) if isinstance(rth_jc_raw, (int, float)) and rth_jc_raw > 0 else None
         tj_max_raw = thermal.get("junctionTemperatureMax")
         tj_max = float(tj_max_raw) if isinstance(tj_max_raw, (int, float)) else None
 
@@ -149,6 +152,7 @@ class Mosfet:
             qg_total=float(qg_total),
             vgs_threshold_max=float(vgs_th_max),
             rth_ja=rth_ja,
+            rth_jc=rth_jc,
             tj_max=tj_max,
             case=case,
             technology=technology,
@@ -396,6 +400,7 @@ class Diode:
     qrr: float              # reverseRecoveryCharge (coulombs); 0 for Schottky
     trr: float              # reverseRecoveryTime (seconds); 0 for Schottky
     rth_ja: float | None    # thermalResistanceJunctionAmbient (K/W)
+    rth_jc: float | None    # thermalResistanceJunctionCase (K/W)
     tj_max: float | None    # junctionTemperatureMax (°C)
     case: str
     technology: str         # Si / SiC schottky / fast / ultrafast (from subType)
@@ -458,6 +463,8 @@ class Diode:
         thermal = di.get("thermal") or {}
         rth_ja_raw = thermal.get("thermalResistanceJunctionAmbient")
         rth_ja = float(rth_ja_raw) if isinstance(rth_ja_raw, (int, float)) and rth_ja_raw > 0 else None
+        rth_jc_raw = thermal.get("thermalResistanceJunctionCase")
+        rth_jc = float(rth_jc_raw) if isinstance(rth_jc_raw, (int, float)) and rth_jc_raw > 0 else None
         tj_max_raw = thermal.get("junctionTemperatureMax")
         tj_max = float(tj_max_raw) if isinstance(tj_max_raw, (int, float)) else None
 
@@ -470,6 +477,7 @@ class Diode:
             qrr=float(qrr),
             trr=float(trr),
             rth_ja=rth_ja,
+            rth_jc=rth_jc,
             tj_max=tj_max,
             case=case,
             technology=tech,

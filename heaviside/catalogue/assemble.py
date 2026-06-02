@@ -183,6 +183,8 @@ def _stamp_mosfet(
     comp["qg_total"] = sel.chosen.qg_total
     if sel.chosen.rth_ja is not None:
         comp["rth_ja"] = sel.chosen.rth_ja
+    if sel.chosen.rth_jc is not None:
+        comp["rth_jc"] = sel.chosen.rth_jc
     if sel.chosen.tj_max is not None:
         comp["tj_max"] = sel.chosen.tj_max
     comp["selection_provenance"] = {
@@ -223,6 +225,8 @@ def _stamp_diode(
     comp["qrr"] = sel.chosen.qrr
     if sel.chosen.rth_ja is not None:
         comp["rth_ja"] = sel.chosen.rth_ja
+    if sel.chosen.rth_jc is not None:
+        comp["rth_jc"] = sel.chosen.rth_jc
     if sel.chosen.tj_max is not None:
         comp["tj_max"] = sel.chosen.tj_max
     comp["selection_provenance"] = {

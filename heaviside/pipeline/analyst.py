@@ -46,6 +46,13 @@ class AnalystError(ValueError):
 # numbers will come from a dedicated gate-driver selector later.
 _GATE_DRIVE_CURRENT_A: float = 1.0
 
+# Design target for junction temperature as a fraction of the part's Tj_max
+# — a 15% margin, the standard reliability derating for power semiconductors
+# (mirrors the voltage/current derating factors used in selection). When a
+# part can't stay under this on its own (junction-to-ambient, no heatsink),
+# the thermal stage sizes the required heatsink instead of failing outright.
+_THERMAL_TJ_DERATING: float = 0.85
+
 
 # ---------------------------------------------------------------------------
 # Buck loss budget
@@ -294,13 +301,71 @@ def stamp_junction_temperatures(
             loss = _component_loss(budget, name)
             if loss is None:
                 continue
-            comp["tj"] = round(t_amb + loss * float(rth), 2)
-            comp["tj_provenance"] = {
-                "method": "Tj = T_amb + loss * Rth_ja",
-                "t_ambient_c": t_amb,
-                "loss_w": round(loss, 6),
-                "rth_ja_c_per_w": float(rth),
-            }
+
+            rth_ja = float(rth)
+            tj_noheatsink = t_amb + loss * rth_ja
+            tj_max = comp.get("tj_max")
+            target = (float(tj_max) * _THERMAL_TJ_DERATING
+                      if isinstance(tj_max, (int, float)) and tj_max > 0 else None)
+
+            # Case 1: junction-to-ambient already within the derated target —
+            # no heatsink needed.
+            if target is None or tj_noheatsink <= target:
+                comp["tj"] = round(tj_noheatsink, 2)
+                comp["tj_provenance"] = {
+                    "method": "Tj = T_amb + loss * Rth_ja (no heatsink)",
+                    "t_ambient_c": t_amb,
+                    "loss_w": round(loss, 6),
+                    "rth_ja_c_per_w": rth_ja,
+                }
+                continue
+
+            # Needs a heatsink. Size it from the junction-to-CASE resistance.
+            rth_jc = comp.get("rth_jc")
+            if not isinstance(rth_jc, (int, float)) or rth_jc <= 0:
+                # Can't size a heatsink without Rth_jc — surface it (the gate
+                # will fail thermal_limit on the no-heatsink Tj). No guessing.
+                comp["tj"] = round(tj_noheatsink, 2)
+                comp["tj_provenance"] = {
+                    "method": "Tj = T_amb + loss * Rth_ja — NEEDS HEATSINK but "
+                              "Rth_jc unknown (fetch from datasheet to size it)",
+                    "t_ambient_c": t_amb,
+                    "loss_w": round(loss, 6),
+                    "rth_ja_c_per_w": rth_ja,
+                }
+                continue
+
+            rth_jc = float(rth_jc)
+            tj_floor = t_amb + loss * rth_jc  # ideal infinite heatsink
+            if tj_floor < target:
+                # Feasible: a heatsink+interface with sink-side thermal
+                # resistance <= rsa_budget keeps Tj at the derated target.
+                rsa_budget = (target - t_amb) / loss - rth_jc
+                comp["tj"] = round(target, 2)
+                comp["heatsink_required_rth_sa_max"] = round(rsa_budget, 3)
+                comp["tj_provenance"] = {
+                    "method": "Tj = target with heatsink: Rth_jc + required "
+                              "sink Rth_sa <= budget",
+                    "t_ambient_c": t_amb,
+                    "loss_w": round(loss, 6),
+                    "rth_jc_c_per_w": rth_jc,
+                    "tj_target_c": round(target, 2),
+                    "required_rth_sa_max_c_per_w": round(rsa_budget, 3),
+                }
+            else:
+                # Even an ideal (zero-resistance) heatsink can't hold Tj under
+                # target — the die itself can't shed the heat. Genuine fail;
+                # needs paralleled devices or a larger die.
+                comp["tj"] = round(tj_floor, 2)
+                comp["tj_provenance"] = {
+                    "method": "Tj floor = T_amb + loss * Rth_jc (ideal sink) — "
+                              "INFEASIBLE: exceeds target even with perfect "
+                              "heatsink; parallel devices / larger die needed",
+                    "t_ambient_c": t_amb,
+                    "loss_w": round(loss, 6),
+                    "rth_jc_c_per_w": rth_jc,
+                    "tj_target_c": round(target, 2),
+                }
 
 
 # ---------------------------------------------------------------------------
