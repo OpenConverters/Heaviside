@@ -661,6 +661,8 @@ def full_design(
     parallel: bool = True,
     max_workers: int | None = None,
     selector_fn: TopologySelectorFn | None = None,
+    progress_cb: Callable[[str, int], None] | None = None,
+    restrict_topologies: list[str] | None = None,
 ) -> tuple[Stage1Result, Stage2Result, tuple[DesignOutcome, ...]]:
     """Run Stage 1 → Stage 2 → Stage 3 → rank by verdict.
 
@@ -668,7 +670,19 @@ def full_design(
     Stage 2: parallel fast-Pareto magnetic pick per topology.
     Stage 3: realize each pick (decompose → simulate → realism gate).
     Stage 4: rank survivors by realism verdict + scoring.
+
+    `progress_cb`, if given, is called with (human_message, percent) at coarse
+    stage boundaries — the pipeline has no finer-grained hook. Failures in the
+    callback never affect the design run.
     """
+    def _emit(msg: str, pct: int) -> None:
+        if progress_cb is not None:
+            try:
+                progress_cb(msg, pct)
+            except Exception:  # noqa: BLE001 — progress is best-effort, never fatal
+                pass
+
+    _emit("Screening feasible topologies", 5)
     stage1 = stage1_topology_screen(spec, selector_fn=selector_fn)
 
     # Query lesson store: use training lessons to reorder topologies
@@ -692,6 +706,17 @@ def full_design(
 
     # Reorder: preferred topologies first, warned last
     chosen = list(stage1.reconciliation.chosen)
+    # Hard restriction (opt-in): a caller that pins specific topologies wants
+    # ONLY those designed, not the screen's union. `selector_fn` merely
+    # *suggests*; `restrict_topologies` is an intersection.
+    if restrict_topologies:
+        wanted = {t.lower().replace(" ", "_") for t in restrict_topologies}
+        restricted = [c for c in chosen if c in wanted]
+        # If the screen rejected every pinned topology, honour the pin anyway
+        # so the user sees that topology's specific failure, not silence.
+        chosen = restricted if restricted else [
+            t.lower().replace(" ", "_") for t in restrict_topologies
+        ]
     if preferred_topos:
         seen = set()
         reordered = []
@@ -720,6 +745,7 @@ def full_design(
     for l in training_eta[:5]:
         logger.info("Teacher (training): %s", l.detail)
 
+    _emit(f"Sizing magnetics for {len(chosen)} topologies", 15)
     stage2 = stage2_pick_magnetics(
         spec, tuple(chosen),
         n_candidates=n_candidates_per_topology,
@@ -730,7 +756,12 @@ def full_design(
     )
 
     outcomes: list[DesignOutcome] = []
-    for pick in stage2.picks:
+    n_picks = len(stage2.picks) or 1
+    for i, pick in enumerate(stage2.picks):
+        # Stage 3 spans 25%→90% across the picks.
+        pct = 25 + int(65 * i / n_picks)
+        _emit(f"Realizing & simulating {pick.topology.name} "
+              f"({i + 1}/{len(stage2.picks)})", pct)
         logger.info("Stage 3: realizing %s", pick.topology.name)
         outcome = stage3_realize(pick, spec)
         v = outcome.verdict_dict
@@ -761,7 +792,9 @@ def full_design(
 
     # Stage 4: Ray + Nicola adversarial review of best design
     if outcomes and outcomes[0].verdict_dict:
+        _emit("Final review (Ray + Nicola)", 95)
         outcomes[0] = _stage4_adversarial_review(outcomes[0])
+    _emit("Done", 100)
 
     # Stage 5: Teacher — analyze failures and store lessons
     from heaviside.pipeline.teacher import review_design_run, summarize_lessons

@@ -112,17 +112,13 @@ def design(req: DesignRequest) -> dict[str, Any]:
     )
 
     try:
-        selector_fn = None
-        if req.topologies:
-            selector_fn = lambda s: (req.topologies, "user-specified")
-
         stage1, stage2, outcomes = full_design(
             req.spec,
             n_candidates_per_topology=req.candidates_per_topology,
             pick_criteria=req.pick_criteria,
             core_mode=req.core_mode,
             parallel=True,
-            selector_fn=selector_fn,
+            restrict_topologies=req.topologies or None,
         )
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -192,17 +188,13 @@ def design_report(req: DesignRequest) -> Any:
     from heaviside.report import render_html
 
     try:
-        selector_fn = None
-        if req.topologies:
-            selector_fn = lambda s: (req.topologies, "user-specified")
-
         _, _, outcomes = full_design(
             req.spec,
             n_candidates_per_topology=req.candidates_per_topology,
             pick_criteria=req.pick_criteria,
             core_mode=req.core_mode,
             parallel=True,
-            selector_fn=selector_fn,
+            restrict_topologies=req.topologies or None,
         )
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -330,32 +322,83 @@ def crossref_endpoint(req: CrossRefRequest) -> dict[str, Any]:
 
 
 def _crossref_outcome_dict(outcome: Any) -> dict[str, Any]:
+    components = [
+        {
+            "ref_des": c.ref_des,
+            "component_type": c.component_type,
+            "original_mpn": c.original_mpn,
+            "substitute_mpn": c.substitute_mpn,
+            "status": c.status.value,
+            "notes": c.notes,
+        }
+        for c in outcome.components
+    ]
+    # Coverage = parts with a concrete substitute over those that needed one
+    # (keep_original / not_fitted parts don't count against coverage).
+    _SUBBED = {"exact", "recommended", "partial"}
+    _NEEDS = _SUBBED | {"no_substitute"}
+    needing = [c for c in components if c["status"] in _NEEDS]
+    subbed = [c for c in needing if c["status"] in _SUBBED]
+    coverage_pct = round(100 * len(subbed) / len(needing)) if needing else None
     return {
         "target_manufacturer": outcome.target_manufacturer,
         "passed": outcome.passed,
-        "components": [
-            {
-                "ref_des": c.ref_des,
-                "component_type": c.component_type,
-                "original_mpn": c.original_mpn,
-                "substitute_mpn": c.substitute_mpn,
-                "status": c.status.value,
-                "notes": c.notes,
-            }
-            for c in outcome.components
-        ],
+        "components": components,
+        "coverage_substituted": len(subbed),
+        "coverage_total": len(needing),
+        "coverage_pct": coverage_pct,
         "diagnostics": list(outcome.diagnostics),
     }
 
 
-def _design_job(spec: dict[str, Any], n: int) -> dict[str, Any]:
+def _design_job(
+    spec: dict[str, Any],
+    n: int,
+    topologies: list[str] | None = None,
+    update: Any = None,
+) -> dict[str, Any]:
+    from heaviside.pipeline.cre import compute_desired_inductance
     from heaviside.pipeline.full_design import full_design
     from heaviside.report import render_html
 
-    _, _, outcomes = full_design(spec, n_candidates_per_topology=n, parallel=True)
+    # The web form posts a bare electrical spec. The MKF magnetic designer
+    # additionally needs `desiredInductance` (and, for isolated topologies,
+    # turns ratios) — the CRE path computes these in to_heaviside_spec. Mirror
+    # the inductance sizing here so a minimal form yields a real design.
+    spec = dict(spec)
+    if "desiredInductance" not in spec:
+        op = (spec.get("operatingPoints") or [{}])[0]
+        vin = (spec.get("inputVoltage") or {}).get("nominal")
+        vouts = op.get("outputVoltages") or []
+        iouts = op.get("outputCurrents") or []
+        fsw = op.get("switchingFrequency")
+        ripple = spec.get("currentRippleRatio", 0.3)
+        if vin and vouts and iouts and fsw:
+            l = compute_desired_inductance(vin, vouts[0], iouts[0], fsw,
+                                           ripple_ratio=ripple)
+            if l is not None:
+                spec["desiredInductance"] = l
+
+    progress_cb = None
+    if update is not None:
+        progress_cb = lambda msg, pct: update(f"{pct}% — {msg}")
+
+    _, stage2, outcomes = full_design(
+        spec, n_candidates_per_topology=n, parallel=True,
+        restrict_topologies=topologies or None, progress_cb=progress_cb,
+    )
     if not outcomes:
-        return {"html": "<p>No design survived the pipeline.</p>", "topology": None,
-                "verdict": None}
+        # Surface WHY nothing survived (per "no silent shortcuts"): the
+        # per-topology magnetic-design failures are the real signal.
+        fails = "".join(
+            f"<li><code>{t}</code>: {e}</li>" for t, e in stage2.failures[:12]
+        )
+        detail = (f"<ul>{fails}</ul>" if fails
+                  else "<p>No topology was selected for this spec.</p>")
+        return {
+            "html": f"<p><b>No design survived the pipeline.</b></p>{detail}",
+            "topology": None, "verdict": None,
+        }
     best = next(
         (o for o in outcomes
          if o.verdict_dict and o.verdict_dict.get("verdict") == "pass"),
@@ -377,7 +420,10 @@ def _design_job(spec: dict[str, Any], n: int) -> dict[str, Any]:
 def submit_design(req: DesignRequest) -> dict[str, str]:
     from heaviside.api.jobs import registry
     job_id = registry.submit(
-        "design", lambda: _design_job(req.spec, req.candidates_per_topology)
+        "design",
+        lambda update: _design_job(
+            req.spec, req.candidates_per_topology, req.topologies, update
+        ),
     )
     return {"job_id": job_id}
 
@@ -387,7 +433,9 @@ def submit_crossref(req: CrossRefRequest) -> dict[str, str]:
     from heaviside.api.jobs import registry
     from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
 
-    def run() -> dict[str, Any]:
+    def run(update: Any) -> dict[str, Any]:
+        update(f"Cross-referencing {len(req.source_bom)} parts "
+               f"→ {req.target_manufacturer}")
         outcome = run_crossref_pipeline(
             req.source_bom, req.target_manufacturer,
             circuit_context=req.circuit_context,
@@ -406,11 +454,13 @@ async def submit_crossref_from_pdf(
     from heaviside.api.jobs import registry
 
     raw = await file.read()
+    orig_name = file.filename or "reference.pdf"
 
-    def run() -> dict[str, Any]:
+    def run(update: Any) -> dict[str, Any]:
         import tempfile, os
         from pathlib import Path
         from heaviside.pipeline.crossref_pipeline import run_crossref_with_cre
+        update(f"Reverse-engineering {orig_name} → {target_manufacturer}")
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             f.write(raw)
             tmp = f.name
@@ -423,6 +473,35 @@ async def submit_crossref_from_pdf(
         return _crossref_outcome_dict(outcome)
 
     return {"job_id": registry.submit("crossref_pdf", run)}
+
+
+def _job_summary(job: Any) -> dict[str, Any]:
+    """Compact view for the jobs list — no heavy `result` payload."""
+    summary: str | None = None
+    if job.status == "done" and isinstance(job.result, dict):
+        r = job.result
+        if "verdict" in r:  # design job
+            summary = f"{r.get('topology') or '?'} — {r.get('verdict') or '?'}"
+        elif "coverage_pct" in r and r.get("coverage_pct") is not None:
+            summary = (f"{r['coverage_substituted']}/{r['coverage_total']} "
+                       f"({r['coverage_pct']}%) → {r.get('target_manufacturer')}")
+    elif job.status == "error":
+        summary = job.error
+    elif job.status in ("running", "queued"):
+        summary = job.progress or None
+    return {
+        "job_id": job.id,
+        "kind": job.kind,
+        "status": job.status,
+        "progress": job.progress,
+        "summary": summary,
+    }
+
+
+@app.get("/jobs")
+def list_jobs() -> dict[str, Any]:
+    from heaviside.api.jobs import registry
+    return {"jobs": [_job_summary(j) for j in registry.list_all()]}
 
 
 @app.get("/jobs/{job_id}")
@@ -439,6 +518,158 @@ def get_job(job_id: str) -> dict[str, Any]:
         "result": job.result if job.status == "done" else None,
         "error": job.error,
     }
+
+
+@app.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict[str, Any]:
+    from heaviside.api.jobs import registry
+    if not registry.cancel(job_id):
+        raise HTTPException(
+            status_code=409, detail="job not found or already finished"
+        )
+    return {"job_id": job_id, "status": "cancel_requested"}
+
+
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: str) -> dict[str, Any]:
+    from heaviside.api.jobs import registry
+    if not registry.delete(job_id):
+        raise HTTPException(
+            status_code=409, detail="job not found or still in-flight"
+        )
+    return {"job_id": job_id, "deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# TAS catalogue browser — read-only parametric search over TAS/data/*.ndjson.
+# Streams the NDJSON and early-stops once `limit` matches are found, so even
+# the 130k-row capacitor file responds promptly for a typed query.
+# ---------------------------------------------------------------------------
+
+
+def _fmt_eng(value: float | None, unit: str) -> str | None:
+    """Engineering-notation string (e.g. 4.7e-6 F → '4.7 µF'). None passes through."""
+    if value is None or not isinstance(value, (int, float)):
+        return None
+    if value == 0:
+        return f"0 {unit}"
+    prefixes = [(1e9, "G"), (1e6, "M"), (1e3, "k"), (1.0, ""), (1e-3, "m"),
+                (1e-6, "µ"), (1e-9, "n"), (1e-12, "p")]
+    av = abs(value)
+    for scale, pre in prefixes:
+        if av >= scale:
+            return f"{value / scale:.3g} {pre}{unit}"
+    return f"{value / 1e-12:.3g} p{unit}"
+
+
+def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]:
+    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.catalogue.selector import (
+        Capacitor, Diode, Mosfet, Resistor, _tas_data_dir,
+    )
+
+    def _mosfet(env: dict[str, Any]) -> dict[str, Any] | None:
+        m = Mosfet.from_envelope(env)
+        if m is None:
+            return None
+        return {"mpn": m.mpn, "manufacturer": m.manufacturer, "tech": m.technology,
+                "p1": _fmt_eng(m.vds_rated, "V"), "p2": _fmt_eng(m.rds_on, "Ω"),
+                "p3": _fmt_eng(m.id_continuous, "A"), "status": m.status}
+
+    def _diode(env: dict[str, Any]) -> dict[str, Any] | None:
+        d = Diode.from_envelope(env)
+        if d is None:
+            return None
+        return {"mpn": d.mpn, "manufacturer": d.manufacturer, "tech": d.technology,
+                "p1": _fmt_eng(d.vrrm_rated, "V"), "p2": _fmt_eng(d.if_avg_rated, "A"),
+                "p3": _fmt_eng(d.vf_typ, "V"), "status": d.status}
+
+    def _cap(env: dict[str, Any]) -> dict[str, Any] | None:
+        c = Capacitor.from_envelope(env)
+        if c is None:
+            return None
+        return {"mpn": c.mpn, "manufacturer": c.manufacturer, "tech": c.technology,
+                "p1": _fmt_eng(c.capacitance, "F"), "p2": _fmt_eng(c.v_rated, "V"),
+                "p3": _fmt_eng(c.esr, "Ω"), "status": c.status}
+
+    def _res(env: dict[str, Any]) -> dict[str, Any] | None:
+        r = Resistor.from_envelope(env)
+        if r is None:
+            return None
+        return {"mpn": r.mpn, "manufacturer": r.manufacturer, "tech": "",
+                "p1": _fmt_eng(r.resistance, "Ω"), "p2": f"{r.tolerance * 100:.3g}%",
+                "p3": _fmt_eng(r.power_rating, "W"), "status": r.status}
+
+    def _mag(env: dict[str, Any]) -> dict[str, Any] | None:
+        try:
+            m = env["magnetic"]["manufacturerInfo"]
+            el = m["datasheetInfo"].get("electrical", {})
+        except (KeyError, TypeError):
+            return None
+        ref, name = m.get("reference"), m.get("name")
+        if not isinstance(ref, str) or not isinstance(name, str):
+            return None
+
+        def _scalar(v: Any) -> float | None:
+            if isinstance(v, Mapping):
+                v = v.get("nominal", v.get("maximum", v.get("minimum")))
+            return v if isinstance(v, (int, float)) else None
+
+        return {"mpn": ref, "manufacturer": name, "tech": m.get("family", ""),
+                "p1": _fmt_eng(_scalar(el.get("inductance")), "H"),
+                "p2": _fmt_eng(_scalar(el.get("saturationCurrentPeak")), "A"),
+                "p3": _fmt_eng(_scalar(el.get("dcResistance")), "Ω"),
+                "status": m.get("status", "")}
+
+    catalog: dict[str, tuple[str, Any]] = {
+        "mosfets": ("mosfets.ndjson", _mosfet),
+        "diodes": ("diodes.ndjson", _diode),
+        "capacitors": ("capacitors.ndjson", _cap),
+        "resistors": ("resistors.ndjson", _res),
+        "magnetics": ("magnetics.ndjson", _mag),
+    }
+    if category not in catalog:
+        raise HTTPException(
+            status_code=404,
+            detail=f"unknown category '{category}'; choose one of "
+                   f"{sorted(catalog)}",
+        )
+    filename, project = catalog[category]
+    path = _tas_data_dir() / filename
+    q = query.strip().lower()
+    rows: list[dict[str, Any]] = []
+    for _lineno, env in iter_envelopes(path):
+        try:
+            row = project(env)
+        except Exception:  # noqa: BLE001 — skip an unreadable row, never abort the sweep
+            continue
+        if row is None:
+            continue
+        if q and q not in (row["mpn"] or "").lower() \
+                and q not in (row["manufacturer"] or "").lower():
+            continue
+        rows.append(row)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+@app.get("/catalog/{category}")
+def catalog(category: str, q: str = "", limit: int = 50) -> dict[str, Any]:
+    """Parametric browse of a TAS component category. `q` matches MPN or
+    manufacturer (case-insensitive substring). Columns p1/p2/p3 are the three
+    headline parameters for that category (units vary — see `param_labels`)."""
+    limit = max(1, min(limit, 200))
+    labels = {
+        "mosfets": ["Vds", "Rds(on)", "Id"],
+        "diodes": ["Vrrm", "If(avg)", "Vf"],
+        "capacitors": ["C", "V", "ESR"],
+        "resistors": ["R", "Tol", "P"],
+        "magnetics": ["L", "Isat", "DCR"],
+    }
+    rows = _catalog_rows(category, q, limit)
+    return {"category": category, "count": len(rows),
+            "param_labels": labels.get(category, ["", "", ""]), "rows": rows}
 
 
 # ---------------------------------------------------------------------------

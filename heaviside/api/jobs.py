@@ -16,10 +16,11 @@ several CRE/design jobs at once trips the Moonshot 429 rate limit
 from __future__ import annotations
 
 import threading
+import time
 import traceback
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from queue import Queue
 from typing import Any
 
@@ -28,11 +29,12 @@ from typing import Any
 class Job:
     id: str
     kind: str
-    status: str = "queued"          # queued | running | done | error
+    status: str = "queued"          # queued | running | done | error | cancelled
     result: Any = None
     error: str | None = None
     progress: str = ""
     created_monotonic: float | None = None
+    cancel_requested: bool = False
 
 
 class JobRegistry:
@@ -45,16 +47,50 @@ class JobRegistry:
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
-    def submit(self, kind: str, fn: Callable[[], Any]) -> str:
+    def submit(self, kind: str, fn: Callable[..., Any]) -> str:
+        """Queue a job. `fn` may take zero args, or one arg: an ``update(msg)``
+        callable it can call to publish a human-readable progress string."""
         job_id = uuid.uuid4().hex[:12]
         with self._lock:
-            self._jobs[job_id] = Job(id=job_id, kind=kind)
+            self._jobs[job_id] = Job(
+                id=job_id, kind=kind, created_monotonic=time.monotonic()
+            )
         self._queue.put((job_id, fn))
         return job_id
 
     def get(self, job_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(job_id)
+
+    def list_all(self) -> list[Job]:
+        """All jobs, newest first."""
+        with self._lock:
+            jobs = list(self._jobs.values())
+        jobs.sort(key=lambda j: j.created_monotonic or 0.0, reverse=True)
+        return jobs
+
+    def delete(self, job_id: str) -> bool:
+        """Drop a finished/errored/cancelled job's record. Returns True if removed."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            if job.status in ("queued", "running"):
+                return False  # don't delete in-flight work
+            del self._jobs[job_id]
+            return True
+
+    def cancel(self, job_id: str) -> bool:
+        """Request cancellation. A still-queued job is cancelled immediately;
+        a running job is flagged (best-effort — the worker is in-thread)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status in ("done", "error", "cancelled"):
+                return False
+            job.cancel_requested = True
+            if job.status == "queued":
+                job.status = "cancelled"
+            return True
 
     def _set(self, job_id: str, **kw: Any) -> None:
         with self._lock:
@@ -65,11 +101,24 @@ class JobRegistry:
                 setattr(job, k, v)
 
     def _run(self) -> None:
+        import inspect
+
         while True:
             job_id, fn = self._queue.get()
+            job = self.get(job_id)
+            if job is not None and job.cancel_requested:
+                # Cancelled while still queued — skip without running.
+                self._set(job_id, status="cancelled")
+                self._queue.task_done()
+                continue
             self._set(job_id, status="running")
             try:
-                result = fn()
+                update = lambda msg: self._set(job_id, progress=str(msg))
+                # fn may be zero-arg or take the progress updater.
+                if len(inspect.signature(fn).parameters) >= 1:
+                    result = fn(update)
+                else:
+                    result = fn()
                 self._set(job_id, status="done", result=result)
             except Exception as exc:  # noqa: BLE001 — surface to the client
                 self._set(

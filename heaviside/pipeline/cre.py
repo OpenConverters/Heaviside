@@ -18,6 +18,28 @@ from pathlib import Path
 from typing import Any
 
 
+def compute_desired_inductance(
+    vin_nom: float, vout: float, iout: float, fsw: float,
+    *, ripple_ratio: float = 0.3,
+) -> float | None:
+    """Ripple-based main-inductor sizing for the MKF magnetic designer.
+
+    Buck (Vin > Vout) and boost (Vin < Vout) closed forms at the nominal
+    operating point. Returns None when inputs are non-positive (nothing to
+    size) — the caller decides whether that's fatal. This is converter
+    sizing, not core magnetics: the actual core/turns come from MKF.
+    """
+    if not (fsw > 0 and iout > 0 and vin_nom > 0 and vout > 0):
+        return None
+    delta_il = iout * ripple_ratio
+    if vin_nom > vout:  # buck
+        l_desired = (vin_nom - vout) * vout / (delta_il * fsw * vin_nom)
+    else:  # boost
+        d = 1 - vin_nom / vout
+        l_desired = vin_nom * d / (delta_il * fsw)
+    return l_desired if l_desired > 0 else None
+
+
 @dataclass(frozen=True, slots=True)
 class ReferenceSpec:
     """Structured specs extracted from a reference design."""
@@ -66,18 +88,11 @@ class ReferenceSpec:
             spec["inputVoltage"]["minimum"] = self.vout * 1.2
 
         # Compute desiredInductance for MKF magnetic design
-        if self.fsw > 0 and self.iout > 0 and self.vin_nom > 0 and self.vout > 0:
-            ripple_ratio = 0.3
-            delta_il = self.iout * ripple_ratio
-            vin = self.vin_nom
-            vout = self.vout
-            if vin > vout:  # buck
-                l_desired = (vin - vout) * vout / (delta_il * self.fsw * vin)
-            else:  # boost
-                d = 1 - vin / vout
-                l_desired = vin * d / (delta_il * self.fsw)
-            if l_desired > 0:
-                spec["desiredInductance"] = l_desired
+        l_desired = compute_desired_inductance(
+            self.vin_nom, self.vout, self.iout, self.fsw, ripple_ratio=0.3
+        )
+        if l_desired is not None:
+            spec["desiredInductance"] = l_desired
         spec.update(self.extra)
         return spec
 
