@@ -82,9 +82,14 @@ def _mosfet_constraints_from_stress(
     *,
     pout: float,
     fsw: float,
+    duty: float | None = None,
 ) -> MosfetConstraints:
     """Translate per-component stress + power-budget into selection
-    constraints. Loud failure if any required stress is missing."""
+    constraints. Loud failure if any required stress is missing.
+
+    When ``duty`` is provided, the operating-point fields are populated so
+    the caller can use the LOWEST_TOTAL_LOSS tiebreaker (balances Rds_on vs
+    Qg at the actual operating point — picks GaN over big Si at high fsw)."""
     if s.vds_stress is None or s.id_stress is None:
         raise ValueError(
             "MOSFET constraints require both vds_stress and id_stress "
@@ -93,11 +98,20 @@ def _mosfet_constraints_from_stress(
     rds_on_max = (_MOSFET_RDS_ON_LOSS_FRACTION * pout) / (s.id_stress ** 2)
     # Qg = (Loss budget for switching) / (Vgs * fsw)
     qg_max = (_MOSFET_QG_LOSS_FRACTION * pout) / (_DEFAULT_GATE_DRIVE_VOLTAGE * fsw)
+    op_kwargs: dict[str, float] = {}
+    if duty is not None and 0.0 < duty < 1.0 and fsw > 0:
+        op_kwargs = {
+            "op_i_rms": s.id_stress,
+            "op_vds": s.vds_stress,
+            "op_duty": duty,
+            "op_fsw": fsw,
+        }
     return MosfetConstraints(
         vds_min=s.vds_stress * _MOSFET_VDS_DERATING,
         id_min=s.id_stress * _MOSFET_ID_DERATING,
         rds_on_max=rds_on_max,
         qg_max=qg_max,
+        **op_kwargs,
     )
 
 
@@ -451,10 +465,20 @@ def assemble_bom_from_tas(
     if pout <= 0:
         return tas
 
+    # Operating-point duty (for switching-loss-aware FET selection).
+    vin_in = spec.get("inputVoltage") or {}
+    vin_nom = vin_in.get("nominal") if isinstance(vin_in, Mapping) else None
+    vout0 = float(vouts[0])
+    duty: float | None = None
+    if isinstance(vin_nom, (int, float)) and vin_nom > 0 and vout0 > 0:
+        duty = vout0 / vin_nom if vout0 < vin_nom else max(0.0, 1.0 - vin_nom / vout0)
+
     # MOSFET constraints + selection.
     mosfet_c: MosfetConstraints | None = None
     if stresses.vds_stress is not None and stresses.id_stress is not None:
-        mosfet_c = _mosfet_constraints_from_stress(stresses, pout=pout, fsw=float(fsw))
+        mosfet_c = _mosfet_constraints_from_stress(
+            stresses, pout=pout, fsw=float(fsw), duty=duty,
+        )
 
     # Diode constraints + selection.
     diode_c: DiodeConstraints | None = None
@@ -484,7 +508,13 @@ def assemble_bom_from_tas(
             if not isinstance(comp, dict):
                 continue
             if mosfet_c is not None and _is_mosfet_placeholder(comp):
-                sel_m = select_mosfet(mosfet_c, tiebreaker=mosfet_tiebreaker)
+                # Prefer total-loss (conduction+switching) selection when the
+                # operating point is known — picks low-Qg parts at high fsw
+                # instead of the biggest low-Rds_on Si FET. Falls back to the
+                # caller's tiebreaker if the op-point wasn't populated.
+                tb = (MosfetTiebreaker.LOWEST_TOTAL_LOSS
+                      if mosfet_c.op_duty is not None else mosfet_tiebreaker)
+                sel_m = select_mosfet(mosfet_c, tiebreaker=tb)
                 _stamp_mosfet(
                     comp, sel_m,
                     stress_vds=stresses.vds_stress,

@@ -175,6 +175,12 @@ class MosfetTiebreaker(StrEnum):
     LOWEST_QG = "lowest_qg"
     HIGHEST_VDS_MARGIN = "highest_vds_margin"
     HIGHEST_ID_MARGIN = "highest_id_margin"
+    # Minimise conduction + switching loss at the operating point. Requires
+    # the op-point fields on MosfetConstraints. Balances Rds_on vs Qg —
+    # naturally favours low-Qg (GaN) parts as fsw rises, which a single-axis
+    # LOWEST_RDS_ON misses (it picks huge low-Rds_on Si FETs that hard-switch
+    # at high loss). This is the engineering-correct pick for high fsw/power.
+    LOWEST_TOTAL_LOSS = "lowest_total_loss"
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +203,13 @@ class MosfetConstraints:
     qg_max: float
     technology_allowed: frozenset[str] = frozenset({"Si", "SiC", "GaN"})
     exclude_discontinued: bool = True
+    # Operating point for the LOWEST_TOTAL_LOSS tiebreaker (optional).
+    # When all four are set, the selector ranks candidates by
+    # duty*i_rms^2*Rds_on + 0.5*vds*i_rms*Qg*fsw/Ig.
+    op_i_rms: float | None = None
+    op_vds: float | None = None
+    op_duty: float | None = None
+    op_fsw: float | None = None
 
     def __post_init__(self) -> None:
         for name in ("vds_min", "id_min", "rds_on_max", "qg_max"):
@@ -332,6 +345,22 @@ def select_mosfet(
         winner = min(passing, key=lambda m: (_no_thermal(m), -m.vds_rated / c.vds_min))
     elif tiebreaker is MosfetTiebreaker.HIGHEST_ID_MARGIN:
         winner = min(passing, key=lambda m: (_no_thermal(m), -m.id_continuous / c.id_min))
+    elif tiebreaker is MosfetTiebreaker.LOWEST_TOTAL_LOSS:
+        if not all(isinstance(x, (int, float)) and x > 0 for x in
+                   (c.op_i_rms, c.op_vds, c.op_duty, c.op_fsw)):
+            raise ValueError(
+                "LOWEST_TOTAL_LOSS requires op_i_rms/op_vds/op_duty/op_fsw "
+                "on MosfetConstraints"
+            )
+        _IG = 1.0  # gate-drive current proxy; matches analyst _GATE_DRIVE_CURRENT_A
+
+        def _total_loss(m: Mosfet) -> float:
+            p_cond = float(c.op_duty) * (float(c.op_i_rms) ** 2) * m.rds_on
+            p_sw = (0.5 * float(c.op_vds) * float(c.op_i_rms)
+                    * m.qg_total * float(c.op_fsw) / _IG) if m.qg_total > 0 else 0.0
+            return p_cond + p_sw
+
+        winner = min(passing, key=lambda m: (_no_thermal(m), _total_loss(m)))
     else:  # pragma: no cover — enum is exhaustive
         raise ValueError(f"unhandled tiebreaker {tiebreaker!r}")
 

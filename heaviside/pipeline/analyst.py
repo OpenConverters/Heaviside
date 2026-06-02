@@ -200,8 +200,8 @@ def compute_buck_loss_budget(
         else:
             budget["Q1_conduction"] = None
         if isinstance(qg, (int, float)) and qg > 0:
-            # P_sw ~ Vds * Id * (Qg / Ig) * fsw
-            budget["Q1_switching"] = vin * iout * float(qg) * fsw / _GATE_DRIVE_CURRENT_A
+            # P_sw = 0.5*Vds*Id*(Qg/Ig)*fsw (triangular V-I overlap, 2 edges).
+            budget["Q1_switching"] = 0.5 * vin * iout * float(qg) * fsw / _GATE_DRIVE_CURRENT_A
         else:
             budget["Q1_switching"] = None
 
@@ -455,7 +455,7 @@ def _compute_generic_loss_budget(
             # boost / Vin for buck — but Vds_off varies by topology.
             # Use the higher of vin/vout as a conservative proxy.
             vds_off = max(vin, vout)
-            budget["Q1_switching"] = vds_off * pri_current * float(qg) * fsw / _GATE_DRIVE_CURRENT_A
+            budget["Q1_switching"] = 0.5 * vds_off * pri_current * float(qg) * fsw / _GATE_DRIVE_CURRENT_A
         else:
             budget["Q1_switching"] = None
 
@@ -609,7 +609,14 @@ def _mosfet_loss(
     if zvs:
         budget[f"{name}_switching"] = 0.0
     elif isinstance(qg, (int, float)) and qg > 0:
-        budget[f"{name}_switching"] = vds_off * i_on * float(qg) * fsw / _GATE_DRIVE_CURRENT_A
+        # Hard-switching V-I overlap loss: E = 0.5*Vds*Id*t_transition per
+        # edge, two edges/cycle → P = 0.5*Vds*Id*(Qg/Ig)*fsw. The 0.5 is the
+        # triangular-overlap factor (was previously omitted, ~2x high).
+        # NOTE: Qg overestimates the Miller-plateau (Qgd) transition charge;
+        # this remains a conservative upper bound until Qgd is in TAS.
+        budget[f"{name}_switching"] = (
+            0.5 * vds_off * i_on * float(qg) * fsw / _GATE_DRIVE_CURRENT_A
+        )
     else:
         budget[f"{name}_switching"] = None
     return budget
