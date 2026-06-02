@@ -475,6 +475,68 @@ async def submit_crossref_from_pdf(
     return {"job_id": registry.submit("crossref_pdf", run)}
 
 
+class CrossRefUrlRequest(BaseModel):
+    url: str
+    target_manufacturer: str
+
+
+def _html_to_text(html: str) -> str:
+    """Strip an HTML app-note page down to readable text (best-effort)."""
+    import re
+    html = re.sub(r"(?is)<(script|style|head|nav|footer)[^>]*>.*?</\1>", " ", html)
+    html = re.sub(r"(?s)<[^>]+>", " ", html)
+    html = re.sub(r"&nbsp;", " ", html)
+    html = re.sub(r"&amp;", "&", html)
+    return re.sub(r"[ \t]*\n\s*", "\n", re.sub(r"[ \t]+", " ", html)).strip()
+
+
+@app.post("/jobs/crossref/from-url")
+def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
+    """Fetch a reference design from a URL (PDF or HTML app-note), reverse-
+    engineer it, then cross-reference its BOM to the target manufacturer."""
+    from heaviside.api.jobs import registry
+
+    def run(update: Any) -> dict[str, Any]:
+        import httpx, tempfile, os
+        from pathlib import Path
+        from heaviside.pipeline.crossref_pipeline import run_crossref_with_cre
+
+        name = (req.url.rsplit("/", 1)[-1].split("?")[0] or "design")[:50]
+        update(f"Downloading {name}…")
+        resp = httpx.get(
+            req.url, follow_redirects=True, timeout=90.0,
+            headers={"User-Agent": "Mozilla/5.0 (Heaviside crossref)"},
+        )
+        resp.raise_for_status()
+        body = resp.content
+        is_pdf = body[:5] == b"%PDF-" or "pdf" in resp.headers.get("content-type", "").lower()
+
+        update(f"Reverse-engineering {name} → {req.target_manufacturer}")
+        if is_pdf:
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+                f.write(body)
+                tmp = f.name
+            try:
+                outcome = run_crossref_with_cre(
+                    Path(tmp).stem, req.target_manufacturer, pdf_path=Path(tmp),
+                )
+            finally:
+                os.unlink(tmp)
+        else:
+            text = _html_to_text(body.decode("utf-8", "ignore"))
+            if len(text) < 200:
+                raise ValueError(
+                    f"fetched {len(body)} bytes from URL but extracted only "
+                    f"{len(text)} chars of text — not a usable design document"
+                )
+            outcome = run_crossref_with_cre(
+                name, req.target_manufacturer, pdf_text=text,
+            )
+        return _crossref_outcome_dict(outcome)
+
+    return {"job_id": registry.submit("crossref_url", run)}
+
+
 def _job_summary(job: Any) -> dict[str, Any]:
     """Compact view for the jobs list — no heavy `result` payload."""
     summary: str | None = None

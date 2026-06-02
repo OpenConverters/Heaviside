@@ -1378,6 +1378,7 @@ def run_crossref_with_cre(
     target_manufacturer: str,
     *,
     pdf_path: Path | None = None,
+    pdf_text: str | None = None,
     source_bom_override: list[dict[str, Any]] | None = None,
     verbose: bool = False,
 ) -> CrossRefOutcome:
@@ -1406,6 +1407,10 @@ def run_crossref_with_cre(
 
     # --- CRE stages: extract and simulate ---
     cre_state = CREState(reference=reference, pdf_path=pdf_path)
+    if pdf_text is not None:
+        # Pre-extracted text (e.g. an HTML app-note fetched from a URL):
+        # seed it directly so stage 0 skips PDF extraction.
+        cre_state.pdf_text = pdf_text
     cre_state = _stage0_extract_pdf(cre_state)
     cre_state = _stage1_competitor(cre_state)
     cre_state = _stage2_reverse_engineer(cre_state)
