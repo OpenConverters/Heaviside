@@ -62,3 +62,6 @@ knowledge/lessons.ndjson
 
 # Playwright MCP scratch output
 .playwright-mcp/
+
+# webui build deps
+heaviside/webui/node_modules/
