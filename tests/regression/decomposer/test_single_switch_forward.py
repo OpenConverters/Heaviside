@@ -1,10 +1,11 @@
 """End-to-end regression test for MKF→TAS single-switch forward decomposer.
 
-MKF emits primary excitation only (S1 + Lpri + Ldemag + Kpri_demag +
-Ddemag). The stencil augments this with a synthetic output stage —
-3rd winding ``sec0`` on T1, forward + freewheel diodes, output choke,
-output cap, and a ``Vout0`` external port — so the resulting TAS is a
-complete simulatable converter that round-trips through SPICE↔TAS.
+MKF emits a complete forward converter: S1 + 3-winding-class transformer
+(Lpri + Ldemag reset winding + one Lsec{i} per output rail) + Kpri_demag /
+Kpri_sec{i} / Kdemag_sec{i} couplings + demag reset diode (Ddemag) + one
+forward-rectifier output stage per secondary (Dfwd{i} + Dfw{i} + Lout{i} +
+Cout{i}). The stencil maps each secondary into a ``Vout{i}`` rail with the
+same forward-rectifier output stage as the two-switch / active-clamp forward.
 """
 
 from __future__ import annotations
@@ -38,7 +39,9 @@ SPEC: dict[str, object] = {
     ],
 }
 MAGNETIZING_INDUCTANCE = 1e-3
-TURNS_RATIOS = [2.0]
+# turnsRatios[0] = demag winding (1:1), turnsRatios[1] = sec0 (N_pri/N_sec0).
+# n_sec0 = 1.6 keeps the regulated-rail duty under the half-period reset limit.
+TURNS_RATIOS = [1.0, 1.6]
 
 
 def _maybe_update(path: Path, content: str) -> None:
@@ -91,12 +94,12 @@ def test_ssforward_tas_round_trip_shape() -> None:
         "pri.1", "pri.2", "demag.1", "demag.2", "sec0.1", "sec0.2",
     }, t1_pins
 
-    # Injected output stage: 2 diodes (D_fwd, D_fw) + L_out0 + C_out0.
+    # Output stage (rail 0): 2 diodes (D_fwd0, D_fw0) + L_out0 + C_out0.
     rect_names = {
         c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"]
         if not c["name"].startswith("P_")
     }
-    assert rect_names == {"D_fwd", "D_fw", "L_out0", "C_out0"}, rect_names
+    assert rect_names == {"D_fwd0", "D_fw0", "L_out0", "C_out0"}, rect_names
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {

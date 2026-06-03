@@ -107,12 +107,12 @@
         "circuit": {
           "components": [
             {
-              "name": "D_fwd",
-              "data": "TAS/data/diodes.ndjson?placeholder=D_fwd"
+              "name": "D_fwd0",
+              "data": "TAS/data/diodes.ndjson?placeholder=D_fwd0"
             },
             {
-              "name": "D_fw",
-              "data": "TAS/data/diodes.ndjson?placeholder=D_fw"
+              "name": "D_fw0",
+              "data": "TAS/data/diodes.ndjson?placeholder=D_fw0"
             },
             {
               "name": "L_out0",
@@ -133,11 +133,11 @@
               "kind": "wire",
               "endpoints": [
                 {
-                  "component": "D_fwd",
+                  "component": "D_fwd0",
                   "pin": "K"
                 },
                 {
-                  "component": "D_fw",
+                  "component": "D_fw0",
                   "pin": "K"
                 },
                 {
@@ -232,7 +232,7 @@
             "pin": "sec0.1"
           },
           {
-            "component": "D_fwd",
+            "component": "D_fwd0",
             "pin": "A"
           }
         ]
@@ -273,7 +273,7 @@
             "pin": "sec0.2"
           },
           {
-            "component": "D_fw",
+            "component": "D_fw0",
             "pin": "A"
           },
           {

@@ -111,6 +111,7 @@ _TESTBENCH_PREFIXES: tuple[str, ...] = (
                                  # Rsn1_o1, Csn1_o1, Rsn2_o1, …)
     "Rdcr_",                     # DCR parasitic resistors on inductors
     "Rco_esr", "Rcs_esr", "Rcc_esr", "Rc1_esr", "R_cb_esr", "R_co_esr",  # cap ESR parasitics
+    "Rcout",                     # output cap ESR per-output (single_switch_forward: Rcout0, Rcout1, …)
     "Rout",                      # output cap ESR per-output (Rout0_esr, Rout1_esr, …)
     "Resr_",                     # generic ESR (LLC etc.)
     "Rload", "R_load",           # load resistors (Rload, R_load_o1, …)
@@ -1174,59 +1175,76 @@ def flyback(deck: SpiceDeck) -> TasTopology:
 # Single-switch forward stencil
 # -----------------------------------------------------------------------------
 #
-# MKF emits the *primary excitation only* for this topology (0 secondaries
-# in the schema). The deck describes the switch + transformer + demag-reset
-# diode that returns magnetising energy to Vin — there is no output stage
-# in the deck. The TAS we emit therefore has switchingCell + isolation +
-# control, but no outputRectifier. Callers that want a complete converter
-# must augment the BOM downstream; the decomposer stays faithful to MKF.
+# MKF emits a complete forward converter: primary switch + 3-winding-class
+# transformer (primary + demag reset winding + N secondaries) + demag reset
+# diode + one forward-rectifier output stage per secondary. The demag winding
+# returns magnetising energy to Vin through ``Ddemag`` (the single-switch
+# equivalent of the two-switch reset diodes / active clamp). Each output rail
+# uses the same forward-rectifier output stage as two_switch_forward /
+# active_clamp_forward (forward diode + freewheel diode + output choke + cap).
 #
-# Deck:
-#   S1 vin_dc pri_p …             ; Q1.D=Vin, Q1.S=switch_node
-#   Lpri pri_in 0                  ; T1.pri.1=switch_node, T1.pri.2=GND
-#   Ldemag 0 demag_in              ; T1.demag.1=GND, T1.demag.2=demag_node
-#   Kpri_demag Lpri Ldemag 0.9999  ; coupling
-#   Ddemag demag_sense vin_dc      ; D_demag.A=demag_node, D_demag.K=Vin
+# MKF deck (verified against the live PyOM build):
 #
-# Real BOM = {Q1=S1, T1 (Lpri+Ldemag+Kpri_demag), D_demag=Ddemag}.
+#   S1   q1_drain pri_p …            ; Q1.D=Vin, Q1.S=switch_node
+#   Lpri pri_in 0                    ; T1.pri.1=switch_node, T1.pri.2=GND
+#   Ldemag 0 demag_in                ; T1.demag.1=GND, T1.demag.2=demag_node
+#   Lsec{i} sec{i}_in 0              ; T1.sec{i}.1=sec{i}_node, T1.sec{i}.2=GND
+#   Kpri_demag Lpri Ldemag 0.9999    ; couplings (all pairwise)
+#   Kpri_sec{i} / Kdemag_sec{i} / Ksec{i}_sec{j} 0.9999
+#   Ddemag demag_sense vin_dc        ; D_demag.A=demag_node, D_demag.K=Vin
+#   Dfwd{i} sec{i}_in sec{i}_rect    ; D_fwd{i}.A=sec{i}_node, K=sec{i}_rect_node
+#   Dfw{i}  0       sec{i}_rect      ; D_fw{i}.A=GND,          K=sec{i}_rect_node
+#   Lout{i} lout{i} vout_c{i}        ; L_out{i}.1=sec{i}_rect_node, .2=Vout{i}
+#   Cout{i} vout{i} 0                ; C_out{i}.1=Vout{i}, C_out{i}.2=GND
+#
+# Real BOM = {Q1=S1, D_demag=Ddemag, T1 (Lpri+Ldemag+Lsec{i}+couplings),
+#             per rail: D_fwd{i}, D_fw{i}, L_out{i}, C_out{i}}.
 
 
-_SSF_REAL_KINDS = {
-    "S1":          "switch",
-    "Lpri":        "inductor",
-    "Ldemag":      "inductor",
-    "Kpri_demag":  "coupling",
-    "Ddemag":      "diode",
-}
+def _ssf_real_kinds(deck: SpiceDeck) -> dict[str, str]:
+    """Expected real-component set for a single-switch forward deck with N
+    secondaries. The primary carries the main switch ``S1`` and the demag
+    reset winding (``Ldemag``) + diode (``Ddemag``); each output rail ``i``
+    carries one secondary winding (``Lsec{i}``), a forward + freewheel diode
+    pair (``Dfwd{i}``/``Dfw{i}``), an output choke (``Lout{i}``) and an output
+    cap (``Cout{i}``). All transformer couplings (``Kpri_demag``,
+    ``Kpri_sec{i}``, ``Kdemag_sec{i}``, ``Ksec{i}_sec{j}``) are accepted
+    generically via :func:`_coupling_kinds`.
+    """
+    n = _secondary_count(deck)
+    kinds: dict[str, str] = {
+        "S1":     "switch",
+        "Lpri":   "inductor",
+        "Ldemag": "inductor",
+        "Ddemag": "diode",
+    }
+    for i in range(n):
+        kinds[f"Lsec{i}"] = "inductor"
+        kinds[f"Dfwd{i}"] = "diode"
+        kinds[f"Dfw{i}"]  = "diode"
+        kinds[f"Lout{i}"] = "inductor"
+        kinds[f"Cout{i}"] = "capacitor"
+    kinds.update(_coupling_kinds(deck))   # Kpri_demag, Kpri_sec{i}, …
+    return kinds
 
 
 def single_switch_forward(deck: SpiceDeck) -> TasTopology:
-    """Decompose an MKF single-switch forward deck into TAS, with synthetic
-    output-stage augmentation.
+    """Decompose an MKF single-switch forward deck into TAS.
 
-    MKF's single-switch forward emission contains only the primary
-    excitation half (S1 + Lpri + Ldemag + Kpri_demag + Ddemag): no
-    secondary winding, no forward / freewheel rectifier, no output choke,
-    no output cap, and therefore no Vout port. A converter without an
-    output is not simulatable end-to-end and cannot round-trip through
-    the SPICE↔TAS pipeline.
-
-    To make the topology useful, the stencil augments the MKF skeleton
-    with the canonical single-switch-forward output stage:
-
-      * A third winding ``sec0`` added to T1 (so T1 becomes 3-winding:
-        pri + demag + sec0, all mutually coupled).
-      * An ``output_0`` outputRectifier stage containing the forward
-        rectifier diode ``D_fwd``, freewheel diode ``D_fw``, output
-        choke ``L_out0``, and output cap ``C_out0``.
-      * A ``Vout0`` external port across the LC filter.
-
-    The injected components are not present in the MKF deck — they
-    extend the validated primary skeleton into a complete converter
-    topology. ``_validate_real_set`` continues to check only what MKF
-    actually emits.
+    Supports N output rails: each ``Lsec{i}``/``Dfwd{i}``/``Dfw{i}``/
+    ``Lout{i}``/``Cout{i}`` group becomes an isolated secondary winding +
+    forward-rectifier (forward diode + freewheel diode + output choke +
+    cap) stage feeding ``Vout{i}`` — identical output topology to the
+    two-switch / active-clamp forward. The demag reset winding (``demag``)
+    + diode (``D_demag``) returns the magnetising volt-seconds to Vin. The
+    control loop closes around ``Vout0`` (primary rail).
     """
-    _validate_real_set(deck, "single_switch_forward", _SSF_REAL_KINDS)
+    _validate_real_set(deck, "single_switch_forward", _ssf_real_kinds(deck))
+    n_sec = _secondary_count(deck)
+    if n_sec < 1:
+        raise StencilError(
+            "single_switch_forward: deck has no secondary winding (Lsec0)"
+        )
 
     switching_cell = {
         "name": "primary_switch",
@@ -1242,40 +1260,43 @@ def single_switch_forward(deck: SpiceDeck) -> TasTopology:
         },
     }
 
-    # 3-winding T1 (pri+demag from MKF, sec0 injected for output stage).
+    # T1: pri + demag (reset) + N secondaries, all mutually coupled.
+    windings = ("pri", "demag") + tuple(f"sec{i}" for i in range(n_sec))
     isolation = _isolation_stage(
-        ("pri", "demag", "sec0"),
+        windings,
         input_wire="switch_node",
-        output_wires=("demag_node", "sec0_node"),
+        output_wires=("demag_node",)
+        + tuple(f"sec{i}_node" for i in range(n_sec)),
     )
 
-    # Injected output stage — identical pattern to active_clamp_forward
-    # and two_switch_forward (forward diode + freewheel diode + LC filter).
-    output_rectifier_0 = {
-        "name": "output_0",
-        "role": "outputRectifier",
-        "inputPort":  {"type": "hfAc",  "wire": "sec0_node"},
-        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
-        "circuit": {
-            "components": [
-                _component("diode",     "D_fwd"),    # forward rectifier
-                _component("diode",     "D_fw"),     # freewheel
-                _component("magnetic",  "L_out0"),   # output choke
-                _component("capacitor", "C_out0"),
-            ],
-            "connections": [
-                {
-                    "name": "sec0_rect_node",
-                    "kind": "wire",
-                    "endpoints": [
-                        {"component": "D_fwd",  "pin": "K"},
-                        {"component": "D_fw",   "pin": "K"},
-                        {"component": "L_out0", "pin": "1"},
-                    ],
-                },
-            ],
-        },
-    }
+    output_rectifiers = [
+        {
+            "name": f"output_{i}",
+            "role": "outputRectifier",
+            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_node"},
+            "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
+            "circuit": {
+                "components": [
+                    _component("diode",     f"D_fwd{i}"),   # ← Dfwd{i}
+                    _component("diode",     f"D_fw{i}"),    # ← Dfw{i}
+                    _component("magnetic",  f"L_out{i}"),   # ← Lout{i}
+                    _component("capacitor", f"C_out{i}"),   # ← Cout{i}
+                ],
+                "connections": [
+                    {
+                        "name": f"sec{i}_rect_node",
+                        "kind": "wire",
+                        "endpoints": [
+                            {"component": f"D_fwd{i}",  "pin": "K"},
+                            {"component": f"D_fw{i}",   "pin": "K"},
+                            {"component": f"L_out{i}",  "pin": "1"},
+                        ],
+                    },
+                ],
+            },
+        }
+        for i in range(n_sec)
+    ]
 
     control = _isolated_control_stage(("Q1",))
 
@@ -1307,35 +1328,39 @@ def single_switch_forward(deck: SpiceDeck) -> TasTopology:
                 {"component": "D_demag", "pin": "A"},
             ],
         },
-        {
-            "name": "sec0_node",
+    ]
+    for i in range(n_sec):
+        inter_stage.append({
+            "name": f"sec{i}_node",
             "kind": "wire",
             "endpoints": [
-                {"component": "T1",    "pin": "sec0.1"},
-                {"component": "D_fwd", "pin": "A"},
+                {"component": "T1",        "pin": f"sec{i}.1"},
+                {"component": f"D_fwd{i}", "pin": "A"},
             ],
-        },
-        {
-            "name": "Vout0",
+        })
+        inter_stage.append({
+            "name": f"Vout{i}",
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "L_out0", "pin": "2"},
-                {"component": "C_out0", "pin": "1"},
+                {"component": f"L_out{i}", "pin": "2"},
+                {"component": f"C_out{i}", "pin": "1"},
             ],
-        },
-        _gnd_wire(
-            ("T1",     "pri.2"),
-            ("T1",     "demag.1"),
-            ("T1",     "sec0.2"),
-            ("D_fw",   "A"),
-            ("C_out0", "2"),
-        ),
-        *_gate_wires("Q1"),
+        })
+
+    gnd_endpoints: list[tuple[str, str]] = [
+        ("T1", "pri.2"),
+        ("T1", "demag.1"),
     ]
+    for i in range(n_sec):
+        gnd_endpoints.append(("T1",        f"sec{i}.2"))
+        gnd_endpoints.append((f"D_fw{i}",  "A"))
+        gnd_endpoints.append((f"C_out{i}", "2"))
+    inter_stage.append(_gnd_wire(*gnd_endpoints))
+    inter_stage.extend(_gate_wires("Q1"))
 
     return {
-        "stages": [switching_cell, isolation, output_rectifier_0, control],
+        "stages": [switching_cell, isolation, *output_rectifiers, control],
         "interStageCircuit": inter_stage,
     }
 
