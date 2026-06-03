@@ -366,11 +366,13 @@ def _design_job(
     # turns ratios) — the CRE path computes these in to_heaviside_spec. Mirror
     # the inductance sizing here so a minimal form yields a real design.
     spec = dict(spec)
+    op = (spec.get("operatingPoints") or [{}])[0]
+    vouts = op.get("outputVoltages") or []
+    iouts = op.get("outputCurrents") or []
+    n_out = min(len(vouts), len(iouts))
+    total_pout = sum(float(v) * float(i) for v, i in zip(vouts, iouts))
     if "desiredInductance" not in spec:
-        op = (spec.get("operatingPoints") or [{}])[0]
         vin = (spec.get("inputVoltage") or {}).get("nominal")
-        vouts = op.get("outputVoltages") or []
-        iouts = op.get("outputCurrents") or []
         fsw = op.get("switchingFrequency")
         ripple = spec.get("currentRippleRatio", 0.3)
         if vin and vouts and iouts and fsw:
@@ -404,10 +406,23 @@ def _design_job(
          if o.verdict_dict and o.verdict_dict.get("verdict") == "pass"),
         outcomes[0],
     )
+    html = render_html(best)
+    if n_out > 1:
+        # Be explicit (never silent): the design honours all rails for topology
+        # selection + netlist, but stress/realism/BOM are primary-rail today.
+        rails = ", ".join(f"{float(v):g} V @ {float(i):g} A" for v, i in zip(vouts, iouts))
+        html = (
+            f'<div style="background:rgba(180,120,30,.12);border:1px solid '
+            f'rgba(180,120,30,.4);border-radius:10px;padding:.7rem 1rem;margin-bottom:1rem">'
+            f'<b>Multi-output converter</b> — {n_out} rails ({rails}), '
+            f'{total_pout:g} W total. Topology screening, magnetics and the netlist '
+            f'use all rails; per-secondary stress, realism and component selection are '
+            f'currently summarised on the primary rail (OUT0).</div>'
+        ) + html
     return {
         "topology": best.pick.topology.name,
         "verdict": best.verdict_dict.get("verdict") if best.verdict_dict else None,
-        "html": render_html(best),
+        "html": html,
         "alternatives": [
             {"topology": o.pick.topology.name,
              "verdict": o.verdict_dict.get("verdict") if o.verdict_dict else None}

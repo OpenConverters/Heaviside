@@ -88,6 +88,13 @@ header.hv::after {
 .field > .p-inputnumber, .field > .p-select, .field > .p-inputtext,
 .field > .p-textarea { width: 100%; }
 
+/* ---------- Output rails ---------- */
+.rail { display: flex; align-items: flex-end; gap: .7rem; margin-bottom: .5rem; }
+.rail .field { flex: 1; margin: 0; }
+.rail-tag { align-self: center; font-size: .72rem; font-weight: 700; color: var(--om-teal);
+  background: rgba(84,179,175,.12); border: 1px solid rgba(84,179,175,.35);
+  border-radius: 7px; padding: .3rem .5rem; min-width: 3.2rem; text-align: center; }
+
 /* ---------- Topology chips ---------- */
 .topo-grid { display: flex; flex-wrap: wrap; gap: .45rem; }
 .chip {

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import InputNumber from 'primevue/inputnumber'
 import SelectButton from 'primevue/selectbutton'
 import Button from 'primevue/button'
@@ -10,10 +10,16 @@ import { api, pollJob } from '../api.js'
 
 const step = ref(1)
 const d = ref({
-  vinMin: 9, vinNom: 12, vinMax: 16, vout: 3.3, iout: 3,
+  vinMin: 9, vinNom: 12, vinMax: 16,
+  outputs: [{ vout: 3.3, iout: 3 }],
   fswKhz: 500, ambient: 25, eff: 0.92,
   mode: 'ripple', ripple: 0.3, inductanceUh: 4.7, topology: null,
 })
+function addOutput() { d.value.outputs.push({ vout: 5, iout: 1 }) }
+function removeOutput(i) { d.value.outputs.splice(i, 1) }
+const totalPower = computed(() =>
+  d.value.outputs.reduce((s, o) => s + (o.vout || 0) * (o.iout || 0), 0))
+const multiOutput = computed(() => d.value.outputs.length > 1)
 const modes = [
   { label: 'Ripple ratio', value: 'ripple' },
   { label: 'Known inductance', value: 'known' },
@@ -36,7 +42,8 @@ function buildSpec() {
   const spec = {
     inputVoltage: { minimum: d.value.vinMin, nominal: d.value.vinNom, maximum: d.value.vinMax },
     operatingPoints: [{
-      outputVoltages: [d.value.vout], outputCurrents: [d.value.iout],
+      outputVoltages: d.value.outputs.map((o) => o.vout),
+      outputCurrents: d.value.outputs.map((o) => o.iout),
       switchingFrequency: d.value.fswKhz * 1000, ambientTemperature: d.value.ambient,
     }],
     efficiency: d.value.eff, diodeVoltageDrop: 0.7,
@@ -91,12 +98,30 @@ async function run() {
         <div class="field"><label class="fld-label">Vin max (V)</label>
           <InputNumber v-model="d.vinMax" /></div>
       </div>
-      <div class="section-label" style="margin-top:1rem">Output &amp; switching</div>
-      <div class="grid4">
+      <div class="section-label" style="margin-top:1rem">
+        Output rails
+        <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">
+          — {{ totalPower.toFixed(1) }} W total{{ multiOutput ? ' · multi-output' : '' }}</span>
+      </div>
+      <div v-for="(o, i) in d.outputs" :key="i" class="rail">
+        <span class="rail-tag mono">OUT{{ i }}</span>
         <div class="field"><label class="fld-label">Vout (V)</label>
-          <InputNumber v-model="d.vout" :minFractionDigits="1" :maxFractionDigits="2" /></div>
+          <InputNumber v-model="o.vout" :minFractionDigits="1" :maxFractionDigits="2" /></div>
         <div class="field"><label class="fld-label">Iout (A)</label>
-          <InputNumber v-model="d.iout" :maxFractionDigits="2" /></div>
+          <InputNumber v-model="o.iout" :maxFractionDigits="2" /></div>
+        <Button v-if="d.outputs.length > 1" icon="pi pi-trash" text rounded severity="danger"
+                aria-label="remove rail" @click="removeOutput(i)" />
+      </div>
+      <Button label="Add output rail" icon="pi pi-plus" text size="small" @click="addOutput" />
+      <Message v-if="multiOutput" severity="info" style="margin-top:.6rem">
+        Multiple rails describe a multi-output converter — pick an isolated topology
+        (flyback, forward, isolated buck/-boost…) in step 3. Magnetic sizing &amp; the
+        primary side use the full {{ totalPower.toFixed(1) }} W; per-secondary component
+        selection is summarised on the main rail.
+      </Message>
+
+      <div class="section-label" style="margin-top:1rem">Switching</div>
+      <div class="grid4">
         <div class="field"><label class="fld-label">fsw (kHz)</label>
           <InputNumber v-model="d.fswKhz" /></div>
         <div class="field"><label class="fld-label">Efficiency target</label>
