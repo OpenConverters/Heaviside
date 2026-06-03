@@ -1,0 +1,35 @@
+{
+  "name": "EVL1653F-TF-00A",
+  "passed": true,
+  "elapsed_s": 312.0,
+  "topology": "synchronous buck",
+  "vin_max": 16.0,
+  "vout": 3.3,
+  "pout": 9.9,
+  "bom_count": 14,
+  "comparisons": [
+    {
+      "sim_eff": 0.9282338666594263,
+      "claimed_eff": 0.94,
+      "delta_pp": 1.1766133340573637,
+      "sim_vout": 3.314773,
+      "claimed_vout": 3.3,
+      "vout_err": 0.44766666666667787,
+      "passed": true,
+      "diagnosis": ""
+    },
+    {
+      "sim_eff": 0.9282344436635597,
+      "claimed_eff": 0.917,
+      "delta_pp": 1.1234443663559635,
+      "sim_vout": 3.319742,
+      "claimed_vout": 3.3,
+      "vout_err": 0.5982424242424355,
+      "passed": true,
+      "diagnosis": ""
+    }
+  ],
+  "diagnostics": [
+    "no design to review"
+  ]
+}

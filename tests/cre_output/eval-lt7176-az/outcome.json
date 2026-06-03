@@ -1,0 +1,38 @@
+{
+  "name": "eval-lt7176-az",
+  "passed": true,
+  "elapsed_s": 383.7,
+  "topology": "dual-phase synchronous buck",
+  "vin_max": 4.0,
+  "vout": 0.5,
+  "pout": 24.0,
+  "bom_count": 11,
+  "comparisons": [
+    {
+      "sim_eff": 0.7462808435085199,
+      "claimed_eff": 0.76,
+      "delta_pp": 1.3719156491480144,
+      "sim_vout": 0.5001427,
+      "claimed_vout": 0.5,
+      "vout_err": 0.028540000000010224,
+      "passed": true,
+      "diagnosis": ""
+    },
+    {
+      "sim_eff": 0.7462808435085199,
+      "claimed_eff": 0.76,
+      "delta_pp": 1.3719156491480144,
+      "sim_vout": 0.5001427,
+      "claimed_vout": 0.5,
+      "vout_err": 0.028540000000010224,
+      "passed": true,
+      "diagnosis": ""
+    }
+  ],
+  "diagnostics": [
+    "failed to fetch inductor XGL6030-650MEC from Digi-Key: digikey API returned HTTP 404: {\"ErrorResponseVersion\":\"3.0.0.0\",\"StatusCode\": 404,\"ErrorMessage\":\"Product was not found\",\"ErrorDetails\":\"The specified DigiKey product XGL6030-650MEC was not found\",\"RequestId\":\"57f634e7-797a-42c5-fe0d-f071a26a515d\",\"ValidationErrors\":[]}",
+    "failed to fetch inductor XGL6030-650MEC from Digi-Key: digikey API returned HTTP 404: {\"ErrorResponseVersion\":\"3.0.0.0\",\"StatusCode\": 404,\"ErrorMessage\":\"Product was not found\",\"ErrorDetails\":\"The specified DigiKey product XGL6030-650MEC was not found\",\"RequestId\":\"d6bd7b66-221e-4944-8b7e-bd45a85cbc6e\",\"ValidationErrors\":[]}",
+    "testbench: inductor DCR not available in TAS \u2014 simulation uses ideal inductor (no winding loss)",
+    "no design to review"
+  ]
+}

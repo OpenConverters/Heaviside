@@ -175,6 +175,55 @@ def _saved_probes(deck: str) -> set[str]:
 # (vin_probe, iin_probe, vout_probe, iout_probe). The runner picks the
 # first quadruple whose probes are ALL present in the deck.
 _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
+    # Isolated buck-boost: the primary inverting rail (vpri_out) is the
+    # main output — outputVoltages[0] in the spec.  The secondary
+    # (vout0) follows by turns ratio and carries a small fraction of
+    # total power.  Must match before the forward-family / flyback
+    # entries below, which would wrongly select vout0.
+    "isolated_buck_boost": [
+        ("v(vin_dc)",  "i(vin)",  "v(vpri_out)",  "i(vpri_out_sense)"),
+    ],
+    # Push-pull: centre-tapped primary, vout is the output LC filter.
+    # i(vin) for input current (includes both switch cycles).
+    "push_pull": [
+        ("v(vin_dc)",  "i(vin)",  "v(vout)",  "i(vsec_sense)"),
+        ("v(vin_dc)",  "i(vin)",  "v(vout)",  "i(vct_sense)"),
+    ],
+    # Weinberg: push-pull variant with combined secondary winding.
+    "weinberg": [
+        ("v(vin_dc)",  "i(vin_sense)",  "v(out_node)",  "i(vout_sense)"),
+    ],
+    # Asymmetric half-bridge (AHB).
+    # DC source is ``Vdc vin_dc 0``; i(Vdc) is the true input current
+    # (avoids snubber-RC spikes that contaminate i(Vpri_sense)).
+    # Full variant (v6+): v(out_node) / i(Vout_sense), v(vin_dc) in .save.
+    # Simple variant (v5): v(co_top) / i(Vout_sense), no v(vin_dc) in .save.
+    "asymmetric_half_bridge": [
+        ("v(vin_dc)",  "i(vdc)",  "v(out_node)",  "i(vout_sense)"),
+    ],
+    # Phase-shifted full bridge (PSFB).
+    # DC source is ``Vdc vin_dc 0``; i(Vdc) is the input current.
+    # Per-output naming uses the ``_o<N>`` suffix convention.
+    "phase_shifted_full_bridge": [
+        ("v(vin_dc)",  "i(vdc)",  "v(out_node_o1)",  "i(vout_sense_o1)"),
+    ],
+    # Phase-shifted half bridge (PSHB).
+    # Same DC source convention as PSFB; per-output ``_o<N>`` naming.
+    "phase_shifted_half_bridge": [
+        ("v(vin_dc)",  "i(vdc)",  "v(out_node_o1)",  "i(vout_sense_o1)"),
+    ],
+    # Dual active bridge: two full bridges. Primary input at vin_dc1,
+    # secondary output at vout_cap_o1.
+    "dual_active_bridge": [
+        ("v(vin_dc1)",  "i(vdc1)",  "v(vout_cap_o1)",  "i(vsec_sense_o1)"),
+    ],
+    # LLC / CLLC / CLLLC resonant: half-bridge primary, centre-tapped
+    # secondary. vout at vout_cap_o1 or vout_pos_o1.
+    "resonant_hb": [
+        ("v(vin_dc)",   "i(vin)",   "v(vout_cap_o1)",   "i(vsec_sense_o1)"),
+        ("v(vin_dc)",   "i(vin)",   "v(vout_pos_o1)",   "i(vsec_sense_o1)"),
+        ("v(vin_dc1)",  "i(vdc1)",  "v(vout_cap_o1)",   "i(vsec_sense_o1)"),
+    ],
     # Buck / boost / cuk / sepic / zeta / 4SBB / flyback (single-output).
     # ``i(vl_sense)`` is the inductor current; for boost-family decks
     # the inductor sits in series with the input source, so i_L IS the
@@ -404,6 +453,162 @@ def _rewrite_pwm_duty(deck: str, *, new_duty: float, period_s: float) -> str:
     return out
 
 
+# ACF deck topology transform --------------------------------------------
+# MKF emits the old ACF topology (Cclamp to GND, S_clamp between
+# clamp_cap and sw_node).  The canonical topology (Cclamp across the
+# primary, S_clamp high-side from Vin) resets the transformer correctly
+# and achieves η≈0.93 vs η≈0.60 for the old layout.  Transform the
+# netlist once before simulation rather than requiring an MKF rebuild.
+_ACF_SCLAMP_RE = re.compile(
+    r"^(\s*)S_clamp\s+clamp_cap\s+sw_node\b(.*)$", re.MULTILINE,
+)
+_ACF_CCLAMP_LINE_RE = re.compile(
+    r"^(\s*)Cclamp\s+clamp_cap\s+0\s+(\S+)\s+IC=([\d.eE+-]+)(.*)$",
+    re.MULTILINE,
+)
+_ACF_RCLAMP_RE = re.compile(
+    r"^(\s*)Rclamp\s+clamp_cap\s+0\b(.*)$", re.MULTILINE,
+)
+
+
+def _transform_acf_topology(deck: str) -> str:
+    """Rewrite old-style ACF clamp (Cclamp to GND) to canonical (across primary)."""
+    if not _ACF_SCLAMP_RE.search(deck):
+        return deck
+
+    vin_m = _VIN_RE.search(deck)
+    if vin_m is None:
+        return deck
+    vin = float(vin_m.group(1))
+
+    cclamp_m = _ACF_CCLAMP_LINE_RE.search(deck)
+    if cclamp_m is None:
+        return deck
+    cap_val = cclamp_m.group(2)
+    old_ic = float(cclamp_m.group(3))
+
+    pulse = _read_pwm_pulse(deck)
+    if pulse is None:
+        return deck
+    pw, period = pulse
+    duty = pw / period
+
+    main_m = _PULSE_LINE_RE.search(deck)
+    if main_m is None:
+        return deck
+
+    clamp_pm = _CLAMP_PULSE_RE.search(deck)
+    if clamp_pm is None:
+        return deck
+    old_td = _spice_time(clamp_pm.group(4))
+    dead_time = old_td - pw
+    if dead_time < 0:
+        dead_time = 100e-9
+    clamp_on = period - pw - 2 * dead_time
+    if clamp_on <= 0:
+        return deck
+
+    new_ic = vin * (period - 2 * dead_time) / clamp_on
+
+    deck = _ACF_SCLAMP_RE.sub(
+        lambda m: f"{m.group(1)}S_clamp vin_dc clamp_node{m.group(2)}", deck,
+    )
+    deck = _ACF_CCLAMP_LINE_RE.sub(
+        lambda m: f"{m.group(1)}Cclamp clamp_node pri_in {cap_val} IC={new_ic:.6f}{m.group(4)}",
+        deck,
+    )
+    deck = _ACF_RCLAMP_RE.sub(
+        lambda m: f"{m.group(1)}Rclamp clamp_node pri_in{m.group(2)}", deck,
+    )
+
+    # MKF's ACF deck may emit the default DIDEAL model (IS=1e-14,
+    # RS=1e-6) which is too stiff for the canonical clamp topology and
+    # causes "timestep too small" on the freewheeling diode.  Replace
+    # with a Schottky-grade model that matches DEFAULT_SPICE_CONFIG.
+    deck = re.sub(
+        r"\.model\s+DIDEAL\s+D\([^)]*\)",
+        ".model DIDEAL D(IS=1e-12 RS=0.05)",
+        deck,
+        count=1,
+    )
+
+    return deck
+
+
+# ACF clamp IC + timing rewrite ------------------------------------------
+_CLAMP_PULSE_RE = re.compile(
+    r"""
+    ^(\s*Vpwm_clamp\s+\S+\s+\S+\s+PULSE\()  # 1: prefix
+    (\S+)\s+(\S+)\s+                          # 2,3: V1 V2
+    (\S+)\s+                                  # 4: TD (clamp delay)
+    (\S+)\s+(\S+)\s+                          # 5,6: TR TF
+    (\S+)\s+                                  # 7: PW (clamp on-time)
+    (\S+)\)                                   # 8: PER
+    """,
+    re.MULTILINE | re.VERBOSE,
+)
+_CCLAMP_IC_RE = re.compile(
+    r"^(\s*Cclamp\s+\S+\s+\S+\s+\S+\s+IC=)([\d.eE+-]+)",
+    re.MULTILINE,
+)
+_VIN_RE = re.compile(r"^\s*Vin\s+\S+\s+\S+\s+([\d.eE+-]+)", re.MULTILINE)
+
+
+def _rewrite_acf_clamp(deck: str, *, new_duty: float, period_s: float) -> str:
+    """Update the ACF clamp switch timing and Cclamp IC for a new duty.
+
+    The active-clamp forward has a complementary clamp switch
+    (Vpwm_clamp) and a pre-charged clamp capacitor (Cclamp IC=...).
+    Both depend on the main-switch duty cycle.  When the closed-loop
+    driver adjusts duty, these must track or ngspice diverges.
+
+    No-op (returns deck unchanged) if the deck has no Vpwm_clamp.
+    """
+    clamp_m = _CLAMP_PULSE_RE.search(deck)
+    if clamp_m is None:
+        return deck
+
+    main_pulse = _read_pwm_pulse(deck)
+    if main_pulse is None:
+        return deck
+
+    main_pw, _ = main_pulse
+    main_m = _PULSE_LINE_RE.search(deck)
+    if main_m is None:
+        return deck
+
+    old_td = _spice_time(clamp_m.group(4))
+    old_main_pw = _spice_time(main_m.group(7))
+    dead_time = old_td - old_main_pw
+    if dead_time < 0:
+        dead_time = 100e-9
+
+    new_pw_main = new_duty * period_s
+    clamp_delay = new_pw_main + dead_time
+    clamp_on = period_s - new_pw_main - 2 * dead_time
+    if clamp_on <= 0:
+        return deck
+
+    def _replace_clamp(m: re.Match[str]) -> str:
+        return (
+            f"{m.group(1)}{m.group(2)} {m.group(3)} "
+            f"{clamp_delay:.9e} {m.group(5)} {m.group(6)} "
+            f"{clamp_on:.9e} {m.group(8)})"
+        )
+
+    deck = _CLAMP_PULSE_RE.sub(_replace_clamp, deck, count=1)
+
+    vin_m = _VIN_RE.search(deck)
+    if vin_m is not None:
+        vin = float(vin_m.group(1))
+        v_clamp = vin * (period_s - 2 * dead_time) / clamp_on
+        deck = _CCLAMP_IC_RE.sub(
+            lambda m: f"{m.group(1)}{v_clamp:.6f}", deck, count=1,
+        )
+
+    return deck
+
+
 def simulate_closed_loop(
     deck: str,
     *,
@@ -441,7 +646,7 @@ def simulate_closed_loop(
         )
     period = pulse[1]
 
-    current_deck = deck
+    current_deck = _transform_acf_topology(deck)
     last_result: SimResult | None = None
     for i in range(int(max_iterations)):
         last_result = simulate_steady_state(
@@ -473,6 +678,9 @@ def simulate_closed_loop(
         # is the canonical check; we just refuse to write nonsense.
         new_duty = max(0.01, min(0.95, new_duty))
         current_deck = _rewrite_pwm_duty(
+            current_deck, new_duty=new_duty, period_s=period,
+        )
+        current_deck = _rewrite_acf_clamp(
             current_deck, new_duty=new_duty, period_s=period,
         )
 

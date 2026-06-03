@@ -23,10 +23,8 @@ TAS_GOLDEN = GOLDEN_DIR / "isobb_48to12_5A.tas.json"
 SPEC: dict[str, object] = {
     "inputVoltage": {"nominal": 48.0},
     "diodeVoltageDrop": 0.7,
-    "maximumSwitchCurrent": 20.0,
     "currentRippleRatio": 0.4,
     "efficiency": 0.95,
-    "desiredInductance": 22e-6,
     "operatingPoints": [
         {
             "switchingFrequency": 200000.0,

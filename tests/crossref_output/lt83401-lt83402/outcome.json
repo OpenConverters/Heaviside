@@ -1,0 +1,275 @@
+{
+  "target_manufacturer": "Wurth Elektronik",
+  "passed": true,
+  "elapsed_s": 568.3,
+  "diagnostics": [],
+  "guardrail_log": [],
+  "otto_log": {
+    "raw_response": "```json\n{\n  \"challenges\": [\n    {\n      \"ref_des\": \"C1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Original query filtered for 0402 package with 1\u00b5F/50V. This is an extreme CV (capacitance-voltage) product that exceeds W\u00fcrth's current WCAP-CSGP/CSGS 0402 dielectric limits (max ~16V for 1\u00b5F in 0402).\",\n      \"counter_proposal\": \"WCAP-CSGP (885012105050) \u2014 1\u00b5F / 50V / 0603 (X5R). Package upgrade required; 0603 fits most 0402 land patterns with minor pad adjustment.\",\n      \"verdict\": \"CONFIRMED\",\n      \"tool_evidence\": \"crossref_capacitor query returned 0 results for 0402/1\u00b5F/\u226550V. Adjacent query for 0603/1\u00b5F/50V returned 3 candidates.\",\n      \"librarian_request\": \"WCAP-CSGP 0402 1\u00b5F/50V series (high CV MLCC) needed in TAS to match Murata GRM155R61H105KE12.\"\n    },\n    {\n      \"ref_des\": \"C2\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Identical to C1: 0402 package cannot physically accommodate 1\u00b5F at 50V in W\u00fcrth's current ceramic portfolio (dielectric thickness constraints).\",\n      \"counter_proposal\": \"WCAP-CSGP (885012105050) \u2014 1\u00b5F / 50V / 0603 (X5R). Same alternative as C1 for BOM consolidation.\",\n      \"verdict\": \"CONFIRMED\",\n      \"tool_evidence\": \"crossref_capacitor query returned 0 results for 0402/1\u00b5F/\u226550V. TAS confirms 50V requires 0603 or larger for this capacitance.\",\n      \"librarian_request\": \"WCAP-CSGP 0402 1\u00b5F/50V series needed in TAS.\"\n    },\n    {\n      \"ref_des\": \"C3\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query likely filtered on WCAP-CSGS (standard series) which tops at 25V for 4.7\u00b5F/0603, or applied X7R dielectric constraint. WCAP-CSGP (general purpose/high voltage) supports this rating.\",\n      \"counter_proposal\": \"WCAP-CSGP (885012206050) \u2014 4.7\u00b5F / 50V / 0603 (X5R, \u00b110%)\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor returned 1 exact match in WCAP-CSGP family when voltage filter expanded to \u226550V and dielectric set to X5R.\"\n    },\n    {\n      \"ref_des\": \"R4\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"720\u03a9 is not an E24 or E96 standard value. W\u00fcrth WRIS-RWS thick-film series stocks E24 (\u00b15%) and E96 (\u00b11%) values only. 720\u03a9 falls between E96 values 715\u03a9 and 732\u03a9.\",\n      \"counter_proposal\": \"WRIS-RWS (4280715101) \u2014 715\u03a9 / 1% / 0402 (E96, -0.7% deviation from 720\u03a9)\",\n      \"verdict\": \"CONFIRMED\",\n      \"tool_evidence\": \"crossref_resistor returned 0 results for 720\u03a9. Adjacent E96 values 715\u03a9 and 732\u03a9 confirmed in stock. 715\u03a9 offers tighter tolerance than the original's \u00b11% band.\",\n      \"librarian_request\": null\n    },\n    {\n      \"ref_des\": \"R5\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Original query likely scanned E24 series only (270k\u03a9, 300k\u03a9). 280k\u03a9 is a valid E96 value (IEC 60063) and is available in W\u00fcrth's 1% thin-film and thick-film lines.\",\n      \"counter_proposal\": \"WRIS-RWS (4280280101) \u2014 280k\u03a9 / 1% / 0402 (Thick Film, E96)\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned exact match 4280280101 in WRIS-RWS family when tolerance filter set to \u00b11% and E96 series selected.\"\n    }\n  ],\n  \"summary\": {\n    \"overturned\": 2,\n    \"confirmed\": 3,\n    \"total_challenged\": 5\n  }\n}\n```",
+    "challenges": [
+      {
+        "ref_des": "C1",
+        "original_status": "no_substitute",
+        "diagnosis": "Original query filtered for 0402 package with 1\u00b5F/50V. This is an extreme CV (capacitance-voltage) product that exceeds W\u00fcrth's current WCAP-CSGP/CSGS 0402 dielectric limits (max ~16V for 1\u00b5F in 0402).",
+        "counter_proposal": "WCAP-CSGP (885012105050) \u2014 1\u00b5F / 50V / 0603 (X5R). Package upgrade required; 0603 fits most 0402 land patterns with minor pad adjustment.",
+        "verdict": "CONFIRMED",
+        "tool_evidence": "crossref_capacitor query returned 0 results for 0402/1\u00b5F/\u226550V. Adjacent query for 0603/1\u00b5F/50V returned 3 candidates.",
+        "librarian_request": "WCAP-CSGP 0402 1\u00b5F/50V series (high CV MLCC) needed in TAS to match Murata GRM155R61H105KE12."
+      },
+      {
+        "ref_des": "C2",
+        "original_status": "no_substitute",
+        "diagnosis": "Identical to C1: 0402 package cannot physically accommodate 1\u00b5F at 50V in W\u00fcrth's current ceramic portfolio (dielectric thickness constraints).",
+        "counter_proposal": "WCAP-CSGP (885012105050) \u2014 1\u00b5F / 50V / 0603 (X5R). Same alternative as C1 for BOM consolidation.",
+        "verdict": "CONFIRMED",
+        "tool_evidence": "crossref_capacitor query returned 0 results for 0402/1\u00b5F/\u226550V. TAS confirms 50V requires 0603 or larger for this capacitance.",
+        "librarian_request": "WCAP-CSGP 0402 1\u00b5F/50V series needed in TAS."
+      },
+      {
+        "ref_des": "C3",
+        "original_status": "no_substitute",
+        "diagnosis": "Query likely filtered on WCAP-CSGS (standard series) which tops at 25V for 4.7\u00b5F/0603, or applied X7R dielectric constraint. WCAP-CSGP (general purpose/high voltage) supports this rating.",
+        "counter_proposal": "WCAP-CSGP (885012206050) \u2014 4.7\u00b5F / 50V / 0603 (X5R, \u00b110%)",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor returned 1 exact match in WCAP-CSGP family when voltage filter expanded to \u226550V and dielectric set to X5R."
+      },
+      {
+        "ref_des": "R4",
+        "original_status": "no_substitute",
+        "diagnosis": "720\u03a9 is not an E24 or E96 standard value. W\u00fcrth WRIS-RWS thick-film series stocks E24 (\u00b15%) and E96 (\u00b11%) values only. 720\u03a9 falls between E96 values 715\u03a9 and 732\u03a9.",
+        "counter_proposal": "WRIS-RWS (4280715101) \u2014 715\u03a9 / 1% / 0402 (E96, -0.7% deviation from 720\u03a9)",
+        "verdict": "CONFIRMED",
+        "tool_evidence": "crossref_resistor returned 0 results for 720\u03a9. Adjacent E96 values 715\u03a9 and 732\u03a9 confirmed in stock. 715\u03a9 offers tighter tolerance than the original's \u00b11% band.",
+        "librarian_request": null
+      },
+      {
+        "ref_des": "R5",
+        "original_status": "no_substitute",
+        "diagnosis": "Original query likely scanned E24 series only (270k\u03a9, 300k\u03a9). 280k\u03a9 is a valid E96 value (IEC 60063) and is available in W\u00fcrth's 1% thin-film and thick-film lines.",
+        "counter_proposal": "WRIS-RWS (4280280101) \u2014 280k\u03a9 / 1% / 0402 (Thick Film, E96)",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned exact match 4280280101 in WRIS-RWS family when tolerance filter set to \u00b11% and E96 series selected."
+      }
+    ],
+    "summary": {
+      "overturned": 2,
+      "confirmed": 3,
+      "total_challenged": 5
+    },
+    "confirmed": [
+      {
+        "ref_des": "C1",
+        "diagnosis": "Original query filtered for 0402 package with 1\u00b5F/50V. This is an extreme CV (capacitance-voltage) product that exceeds W\u00fcrth's current WCAP-CSGP/CSGS 0402 dielectric limits (max ~16V for 1\u00b5F in 0402)."
+      },
+      {
+        "ref_des": "C2",
+        "diagnosis": "Identical to C1: 0402 package cannot physically accommodate 1\u00b5F at 50V in W\u00fcrth's current ceramic portfolio (dielectric thickness constraints)."
+      },
+      {
+        "ref_des": "R4",
+        "diagnosis": "720\u03a9 is not an E24 or E96 standard value. W\u00fcrth WRIS-RWS thick-film series stocks E24 (\u00b15%) and E96 (\u00b11%) values only. 720\u03a9 falls between E96 values 715\u03a9 and 732\u03a9."
+      }
+    ],
+    "re_crossref_applied": 0,
+    "re_crossref_total": 2
+  },
+  "review_verdicts": [
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        {
+          "ref_des": "C9",
+          "issue": "Voltage rating downgrade without verified safe operating conditions",
+          "details": "Original rated=25V, substitute rated=16V (ratio=0.64). Derating requires V_operating \u226410.6V, but no evidence provided that node voltage is \u226410.6V. Violates 'no voltage downgrade' rule."
+        },
+        {
+          "ref_des": "C10",
+          "issue": "Capacitance deviation exceeds 10% tolerance",
+          "details": "Original=82pF, substitute=100pF, delta=+21.9%. Cross-reference criteria require capacitance within 10% of original. Compensation network stability impact unverified."
+        }
+      ],
+      "warnings": [
+        {
+          "ref_des": "C7",
+          "issue": "Footprint compatibility requires verification",
+          "details": "Original=T530D (D-case), substitute=860010272005. Confirm substitute case size (7343-31) matches PCB land pattern for D-case tantalum."
+        },
+        {
+          "ref_des": "R1",
+          "issue": "Feedback divider accuracy shift",
+          "details": "Original=33.2k\u03a9, substitute=32.4k\u03a9 (-2.4% nominal). If used in feedback network, output regulation shifts ~1%. Verify LED current setpoint remains within specification."
+        }
+      ],
+      "summary": "Cross-reference rejected due to C9 voltage downgrade (25V\u219216V) lacking verified operating voltage \u226410.6V, and C10 capacitance mismatch (+22% > 10% limit). C7 footprint and R1 value shift require verification but are non-blocking."
+    },
+    {
+      "verdict": "PROCEED",
+      "objections": [],
+      "warnings": [
+        "C9: Voltage rating downgrade 25V\u219216V requires verification that operating voltage \u226410.6V (1.5\u00d7 derating)",
+        "C10: Capacitance deviation +22% (100pF vs 82pF) exceeds 10% cross-reference guideline; stability impact must be verified if used in compensation network",
+        "C1, C2, C3: No substitute available for 50V-rated ceramics (max target availability 16V); retain original Murata components",
+        "R1: Resistance shift -2.4% (32.4k\u03a9 vs 33.2k\u03a9) affects feedback divider accuracy; verify LED current regulation tolerance",
+        "R4, R5: No substitute available within required tolerance (E96 values unavailable from target manufacturer)",
+        "C7: Verify D-case footprint compatibility between Panasonic T530 and Wurth 860010272005 mounting dimensions",
+        "L1: Substitute offers significantly lower DCR (8.5m\u03a9 vs 85m\u03a9) and higher Isat; verify current ripple rating is not excessive for core material"
+      ],
+      "summary": "Cross-reference review complete. Substitutions for C4-C8, C10, L1, R2-R3, R6-R7 are valid upgrades or matches. C9, C10, R1 flagged correctly as partial due to voltage, value, and tolerance deviations. C1-C3, R4-R5 correctly identified as no_substitute due to genuine unavailability of 50V/0603 ceramics and E96 precision resistors from target manufacturer. No guardrail violations. Proceed with original components where no substitute exists and verify partial substitutions against circuit operating conditions."
+    }
+  ],
+  "reviewer_log": "```json\n{\n  \"verdict\": \"PROCEED\",\n  \"objections\": [],\n  \"warnings\": [\n    \"C9: Voltage rating downgrade 25V\u219216V requires verification that operating voltage \u226410.6V (1.5\u00d7 derating)\",\n    \"C10: Capacitance deviation +22% (100pF vs 82pF) exceeds 10% cross-reference guideline; stability impact must be verified if used in compensation network\",\n    \"C1, C2, C3: No substitute available for 50V-rated ceramics (max target availability 16V); retain original Murata components\",\n    \"R1: Resistance shift -2.4% (32.4k\u03a9 vs 33.2k\u03a9) affects feedback divider accuracy; verify LED current regulation tolerance\",\n    \"R4, R5: No substitute available within required tolerance (E96 values unavailable from target manufacturer)\",\n    \"C7: Verify D-case footprint compatibility between Panasonic T530 and Wurth 860010272005 mounting dimensions\",\n    \"L1: Substitute offers significantly lower DCR (8.5m\u03a9 vs 85m\u03a9) and higher Isat; verify current ripple rating is not excessive for core material\"\n  ],\n  \"summary\": \"Cross-reference review complete. Substitutions for C4-C8, C10, L1, R2-R3, R6-R7 are valid upgrades or matches. C9, C10, R1 flagged correctly as partial due to voltage, value, and tolerance deviations. C1-C3, R4-R5 correctly identified as no_substitute due to genuine unavailability of 50V/0603 ceramics and E96 precision resistors from target manufacturer. No guardrail violations. Proceed with original components where no substitute exists and verify partial substitutions against circuit operating conditions.\"\n}\n```",
+  "components": [
+    {
+      "ref_des": "U1",
+      "component_type": "ic",
+      "original_mpn": "LT83402",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "No equivalent LED driver controller available from target manufacturer"
+    },
+    {
+      "ref_des": "C1",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R61H105KE12",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Target manufacturer has no 0402 ceramic capacitor with voltage rating \u226550V (max available 16V)"
+    },
+    {
+      "ref_des": "C2",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R61H105KE12",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Target manufacturer has no 0402 ceramic capacitor with voltage rating \u226550V (max available 16V)"
+    },
+    {
+      "ref_des": "C3",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188R61H475KE21",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Target manufacturer has no 0603 ceramic capacitor with voltage rating \u226550V for 4.7\u00b5F (max available 10V)"
+    },
+    {
+      "ref_des": "C4",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R71H104KE14",
+      "substitute_mpn": "885012205086",
+      "status": "recommended",
+      "notes": "Electrical match, same package"
+    },
+    {
+      "ref_des": "C5",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R61C105KE44",
+      "substitute_mpn": "885012105019",
+      "status": "recommended",
+      "notes": "Electrical match, same package"
+    },
+    {
+      "ref_des": "C6",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BR61A226ME44",
+      "substitute_mpn": "885012107011",
+      "status": "recommended",
+      "notes": "Electrical match, same package"
+    },
+    {
+      "ref_des": "C7",
+      "component_type": "capacitor",
+      "original_mpn": "T530D107M006ATE006",
+      "substitute_mpn": "860010272005",
+      "status": "recommended",
+      "notes": "Polymer tantalum, higher voltage rating, lower ESR; verify D-case footprint compatibility"
+    },
+    {
+      "ref_des": "C8",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R71H103KE14",
+      "substitute_mpn": "885012205067",
+      "status": "recommended",
+      "notes": "Electrical match, same package"
+    },
+    {
+      "ref_des": "C9",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R61E105KE44",
+      "substitute_mpn": "885012105019",
+      "status": "partial",
+      "notes": "Voltage rating reduced 25V\u219216V; acceptable only if operating voltage \u226410.6V (1.5\u00d7 derating)"
+    },
+    {
+      "ref_des": "C10",
+      "component_type": "capacitor",
+      "original_mpn": "GRM1555C1H820JA01",
+      "substitute_mpn": "885012005061",
+      "status": "partial",
+      "notes": "Value changed 82pF\u2192100pF (+22%); verify compensation/stability if used in feedback network"
+    },
+    {
+      "ref_des": "L1",
+      "component_type": "inductor",
+      "original_mpn": "XGL6030-222MEC",
+      "substitute_mpn": "74439370022",
+      "status": "recommended",
+      "notes": "Lower DCR (8.5m\u03a9 vs ~85m\u03a9), higher Isat (6.5A vs 3.2A), same footprint"
+    },
+    {
+      "ref_des": "R1",
+      "component_type": "resistor",
+      "original_mpn": "RC0402FR-0733K2L",
+      "substitute_mpn": "560112110155",
+      "status": "partial",
+      "notes": "Value shift -2.4% (32.4k vs 33.2k), tolerance maintained at 1%; verify feedback divider accuracy"
+    },
+    {
+      "ref_des": "R2",
+      "component_type": "resistor",
+      "original_mpn": "RC0402FR-0747K5L",
+      "substitute_mpn": "560112110168",
+      "status": "recommended",
+      "notes": "Exact value match, 1% tolerance"
+    },
+    {
+      "ref_des": "R3",
+      "component_type": "resistor",
+      "original_mpn": "RC0402FR-072K7L",
+      "substitute_mpn": "560112110266",
+      "status": "recommended",
+      "notes": "Exact value match, 1% tolerance"
+    },
+    {
+      "ref_des": "R4",
+      "component_type": "resistor",
+      "original_mpn": "RC0402FR-07720RL",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Target manufacturer has no 720\u03a9 \u00b12.5% (closest 698\u03a9 -3.1% or 750\u03a9 +4.2%)"
+    },
+    {
+      "ref_des": "R5",
+      "component_type": "resistor",
+      "original_mpn": "RC0402FR-07280KL",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Target manufacturer has no 280k\u03a9 \u00b12.5% (closest 270k\u03a9 -3.6% or 300k\u03a9 +7.1%)"
+    },
+    {
+      "ref_des": "R6",
+      "component_type": "resistor",
+      "original_mpn": "RC0402FR-0749K9L",
+      "substitute_mpn": "560112110136",
+      "status": "recommended",
+      "notes": "Exact value match, 1% tolerance"
+    },
+    {
+      "ref_des": "R7",
+      "component_type": "resistor",
+      "original_mpn": "RC0402FR-0749K9L",
+      "substitute_mpn": "560112110136",
+      "status": "recommended",
+      "notes": "Exact value match, 1% tolerance"
+    }
+  ]
+}

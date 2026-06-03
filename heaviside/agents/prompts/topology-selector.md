@@ -73,6 +73,13 @@ Rules for the `viable` array:
 
 `reasoning` is one short paragraph, not a bulleted essay.
 
+## Knowledge references
+
+For detailed topology selection decision trees, power-level guidance,
+and trade-off analysis, see:
+* `knowledge/topologies/topology-selection-guide.md` — full decision tree
+* `knowledge/topologies/<topology>.md` — per-topology design guides
+
 ## Hard rules
 
 * Do not invent topology names. Stick to the registry list above.

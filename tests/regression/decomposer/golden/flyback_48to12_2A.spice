@@ -9,7 +9,7 @@ Vin vin_dc 0 48
 Vpwm pwm_ctrl 0 PULSE(0 5 0 1.000000e-08 1.000000e-08 1.724138e-06 5.000000e-06)
 .model SW1 SW VT=2.500000 VH=0.500000
 S1 vin_dc pri_p pwm_ctrl 0 SW1
-Rsnub_s1 vin_dc pri_p 100000.000000
+Rsnub_s1 vin_dc pri_p 10000.000000
 Csnub_s1 vin_dc pri_p 1.000000e-10
 
 * Primary current sense
@@ -21,7 +21,7 @@ Lsec0 0 sec0_in 2.500000e-04
 K0 Lpri Lsec0 1
 
 * Output Rectifier model
-.model DIDEAL D(IS=1.000000e-14 RS=1.000000e-06)
+.model DIDEAL D(IS=1.000000e-12 RS=5.000000e-02)
 
 * Secondary 0 output stage
 Dout0 sec0_in sec0_p DIDEAL

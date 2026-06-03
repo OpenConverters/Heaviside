@@ -174,7 +174,7 @@ def pareto_pick_main(
     *,
     n_candidates: int = 5,
     criteria: str = "lowest_losses",
-    core_mode: str = "available cores",
+    core_mode: str = "standard cores",
 ) -> tuple[MagneticDesign, list[MagneticDesign]]:
     """End-to-end: get N fast-mode candidates, pick the best per criteria.
 

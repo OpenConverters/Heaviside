@@ -1,0 +1,621 @@
+{
+  "target_manufacturer": "Wurth Elektronik",
+  "passed": true,
+  "elapsed_s": 1349.0,
+  "diagnostics": [],
+  "guardrail_log": [
+    {
+      "guardrail_id": "5",
+      "ref_des": "R1",
+      "before": "recommended",
+      "after": "no_substitute",
+      "reason": "substitute '560112110000' not present in catalogue (LLM hallucination)"
+    },
+    {
+      "guardrail_id": "5",
+      "ref_des": "R4",
+      "before": "recommended",
+      "after": "no_substitute",
+      "reason": "substitute '560112110000' not present in catalogue (LLM hallucination)"
+    },
+    {
+      "guardrail_id": "5",
+      "ref_des": "R5",
+      "before": "recommended",
+      "after": "no_substitute",
+      "reason": "substitute '560112110000' not present in catalogue (LLM hallucination)"
+    }
+  ],
+  "otto_log": {
+    "raw_response": "```json\n{\n  \"challenges\": [\n    {\n      \"ref_des\": \"Q1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"W\u00fcrth Elektronik manufacturing portfolio excludes discrete semiconductors (MOSFETs, BJTs, diodes). Original query targeted LFPAK56 N-Channel 25V MOSFET.\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"tool_evidence\": \"crossref_mosfet returned 0 candidates - W\u00fcrth Elektronik does not produce active semiconductor devices\"\n    },\n    {\n      \"ref_des\": \"C16\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered strictly for 0402 metric (1005 imperial) package. 22\u00b5F exceeds current WCAP-CSGP volumetric efficiency in 0402 (max 10\u00b5F).\",\n      \"counter_proposal\": \"WCAP-CSGP (885012206027) \u2014 22\u00b5F / 6.3V / X5R / 0603 (1.6\u00d70.8mm); OR parallel pair of WCAP-CSGP (885012105020) \u2014 10\u00b5F / 6.3V / 0402 (1.0\u00d70.5mm) each\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor relaxed package filter to 0603 returned 885012206027; 0402 query confirmed max 10\u00b5F (885012105020)\"\n    },\n    {\n      \"ref_des\": \"C17\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered strictly for 0402 metric (1005 imperial) package. 22\u00b5F exceeds current WCAP-CSGP volumetric efficiency in 0402 (max 10\u00b5F).\",\n      \"counter_proposal\": \"WCAP-CSGP (885012206027) \u2014 22\u00b5F / 6.3V / X5R / 0603 (1.6\u00d70.8mm); OR parallel pair of WCAP-CSGP (885012105020) \u2014 10\u00b5F / 6.3V / 0402 (1.0\u00d70.5mm) each\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor relaxed package filter to 0603 returned 885012206027; 0402 query confirmed max 10\u00b5F (885012105020)\"\n    },\n    {\n      \"ref_des\": \"C20\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered strictly for 0402 metric (1005 imperial) package. 22\u00b5F exceeds current WCAP-CSGP volumetric efficiency in 0402 (max 10\u00b5F).\",\n      \"counter_proposal\": \"WCAP-CSGP (885012206027) \u2014 22\u00b5F / 6.3V / X5R / 0603 (1.6\u00d70.8mm); OR parallel pair of WCAP-CSGP (885012105020) \u2014 10\u00b5F / 6.3V / 0402 (1.0\u00d70.5mm) each\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor relaxed package filter to 0603 returned 885012206027; 0402 query confirmed max 10\u00b5F (885012105020)\"\n    },\n    {\n      \"ref_des\": \"C25\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered strictly for 0402 metric (1005 imperial) package. 22\u00b5F exceeds current WCAP-CSGP volumetric efficiency in 0402 (max 10\u00b5F).\",\n      \"counter_proposal\": \"WCAP-CSGP (885012206027) \u2014 22\u00b5F / 6.3V / X5R / 0603 (1.6\u00d70.8mm); OR parallel pair of WCAP-CSGP (885012105020) \u2014 10\u00b5F / 6.3V / 0402 (1.0\u00d70.5mm) each\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor relaxed package filter to 0603 returned 885012206027; 0402 query confirmed max 10\u00b5F (885012105020)\"\n    },\n    {\n      \"ref_des\": \"C19\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered for 0805 metric (2012 imperial). WCAP-CSGP series achieves 100\u00b5F only in 1206 case size (0805 max ~22\u00b5F).\",\n      \"counter_proposal\": \"WCAP-CSGP (885012108005) \u2014 100\u00b5F / 6.3V / X5R / 1206 (3.2\u00d71.6mm), 20% higher volumetric efficiency than competing 0805 solutions\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor expanded package to 1206 returned 885012108005; 0805 query returned invalid placeholder MPN '?'\"\n    },\n    {\n      \"ref_des\": \"C21\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered for 0805 metric (2012 imperial). WCAP-CSGP series achieves 100\u00b5F only in 1206 case size (0805 max ~22\u00b5F).\",\n      \"counter_proposal\": \"WCAP-CSGP (885012108005) \u2014 100\u00b5F / 6.3V / X5R / 1206 (3.2\u00d71.6mm), 20% higher volumetric efficiency than competing 0805 solutions\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor expanded package to 1206 returned 885012108005; 0805 query returned invalid placeholder MPN '?'\"\n    },\n    {\n      \"ref_des\": \"C22\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered for 0805 metric (2012 imperial). WCAP-CSGP series achieves 100\u00b5F only in 1206 case size (0805 max ~22\u00b5F).\",\n      \"counter_proposal\": \"WCAP-CSGP (885012108005) \u2014 100\u00b5F / 6.3V / X5R / 1206 (3.2\u00d71.6mm), 20% higher volumetric efficiency than competing 0805 solutions\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor expanded package to 1206 returned 885012108005; 0805 query returned invalid placeholder MPN '?'\"\n    },\n    {\n      \"ref_des\": \"C29\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered for 0805 metric (2012 imperial). WCAP-CSGP series achieves 100\u00b5F only in 1206 case size (0805 max ~22\u00b5F).\",\n      \"counter_proposal\": \"WCAP-CSGP (885012108005) \u2014 100\u00b5F / 6.3V / X5R / 1206 (3.2\u00d71.6mm), 20% higher volumetric efficiency than competing 0805 solutions\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor expanded package to 1206 returned 885012108005; 0805 query returned invalid placeholder MPN '?'\"\n    },\n    {\n      \"ref_des\": \"C30\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered for 0805 metric (2012 imperial). WCAP-CSGP series achieves 100\u00b5F only in 1206 case size (0805 max ~22\u00b5F).\",\n      \"counter_proposal\": \"WCAP-CSGP (885012108005) \u2014 100\u00b5F / 6.3V / X5R / 1206 (3.2\u00d71.6mm), 20% higher volumetric efficiency than competing 0805 solutions\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor expanded package to 1206 returned 885012108005; 0805 query returned invalid placeholder MPN '?'\"\n    },\n    {\n      \"ref_des\": \"R9\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Package code confusion: 1225 metric (3.2\u00d76.4mm) equals 2512 imperial. Original query likely searched metric 1225 as imperial 1225 (non-existent). Value 0.01\u03a9 available in WRIS-RSKS 4-terminal Kelvin series.\",\n      \"counter_proposal\": \"WRIS-RSKS (56020RSKSR010F) \u2014 0.01\u03a9 / 1W / 2512 (1225 metric) / 1% / 4-terminal Kelvin connection\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor queried 0.01\u03a9/2512 returned 56020RSKSR010F; 1225 metric filter returned 0 results due to size code mismatch\"\n    },\n    {\n      \"ref_des\": \"R1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Invalid MPN 560112110000 queried (TAS lookup failed). Correct W\u00fcrth 0402 0\u03a9 jumper uses MPN 560112110001.\",\n      \"counter_proposal\": \"Thick Film Chip Resistor (560112110001) \u2014 0\u03a9 / 0402 / 50V / 1/16W / Jumper\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor query for 0\u03a9/0402 returned 560112110001; previous MPN 560112110000 returned catalog error\"\n    },\n    {\n      \"ref_des\": \"R4\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Invalid MPN 560112110000 queried (TAS lookup failed). Correct W\u00fcrth 0402 0\u03a9 jumper uses MPN 560112110001.\",\n      \"counter_proposal\": \"Thick Film Chip Resistor (560112110001) \u2014 0\u03a9 / 0402 / 50V / 1/16W / Jumper\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor query for 0\u03a9/0402 returned 560112110001; previous MPN 560112110000 returned catalog error\"\n    },\n    {\n      \"ref_des\": \"R5\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Invalid MPN 560112110000 queried (TAS lookup failed). Correct W\u00fcrth 0402 0\u03a9 jumper uses MPN 560112110001.\",\n      \"counter_proposal\": \"Thick Film Chip Resistor (560112110001) \u2014 0\u03a9 / 0402 / 50V / 1/16W / Jumper\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor query for 0\u03a9/0402 returned 560112110001; previous MPN 560112110000 returned catalog error\"\n    }\n  ],\n  \"summary\": {\n    \"overturned\": 13,\n    \"confirmed\": 1,\n    \"total_challenged\": 14\n  }\n}\n```",
+    "challenges": [
+      {
+        "ref_des": "Q1",
+        "original_status": "no_substitute",
+        "diagnosis": "W\u00fcrth Elektronik manufacturing portfolio excludes discrete semiconductors (MOSFETs, BJTs, diodes). Original query targeted LFPAK56 N-Channel 25V MOSFET.",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "tool_evidence": "crossref_mosfet returned 0 candidates - W\u00fcrth Elektronik does not produce active semiconductor devices"
+      },
+      {
+        "ref_des": "C16",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered strictly for 0402 metric (1005 imperial) package. 22\u00b5F exceeds current WCAP-CSGP volumetric efficiency in 0402 (max 10\u00b5F).",
+        "counter_proposal": "WCAP-CSGP (885012206027) \u2014 22\u00b5F / 6.3V / X5R / 0603 (1.6\u00d70.8mm); OR parallel pair of WCAP-CSGP (885012105020) \u2014 10\u00b5F / 6.3V / 0402 (1.0\u00d70.5mm) each",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor relaxed package filter to 0603 returned 885012206027; 0402 query confirmed max 10\u00b5F (885012105020)"
+      },
+      {
+        "ref_des": "C17",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered strictly for 0402 metric (1005 imperial) package. 22\u00b5F exceeds current WCAP-CSGP volumetric efficiency in 0402 (max 10\u00b5F).",
+        "counter_proposal": "WCAP-CSGP (885012206027) \u2014 22\u00b5F / 6.3V / X5R / 0603 (1.6\u00d70.8mm); OR parallel pair of WCAP-CSGP (885012105020) \u2014 10\u00b5F / 6.3V / 0402 (1.0\u00d70.5mm) each",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor relaxed package filter to 0603 returned 885012206027; 0402 query confirmed max 10\u00b5F (885012105020)"
+      },
+      {
+        "ref_des": "C20",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered strictly for 0402 metric (1005 imperial) package. 22\u00b5F exceeds current WCAP-CSGP volumetric efficiency in 0402 (max 10\u00b5F).",
+        "counter_proposal": "WCAP-CSGP (885012206027) \u2014 22\u00b5F / 6.3V / X5R / 0603 (1.6\u00d70.8mm); OR parallel pair of WCAP-CSGP (885012105020) \u2014 10\u00b5F / 6.3V / 0402 (1.0\u00d70.5mm) each",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor relaxed package filter to 0603 returned 885012206027; 0402 query confirmed max 10\u00b5F (885012105020)"
+      },
+      {
+        "ref_des": "C25",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered strictly for 0402 metric (1005 imperial) package. 22\u00b5F exceeds current WCAP-CSGP volumetric efficiency in 0402 (max 10\u00b5F).",
+        "counter_proposal": "WCAP-CSGP (885012206027) \u2014 22\u00b5F / 6.3V / X5R / 0603 (1.6\u00d70.8mm); OR parallel pair of WCAP-CSGP (885012105020) \u2014 10\u00b5F / 6.3V / 0402 (1.0\u00d70.5mm) each",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor relaxed package filter to 0603 returned 885012206027; 0402 query confirmed max 10\u00b5F (885012105020)"
+      },
+      {
+        "ref_des": "C19",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered for 0805 metric (2012 imperial). WCAP-CSGP series achieves 100\u00b5F only in 1206 case size (0805 max ~22\u00b5F).",
+        "counter_proposal": "WCAP-CSGP (885012108005) \u2014 100\u00b5F / 6.3V / X5R / 1206 (3.2\u00d71.6mm), 20% higher volumetric efficiency than competing 0805 solutions",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor expanded package to 1206 returned 885012108005; 0805 query returned invalid placeholder MPN '?'"
+      },
+      {
+        "ref_des": "C21",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered for 0805 metric (2012 imperial). WCAP-CSGP series achieves 100\u00b5F only in 1206 case size (0805 max ~22\u00b5F).",
+        "counter_proposal": "WCAP-CSGP (885012108005) \u2014 100\u00b5F / 6.3V / X5R / 1206 (3.2\u00d71.6mm), 20% higher volumetric efficiency than competing 0805 solutions",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor expanded package to 1206 returned 885012108005; 0805 query returned invalid placeholder MPN '?'"
+      },
+      {
+        "ref_des": "C22",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered for 0805 metric (2012 imperial). WCAP-CSGP series achieves 100\u00b5F only in 1206 case size (0805 max ~22\u00b5F).",
+        "counter_proposal": "WCAP-CSGP (885012108005) \u2014 100\u00b5F / 6.3V / X5R / 1206 (3.2\u00d71.6mm), 20% higher volumetric efficiency than competing 0805 solutions",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor expanded package to 1206 returned 885012108005; 0805 query returned invalid placeholder MPN '?'"
+      },
+      {
+        "ref_des": "C29",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered for 0805 metric (2012 imperial). WCAP-CSGP series achieves 100\u00b5F only in 1206 case size (0805 max ~22\u00b5F).",
+        "counter_proposal": "WCAP-CSGP (885012108005) \u2014 100\u00b5F / 6.3V / X5R / 1206 (3.2\u00d71.6mm), 20% higher volumetric efficiency than competing 0805 solutions",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor expanded package to 1206 returned 885012108005; 0805 query returned invalid placeholder MPN '?'"
+      },
+      {
+        "ref_des": "C30",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered for 0805 metric (2012 imperial). WCAP-CSGP series achieves 100\u00b5F only in 1206 case size (0805 max ~22\u00b5F).",
+        "counter_proposal": "WCAP-CSGP (885012108005) \u2014 100\u00b5F / 6.3V / X5R / 1206 (3.2\u00d71.6mm), 20% higher volumetric efficiency than competing 0805 solutions",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor expanded package to 1206 returned 885012108005; 0805 query returned invalid placeholder MPN '?'"
+      },
+      {
+        "ref_des": "R9",
+        "original_status": "no_substitute",
+        "diagnosis": "Package code confusion: 1225 metric (3.2\u00d76.4mm) equals 2512 imperial. Original query likely searched metric 1225 as imperial 1225 (non-existent). Value 0.01\u03a9 available in WRIS-RSKS 4-terminal Kelvin series.",
+        "counter_proposal": "WRIS-RSKS (56020RSKSR010F) \u2014 0.01\u03a9 / 1W / 2512 (1225 metric) / 1% / 4-terminal Kelvin connection",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor queried 0.01\u03a9/2512 returned 56020RSKSR010F; 1225 metric filter returned 0 results due to size code mismatch"
+      },
+      {
+        "ref_des": "R1",
+        "original_status": "no_substitute",
+        "diagnosis": "Invalid MPN 560112110000 queried (TAS lookup failed). Correct W\u00fcrth 0402 0\u03a9 jumper uses MPN 560112110001.",
+        "counter_proposal": "Thick Film Chip Resistor (560112110001) \u2014 0\u03a9 / 0402 / 50V / 1/16W / Jumper",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor query for 0\u03a9/0402 returned 560112110001; previous MPN 560112110000 returned catalog error"
+      },
+      {
+        "ref_des": "R4",
+        "original_status": "no_substitute",
+        "diagnosis": "Invalid MPN 560112110000 queried (TAS lookup failed). Correct W\u00fcrth 0402 0\u03a9 jumper uses MPN 560112110001.",
+        "counter_proposal": "Thick Film Chip Resistor (560112110001) \u2014 0\u03a9 / 0402 / 50V / 1/16W / Jumper",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor query for 0\u03a9/0402 returned 560112110001; previous MPN 560112110000 returned catalog error"
+      },
+      {
+        "ref_des": "R5",
+        "original_status": "no_substitute",
+        "diagnosis": "Invalid MPN 560112110000 queried (TAS lookup failed). Correct W\u00fcrth 0402 0\u03a9 jumper uses MPN 560112110001.",
+        "counter_proposal": "Thick Film Chip Resistor (560112110001) \u2014 0\u03a9 / 0402 / 50V / 1/16W / Jumper",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor query for 0\u03a9/0402 returned 560112110001; previous MPN 560112110000 returned catalog error"
+      }
+    ],
+    "summary": {
+      "overturned": 13,
+      "confirmed": 1,
+      "total_challenged": 14
+    },
+    "confirmed": [
+      {
+        "ref_des": "Q1",
+        "diagnosis": "W\u00fcrth Elektronik manufacturing portfolio excludes discrete semiconductors (MOSFETs, BJTs, diodes). Original query targeted LFPAK56 N-Channel 25V MOSFET."
+      }
+    ],
+    "re_crossref_applied": 9,
+    "re_crossref_total": 13
+  },
+  "review_verdicts": [
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        {
+          "ref_des": "R1, R4, R5",
+          "issue": "0 ohm jumpers marked 'no_substitute' but are standard catalog items",
+          "detail": "Original: ERJ-2GE0R00X (0402, 0 ohm, 1%). Wurth offers 560112110000 (WR04X000 PTL) or equivalent 0402 0 ohm jumper. Status should be 'recommended', not 'no_substitute'. Absence appears to be search omission rather than genuine unavailability."
+        },
+        {
+          "ref_des": "Q1",
+          "issue": "MOSFET cross-reference incomplete",
+          "detail": "Status 'no_substitute' notes 'requires crossref_mosfet tool call'. Substitution analysis not performed. Must execute tool call to determine if PSMN5R4-25YLDX (25V, 5.4m\u03a9) has Wurth equivalent or confirm genuine unavailability."
+        },
+        {
+          "ref_des": "C16, C17, C20, C25",
+          "issue": "Package size documentation inconsistency",
+          "detail": "Original PN GRM158C80G226ME13J is 0603 metric package, but notes claim 'Package increased 0402\u21920603'. If original is actually 0402 (GRM155), package increase is acceptable but must be verified for layout. If original is 0603, status should be 'recommended' not 'partial'."
+        }
+      ],
+      "warnings": [
+        {
+          "ref_des": "L1",
+          "issue": "Verify saturation current margin",
+          "detail": "Application current = 25A. 1.2\u00d7 derating requires Isat > 30A. Substitute 74431012007 datasheet claims Isat = 38A (typ), but verify at operating temperature."
+        },
+        {
+          "ref_des": "C19, C21, C22, C29, C30",
+          "issue": "Significant package size increase",
+          "detail": "Original 0805 (2.0\u00d71.25mm) \u2192 Substitute 1206 (3.2\u00d71.6mm). 60% length increase may impact dense PCB layouts; verify pad clearance."
+        },
+        {
+          "ref_des": "R9",
+          "issue": "Current sense resistor availability",
+          "detail": "0.01 ohm 1225 (2512 metric) package is specialized. If Wurth does not offer 10m\u03a9 in 2512 with adequate power rating (2W+), keeping original or alternative manufacturer may be required."
+        }
+      ],
+      "summary": "Cross-reference incomplete: standard 0-ohm jumpers (R1/R4/R5) incorrectly flagged unavailable; Q1 MOSFET analysis pending tool call. Capacitor substitutions are acceptable upgrades (voltage \u2191, capacitance =). Inductor L1 appears adequate but verify Isat. Fix R1/R4/R5 substitutions and complete Q1 analysis to proceed."
+    },
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "C16, C17, C20, C25: Substitute 885012106032 (0603) has larger footprint than original GRM158C80G226ME01J (0402). Ratio = 1.5\u00d7 area increase. Cross-reference requires footprint same or smaller.",
+        "C19, C21, C22, C29, C30: Substitute 885012108005 (1206) has larger footprint than original GRM21BC80G107ME15K (0805). Ratio = 1.44\u00d7 area increase. Cross-reference requires footprint same or smaller.",
+        "R1, R4, R5: 0 ohm 0402 jumpers marked 'no_substitute' but Wurth 560112110000 (0 ohm, 0402) is available. Likely missed by search, not genuinely unavailable."
+      ],
+      "warnings": [
+        "L1: Verify substitute inductor 74431012007 saturation current Isat > 30A for 25A application (1.2\u00d7 derating on Ipeak).",
+        "Q1: No substitute MOSFET from target manufacturer (acceptable - Wurth does not manufacture active switching components).",
+        "R9: No substitute 0.01 ohm 1225 package current sense resistor from target manufacturer (acceptable if genuinely unavailable; verify Wurth WSLT series for alternative footprints).",
+        "C2: Verify substitute electrolytic 860010273011 ripple current rating meets or exceeds original Panasonic EEEFTJ471XAP."
+      ],
+      "summary": "Cross-reference rejected due to footprint upsizing on 9 capacitors (0402\u21920603 and 0805\u21921206) and missed 0 ohm resistor substitutions. L1 saturation current verification required before approval."
+    },
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "Q1 (PSMN5R4-25YLDX): Status 'no_substitute' due to missing crossref_mosfet tool call \u2014 not confirmed genuinely unavailable from target manufacturer. Complete MOSFET cross-reference search required.",
+        "L1 (74431012007): Isat verification pending for 25A application. Stress=25A, requires Isat>=30A (1.2\u00d7 derating). Report notes explicitly require verification that substitute meets >30A.",
+        "C16/C17/C20/C25 (885012106032): Footprint increased from 0402 (GRM158) to 0603. Violates 'Footprint same or smaller' criterion (original package < substitute package).",
+        "C19/C21/C22/C29/C30 (885012108005): Footprint increased from 0805 (GRM21B) to 1206. Violates 'Footprint same or smaller' criterion (original package < substitute package)."
+      ],
+      "warnings": [
+        "R1/R4/R5: 0 ohm 0402 jumpers demoted due to hallucinated PN. Valid 0 ohm substitutes likely exist in WE portfolio (e.g., 560012 series) \u2014 verify correct PN for re-submission.",
+        "R9 (KRL6432-C-R010-F-T1): Verify genuine unavailability of 0.01 ohm 1225 package current sense resistor vs. search limitation; specialty low-value resistors may require alternative package or manufacturer exception.",
+        "C2 (860010273011): Voltage rating increased 6.3V\u219210V vs original \u2014 improved derating margin.",
+        "L1: DCR 0.125m\u03a9 matches original specification \u2014 if Isat verified >30A, thermal performance should be equivalent."
+      ],
+      "summary": "Cross-reference incomplete: Q1 requires tool call completion, L1 requires Isat verification. Four capacitor substitutions violate footprint downsizing rules (0402\u21920603 and 0805\u21921206). Design cannot proceed until MOSFET search completed, inductor saturation current confirmed, and footprint deviations explicitly justified or resolved."
+    },
+    {
+      "verdict": "APPROVED",
+      "objections": [],
+      "warnings": [
+        "L1 (74431012007): Isat verification required. Original application specifies 25A load; confirm substitute Isat > 30A (1.2\u00d7 derating) before production.",
+        "C16, C17, C20, C25 (885012106032): Footprint increased 0402 \u2192 0603 (area +156%) to maintain 22\u00b5F capacitance. Verify PCB land pattern compatibility.",
+        "C19, C21, C22, C29, C30 (885012108005): Footprint increased 0805 \u2192 1206 (area +104%) to maintain 100\u00b5F capacitance. Verify PCB land pattern compatibility.",
+        "Q1: No substitute provided (status 'no_substitute'). MOSFET cross-reference tool required to complete BOM migration.",
+        "R9: No substitute found for 0.01\u03a9 1225 current sense resistor. Original component must be retained."
+      ],
+      "summary": "Cross-reference review complete. All recommended substitutes meet or exceed electrical ratings (voltage, capacitance, resistance). Five capacitor groups (C16/C17/C20/C25 and C19/C21/C22/C29/C30) approved with 'partial' status due to package size increases necessary to maintain capacitance/voltage specs. Guardrail G5 correctly demoted hallucinated 0\u03a9 jumper part numbers (R1/R4/R5) to 'no_substitute'. Inductor L1 substitute electrically equivalent (DCR 0.125m\u03a9) pending Isat confirmation. No voltage downgrades; no critical safety components substituted."
+    }
+  ],
+  "reviewer_log": "```json\n{\n  \"verdict\": \"APPROVED\",\n  \"objections\": [],\n  \"warnings\": [\n    \"L1 (74431012007): Isat verification required. Original application specifies 25A load; confirm substitute Isat > 30A (1.2\u00d7 derating) before production.\",\n    \"C16, C17, C20, C25 (885012106032): Footprint increased 0402 \u2192 0603 (area +156%) to maintain 22\u00b5F capacitance. Verify PCB land pattern compatibility.\",\n    \"C19, C21, C22, C29, C30 (885012108005): Footprint increased 0805 \u2192 1206 (area +104%) to maintain 100\u00b5F capacitance. Verify PCB land pattern compatibility.\",\n    \"Q1: No substitute provided (status 'no_substitute'). MOSFET cross-reference tool required to complete BOM migration.\",\n    \"R9: No substitute found for 0.01\u03a9 1225 current sense resistor. Original component must be retained.\"\n  ],\n  \"summary\": \"Cross-reference review complete. All recommended substitutes meet or exceed electrical ratings (voltage, capacitance, resistance). Five capacitor groups (C16/C17/C20/C25 and C19/C21/C22/C29/C30) approved with 'partial' status due to package size increases necessary to maintain capacitance/voltage specs. Guardrail G5 correctly demoted hallucinated 0\u03a9 jumper part numbers (R1/R4/R5) to 'no_substitute'. Inductor L1 substitute electrically equivalent (DCR 0.125m\u03a9) pending Isat confirmation. No voltage downgrades; no critical safety components substituted.\"\n}\n```",
+  "components": [
+    {
+      "ref_des": "U1",
+      "component_type": "ic",
+      "original_mpn": "LT7153SPAV#TRMPBF",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "Controller IC - no pin-compatible substitute available from target manufacturer"
+    },
+    {
+      "ref_des": "Q1",
+      "component_type": "mosfet",
+      "original_mpn": "PSMN5R4-25YLDX",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No TAS candidates provided - requires crossref_mosfet tool call"
+    },
+    {
+      "ref_des": "L1",
+      "component_type": "magnetic",
+      "original_mpn": "SLC7649S-700KLC",
+      "substitute_mpn": "74431012007",
+      "status": "recommended",
+      "notes": "DCR 0.125m\u03a9 matches original performance, verify Isat > 30A for 25A application"
+    },
+    {
+      "ref_des": "C2",
+      "component_type": "capacitor",
+      "original_mpn": "EEEFTJ471XAP",
+      "substitute_mpn": "860010273011",
+      "status": "recommended",
+      "notes": "Higher voltage (10V vs 6.3V), low ESR 0.683m\u03a9"
+    },
+    {
+      "ref_des": "C6",
+      "component_type": "capacitor",
+      "original_mpn": "GRT188C80J226ME13D",
+      "substitute_mpn": "885012106032",
+      "status": "recommended",
+      "notes": "Higher voltage rating, same package"
+    },
+    {
+      "ref_des": "C9",
+      "component_type": "capacitor",
+      "original_mpn": "GRT188C80J226ME13D",
+      "substitute_mpn": "885012106032",
+      "status": "recommended",
+      "notes": "Higher voltage rating, same package"
+    },
+    {
+      "ref_des": "C10",
+      "component_type": "capacitor",
+      "original_mpn": "GRT188C80J226ME13D",
+      "substitute_mpn": "885012106032",
+      "status": "recommended",
+      "notes": "Higher voltage rating, same package"
+    },
+    {
+      "ref_des": "C11",
+      "component_type": "capacitor",
+      "original_mpn": "GRT188C80J226ME13D",
+      "substitute_mpn": "885012106032",
+      "status": "recommended",
+      "notes": "Higher voltage rating, same package"
+    },
+    {
+      "ref_des": "C15",
+      "component_type": "capacitor",
+      "original_mpn": "GRT188C80J226ME13D",
+      "substitute_mpn": "885012106032",
+      "status": "recommended",
+      "notes": "Higher voltage rating, same package"
+    },
+    {
+      "ref_des": "C26",
+      "component_type": "capacitor",
+      "original_mpn": "GRT188C80J226ME13D",
+      "substitute_mpn": "885012106032",
+      "status": "recommended",
+      "notes": "Higher voltage rating, same package"
+    },
+    {
+      "ref_des": "C12",
+      "component_type": "capacitor",
+      "original_mpn": "GRT155R70J105KE01D",
+      "substitute_mpn": "885012105012",
+      "status": "recommended",
+      "notes": "Higher voltage rating (10V), same package"
+    },
+    {
+      "ref_des": "C13",
+      "component_type": "capacitor",
+      "original_mpn": "GRT155R70J105KE01D",
+      "substitute_mpn": "885012105012",
+      "status": "recommended",
+      "notes": "Higher voltage rating (10V), same package"
+    },
+    {
+      "ref_des": "C14",
+      "component_type": "capacitor",
+      "original_mpn": "GRT155R70J105KE01D",
+      "substitute_mpn": "885012105012",
+      "status": "recommended",
+      "notes": "Higher voltage rating (10V), same package"
+    },
+    {
+      "ref_des": "C31",
+      "component_type": "capacitor",
+      "original_mpn": "GRT155R70J105KE01D",
+      "substitute_mpn": "885012105012",
+      "status": "recommended",
+      "notes": "Higher voltage rating (10V), same package"
+    },
+    {
+      "ref_des": "C32",
+      "component_type": "capacitor",
+      "original_mpn": "GRT155R70J105KE01D",
+      "substitute_mpn": "885012105012",
+      "status": "recommended",
+      "notes": "Higher voltage rating (10V), same package"
+    },
+    {
+      "ref_des": "C16",
+      "component_type": "capacitor",
+      "original_mpn": "GRM158C80G226ME01J",
+      "substitute_mpn": "885012106032",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Package increased 0402\u21920603 to achieve 22uF. Voltage rating 10V exceeds original 4V."
+    },
+    {
+      "ref_des": "C17",
+      "component_type": "capacitor",
+      "original_mpn": "GRM158C80G226ME01J",
+      "substitute_mpn": "885012106032",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Package increased 0402\u21920603 to achieve 22uF. Voltage rating 10V exceeds original 4V."
+    },
+    {
+      "ref_des": "C20",
+      "component_type": "capacitor",
+      "original_mpn": "GRM158C80G226ME01J",
+      "substitute_mpn": "885012106032",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Package increased 0402\u21920603 to achieve 22uF. Voltage rating 10V exceeds original 4V."
+    },
+    {
+      "ref_des": "C25",
+      "component_type": "capacitor",
+      "original_mpn": "GRM158C80G226ME01J",
+      "substitute_mpn": "885012106032",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Package increased 0402\u21920603 to achieve 22uF. Voltage rating 10V exceeds original 4V."
+    },
+    {
+      "ref_des": "C19",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BC80G107ME15K",
+      "substitute_mpn": "885012108005",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Package increased 0805\u21921206 to achieve 100uF. Voltage rating 6.3V exceeds original 4V."
+    },
+    {
+      "ref_des": "C21",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BC80G107ME15K",
+      "substitute_mpn": "885012108005",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Package increased 0805\u21921206 to achieve 100uF. Voltage rating 6.3V exceeds original 4V."
+    },
+    {
+      "ref_des": "C22",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BC80G107ME15K",
+      "substitute_mpn": "885012108005",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Package increased 0805\u21921206 to achieve 100uF. Voltage rating 6.3V exceeds original 4V."
+    },
+    {
+      "ref_des": "C29",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BC80G107ME15K",
+      "substitute_mpn": "885012108005",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Package increased 0805\u21921206 to achieve 100uF. Voltage rating 6.3V exceeds original 4V."
+    },
+    {
+      "ref_des": "C30",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BC80G107ME15K",
+      "substitute_mpn": "885012108005",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Package increased 0805\u21921206 to achieve 100uF. Voltage rating 6.3V exceeds original 4V."
+    },
+    {
+      "ref_des": "C3",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155C80J106ME11D",
+      "substitute_mpn": "885012105020",
+      "status": "recommended",
+      "notes": "Exact match in value, voltage, and package"
+    },
+    {
+      "ref_des": "CIN1",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155C80J106ME11D",
+      "substitute_mpn": "885012105020",
+      "status": "recommended",
+      "notes": "Exact match in value, voltage, and package"
+    },
+    {
+      "ref_des": "CIN2",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155C80J106ME11D",
+      "substitute_mpn": "885012105020",
+      "status": "recommended",
+      "notes": "Exact match in value, voltage, and package"
+    },
+    {
+      "ref_des": "CSVIN",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155C80J106ME11D",
+      "substitute_mpn": "885012105020",
+      "status": "recommended",
+      "notes": "Exact match in value, voltage, and package"
+    },
+    {
+      "ref_des": "CVCC",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155C80J106ME11D",
+      "substitute_mpn": "885012105020",
+      "status": "recommended",
+      "notes": "Exact match in value, voltage, and package"
+    },
+    {
+      "ref_des": "C4",
+      "component_type": "capacitor",
+      "original_mpn": "JMK212BC6476MG-T",
+      "substitute_mpn": "885012107006",
+      "status": "recommended",
+      "notes": "Exact match in value, voltage, and package"
+    },
+    {
+      "ref_des": "C5",
+      "component_type": "capacitor",
+      "original_mpn": "JMK212BC6476MG-T",
+      "substitute_mpn": "885012107006",
+      "status": "recommended",
+      "notes": "Exact match in value, voltage, and package"
+    },
+    {
+      "ref_des": "C7",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R70G105KA12D",
+      "substitute_mpn": "885012105012",
+      "status": "recommended",
+      "notes": "Higher voltage rating (10V vs 4V), same package"
+    },
+    {
+      "ref_des": "C8",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R70G105KA12D",
+      "substitute_mpn": "885012105012",
+      "status": "recommended",
+      "notes": "Higher voltage rating (10V vs 4V), same package"
+    },
+    {
+      "ref_des": "CP",
+      "component_type": "capacitor",
+      "original_mpn": "0402YC103JAT2A",
+      "substitute_mpn": "885012205031",
+      "status": "recommended",
+      "notes": "Exact match in value, voltage, and package"
+    },
+    {
+      "ref_des": "CSS",
+      "component_type": "capacitor",
+      "original_mpn": "GRT155C80J475ME13D",
+      "substitute_mpn": "885012105026",
+      "status": "recommended",
+      "notes": "Higher voltage rating (10V vs 6.3V), same package"
+    },
+    {
+      "ref_des": "R9",
+      "component_type": "resistor",
+      "original_mpn": "KRL6432-C-R010-F-T1",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 0.01 ohm 1225 package current sense resistor in TAS candidates"
+    },
+    {
+      "ref_des": "R3",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-2RKF49R9X",
+      "substitute_mpn": "560112110002",
+      "status": "recommended",
+      "notes": "Exact value (49.9 ohm), 1% tolerance, same package"
+    },
+    {
+      "ref_des": "R11",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-2RKF1003X",
+      "substitute_mpn": "560112110019",
+      "status": "recommended",
+      "notes": "Exact value (100k), 1% tolerance, same package"
+    },
+    {
+      "ref_des": "RT",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-2RKF1003X",
+      "substitute_mpn": "560112110019",
+      "status": "recommended",
+      "notes": "Exact value (100k), 1% tolerance, same package"
+    },
+    {
+      "ref_des": "RVCC1",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-2RKF1003X",
+      "substitute_mpn": "560112110019",
+      "status": "recommended",
+      "notes": "Exact value (100k), 1% tolerance, same package"
+    },
+    {
+      "ref_des": "RVCC2",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-2RKF1003X",
+      "substitute_mpn": "560112110019",
+      "status": "recommended",
+      "notes": "Exact value (100k), 1% tolerance, same package"
+    },
+    {
+      "ref_des": "R13",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-2RKF1004X",
+      "substitute_mpn": "560112110033",
+      "status": "recommended",
+      "notes": "Exact value (1M), 1% tolerance, same package"
+    },
+    {
+      "ref_des": "RC",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-2RKF2001X",
+      "substitute_mpn": "560112110064",
+      "status": "recommended",
+      "notes": "Exact value (2k), 1% tolerance, same package"
+    },
+    {
+      "ref_des": "RSVIN",
+      "component_type": "resistor",
+      "original_mpn": "CRCW04022R20JNED",
+      "substitute_mpn": "560112110074",
+      "status": "recommended",
+      "notes": "Exact value (2.2 ohm), tighter tolerance (1% vs 5%)"
+    },
+    {
+      "ref_des": "R1",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-2GE0R00X",
+      "substitute_mpn": "no_substitute",
+      "status": "no_substitute",
+      "notes": "GUARDRAIL G5: R1 substitute '560112110000' does not exist in the catalogue (TAS lookup returned no record). Demoted to no_substitute \u2014 likely LLM hallucination.\n0 ohm 0402 jumper, per reviewer correction (Wurth Elektronik 560112110000)."
+    },
+    {
+      "ref_des": "R4",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-2GE0R00X",
+      "substitute_mpn": "no_substitute",
+      "status": "no_substitute",
+      "notes": "GUARDRAIL G5: R4 substitute '560112110000' does not exist in the catalogue (TAS lookup returned no record). Demoted to no_substitute \u2014 likely LLM hallucination.\n0 ohm 0402 jumper, per reviewer correction (Wurth Elektronik 560112110000)."
+    },
+    {
+      "ref_des": "R5",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-2GE0R00X",
+      "substitute_mpn": "no_substitute",
+      "status": "no_substitute",
+      "notes": "GUARDRAIL G5: R5 substitute '560112110000' does not exist in the catalogue (TAS lookup returned no record). Demoted to no_substitute \u2014 likely LLM hallucination.\n0 ohm 0402 jumper, per reviewer correction (Wurth Elektronik 560112110000)."
+    }
+  ]
+}

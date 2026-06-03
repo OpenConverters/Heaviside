@@ -1,0 +1,37 @@
+{
+  "name": "EVQ3359C-LE-00A",
+  "passed": true,
+  "elapsed_s": 360.3,
+  "topology": "boost",
+  "vin_max": 0.0,
+  "vout": 36.0,
+  "pout": 17.3,
+  "bom_count": 17,
+  "comparisons": [
+    {
+      "sim_eff": 0.9603703581222386,
+      "claimed_eff": 0.0,
+      "delta_pp": 0.0,
+      "sim_vout": 37.04323,
+      "claimed_vout": 36.0,
+      "vout_err": 2.8978611111111148,
+      "passed": true,
+      "diagnosis": ""
+    },
+    {
+      "sim_eff": 0.9648282596271233,
+      "claimed_eff": 0.0,
+      "delta_pp": 0.0,
+      "sim_vout": 35.70379,
+      "claimed_vout": 36.0,
+      "vout_err": 0.8228055555555613,
+      "passed": true,
+      "diagnosis": ""
+    }
+  ],
+  "diagnostics": [
+    "competitor extracted incomplete spec \u2014 missing: vin_max. Raw specs: {\"input_type\": \"dc\", \"vin_min\": null, \"vin_nom\": 12, \"vin_max\": null, \"outputs\": [{\"voltage\": 36.0, \"current\": 0.48, \"power\": 17.3}], \"topology\": \"boost\", \"switching_frequency\": 440000, \"isolation_required\": false, \"turns_ratio\": null, \"rdson_hs_mohm\": 23, \"rdson_ls_mohm\": 8.5}",
+    "failed to fetch inductor XAL4040-103MEB from Digi-Key: digikey API returned HTTP 404: {\"ErrorResponseVersion\":\"3.0.0.0\",\"StatusCode\": 404,\"ErrorMessage\":\"Product was not found\",\"ErrorDetails\":\"The specified DigiKey product XAL4040-103MEB was not found\",\"RequestId\":\"439f5dfb-c380-4eab-b26c-f22911e2d5db\",\"ValidationErrors\":[]}",
+    "no design to review"
+  ]
+}

@@ -1,0 +1,96 @@
+<!DOCTYPE html><html><head><meta charset='utf-8'>
+<title>EVL1653F-TF-00A</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+       max-width: 1000px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+h1 { border-bottom: 2px solid #c8102e; padding-bottom: 0.5rem; }
+h2 { color: #c8102e; margin-top: 2rem; }
+h3 { color: #333; margin-top: 1.5rem; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.9rem; }
+th, td { border: 1px solid #d1d5db; padding: 0.4rem 0.6rem; text-align: left; }
+th { background: #f3f4f6; font-weight: 600; }
+.exact { color: #059669; font-weight: 600; }
+.replaced { color: #2563eb; font-weight: 600; }
+.partial { color: #d97706; font-weight: 600; }
+.no-sub { color: #9ca3af; }
+.keep { color: #6b7280; }
+.summary-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;
+               padding: 1rem 1.5rem; margin: 1rem 0; }
+.coverage { font-size: 1.3rem; font-weight: 700; color: #c8102e; }
+.guardrail { background: #fef3c7; padding: 0.3rem 0.6rem; border-left: 3px solid #d97706;
+             margin: 0.2rem 0; font-size: 0.85rem; }
+.diagnostic { background: #fef2f2; padding: 0.3rem 0.6rem; border-left: 3px solid #dc2626;
+              margin: 0.2rem 0; font-size: 0.85rem; }
+.mpn { font-family: 'SF Mono', SFMono-Regular, Consolas, monospace; font-size: 0.85rem; }
+.footer { color: #9ca3af; font-size: 0.8rem; margin-top: 3rem; border-top: 1px solid #e5e7eb;
+          padding-top: 0.5rem; }
+@media print { body { margin: 0; } .no-print { display: none; } }
+</style></head><body>
+<h1>Wurth Elektronik Cross-Reference Report</h1>
+<h2>EVL1653F-TF-00A</h2>
+<p><em>Eval board for LT1653F boost converter</em></p>
+<div class="summary-box">
+<p class="coverage">Wurth Elektronik coverage: 9 / 15 = 60%</p>
+<p>Already Wurth Elektronik: 0 · Newly replaced: 9 · Not replaced: 1 · Keep/NC: 5</p>
+</div>
+<h2>1. Outcome Summary</h2>
+<table><tr><th>Category</th><th>Fitted</th><th>Already Würth</th><th>Newly Replaced</th><th>Not Replaced</th></tr>
+<tr><td>Capacitors</td><td>6</td><td>0</td><td>6</td><td>0</td></tr>
+<tr><td>Resistors</td><td>7</td><td>0</td><td>2</td><td>5</td></tr>
+<tr><td>ICs</td><td>1</td><td>0</td><td>0</td><td>1</td></tr>
+<tr><td><strong>Total</strong></td><td><strong>15</strong></td><td><strong>0</strong></td><td><strong>9</strong></td><td><strong>6</strong></td></tr>
+</table>
+<h2>2. Crossing Table</h2>
+<h3>Capacitors</h3>
+<table>
+<tr><th>Ref</th><th>Original MPN</th><th>Würth PN</th><th>Status</th><th>Notes</th></tr>
+<tr><td>C1A</td><td class="mpn">—</td><td class="mpn"><strong>885012107019</strong></td><td class="replaced">REPLACED</td><td>Higher voltage margin (25V vs 16V), same capacitance and package</td></tr>
+<tr><td>C1B</td><td class="mpn">—</td><td class="mpn"><strong>885012105018</strong></td><td class="replaced">REPLACED</td><td>Exact match for capacitance, voltage rating, and package</td></tr>
+<tr><td>C2</td><td class="mpn">—</td><td class="mpn"><strong>885012107005</strong></td><td class="replaced">REPLACED</td><td>Exact voltage and capacitance match, same package</td></tr>
+<tr><td>C2A</td><td class="mpn">—</td><td class="mpn"><strong>885012107005</strong></td><td class="replaced">REPLACED</td><td>Exact voltage and capacitance match, same package</td></tr>
+<tr><td>C3</td><td class="mpn">—</td><td class="mpn"><strong>885012105018</strong></td><td class="replaced">REPLACED</td><td>Exact match for capacitance, voltage rating, and package</td></tr>
+<tr><td>C4</td><td class="mpn">—</td><td class="mpn"><strong>885012205042</strong></td><td class="replaced">REPLACED</td><td>Exact match for capacitance, voltage rating, and package</td></tr>
+</table>
+<h3>Resistors</h3>
+<table>
+<tr><th>Ref</th><th>Original MPN</th><th>Würth PN</th><th>Status</th><th>Notes</th></tr>
+<tr><td>R1</td><td class="mpn">—</td><td class="mpn"><strong>560112110240</strong></td><td class="replaced">REPLACED</td><td>Exact value match, 1% tolerance, 0.1W rating</td></tr>
+<tr><td>R2</td><td class="mpn">—</td><td class="mpn"><strong>560112110264</strong></td><td class="partial">PARTIAL</td><td>Value deviation -2.4% (8.66k vs 8.87k). If used in feedback divider, output voltage increases ~2.4%</td></tr>
+<tr><td>R3</td><td class="mpn">—</td><td class="mpn"><strong>—</strong></td><td class="keep">KEEP</td><td>not fitted (empty value)</td></tr>
+<tr><td>R4</td><td class="mpn">—</td><td class="mpn"><strong>—</strong></td><td class="keep">KEEP</td><td>not fitted (empty value)</td></tr>
+<tr><td>R5</td><td class="mpn">—</td><td class="mpn"><strong>—</strong></td><td class="keep">KEEP</td><td>not fitted (empty value)</td></tr>
+<tr><td>R6</td><td class="mpn">—</td><td class="mpn"><strong>—</strong></td><td class="keep">KEEP</td><td>not fitted (empty value)</td></tr>
+<tr><td>R7</td><td class="mpn">—</td><td class="mpn"><strong>—</strong></td><td class="keep">KEEP</td><td>not fitted (empty value)</td></tr>
+</table>
+<h3>ICs</h3>
+<table>
+<tr><th>Ref</th><th>Original MPN</th><th>Würth PN</th><th>Status</th><th>Notes</th></tr>
+<tr><td>U1</td><td class="mpn">MP1653FGTF</td><td class="mpn"><strong>—</strong></td><td class="no-sub">NOT REPLACED</td><td>Wurth Elektronik does not manufacture PMIC ICs; original MPS part retained</td></tr>
+</table>
+<h2>4. Otto Challenge Log</h2>
+<p><em>Otto is a Würth Elektronik sales agent that challenges every no_substitute verdict. Proposals are verified against Digi-Key before acceptance.</em></p>
+<table><tr><th>Ref</th><th>Verdict</th><th>Diagnosis</th><th>Counter-Proposal</th><th>Verified?</th></tr>
+<tr><td>U1</td><td class="no-sub">CONFIRMED</td><td>Component is an active PMIC (MP1653F synchronous buck converter IC). Würth Elektronik&#x27;s manufacturing portfolio is exclusively passive components, electromechanical parts, connectors, and power modules; the company does not produce discrete semiconductor controller ICs.</td><td>—</td><td><span class="no-sub">N/A</span></td></tr>
+</table>
+<p>Otto summary: 0 overturned, 1 confirmed out of 1 challenged.</p>
+<h2>5. Reviewer Report (Nicola — Quality Mode)</h2>
+<p>Verdict: <span class="no-sub" style="font-size:1.2em">REJECTED</span></p>
+<p>Cross-reference approval blocked for L1: Critical inductor parameters (Isat, footprint) require explicit verification against original MPL-AL6050-1R5 ratings and PCB layout. R2 value deviation requires output voltage tolerance verification.</p>
+<h3>Objections</h3><ul>
+<li>L1 (744771001): Saturation current (Isat) rating not verified against design requirements. The cross-reference notes explicitly state &#x27;Verify saturation current&#x27; without confirming Isat &gt;= 1.2 × Ipeak. Inductor saturation under peak load current will cause catastrophic converter failure.</li>
+<li>L1 (744771001): Footprint / mechanical compatibility not verified. Notes indicate requirement to &#x27;Verify... footprint compatibility&#x27; without confirmation that the Wurth package dimensions match the original MPL-AL6050 land pattern and height restrictions.</li>
+</ul>
+<h3>Warnings</h3><ul>
+<li class="warn">R2 (560112110264): Resistance value deviation of -2.4% (8.66kΩ vs 8.87kΩ nominal) increases converter output voltage by approximately +2.4% if used in the feedback divider network. Verify that the load tolerance specification accommodates this Vout shift or adjust divider values.</li>
+<li class="warn">L1 (744771001): While DCR reduction improves conduction loss (4mΩ vs 16mΩ), verify that the reduced DCR does not compromise current sensing accuracy if the inductor DCR is used for current sensing in the control loop.</li>
+</ul>
+<p>Verdict: <span class="exact" style="font-size:1.2em">APPROVED</span></p>
+<p>Cross-reference substitutions maintain or improve electrical ratings (voltage, DCR). L1 offers lower DCR but requires Isat and footprint confirmation. R2 value shift impacts regulation if in feedback path. No guardrail fires; no safety-critical components substituted.</p>
+<h3>Warnings</h3><ul>
+<li class="warn">L1 (744771001): Saturation current (Isat) rating not verified against peak inductor current. Verify Isat &gt;= 1.2 × Ipeak before final approval.</li>
+<li class="warn">L1 (744771001): Footprint compatibility with original MPL-AL6050-1R5 requires mechanical verification.</li>
+<li class="warn">R2 (560112110264): Resistance value deviation -2.4% (8.66k vs 8.87k nominal) increases output voltage ~2.4% if used in feedback divider. Verify against output voltage tolerance specification.</li>
+<li class="warn">Original BOM part numbers missing for C1A, C1B, C2, C2A, C3, C4, R1, R2; substitute ratings accepted per descriptive notes.</li>
+</ul>
+<div class="footer">Generated by Heaviside CR Pipeline</div>
+</body></html>

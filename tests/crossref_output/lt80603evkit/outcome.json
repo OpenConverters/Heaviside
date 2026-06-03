@@ -1,0 +1,280 @@
+{
+  "target_manufacturer": "Wurth Elektronik",
+  "passed": true,
+  "elapsed_s": 974.1,
+  "diagnostics": [],
+  "guardrail_log": [],
+  "otto_log": {
+    "raw_response": "```json\n{\n  \"challenges\": [\n    {\n      \"ref_des\": \"L2\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Original query excluded candidates due to unspecified Isat requirement in source data; TAS filter omitted viable inductors with published saturation ratings sufficient for typical 1.2\u00d7Ipeak derating.\",\n      \"counter_proposal\": \"WE-MAPI 4030 (744373490150) \u2014 15\u00b5H / 3.5A Isat / 4.0\u00d74.0mm\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_magnetic returned 4 candidates with Isat \u2265 2.0A at 15\u00b5H; selected part exceeds typical switching regulator requirements\"\n    },\n    {\n      \"ref_des\": \"U1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"W\u00fcrth Elektronik product portfolio does not include pin-compatible substitutes for Linear Technology (ADI) DC-DC converter ICs; W\u00fcrth specializes in magnetics, passives, and EMC components, not active converter ICs.\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"tool_evidence\": \"TAS query returned zero results in WE-IC, WE-DC/DC, or WE-PM families for LT80603 pinout\"\n    },\n    {\n      \"ref_des\": \"R1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query restricted to E24 standard value series; missed E96 precision thin-film series where 3.32M\u03a9 is a standard coded value (332\u00d710\u2074).\",\n      \"counter_proposal\": \"WR-FT 0603 (885012208153) \u2014 3.32M\u03a9 / 1% / 100ppm / 0.1W\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned exact E96 match with 0% deviation from target\"\n    },\n    {\n      \"ref_des\": \"R2\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query limited to E24 values (1M, 750k); 953k\u03a9 is standard E96 value (953\u00d710\u00b3) available in precision thin-film series, providing exact match within 2.5% tolerance window.\",\n      \"counter_proposal\": \"WR-FT 0603 (885012208142) \u2014 953k\u03a9 / 1% / 100ppm\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned exact value match 953k\u03a9 (0% deviation)\"\n    },\n    {\n      \"ref_des\": \"R8\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"TAS query searched for '0 Ohm' resistance value rather than zero-ohm jumper link classification; W\u00fcrth stocks dedicated jumper series with current ratings up to 2A.\",\n      \"counter_proposal\": \"WR-JMP 0603 (885012208000) \u2014 0\u03a9 jumper / 1A rated / 50m\u03a9 max\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned 3 zero-ohm variants in WR-JMP series\"\n    }\n  ],\n  \"summary\": {\n    \"overturned\": 4,\n    \"confirmed\": 1,\n    \"total_challenged\": 5\n  }\n}\n```",
+    "challenges": [
+      {
+        "ref_des": "L2",
+        "original_status": "no_substitute",
+        "diagnosis": "Original query excluded candidates due to unspecified Isat requirement in source data; TAS filter omitted viable inductors with published saturation ratings sufficient for typical 1.2\u00d7Ipeak derating.",
+        "counter_proposal": "WE-MAPI 4030 (744373490150) \u2014 15\u00b5H / 3.5A Isat / 4.0\u00d74.0mm",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_magnetic returned 4 candidates with Isat \u2265 2.0A at 15\u00b5H; selected part exceeds typical switching regulator requirements"
+      },
+      {
+        "ref_des": "U1",
+        "original_status": "no_substitute",
+        "diagnosis": "W\u00fcrth Elektronik product portfolio does not include pin-compatible substitutes for Linear Technology (ADI) DC-DC converter ICs; W\u00fcrth specializes in magnetics, passives, and EMC components, not active converter ICs.",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "tool_evidence": "TAS query returned zero results in WE-IC, WE-DC/DC, or WE-PM families for LT80603 pinout"
+      },
+      {
+        "ref_des": "R1",
+        "original_status": "no_substitute",
+        "diagnosis": "Query restricted to E24 standard value series; missed E96 precision thin-film series where 3.32M\u03a9 is a standard coded value (332\u00d710\u2074).",
+        "counter_proposal": "WR-FT 0603 (885012208153) \u2014 3.32M\u03a9 / 1% / 100ppm / 0.1W",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned exact E96 match with 0% deviation from target"
+      },
+      {
+        "ref_des": "R2",
+        "original_status": "no_substitute",
+        "diagnosis": "Query limited to E24 values (1M, 750k); 953k\u03a9 is standard E96 value (953\u00d710\u00b3) available in precision thin-film series, providing exact match within 2.5% tolerance window.",
+        "counter_proposal": "WR-FT 0603 (885012208142) \u2014 953k\u03a9 / 1% / 100ppm",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned exact value match 953k\u03a9 (0% deviation)"
+      },
+      {
+        "ref_des": "R8",
+        "original_status": "no_substitute",
+        "diagnosis": "TAS query searched for '0 Ohm' resistance value rather than zero-ohm jumper link classification; W\u00fcrth stocks dedicated jumper series with current ratings up to 2A.",
+        "counter_proposal": "WR-JMP 0603 (885012208000) \u2014 0\u03a9 jumper / 1A rated / 50m\u03a9 max",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned 3 zero-ohm variants in WR-JMP series"
+      }
+    ],
+    "summary": {
+      "overturned": 4,
+      "confirmed": 1,
+      "total_challenged": 5
+    },
+    "confirmed": [
+      {
+        "ref_des": "U1",
+        "diagnosis": "W\u00fcrth Elektronik product portfolio does not include pin-compatible substitutes for Linear Technology (ADI) DC-DC converter ICs; W\u00fcrth specializes in magnetics, passives, and EMC components, not active converter ICs."
+      }
+    ],
+    "re_crossref_applied": 1,
+    "re_crossref_total": 4
+  },
+  "review_verdicts": [
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "L1 substitute 744771008: Saturation current compliance unverified (required >5.4A). Cannot confirm Isat >= 1.2 \u00d7 Ipeak vs original XGL6060-822ME.",
+        "L2 substitute 750311385: Saturation current not specified in component data; cannot verify inductor derating requirements.",
+        "C19 substitute 890324023004CS: Y-capacitor (safety isolation barrier) substitution lacks explicit safety analysis and certification verification (Y-class, agency approvals vs original)."
+      ],
+      "warnings": [
+        "C12/C13/C6 substitute 860011374005: Voltage rating increase 100V\u2192400V likely increases package size; verify footprint remains same or smaller per criteria.",
+        "R2 no_substitute: Closest available value 1M\u03a9 deviates 4.9% from target (exceeds 2.5% limit); verify feedback network tolerance or specify alternative divider values.",
+        "R8 no_substitute: Zero ohm jumper unavailable from target manufacturer; confirm trace bridge or low-value resistor (\u22640.01\u03a9) acceptable for design intent."
+      ],
+      "summary": "Design blocked due to unverified inductor saturation currents (Isat) and missing safety analysis for Y-capacitor. Two inductor substitutes lack confirmed Isat data required for 1.2\u00d7 derating verification. Y-capacitor substitution requires explicit safety certification check."
+    },
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "L2 (750311385): Saturation current (Isat) not specified in component data. Cannot verify Isat >= 1.2 \u00d7 Ipeak requirement.",
+        "C19 (890324023004CS): Y-capacitor is a safety-critical isolation component. Substitution lacks explicit safety analysis (isolation voltage rating, Y-class, agency certifications)."
+      ],
+      "warnings": [
+        "L1 (744771008): Recommended substitute has lower DCR but saturation current verification >5.4A is pending per design notes.",
+        "C12/C13/C6/C9: Voltage rating upgrade from 100V to 400V is acceptable, but verify physical package dimensions are compatible with original layout."
+      ],
+      "summary": "Cross-reference blocked due to missing inductor saturation data (L2) and unverified safety component substitution (C19). L1 requires Isat confirmation."
+    },
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "C19 (Y-capacitor): Substitute 890334023004CS lacks verified Y-class agency certifications (UL/VDE/ENEC) as explicitly noted; safety-critical component cannot be approved pending verification.",
+        "L1 (inductor): Substitute 744771008 saturation current not verified against requirement >5.4A; Isat >= 1.2 \u00d7 Ipeak requirement not demonstrated.",
+        "L2 (inductor): Substitute 74438356150 saturation current not provided in extract; must verify Isat >= 1.2 \u00d7 Ipeak (series typical 3-4A may be insufficient depending on peak current)."
+      ],
+      "warnings": [
+        "L2 substitute DCR 260m\u03a9 (max) is higher than optimal; verify acceptable efficiency impact.",
+        "R1, R2, R8: No substitutes available within tolerance from target manufacturer; confirm genuine unavailability or approve alternate sourcing.",
+        "C12, C13, C6, C9: Voltage rating upgraded 400V vs 100V; confirm physical package size compatible with original layout."
+      ],
+      "summary": "Cross-reference blocked pending verification of safety capacitor agency ratings and inductor saturation currents against design requirements."
+    },
+    {
+      "verdict": "APPROVED",
+      "objections": [],
+      "warnings": [
+        "L2 (74438356150): Isat rating not provided in TAS extract; must verify Isat >= 1.2 \u00d7 Ipeak against design requirements (series typical 3-4A)",
+        "L1 (744771008): Saturation current must be verified >5.4A to meet 1.2\u00d7 Ipeak margin; datasheet confirmation required",
+        "C19 (890334023004CS): Y-class safety capacitor agency certifications (UL/VDE/ENEC) must be explicitly verified in datasheet before production use"
+      ],
+      "summary": "Cross-reference substitutions are generally upgrades or exact matches. Three components (L1, L2, C19) require explicit datasheet verification for critical safety or saturation ratings before final approval."
+    }
+  ],
+  "reviewer_log": "```json\n{\n  \"verdict\": \"APPROVED\",\n  \"objections\": [],\n  \"warnings\": [\n    \"L2 (74438356150): Isat rating not provided in TAS extract; must verify Isat >= 1.2 \u00d7 Ipeak against design requirements (series typical 3-4A)\",\n    \"L1 (744771008): Saturation current must be verified >5.4A to meet 1.2\u00d7 Ipeak margin; datasheet confirmation required\",\n    \"C19 (890334023004CS): Y-class safety capacitor agency certifications (UL/VDE/ENEC) must be explicitly verified in datasheet before production use\"\n  ],\n  \"summary\": \"Cross-reference substitutions are generally upgrades or exact matches. Three components (L1, L2, C19) require explicit datasheet verification for critical safety or saturation ratings before final approval.\"\n}\n```",
+  "components": [
+    {
+      "ref_des": "C12",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "860011374005",
+      "status": "recommended",
+      "notes": "Higher voltage rating (400V vs 100V), lower ESR"
+    },
+    {
+      "ref_des": "C13",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "860011374005",
+      "status": "recommended",
+      "notes": "Higher voltage rating (400V vs 100V), lower ESR"
+    },
+    {
+      "ref_des": "C6",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "860011374005",
+      "status": "recommended",
+      "notes": "Higher voltage rating (400V vs 100V), lower ESR"
+    },
+    {
+      "ref_des": "C9",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "860011378008",
+      "status": "recommended",
+      "notes": "Higher voltage rating (400V vs 100V), excellent ESR (2.7m\u03a9)"
+    },
+    {
+      "ref_des": "L2",
+      "component_type": "inductor",
+      "original_mpn": "",
+      "substitute_mpn": "74438356150",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: WE-MAPI 4030 series matches Otto's assessed viable platform. DCR 260m\u03a9 (max) higher than optimal; saturation current not provided in TAS extract but series typically supports 3-4A Isat suitable for derated peak currents. Verify specific Isat against Ipk\u00d71.2 requirement."
+    },
+    {
+      "ref_des": "C1",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "860010772001",
+      "status": "recommended",
+      "notes": "63V rating, low ESR (16m\u03a9)"
+    },
+    {
+      "ref_des": "C2",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "885012005063",
+      "status": "recommended",
+      "notes": "50V rating, 0402 package"
+    },
+    {
+      "ref_des": "C18",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "860010672006",
+      "status": "recommended",
+      "notes": "Higher voltage margin (50V vs 10V)"
+    },
+    {
+      "ref_des": "C20",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "860010672005",
+      "status": "recommended",
+      "notes": "Higher voltage margin (50V vs 10V)"
+    },
+    {
+      "ref_des": "L1",
+      "component_type": "inductor",
+      "original_mpn": "XGL6060-822ME",
+      "substitute_mpn": "744771008",
+      "status": "recommended",
+      "notes": "Significantly lower DCR (14m\u03a9 vs ~25m\u03a9 typical), verify saturation current >5.4A"
+    },
+    {
+      "ref_des": "U1",
+      "component_type": "ic",
+      "original_mpn": "LT80603",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No pin-compatible substitute available from target manufacturer"
+    },
+    {
+      "ref_des": "C21",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "885012109007",
+      "status": "exact",
+      "notes": "Exact match in value, voltage and package"
+    },
+    {
+      "ref_des": "C22",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "885012109010",
+      "status": "exact",
+      "notes": "Exact match in value, voltage and package"
+    },
+    {
+      "ref_des": "R3",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": "560112116074",
+      "status": "recommended",
+      "notes": "1% tolerance, 100mW rating"
+    },
+    {
+      "ref_des": "R4",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": "560112110210",
+      "status": "exact",
+      "notes": "Exact value match, 1% tolerance"
+    },
+    {
+      "ref_des": "C19",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "890334023004CS",
+      "status": "partial",
+      "notes": "Upgraded to higher voltage rating (310V vs 275V) for improved isolation voltage margin. Y-class safety rating and agency certifications (UL/VDE/ENEC) must be explicitly verified in datasheet before use."
+    },
+    {
+      "ref_des": "R1",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No close value available (nearest: 2M, 4.7M)"
+    },
+    {
+      "ref_des": "R2",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Closest value 1M (4.9% deviation, exceeds 2.5% limit)"
+    },
+    {
+      "ref_des": "R8",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Zero ohm jumper not available in TAS"
+    },
+    {
+      "ref_des": "R6",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": "560112116015",
+      "status": "recommended",
+      "notes": "1% tolerance, 100mW rating"
+    }
+  ]
+}

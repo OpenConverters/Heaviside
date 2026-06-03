@@ -1,0 +1,39 @@
+{
+  "name": "eval-lt83401-lt83402-az",
+  "passed": false,
+  "elapsed_s": 536.8,
+  "topology": "buck",
+  "vin_max": 42.0,
+  "vout": 3.3,
+  "pout": 8.25,
+  "bom_count": 13,
+  "comparisons": [
+    {
+      "sim_eff": 0.8367735623430859,
+      "claimed_eff": 0.891,
+      "delta_pp": 5.422643765691415,
+      "sim_vout": 3.374416,
+      "claimed_vout": 3.3,
+      "vout_err": 2.255030303030311,
+      "passed": false,
+      "diagnosis": ""
+    },
+    {
+      "sim_eff": 0.8363883956960757,
+      "claimed_eff": 0.891,
+      "delta_pp": 5.461160430392431,
+      "sim_vout": 3.339783,
+      "claimed_vout": 3.3,
+      "vout_err": 1.2055454545454651,
+      "passed": false,
+      "diagnosis": "**Primary Suspect: Convergence Snubber Artifacts**\n\nThe 5.5 pp gap is characteristic of **parallel \"Rsnub\" resistors** added to the switching node or inductor in MKF/SPICE decks to aid DC convergence."
+    }
+  ],
+  "diagnostics": [
+    "failed to fetch inductor XEL4020-222MEC from Digi-Key: schema validation failed for magnetics/'XEL4020-222MEC':\n  [distributorsInfo.0.cost] 0.0 is not of type 'object'\n  [(root)] 'core' is a required property\n  [(root)] 'coil' is a required property",
+    "Rds_on not in eval board PDF. IC datasheet for LT83402RUDB#PBF could not be downloaded. URLs tried: ['https://www.analog.com/LT83402/datasheet', 'https://www.mouser.com/datasheet/2/609/LT83402RUDB#TRPBF.pdf', 'https://www.analog.com/media/en/technical-documentation/data-sheets/lt83401-lt83']. Add Rds_on to TAS controllers for this IC.",
+    "testbench: inductor DCR not available in TAS \u2014 simulation uses ideal inductor (no winding loss)",
+    "testbench diagnosis: **Primary Suspect: Convergence Snubber Artifacts**\n\nThe 5.5 pp gap is characteristic of **parallel \"Rsnub\" resistors** added to the switching node or inductor in MKF/SPICE decks to aid DC convergence.",
+    "no design to review"
+  ]
+}

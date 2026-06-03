@@ -1,0 +1,179 @@
+{
+  "target_manufacturer": "Wurth Elektronik",
+  "passed": true,
+  "elapsed_s": 387.3,
+  "diagnostics": [],
+  "guardrail_log": [],
+  "otto_log": {
+    "raw_response": "```json\n{\n  \"challenges\": [\n    {\n      \"ref_des\": \"U1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Component is an active PMIC (MP1653F synchronous buck converter IC). W\u00fcrth Elektronik's manufacturing portfolio is exclusively passive components, electromechanical parts, connectors, and power modules; the company does not produce discrete semiconductor controller ICs.\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": \"Strategic portfolio gap: W\u00fcrth Elektronik does not manufacture PMIC ICs or buck converter controllers. Functional alternatives exist in MagI\u00b3C power module series (e.g., 171012601 for 3A buck), but these are not drop-in substitutes for QFN-14 footprint ICs.\"\n    }\n  ],\n  \"summary\": {\n    \"overturned\": 0,\n    \"confirmed\": 1,\n    \"total_challenged\": 1\n  }\n}\n```",
+    "challenges": [
+      {
+        "ref_des": "U1",
+        "original_status": "no_substitute",
+        "diagnosis": "Component is an active PMIC (MP1653F synchronous buck converter IC). W\u00fcrth Elektronik's manufacturing portfolio is exclusively passive components, electromechanical parts, connectors, and power modules; the company does not produce discrete semiconductor controller ICs.",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": "Strategic portfolio gap: W\u00fcrth Elektronik does not manufacture PMIC ICs or buck converter controllers. Functional alternatives exist in MagI\u00b3C power module series (e.g., 171012601 for 3A buck), but these are not drop-in substitutes for QFN-14 footprint ICs."
+      }
+    ],
+    "summary": {
+      "overturned": 0,
+      "confirmed": 1,
+      "total_challenged": 1
+    },
+    "confirmed": [
+      {
+        "ref_des": "U1",
+        "diagnosis": "Component is an active PMIC (MP1653F synchronous buck converter IC). W\u00fcrth Elektronik's manufacturing portfolio is exclusively passive components, electromechanical parts, connectors, and power modules; the company does not produce discrete semiconductor controller ICs."
+      }
+    ]
+  },
+  "review_verdicts": [
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "L1 (744771001): Saturation current (Isat) rating not verified against design requirements. The cross-reference notes explicitly state 'Verify saturation current' without confirming Isat >= 1.2 \u00d7 Ipeak. Inductor saturation under peak load current will cause catastrophic converter failure.",
+        "L1 (744771001): Footprint / mechanical compatibility not verified. Notes indicate requirement to 'Verify... footprint compatibility' without confirmation that the Wurth package dimensions match the original MPL-AL6050 land pattern and height restrictions."
+      ],
+      "warnings": [
+        "R2 (560112110264): Resistance value deviation of -2.4% (8.66k\u03a9 vs 8.87k\u03a9 nominal) increases converter output voltage by approximately +2.4% if used in the feedback divider network. Verify that the load tolerance specification accommodates this Vout shift or adjust divider values.",
+        "L1 (744771001): While DCR reduction improves conduction loss (4m\u03a9 vs 16m\u03a9), verify that the reduced DCR does not compromise current sensing accuracy if the inductor DCR is used for current sensing in the control loop."
+      ],
+      "summary": "Cross-reference approval blocked for L1: Critical inductor parameters (Isat, footprint) require explicit verification against original MPL-AL6050-1R5 ratings and PCB layout. R2 value deviation requires output voltage tolerance verification."
+    },
+    {
+      "verdict": "APPROVED",
+      "objections": [],
+      "warnings": [
+        "L1 (744771001): Saturation current (Isat) rating not verified against peak inductor current. Verify Isat >= 1.2 \u00d7 Ipeak before final approval.",
+        "L1 (744771001): Footprint compatibility with original MPL-AL6050-1R5 requires mechanical verification.",
+        "R2 (560112110264): Resistance value deviation -2.4% (8.66k vs 8.87k nominal) increases output voltage ~2.4% if used in feedback divider. Verify against output voltage tolerance specification.",
+        "Original BOM part numbers missing for C1A, C1B, C2, C2A, C3, C4, R1, R2; substitute ratings accepted per descriptive notes."
+      ],
+      "summary": "Cross-reference substitutions maintain or improve electrical ratings (voltage, DCR). L1 offers lower DCR but requires Isat and footprint confirmation. R2 value shift impacts regulation if in feedback path. No guardrail fires; no safety-critical components substituted."
+    }
+  ],
+  "reviewer_log": "```json\n{\n  \"verdict\": \"APPROVED\",\n  \"objections\": [],\n  \"warnings\": [\n    \"L1 (744771001): Saturation current (Isat) rating not verified against peak inductor current. Verify Isat >= 1.2 \u00d7 Ipeak before final approval.\",\n    \"L1 (744771001): Footprint compatibility with original MPL-AL6050-1R5 requires mechanical verification.\",\n    \"R2 (560112110264): Resistance value deviation -2.4% (8.66k vs 8.87k nominal) increases output voltage ~2.4% if used in feedback divider. Verify against output voltage tolerance specification.\",\n    \"Original BOM part numbers missing for C1A, C1B, C2, C2A, C3, C4, R1, R2; substitute ratings accepted per descriptive notes.\"\n  ],\n  \"summary\": \"Cross-reference substitutions maintain or improve electrical ratings (voltage, DCR). L1 offers lower DCR but requires Isat and footprint confirmation. R2 value shift impacts regulation if in feedback path. No guardrail fires; no safety-critical components substituted.\"\n}\n```",
+  "components": [
+    {
+      "ref_des": "U1",
+      "component_type": "ic",
+      "original_mpn": "MP1653FGTF",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Wurth Elektronik does not manufacture PMIC ICs; original MPS part retained"
+    },
+    {
+      "ref_des": "L1",
+      "component_type": "inductor",
+      "original_mpn": "MPL-AL6050-1R5",
+      "substitute_mpn": "744771001",
+      "status": "recommended",
+      "notes": "75% DCR reduction (4m\u03a9 max vs ~16m\u03a9 typical), inductance exact match. Verify saturation current and footprint compatibility."
+    },
+    {
+      "ref_des": "C1A",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "885012107019",
+      "status": "recommended",
+      "notes": "Higher voltage margin (25V vs 16V), same capacitance and package"
+    },
+    {
+      "ref_des": "C1B",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "885012105018",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "C2",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "885012107005",
+      "status": "recommended",
+      "notes": "Exact voltage and capacitance match, same package"
+    },
+    {
+      "ref_des": "C2A",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "885012107005",
+      "status": "recommended",
+      "notes": "Exact voltage and capacitance match, same package"
+    },
+    {
+      "ref_des": "C3",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "885012105018",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "C4",
+      "component_type": "capacitor",
+      "original_mpn": "",
+      "substitute_mpn": "885012205042",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "R1",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": "560112110240",
+      "status": "recommended",
+      "notes": "Exact value match, 1% tolerance, 0.1W rating"
+    },
+    {
+      "ref_des": "R2",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": "560112110264",
+      "status": "partial",
+      "notes": "Value deviation -2.4% (8.66k vs 8.87k). If used in feedback divider, output voltage increases ~2.4%"
+    },
+    {
+      "ref_des": "R3",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": "",
+      "status": "keep_original",
+      "notes": "not fitted (empty value)"
+    },
+    {
+      "ref_des": "R4",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": "",
+      "status": "keep_original",
+      "notes": "not fitted (empty value)"
+    },
+    {
+      "ref_des": "R5",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": "",
+      "status": "keep_original",
+      "notes": "not fitted (empty value)"
+    },
+    {
+      "ref_des": "R6",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": "",
+      "status": "keep_original",
+      "notes": "not fitted (empty value)"
+    },
+    {
+      "ref_des": "R7",
+      "component_type": "resistor",
+      "original_mpn": "",
+      "substitute_mpn": "",
+      "status": "keep_original",
+      "notes": "not fitted (empty value)"
+    }
+  ]
+}

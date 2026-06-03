@@ -1,0 +1,37 @@
+{
+  "name": "lt80603evkit",
+  "passed": true,
+  "elapsed_s": 575.7,
+  "topology": "buck",
+  "vin_max": 65.0,
+  "vout": 5.0,
+  "pout": 17.5,
+  "bom_count": 18,
+  "comparisons": [
+    {
+      "sim_eff": 0.9291516407063705,
+      "claimed_eff": 0.926,
+      "delta_pp": 0.31516407063704177,
+      "sim_vout": 5.077583,
+      "claimed_vout": 5.0,
+      "vout_err": 1.5516599999999947,
+      "passed": true,
+      "diagnosis": ""
+    },
+    {
+      "sim_eff": 0.9290913683599111,
+      "claimed_eff": 0.926,
+      "delta_pp": 0.3091368359911084,
+      "sim_vout": 5.057646,
+      "claimed_vout": 5.0,
+      "vout_err": 1.1529200000000017,
+      "passed": true,
+      "diagnosis": ""
+    }
+  ],
+  "diagnostics": [
+    "failed to fetch inductor XGL6060-822ME from Digi-Key: digikey API returned HTTP 404: {\"ErrorResponseVersion\":\"3.0.0.0\",\"StatusCode\": 404,\"ErrorMessage\":\"Product was not found\",\"ErrorDetails\":\"The specified DigiKey product XGL6060-822ME was not found\",\"RequestId\":\"8f762376-1aab-4f34-e8f3-ea37d50ee5bf\",\"ValidationErrors\":[]}",
+    "Rds_on not in eval board PDF. IC datasheet for LT80603AFO+T could not be downloaded. URLs tried: []. Add Rds_on to TAS controllers for this IC.",
+    "no design to review"
+  ]
+}

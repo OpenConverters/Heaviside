@@ -22,8 +22,8 @@ Cin vin_p 0 2.019852e-06 IC=48.000000
 * Buck-leg switches (Q1 HS, Q2 LS) + RC snubber on SW1
 S_Q1 vin_p sw1 pwm_q1 0 SW1
 S_Q2 sw1 0     pwm_q2 0 SW1
-Rsnub_sw1 sw1 sn_sw1 1000.000000
-Csnub_sw1 sn_sw1 0 1.000000e-09
+Rsnub_sw1 sw1 sn_sw1 10000.000000
+Csnub_sw1 sn_sw1 0 1.000000e-10
 
 * Inductor with current sense (Vl_sense in series at the SW1 side)
 Vl_sense sw1 l_in 0
@@ -34,8 +34,8 @@ Bvpri_diff vpri_diff 0 V=V(l_in)-V(l_out)
 Vsw2_sense l_out sw2 0
 S_Q3 sw2 vout pwm_q3 0 SW1
 S_Q4 sw2 0    pwm_q4 0 SW1
-Rsnub_sw2 sw2 sn_sw2 1000.000000
-Csnub_sw2 sn_sw2 0 1.000000e-09
+Rsnub_sw2 sw2 sn_sw2 10000.000000
+Csnub_sw2 sn_sw2 0 1.000000e-10
 
 * Output capacitor + resistive load with Vout_sense
 Cout vout 0 4.700000e-05 IC=12.000000

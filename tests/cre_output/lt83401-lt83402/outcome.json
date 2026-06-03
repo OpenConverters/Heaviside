@@ -1,0 +1,39 @@
+{
+  "name": "lt83401-lt83402",
+  "passed": true,
+  "elapsed_s": 606.0,
+  "topology": "synchronous buck",
+  "vin_max": 42.0,
+  "vout": 3.3,
+  "pout": 3.3,
+  "bom_count": 14,
+  "comparisons": [
+    {
+      "sim_eff": 0.9062314482661736,
+      "claimed_eff": 0.891,
+      "delta_pp": 1.523144826617362,
+      "sim_vout": 3.286795,
+      "claimed_vout": 3.3,
+      "vout_err": 0.4001515151515057,
+      "passed": true,
+      "diagnosis": ""
+    },
+    {
+      "sim_eff": 0.9062582979112702,
+      "claimed_eff": 0.891,
+      "delta_pp": 1.5258297911270202,
+      "sim_vout": 3.316088,
+      "claimed_vout": 3.3,
+      "vout_err": 0.48751515151516134,
+      "passed": true,
+      "diagnosis": ""
+    }
+  ],
+  "diagnostics": [
+    "failed to fetch inductor XEL4020-222MEC from Digi-Key: schema validation failed for magnetics/'XEL4020-222MEC':\n  [distributorsInfo.0.cost] 0.0 is not of type 'object'\n  [(root)] 'core' is a required property\n  [(root)] 'coil' is a required property",
+    "Rds_on not in eval board PDF. IC datasheet for LT83401RUDB#PBF could not be downloaded. URLs tried: ['https://www.analog.com/LT83401/datasheet', 'https://www.mouser.com/datasheet/2/609/LT83401RUDB#TRPBF.pdf', 'https://www.analog.com/media/en/technical-documentation/data-sheets/lt83401-lt83']. Add Rds_on to TAS controllers for this IC.",
+    "claims extraction failed: JSON parse failed: Extra data: line 1 column 47 (char 46). Block: '{\"voltage\": 3.3, \"current\": 1.0, \"power\": 3.3}]\\n  - For LT83402: [{\"voltage\": 3.3, \"current\": 2.5, \"power\": 8.25}] but also mentions 1V at 2A for efficiency test\\n  - I\\'ll list both configurations or c'",
+    "testbench: inductor DCR not available in TAS \u2014 simulation uses ideal inductor (no winding loss)",
+    "no design to review"
+  ]
+}

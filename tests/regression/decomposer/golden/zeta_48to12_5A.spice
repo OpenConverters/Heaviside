@@ -10,9 +10,9 @@ Vin_sense vin_dc sw_top 0
 Vpwm pwm_ctrl 0 PULSE(0 5 0 1.000000e-08 1.000000e-08 1.089194e-06 5.000000e-06)
 .model SW1 SW VT=2.500000 VH=0.500000
 S1 sw_top node_SW pwm_ctrl 0 SW1
-Rsnub_s1 sw_top node_SW 100.000000
+Rsnub_s1 sw_top node_SW 10000.000000
 Csnub_s1 sw_top snub_s1_int 1.000000e-10
-Rsnub_s1b snub_s1_int node_SW 0.001
+Rsnub_s1b snub_s1_int node_SW 0.001000
 
 * L1 magnetizing inductor (top at node_SW; with DCR)
 Vl1_sense node_SW l1_top 0
@@ -29,9 +29,9 @@ Vc_sense_x cc_left node_X 0
 .model DIDEAL D(IS=1.000000e-12 RS=5.000000e-02)
 Vrect_sense rect_in node_X 0
 D1 0 rect_in DIDEAL
-Rsnub_d1 0 node_X 100.000000
+Rsnub_d1 0 node_X 10000.000000
 Csnub_d1 node_X snub_d1_int 1.000000e-10
-Rsnub_d1b snub_d1_int 0 0.001
+Rsnub_d1b snub_d1_int 0 0.001000
 
 * L2 output inductor (top at node_X; with DCR)
 Vl2_sense node_X l2_top 0

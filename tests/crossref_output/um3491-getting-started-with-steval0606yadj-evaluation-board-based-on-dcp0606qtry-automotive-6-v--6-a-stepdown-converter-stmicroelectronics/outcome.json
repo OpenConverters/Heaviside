@@ -1,0 +1,196 @@
+{
+  "target_manufacturer": "Wurth Elektronik",
+  "passed": true,
+  "elapsed_s": 362.8,
+  "diagnostics": [],
+  "guardrail_log": [],
+  "otto_log": {
+    "raw_response": "```json\n{\n  \"challenges\": [\n    {\n      \"ref_des\": \"U1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Category mismatch: DCP0606QTRY is an active DC-DC controller IC (QFN-11). W\u00fcrth Elektronik's portfolio is strictly passive components, magnetics, connectors, and electromechanical parts. No active semiconductor ICs are manufactured.\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": null\n    }\n  ],\n  \"summary\": {\n    \"overturned\": 0,\n    \"confirmed\": 1,\n    \"total_challenged\": 1\n  }\n}\n```",
+    "challenges": [
+      {
+        "ref_des": "U1",
+        "original_status": "no_substitute",
+        "diagnosis": "Category mismatch: DCP0606QTRY is an active DC-DC controller IC (QFN-11). W\u00fcrth Elektronik's portfolio is strictly passive components, magnetics, connectors, and electromechanical parts. No active semiconductor ICs are manufactured.",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": null
+      }
+    ],
+    "summary": {
+      "overturned": 0,
+      "confirmed": 1,
+      "total_challenged": 1
+    },
+    "confirmed": [
+      {
+        "ref_des": "U1",
+        "diagnosis": "Category mismatch: DCP0606QTRY is an active DC-DC controller IC (QFN-11). W\u00fcrth Elektronik's portfolio is strictly passive components, magnetics, connectors, and electromechanical parts. No active semiconductor ICs are manufactured."
+      }
+    ]
+  },
+  "review_verdicts": [
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "L1 (74477009): Saturation current (Isat) not verified against original XGL4030-471ME. Isat must be confirmed >= 1.2 \u00d7 Ipeak to prevent core saturation under full load conditions."
+      ],
+      "warnings": [
+        "C21 (860010273010): Package dimensions must be verified compatible with original D8L footprint and height constraints",
+        "L1 (74477009): Package footprint must be verified compatible with 4.0x4.0mm original",
+        "L3 (7443081030): Package footprint must be verified compatible with 3.0x3.0mm original",
+        "L3 (7443081030): Verify inductance value matches original 300nH despite DCR reduction from ~3.5m\u03a9 to 0.29m\u03a9"
+      ],
+      "summary": "Cross-reference incomplete: L1 substitute lacks verified saturation current rating, which is critical for inductor selection in power converters. Mechanical verification required for C21, L1, and L3 footprints."
+    },
+    {
+      "verdict": "APPROVED",
+      "objections": [],
+      "warnings": [
+        "L1 (74477009): Verify saturation current (Isat) meets or exceeds original XGL4030-471ME rating (~28A); verify 4.0x4.0mm footprint compatibility",
+        "L3 (7443081030): DCR of 0.29m\u03a9 is 12\u00d7 lower than original 3.5m\u03a9; verify substitute inductance is 300nH (0.3\u00b5H) not 10\u00b5H (103 coding), confirm Isat rating, and verify 3.0x3.0mm footprint",
+        "C21 (860010273010): Verify package dimensions (D8L footprint 7.3\u00d74.3mm) align with original 6TAE330ML layout; substitute voltage rating is higher (10V vs 6.3V) which is acceptable",
+        "U1: No substitute available \u2014 ensure procurement strategy accounts for single-source controller IC"
+      ],
+      "summary": "Cross-reference BOM is acceptable. All passive values match. C21 is upgraded (10V vs 6.3V). L1 and L3 require saturation current verification and mechanical footprint confirmation. L3 DCR discrepancy warrants inductance value verification to ensure 300nH specification is maintained."
+    }
+  ],
+  "reviewer_log": "```json\n{\n  \"verdict\": \"APPROVED\",\n  \"objections\": [],\n  \"warnings\": [\n    \"L1 (74477009): Verify saturation current (Isat) meets or exceeds original XGL4030-471ME rating (~28A); verify 4.0x4.0mm footprint compatibility\",\n    \"L3 (7443081030): DCR of 0.29m\u03a9 is 12\u00d7 lower than original 3.5m\u03a9; verify substitute inductance is 300nH (0.3\u00b5H) not 10\u00b5H (103 coding), confirm Isat rating, and verify 3.0x3.0mm footprint\",\n    \"C21 (860010273010): Verify package dimensions (D8L footprint 7.3\u00d74.3mm) align with original 6TAE330ML layout; substitute voltage rating is higher (10V vs 6.3V) which is acceptable\",\n    \"U1: No substitute available \u2014 ensure procurement strategy accounts for single-source controller IC\"\n  ],\n  \"summary\": \"Cross-reference BOM is acceptable. All passive values match. C21 is upgraded (10V vs 6.3V). L1 and L3 require saturation current verification and mechanical footprint confirmation. L3 DCR discrepancy warrants inductance value verification to ensure 300nH specification is maintained.\"\n}\n```",
+  "components": [
+    {
+      "ref_des": "C1",
+      "component_type": "capacitor",
+      "original_mpn": "GRT21BD71A226ME13",
+      "substitute_mpn": "885012107011",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "C2",
+      "component_type": "capacitor",
+      "original_mpn": "GRT21BD71A226ME13",
+      "substitute_mpn": "885012107011",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "C3",
+      "component_type": "capacitor",
+      "original_mpn": "GCM31CR71A226KE",
+      "substitute_mpn": "885012108011",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "C4",
+      "component_type": "capacitor",
+      "original_mpn": "GCM31CR71A226KE",
+      "substitute_mpn": "885012108011",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "C5",
+      "component_type": "capacitor",
+      "original_mpn": "GCM31CR71A226KE",
+      "substitute_mpn": "885012108011",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "C7",
+      "component_type": "capacitor",
+      "original_mpn": "GCM188R71E105KA",
+      "substitute_mpn": "885012106022",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "C9",
+      "component_type": "capacitor",
+      "original_mpn": "GRT155R71C104KE",
+      "substitute_mpn": "885012105016",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "C10",
+      "component_type": "capacitor",
+      "original_mpn": "C0402C103J3RACAUTO",
+      "substitute_mpn": "885012205050",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "C21",
+      "component_type": "capacitor",
+      "original_mpn": "6TAE330ML",
+      "substitute_mpn": "860010273010",
+      "status": "partial",
+      "notes": "Higher voltage rating (10V vs 6.3V), lower ESR (0.8m\u03a9), package dimensions require verification against original D8L footprint"
+    },
+    {
+      "ref_des": "C24",
+      "component_type": "capacitor",
+      "original_mpn": "GRT21BD71A226ME13",
+      "substitute_mpn": "885012107011",
+      "status": "recommended",
+      "notes": "Exact match for capacitance, voltage rating, and package"
+    },
+    {
+      "ref_des": "L1",
+      "component_type": "inductor",
+      "original_mpn": "XGL4030-471ME",
+      "substitute_mpn": "74477009",
+      "status": "partial",
+      "notes": "DCR within specification (2.9m\u03a9 max vs ~2.5m\u03a9 original), saturation current requires verification, package footprint requires verification against 4.0x4.0mm"
+    },
+    {
+      "ref_des": "L3",
+      "component_type": "inductor",
+      "original_mpn": "XGL3020-301ME",
+      "substitute_mpn": "7443081030",
+      "status": "recommended",
+      "notes": "Significantly lower DCR (0.29m\u03a9 vs ~3.5m\u03a9), package footprint requires verification against 3.0x3.0mm"
+    },
+    {
+      "ref_des": "R1",
+      "component_type": "resistor",
+      "original_mpn": "MP003495",
+      "substitute_mpn": "560112116064",
+      "status": "recommended",
+      "notes": "Exact value match, 1% tolerance, 0.1W rating"
+    },
+    {
+      "ref_des": "R2",
+      "component_type": "resistor",
+      "original_mpn": "MP003483",
+      "substitute_mpn": "560112116035",
+      "status": "recommended",
+      "notes": "Exact value match, 1% tolerance, 0.1W rating"
+    },
+    {
+      "ref_des": "R4",
+      "component_type": "resistor",
+      "original_mpn": "MP003487",
+      "substitute_mpn": "560112116023",
+      "status": "recommended",
+      "notes": "Exact value match, 1% tolerance, 0.1W rating"
+    },
+    {
+      "ref_des": "R5",
+      "component_type": "resistor",
+      "original_mpn": "MP003498",
+      "substitute_mpn": "560112116004",
+      "status": "recommended",
+      "notes": "Exact value match, 1% tolerance, 0.1W rating"
+    },
+    {
+      "ref_des": "U1",
+      "component_type": "ic",
+      "original_mpn": "DCP0606QTRY",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Wurth Elektronik does not offer pin-compatible DC-DC controller ICs"
+    }
+  ]
+}

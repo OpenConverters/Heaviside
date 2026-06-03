@@ -1,0 +1,37 @@
+{
+  "name": "eval-lt7153sp-az",
+  "passed": false,
+  "elapsed_s": 428.0,
+  "topology": "synchronous buck",
+  "vin_max": 5.0,
+  "vout": 0.5,
+  "pout": 12.5,
+  "bom_count": 34,
+  "comparisons": [
+    {
+      "sim_eff": 0.9390119890750507,
+      "claimed_eff": 0.876,
+      "delta_pp": 6.301198907505068,
+      "sim_vout": 0.5126931,
+      "claimed_vout": 0.5,
+      "vout_err": 2.5386200000000025,
+      "passed": false,
+      "diagnosis": ""
+    },
+    {
+      "sim_eff": 0.9120702701210311,
+      "claimed_eff": 0.876,
+      "delta_pp": 3.6070270121031145,
+      "sim_vout": 0.5109515,
+      "claimed_vout": 0.5,
+      "vout_err": 2.1903000000000006,
+      "passed": false,
+      "diagnosis": "**Diagnosis:** The simulation is running **optimistic** (3.6 pp high) because it is missing switching and gate-drive loss terms that dominate in a synchronous buck at these voltage/current levels. The"
+    }
+  ],
+  "diagnostics": [
+    "Rds_on not in eval board PDF. IC datasheet for LT7153SPAV#TRMPBF could not be downloaded. URLs tried: []. Add Rds_on to TAS controllers for this IC.",
+    "testbench diagnosis: **Diagnosis:** The simulation is running **optimistic** (3.6 pp high) because it is missing switching and gate-drive loss terms that dominate in a synchronous buck at these voltage/current levels. The",
+    "no design to review"
+  ]
+}

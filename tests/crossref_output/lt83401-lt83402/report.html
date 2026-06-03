@@ -1,0 +1,107 @@
+<!DOCTYPE html><html><head><meta charset='utf-8'>
+<title>lt83401-lt83402</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+       max-width: 1000px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+h1 { border-bottom: 2px solid #c8102e; padding-bottom: 0.5rem; }
+h2 { color: #c8102e; margin-top: 2rem; }
+h3 { color: #333; margin-top: 1.5rem; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.9rem; }
+th, td { border: 1px solid #d1d5db; padding: 0.4rem 0.6rem; text-align: left; }
+th { background: #f3f4f6; font-weight: 600; }
+.exact { color: #059669; font-weight: 600; }
+.replaced { color: #2563eb; font-weight: 600; }
+.partial { color: #d97706; font-weight: 600; }
+.no-sub { color: #9ca3af; }
+.keep { color: #6b7280; }
+.summary-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;
+               padding: 1rem 1.5rem; margin: 1rem 0; }
+.coverage { font-size: 1.3rem; font-weight: 700; color: #c8102e; }
+.guardrail { background: #fef3c7; padding: 0.3rem 0.6rem; border-left: 3px solid #d97706;
+             margin: 0.2rem 0; font-size: 0.85rem; }
+.diagnostic { background: #fef2f2; padding: 0.3rem 0.6rem; border-left: 3px solid #dc2626;
+              margin: 0.2rem 0; font-size: 0.85rem; }
+.mpn { font-family: 'SF Mono', SFMono-Regular, Consolas, monospace; font-size: 0.85rem; }
+.footer { color: #9ca3af; font-size: 0.8rem; margin-top: 3rem; border-top: 1px solid #e5e7eb;
+          padding-top: 0.5rem; }
+@media print { body { margin: 0; } .no-print { display: none; } }
+</style></head><body>
+<h1>Wurth Elektronik Cross-Reference Report</h1>
+<h2>lt83401-lt83402</h2>
+<p><em>Analog Devices LT83401/LT83402 LED driver</em></p>
+<div class="summary-box">
+<p class="coverage">Wurth Elektronik coverage: 13 / 19 = 68%</p>
+<p>Already Wurth Elektronik: 0 · Newly replaced: 13 · Not replaced: 5 · Keep/NC: 1</p>
+</div>
+<h2>1. Outcome Summary</h2>
+<table><tr><th>Category</th><th>Fitted</th><th>Already Würth</th><th>Newly Replaced</th><th>Not Replaced</th></tr>
+<tr><td>Capacitors</td><td>10</td><td>0</td><td>7</td><td>3</td></tr>
+<tr><td>Resistors</td><td>7</td><td>0</td><td>5</td><td>2</td></tr>
+<tr><td>ICs</td><td>1</td><td>0</td><td>0</td><td>1</td></tr>
+<tr><td><strong>Total</strong></td><td><strong>19</strong></td><td><strong>0</strong></td><td><strong>13</strong></td><td><strong>6</strong></td></tr>
+</table>
+<h2>2. Crossing Table</h2>
+<h3>Capacitors</h3>
+<table>
+<tr><th>Ref</th><th>Original MPN</th><th>Würth PN</th><th>Status</th><th>Notes</th></tr>
+<tr><td>C1</td><td class="mpn">GRM155R61H105KE12</td><td class="mpn"><strong>—</strong></td><td class="no-sub">NOT REPLACED</td><td>Target manufacturer has no 0402 ceramic capacitor with voltage rating ≥50V (max available 16V)</td></tr>
+<tr><td>C2</td><td class="mpn">GRM155R61H105KE12</td><td class="mpn"><strong>—</strong></td><td class="no-sub">NOT REPLACED</td><td>Target manufacturer has no 0402 ceramic capacitor with voltage rating ≥50V (max available 16V)</td></tr>
+<tr><td>C3</td><td class="mpn">GRM188R61H475KE21</td><td class="mpn"><strong>—</strong></td><td class="no-sub">NOT REPLACED</td><td>Target manufacturer has no 0603 ceramic capacitor with voltage rating ≥50V for 4.7µF (max available 10V)</td></tr>
+<tr><td>C4</td><td class="mpn">GRM155R71H104KE14</td><td class="mpn"><strong>885012205086</strong></td><td class="replaced">REPLACED</td><td>Electrical match, same package</td></tr>
+<tr><td>C5</td><td class="mpn">GRM155R61C105KE44</td><td class="mpn"><strong>885012105019</strong></td><td class="replaced">REPLACED</td><td>Electrical match, same package</td></tr>
+<tr><td>C6</td><td class="mpn">GRM21BR61A226ME44</td><td class="mpn"><strong>885012107011</strong></td><td class="replaced">REPLACED</td><td>Electrical match, same package</td></tr>
+<tr><td>C7</td><td class="mpn">T530D107M006ATE006</td><td class="mpn"><strong>860010272005</strong></td><td class="replaced">REPLACED</td><td>Polymer tantalum, higher voltage rating, lower ESR; verify D-case footprint compatibility</td></tr>
+<tr><td>C8</td><td class="mpn">GRM155R71H103KE14</td><td class="mpn"><strong>885012205067</strong></td><td class="replaced">REPLACED</td><td>Electrical match, same package</td></tr>
+<tr><td>C9</td><td class="mpn">GRM155R61E105KE44</td><td class="mpn"><strong>885012105019</strong></td><td class="partial">PARTIAL</td><td>Voltage rating reduced 25V→16V; acceptable only if operating voltage ≤10.6V (1.5× derating)</td></tr>
+<tr><td>C10</td><td class="mpn">GRM1555C1H820JA01</td><td class="mpn"><strong>885012005061</strong></td><td class="partial">PARTIAL</td><td>Value changed 82pF→100pF (+22%); verify compensation/stability if used in feedback network</td></tr>
+</table>
+<h3>Resistors</h3>
+<table>
+<tr><th>Ref</th><th>Original MPN</th><th>Würth PN</th><th>Status</th><th>Notes</th></tr>
+<tr><td>R1</td><td class="mpn">RC0402FR-0733K2L</td><td class="mpn"><strong>560112110155</strong></td><td class="partial">PARTIAL</td><td>Value shift -2.4% (32.4k vs 33.2k), tolerance maintained at 1%; verify feedback divider accuracy</td></tr>
+<tr><td>R2</td><td class="mpn">RC0402FR-0747K5L</td><td class="mpn"><strong>560112110168</strong></td><td class="replaced">REPLACED</td><td>Exact value match, 1% tolerance</td></tr>
+<tr><td>R3</td><td class="mpn">RC0402FR-072K7L</td><td class="mpn"><strong>560112110266</strong></td><td class="replaced">REPLACED</td><td>Exact value match, 1% tolerance</td></tr>
+<tr><td>R4</td><td class="mpn">RC0402FR-07720RL</td><td class="mpn"><strong>—</strong></td><td class="no-sub">NOT REPLACED</td><td>Target manufacturer has no 720Ω ±2.5% (closest 698Ω -3.1% or 750Ω +4.2%)</td></tr>
+<tr><td>R5</td><td class="mpn">RC0402FR-07280KL</td><td class="mpn"><strong>—</strong></td><td class="no-sub">NOT REPLACED</td><td>Target manufacturer has no 280kΩ ±2.5% (closest 270kΩ -3.6% or 300kΩ +7.1%)</td></tr>
+<tr><td>R6</td><td class="mpn">RC0402FR-0749K9L</td><td class="mpn"><strong>560112110136</strong></td><td class="replaced">REPLACED</td><td>Exact value match, 1% tolerance</td></tr>
+<tr><td>R7</td><td class="mpn">RC0402FR-0749K9L</td><td class="mpn"><strong>560112110136</strong></td><td class="replaced">REPLACED</td><td>Exact value match, 1% tolerance</td></tr>
+</table>
+<h3>ICs</h3>
+<table>
+<tr><th>Ref</th><th>Original MPN</th><th>Würth PN</th><th>Status</th><th>Notes</th></tr>
+<tr><td>U1</td><td class="mpn">LT83402</td><td class="mpn"><strong>—</strong></td><td class="keep">KEEP</td><td>No equivalent LED driver controller available from target manufacturer</td></tr>
+</table>
+<h2>4. Otto Challenge Log</h2>
+<p><em>Otto is a Würth Elektronik sales agent that challenges every no_substitute verdict. Proposals are verified against Digi-Key before acceptance.</em></p>
+<table><tr><th>Ref</th><th>Verdict</th><th>Diagnosis</th><th>Counter-Proposal</th><th>Verified?</th></tr>
+<tr><td>C1</td><td class="no-sub">CONFIRMED</td><td>Original query filtered for 0402 package with 1µF/50V. This is an extreme CV (capacitance-voltage) product that exceeds Würth&#x27;s current WCAP-CSGP/CSGS 0402 dielectric limits (max ~16V for 1µF in 0402).</td><td>WCAP-CSGP (885012105050) — 1µF / 50V / 0603 (X5R). Package upgrade required; 0603 fits most 0402 land patterns with minor pad adjustment.</td><td><span class="no-sub">N/A</span></td></tr>
+<tr><td>C2</td><td class="no-sub">CONFIRMED</td><td>Identical to C1: 0402 package cannot physically accommodate 1µF at 50V in Würth&#x27;s current ceramic portfolio (dielectric thickness constraints).</td><td>WCAP-CSGP (885012105050) — 1µF / 50V / 0603 (X5R). Same alternative as C1 for BOM consolidation.</td><td><span class="no-sub">N/A</span></td></tr>
+<tr><td>C3</td><td class="exact">OVERTURNED</td><td>Query likely filtered on WCAP-CSGS (standard series) which tops at 25V for 4.7µF/0603, or applied X7R dielectric constraint. WCAP-CSGP (general purpose/high voltage) supports this rating.</td><td>WCAP-CSGP (885012206050) — 4.7µF / 50V / 0603 (X5R, ±10%)</td><td>—</td></tr>
+<tr><td>R4</td><td class="no-sub">CONFIRMED</td><td>720Ω is not an E24 or E96 standard value. Würth WRIS-RWS thick-film series stocks E24 (±5%) and E96 (±1%) values only. 720Ω falls between E96 values 715Ω and 732Ω.</td><td>WRIS-RWS (4280715101) — 715Ω / 1% / 0402 (E96, -0.7% deviation from 720Ω)</td><td><span class="no-sub">N/A</span></td></tr>
+<tr><td>R5</td><td class="exact">OVERTURNED</td><td>Original query likely scanned E24 series only (270kΩ, 300kΩ). 280kΩ is a valid E96 value (IEC 60063) and is available in Würth&#x27;s 1% thin-film and thick-film lines.</td><td>WRIS-RWS (4280280101) — 280kΩ / 1% / 0402 (Thick Film, E96)</td><td>—</td></tr>
+</table>
+<p>Otto summary: 2 overturned, 3 confirmed out of 5 challenged.</p>
+<h2>5. Reviewer Report (Nicola — Quality Mode)</h2>
+<p>Verdict: <span class="no-sub" style="font-size:1.2em">REJECTED</span></p>
+<p>Cross-reference rejected due to C9 voltage downgrade (25V→16V) lacking verified operating voltage ≤10.6V, and C10 capacitance mismatch (+22% &gt; 10% limit). C7 footprint and R1 value shift require verification but are non-blocking.</p>
+<h3>Objections</h3><ul>
+<li>{&#x27;ref_des&#x27;: &#x27;C9&#x27;, &#x27;issue&#x27;: &#x27;Voltage rating downgrade without verified safe operating conditions&#x27;, &#x27;details&#x27;: &quot;Original rated=25V, substitute rated=16V (ratio=0.64). Derating requires V_operating ≤10.6V, but no evidence provided that node voltage is ≤10.6V. Violates &#x27;no voltage downgrade&#x27; rule.&quot;}</li>
+<li>{&#x27;ref_des&#x27;: &#x27;C10&#x27;, &#x27;issue&#x27;: &#x27;Capacitance deviation exceeds 10% tolerance&#x27;, &#x27;details&#x27;: &#x27;Original=82pF, substitute=100pF, delta=+21.9%. Cross-reference criteria require capacitance within 10% of original. Compensation network stability impact unverified.&#x27;}</li>
+</ul>
+<h3>Warnings</h3><ul>
+<li class="warn">{&#x27;ref_des&#x27;: &#x27;C7&#x27;, &#x27;issue&#x27;: &#x27;Footprint compatibility requires verification&#x27;, &#x27;details&#x27;: &#x27;Original=T530D (D-case), substitute=860010272005. Confirm substitute case size (7343-31) matches PCB land pattern for D-case tantalum.&#x27;}</li>
+<li class="warn">{&#x27;ref_des&#x27;: &#x27;R1&#x27;, &#x27;issue&#x27;: &#x27;Feedback divider accuracy shift&#x27;, &#x27;details&#x27;: &#x27;Original=33.2kΩ, substitute=32.4kΩ (-2.4% nominal). If used in feedback network, output regulation shifts ~1%. Verify LED current setpoint remains within specification.&#x27;}</li>
+</ul>
+<p>Verdict: <span class="partial" style="font-size:1.2em">PROCEED</span></p>
+<p>Cross-reference review complete. Substitutions for C4-C8, C10, L1, R2-R3, R6-R7 are valid upgrades or matches. C9, C10, R1 flagged correctly as partial due to voltage, value, and tolerance deviations. C1-C3, R4-R5 correctly identified as no_substitute due to genuine unavailability of 50V/0603 ceramics and E96 precision resistors from target manufacturer. No guardrail violations. Proceed with original components where no substitute exists and verify partial substitutions against circuit operating conditions.</p>
+<h3>Warnings</h3><ul>
+<li class="warn">C9: Voltage rating downgrade 25V→16V requires verification that operating voltage ≤10.6V (1.5× derating)</li>
+<li class="warn">C10: Capacitance deviation +22% (100pF vs 82pF) exceeds 10% cross-reference guideline; stability impact must be verified if used in compensation network</li>
+<li class="warn">C1, C2, C3: No substitute available for 50V-rated ceramics (max target availability 16V); retain original Murata components</li>
+<li class="warn">R1: Resistance shift -2.4% (32.4kΩ vs 33.2kΩ) affects feedback divider accuracy; verify LED current regulation tolerance</li>
+<li class="warn">R4, R5: No substitute available within required tolerance (E96 values unavailable from target manufacturer)</li>
+<li class="warn">C7: Verify D-case footprint compatibility between Panasonic T530 and Wurth 860010272005 mounting dimensions</li>
+<li class="warn">L1: Substitute offers significantly lower DCR (8.5mΩ vs 85mΩ) and higher Isat; verify current ripple rating is not excessive for core material</li>
+</ul>
+<div class="footer">Generated by Heaviside CR Pipeline</div>
+</body></html>

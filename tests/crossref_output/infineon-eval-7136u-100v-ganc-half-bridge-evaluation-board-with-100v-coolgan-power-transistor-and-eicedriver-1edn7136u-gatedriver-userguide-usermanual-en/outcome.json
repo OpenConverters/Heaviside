@@ -1,0 +1,308 @@
+{
+  "target_manufacturer": "Wurth Elektronik",
+  "passed": true,
+  "elapsed_s": 450.1,
+  "diagnostics": [],
+  "guardrail_log": [],
+  "otto_log": {
+    "raw_response": "```json\n{\n  \"challenges\": [\n    {\n      \"ref_des\": \"C_IN\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered exclusively for 50V max; WCAP-CSGP series offers 100V X7R MLCCs in 1210 package\",\n      \"counter_proposal\": \"WCAP-CSGP (885012208012) \u2014 10\u00b5F / 100V / X7R / 1210 (3225 metric)\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_ceramic returned WCAP-CSGP candidate with 100VDC rating and X7R dielectric\"\n    },\n    {\n      \"ref_des\": \"C_OUT\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Same voltage filter error as C_IN; 100V grade available in WCAP-CSGP\",\n      \"counter_proposal\": \"WCAP-CSGP (885012208012) \u2014 10\u00b5F / 100V / X7R / 1210 (3225 metric)\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_ceramic returned matching component for output filtering\"\n    },\n    {\n      \"ref_des\": \"J1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query assumed combined SMA/header footprint; W\u00fcrth offers discrete RF SMA jacks and standard pin headers separately\",\n      \"counter_proposal\": \"WR-RC (660068021113) \u2014 SMA edge-launch jack for RF input, or WR-PHD (61300311121) \u2014 3-pin 2.54mm header for PWM logic\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_connector returned 8 SMA variants and 42 header options in TAS\"\n    },\n    {\n      \"ref_des\": \"J_VIN\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered for >20A rating; WR-TBL series offers 16A-rated PCB screw terminals sufficient for most GaN input rails\",\n      \"counter_proposal\": \"WR-TBL (691137700003) \u2014 3-position, 5.0mm pitch, 16A rated screw terminal\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_connector returned WR-TBL series with 16A current rating and 300V isolation\"\n    },\n    {\n      \"ref_des\": \"J_VOUT\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Same as J_VIN; WR-TBL series supports high-current output connections\",\n      \"counter_proposal\": \"WR-TBL (691137700003) \u2014 3-position, 5.0mm pitch, 16A rated screw terminal\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_connector returned suitable high-current screw terminal\"\n    },\n    {\n      \"ref_des\": \"Q1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"GaN discrete power switches outside W\u00fcrth manufacturing scope; W\u00fcrth does not fabricate active silicon devices\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": \"No GaN MOSFET product line \u2014 recommend pairing external GaN switch with W\u00fcrth passives (C/L/R) and WE-AGDT gate drive transformers\"\n    },\n    {\n      \"ref_des\": \"Q2\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Identical to Q1; no discrete semiconductor portfolio\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": null\n    },\n    {\n      \"ref_des\": \"U1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Gate driver ICs not manufactured by W\u00fcrth; while WE-AGDT transformers exist, they are not pin-compatible substitutes for 1EDN7136U\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": \"Discrete gate driver ICs not planned \u2014 suggest topology change to WE-AGDT (750316012) adaptive gate drive transformer for isolated drive\"\n    },\n    {\n      \"ref_des\": \"U2\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Identical to U1; no low-side driver IC portfolio\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": null\n    },\n    {\n      \"ref_des\": \"U_TEMP\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Active temperature sensor ICs (silicon-based) not in W\u00fcrth catalog; W\u00fcrth offers only passive NTC/PTC thermistors\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": \"Active sensor ICs outside scope \u2014 recommend WE-NTC (100k\u03a9 NTC) with external comparator as passive alternative\"\n    },\n    {\n      \"ref_des\": \"HS1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Extruded aluminum heatsinks not manufactured; W\u00fcrth offers only thermal interface materials (WE-TGS gap fillers) and EMC shields\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": \"Mechanical heatsink extrusions not available \u2014 recommend WE-TGS (3205037) 1.5mm thermal gap pad for TIM interface to chassis heatsink\"\n    }\n  ],\n  \"summary\": {\n    \"overturned\": 5,\n    \"confirmed\": 6,\n    \"total_challenged\": 11\n  }\n}\n```",
+    "challenges": [
+      {
+        "ref_des": "C_IN",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered exclusively for 50V max; WCAP-CSGP series offers 100V X7R MLCCs in 1210 package",
+        "counter_proposal": "WCAP-CSGP (885012208012) \u2014 10\u00b5F / 100V / X7R / 1210 (3225 metric)",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_ceramic returned WCAP-CSGP candidate with 100VDC rating and X7R dielectric"
+      },
+      {
+        "ref_des": "C_OUT",
+        "original_status": "no_substitute",
+        "diagnosis": "Same voltage filter error as C_IN; 100V grade available in WCAP-CSGP",
+        "counter_proposal": "WCAP-CSGP (885012208012) \u2014 10\u00b5F / 100V / X7R / 1210 (3225 metric)",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_ceramic returned matching component for output filtering"
+      },
+      {
+        "ref_des": "J1",
+        "original_status": "no_substitute",
+        "diagnosis": "Query assumed combined SMA/header footprint; W\u00fcrth offers discrete RF SMA jacks and standard pin headers separately",
+        "counter_proposal": "WR-RC (660068021113) \u2014 SMA edge-launch jack for RF input, or WR-PHD (61300311121) \u2014 3-pin 2.54mm header for PWM logic",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_connector returned 8 SMA variants and 42 header options in TAS"
+      },
+      {
+        "ref_des": "J_VIN",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered for >20A rating; WR-TBL series offers 16A-rated PCB screw terminals sufficient for most GaN input rails",
+        "counter_proposal": "WR-TBL (691137700003) \u2014 3-position, 5.0mm pitch, 16A rated screw terminal",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_connector returned WR-TBL series with 16A current rating and 300V isolation"
+      },
+      {
+        "ref_des": "J_VOUT",
+        "original_status": "no_substitute",
+        "diagnosis": "Same as J_VIN; WR-TBL series supports high-current output connections",
+        "counter_proposal": "WR-TBL (691137700003) \u2014 3-position, 5.0mm pitch, 16A rated screw terminal",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_connector returned suitable high-current screw terminal"
+      },
+      {
+        "ref_des": "Q1",
+        "original_status": "no_substitute",
+        "diagnosis": "GaN discrete power switches outside W\u00fcrth manufacturing scope; W\u00fcrth does not fabricate active silicon devices",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": "No GaN MOSFET product line \u2014 recommend pairing external GaN switch with W\u00fcrth passives (C/L/R) and WE-AGDT gate drive transformers"
+      },
+      {
+        "ref_des": "Q2",
+        "original_status": "no_substitute",
+        "diagnosis": "Identical to Q1; no discrete semiconductor portfolio",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": null
+      },
+      {
+        "ref_des": "U1",
+        "original_status": "no_substitute",
+        "diagnosis": "Gate driver ICs not manufactured by W\u00fcrth; while WE-AGDT transformers exist, they are not pin-compatible substitutes for 1EDN7136U",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": "Discrete gate driver ICs not planned \u2014 suggest topology change to WE-AGDT (750316012) adaptive gate drive transformer for isolated drive"
+      },
+      {
+        "ref_des": "U2",
+        "original_status": "no_substitute",
+        "diagnosis": "Identical to U1; no low-side driver IC portfolio",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": null
+      },
+      {
+        "ref_des": "U_TEMP",
+        "original_status": "no_substitute",
+        "diagnosis": "Active temperature sensor ICs (silicon-based) not in W\u00fcrth catalog; W\u00fcrth offers only passive NTC/PTC thermistors",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": "Active sensor ICs outside scope \u2014 recommend WE-NTC (100k\u03a9 NTC) with external comparator as passive alternative"
+      },
+      {
+        "ref_des": "HS1",
+        "original_status": "no_substitute",
+        "diagnosis": "Extruded aluminum heatsinks not manufactured; W\u00fcrth offers only thermal interface materials (WE-TGS gap fillers) and EMC shields",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": "Mechanical heatsink extrusions not available \u2014 recommend WE-TGS (3205037) 1.5mm thermal gap pad for TIM interface to chassis heatsink"
+      }
+    ],
+    "summary": {
+      "overturned": 5,
+      "confirmed": 6,
+      "total_challenged": 11
+    },
+    "confirmed": [
+      {
+        "ref_des": "Q1",
+        "diagnosis": "GaN discrete power switches outside W\u00fcrth manufacturing scope; W\u00fcrth does not fabricate active silicon devices"
+      },
+      {
+        "ref_des": "Q2",
+        "diagnosis": "Identical to Q1; no discrete semiconductor portfolio"
+      },
+      {
+        "ref_des": "U1",
+        "diagnosis": "Gate driver ICs not manufactured by W\u00fcrth; while WE-AGDT transformers exist, they are not pin-compatible substitutes for 1EDN7136U"
+      },
+      {
+        "ref_des": "U2",
+        "diagnosis": "Identical to U1; no low-side driver IC portfolio"
+      },
+      {
+        "ref_des": "U_TEMP",
+        "diagnosis": "Active temperature sensor ICs (silicon-based) not in W\u00fcrth catalog; W\u00fcrth offers only passive NTC/PTC thermistors"
+      },
+      {
+        "ref_des": "HS1",
+        "diagnosis": "Extruded aluminum heatsinks not manufactured; W\u00fcrth offers only thermal interface materials (WE-TGS gap fillers) and EMC shields"
+      }
+    ],
+    "re_crossref_applied": 0,
+    "re_crossref_total": 5
+  },
+  "review_verdicts": [
+    {
+      "verdict": "APPROVED",
+      "objections": [],
+      "warnings": [
+        "L1 (744393240100): Saturation current rating must be verified against Ipeak \u00d7 1.2 derating requirement; 25A application implies Isat >= 30A required",
+        "R5/R6: Fixed resistor substitution eliminates dead-time trimmer adjustability; ensure selected fixed values are validated against GaN FET switching requirements",
+        "C_IN/C_OUT: Correctly identified as no_substitute; external sourcing required for 100V-rated capacitors with adequate voltage margin"
+      ],
+      "summary": "Cross-reference correctly identifies available passive substitutions. GaN FETs, gate drivers, and high-voltage capacitors appropriately flagged as unavailable from Wurth Elektronik. Inductor saturation rating requires confirmation before implementation."
+    }
+  ],
+  "reviewer_log": "```json\n{\n  \"verdict\": \"APPROVED\",\n  \"objections\": [],\n  \"warnings\": [\n    \"L1 (744393240100): Saturation current rating must be verified against Ipeak \u00d7 1.2 derating requirement; 25A application implies Isat >= 30A required\",\n    \"R5/R6: Fixed resistor substitution eliminates dead-time trimmer adjustability; ensure selected fixed values are validated against GaN FET switching requirements\",\n    \"C_IN/C_OUT: Correctly identified as no_substitute; external sourcing required for 100V-rated capacitors with adequate voltage margin\"\n  ],\n  \"summary\": \"Cross-reference correctly identifies available passive substitutions. GaN FETs, gate drivers, and high-voltage capacitors appropriately flagged as unavailable from Wurth Elektronik. Inductor saturation rating requires confirmation before implementation.\"\n}\n```",
+  "components": [
+    {
+      "ref_des": "Q1",
+      "component_type": "mosfet",
+      "original_mpn": "IGC033S10S1",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Wurth Elektronik does not manufacture GaN MOSFETs or discrete power switches"
+    },
+    {
+      "ref_des": "Q2",
+      "component_type": "mosfet",
+      "original_mpn": "IGC033S10S1",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Wurth Elektronik does not manufacture GaN MOSFETs or discrete power switches"
+    },
+    {
+      "ref_des": "U1",
+      "component_type": "ic",
+      "original_mpn": "1EDN7136U",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Wurth Elektronik does not manufacture gate driver ICs"
+    },
+    {
+      "ref_des": "U2",
+      "component_type": "ic",
+      "original_mpn": "1EDN7136U",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Wurth Elektronik does not manufacture gate driver ICs"
+    },
+    {
+      "ref_des": "C_BST",
+      "component_type": "capacitor",
+      "original_mpn": "Generic",
+      "substitute_mpn": "885012207072",
+      "status": "recommended",
+      "notes": "Exact voltage match, same package"
+    },
+    {
+      "ref_des": "C_VDD",
+      "component_type": "capacitor",
+      "original_mpn": "Generic",
+      "substitute_mpn": "885012207051",
+      "status": "recommended",
+      "notes": "Exact voltage match, same package"
+    },
+    {
+      "ref_des": "C_IN",
+      "component_type": "capacitor",
+      "original_mpn": "Generic",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No candidate >= 100V (max available 50V). 50V insufficient for 1.5\u00d7Vop derating in 100V GaN application"
+    },
+    {
+      "ref_des": "C_OUT",
+      "component_type": "capacitor",
+      "original_mpn": "Generic",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No candidate >= 100V (max available 50V). 50V insufficient for 1.5\u00d7Vop derating in 100V GaN application"
+    },
+    {
+      "ref_des": "C_DECOUP1",
+      "component_type": "capacitor",
+      "original_mpn": "Generic",
+      "substitute_mpn": "885012206095",
+      "status": "recommended",
+      "notes": "Exact voltage match, same package"
+    },
+    {
+      "ref_des": "C_DECOUP2",
+      "component_type": "capacitor",
+      "original_mpn": "Generic",
+      "substitute_mpn": "885012206095",
+      "status": "recommended",
+      "notes": "Exact voltage match, same package"
+    },
+    {
+      "ref_des": "R5",
+      "component_type": "resistor",
+      "original_mpn": "Dead-time trimmer",
+      "substitute_mpn": "560112116012",
+      "status": "partial",
+      "notes": "Fixed resistor replaces trimmer potentiometer; dead-time adjustment capability lost. Package changed from TrimPot to 0603 SMD"
+    },
+    {
+      "ref_des": "R6",
+      "component_type": "resistor",
+      "original_mpn": "Dead-time trimmer",
+      "substitute_mpn": "560112116012",
+      "status": "partial",
+      "notes": "Fixed resistor replaces trimmer potentiometer; dead-time adjustment capability lost. Package changed from TrimPot to 0603 SMD"
+    },
+    {
+      "ref_des": "R_TDI1",
+      "component_type": "resistor",
+      "original_mpn": "TDI pulldown",
+      "substitute_mpn": "560112116012",
+      "status": "recommended",
+      "notes": "5% tolerance acceptable for pulldown application"
+    },
+    {
+      "ref_des": "R_TDI2",
+      "component_type": "resistor",
+      "original_mpn": "TDI pulldown",
+      "substitute_mpn": "560112116012",
+      "status": "recommended",
+      "notes": "5% tolerance acceptable for pulldown application"
+    },
+    {
+      "ref_des": "L1",
+      "component_type": "inductor",
+      "original_mpn": "External",
+      "substitute_mpn": "744393240100",
+      "status": "recommended",
+      "notes": "DCR 18m\u03a9 max; saturation current rating must be verified against Ipk \u00d7 1.2 requirement (25A rated application)"
+    },
+    {
+      "ref_des": "U_TEMP",
+      "component_type": "ic",
+      "original_mpn": "Generic",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Wurth Elektronik does not manufacture temperature sensor ICs"
+    },
+    {
+      "ref_des": "J1",
+      "component_type": "connector",
+      "original_mpn": "SMA or 3-pin",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No specific substitute found in TAS for SMA/Header combination"
+    },
+    {
+      "ref_des": "J_VIN",
+      "component_type": "connector",
+      "original_mpn": "VIN",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No specific substitute found for high-current screw terminal"
+    },
+    {
+      "ref_des": "J_VOUT",
+      "component_type": "connector",
+      "original_mpn": "VOUT",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No specific substitute found for high-current screw terminal"
+    },
+    {
+      "ref_des": "HS1",
+      "component_type": "other",
+      "original_mpn": "TIM TG-A1780",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Thermal interface materials available but no direct heatsink substitute"
+    }
+  ]
+}

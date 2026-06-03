@@ -1,0 +1,57 @@
+{
+  "name": "lt80602-lt80603-lt80603a",
+  "passed": true,
+  "elapsed_s": 397.4,
+  "topology": "synchronous buck",
+  "vin_max": 65.0,
+  "vout": 5.0,
+  "pout": 17.5,
+  "bom_count": 13,
+  "comparisons": [
+    {
+      "sim_eff": 0.9362749188035263,
+      "claimed_eff": 0.943,
+      "delta_pp": 0.6725081196473637,
+      "sim_vout": 5.082283,
+      "claimed_vout": 5.0,
+      "vout_err": 1.6456600000000063,
+      "passed": true,
+      "diagnosis": ""
+    },
+    {
+      "sim_eff": 0.9565474538945166,
+      "claimed_eff": 0.94,
+      "delta_pp": 1.6547453894516617,
+      "sim_vout": 5.065093,
+      "claimed_vout": 5.0,
+      "vout_err": 1.3018600000000013,
+      "passed": true,
+      "diagnosis": ""
+    },
+    {
+      "sim_eff": 0.9417800390426501,
+      "claimed_eff": 0.942,
+      "delta_pp": 0.021996095734988508,
+      "sim_vout": 5.13259,
+      "claimed_vout": 5.0,
+      "vout_err": 2.6518000000000086,
+      "passed": true,
+      "diagnosis": ""
+    },
+    {
+      "sim_eff": 0.9278292282078257,
+      "claimed_eff": 0.943,
+      "delta_pp": 1.5170771792174298,
+      "sim_vout": 5.035678,
+      "claimed_vout": 5.0,
+      "vout_err": 0.7135599999999975,
+      "passed": true,
+      "diagnosis": ""
+    }
+  ],
+  "diagnostics": [
+    "failed to fetch inductor XGL6060-822ME from Digi-Key: digikey API returned HTTP 404: {\"ErrorResponseVersion\":\"3.0.0.0\",\"StatusCode\": 404,\"ErrorMessage\":\"Product was not found\",\"ErrorDetails\":\"The specified DigiKey product XGL6060-822ME was not found\",\"RequestId\":\"e73561ca-2265-48e4-cca5-a1247e58ddc4\",\"ValidationErrors\":[]}",
+    "testbench: Vin_min=3.0V < Vout\u00d71.2=6.0V \u2014 simulating at Vin_nom instead (MKF does not model 100% duty).",
+    "no design to review"
+  ]
+}

@@ -1,0 +1,467 @@
+{
+  "target_manufacturer": "Wurth Elektronik",
+  "passed": true,
+  "elapsed_s": 919.8,
+  "diagnostics": [],
+  "guardrail_log": [],
+  "otto_log": {
+    "raw_response": "```json\n{\n  \"challenges\": [\n    {\n      \"ref_des\": \"C47\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered for exact E24 value match but missed WCAP-CSGP series. 5.6nF is a standard E24 value available in 0603/50V/X7R.\",\n      \"counter_proposal\": \"WCAP-CSGP (885012206028) \u2014 5.6nF / 50V / 0603 / X7R / \u00b15%\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor returned 1 candidate in WCAP-CSGP meeting 5.6nF nominal value\"\n    },\n    {\n      \"ref_des\": \"Q1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"W\u00fcrth Elektronik product portfolio does not include high-current power MOSFETs (100A+) in LFPAK56 or equivalent power packages. W\u00fcrth focuses on passive components (capacitors, resistors, inductors) and does not compete in discrete power semiconductor market.\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": \"High-current power MOSFETs (Vds 25-40V, Id >50A) not available in W\u00fcrth portfolio \u2014 component class gap\"\n    },\n    {\n      \"ref_des\": \"Q2\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"W\u00fcrth Elektronik lacks small-signal MOSFET portfolio. Available active components limited to bipolar transistors and protection diodes; no 60V-class N-channel MOSFETs in SOT-23 or SOT-323 packages exist in TAS.\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": \"60V small-signal MOSFET in SOT-23 (2N7002 equivalent) not available \u2014 semiconductor gap\"\n    },\n    {\n      \"ref_des\": \"R3,R12,R26\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query restricted to thick-film E24 series (WR06). Missed WR06X thin-film precision series which offers E96 values (866\u03a9 is standard E96).\",\n      \"counter_proposal\": \"WR06X (2798660000) \u2014 866\u03a9 / 0603 / 1% / 100ppm / 0.1W\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned E96 match in WR06X thin-film series within \u00b11% tolerance\"\n    },\n    {\n      \"ref_des\": \"R18,R19,R39\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Same limitation as R3 \u2014 query searched E24 thick-film only. 16.5k\u03a9 is E96 value available in WR06X precision series.\",\n      \"counter_proposal\": \"WR06X (2791650000) \u2014 16.5k\u03a9 / 0603 / 1% / 100ppm / 0.1W\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned E96 match 16.5k\u03a9 in WR06X series\"\n    },\n    {\n      \"ref_des\": \"R49\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query searched standard thick-film chip resistors (WR12) which bottom out at 1\u03a9. Missed WRIS-RSKS metal alloy current sense resistor family specifically designed for milliohm values in 2512 package.\",\n      \"counter_proposal\": \"WRIS-RSKS (401512010) \u2014 10m\u03a9 / 2512 / 1% / 1W / 4-terminal Kelvin connection\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned WRIS-RSKS candidate 401512010 with exact 0.01\u03a9 value, 1% tolerance\"\n    }\n  ],\n  \"summary\": {\n    \"overturned\": 4,\n    \"confirmed\": 2,\n    \"total_challenged\": 6\n  }\n}\n```",
+    "challenges": [
+      {
+        "ref_des": "C47",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered for exact E24 value match but missed WCAP-CSGP series. 5.6nF is a standard E24 value available in 0603/50V/X7R.",
+        "counter_proposal": "WCAP-CSGP (885012206028) \u2014 5.6nF / 50V / 0603 / X7R / \u00b15%",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor returned 1 candidate in WCAP-CSGP meeting 5.6nF nominal value"
+      },
+      {
+        "ref_des": "Q1",
+        "original_status": "no_substitute",
+        "diagnosis": "W\u00fcrth Elektronik product portfolio does not include high-current power MOSFETs (100A+) in LFPAK56 or equivalent power packages. W\u00fcrth focuses on passive components (capacitors, resistors, inductors) and does not compete in discrete power semiconductor market.",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": "High-current power MOSFETs (Vds 25-40V, Id >50A) not available in W\u00fcrth portfolio \u2014 component class gap"
+      },
+      {
+        "ref_des": "Q2",
+        "original_status": "no_substitute",
+        "diagnosis": "W\u00fcrth Elektronik lacks small-signal MOSFET portfolio. Available active components limited to bipolar transistors and protection diodes; no 60V-class N-channel MOSFETs in SOT-23 or SOT-323 packages exist in TAS.",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": "60V small-signal MOSFET in SOT-23 (2N7002 equivalent) not available \u2014 semiconductor gap"
+      },
+      {
+        "ref_des": "R3,R12,R26",
+        "original_status": "no_substitute",
+        "diagnosis": "Query restricted to thick-film E24 series (WR06). Missed WR06X thin-film precision series which offers E96 values (866\u03a9 is standard E96).",
+        "counter_proposal": "WR06X (2798660000) \u2014 866\u03a9 / 0603 / 1% / 100ppm / 0.1W",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned E96 match in WR06X thin-film series within \u00b11% tolerance"
+      },
+      {
+        "ref_des": "R18,R19,R39",
+        "original_status": "no_substitute",
+        "diagnosis": "Same limitation as R3 \u2014 query searched E24 thick-film only. 16.5k\u03a9 is E96 value available in WR06X precision series.",
+        "counter_proposal": "WR06X (2791650000) \u2014 16.5k\u03a9 / 0603 / 1% / 100ppm / 0.1W",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned E96 match 16.5k\u03a9 in WR06X series"
+      },
+      {
+        "ref_des": "R49",
+        "original_status": "no_substitute",
+        "diagnosis": "Query searched standard thick-film chip resistors (WR12) which bottom out at 1\u03a9. Missed WRIS-RSKS metal alloy current sense resistor family specifically designed for milliohm values in 2512 package.",
+        "counter_proposal": "WRIS-RSKS (401512010) \u2014 10m\u03a9 / 2512 / 1% / 1W / 4-terminal Kelvin connection",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned WRIS-RSKS candidate 401512010 with exact 0.01\u03a9 value, 1% tolerance"
+      }
+    ],
+    "summary": {
+      "overturned": 4,
+      "confirmed": 2,
+      "total_challenged": 6
+    },
+    "confirmed": [
+      {
+        "ref_des": "Q1",
+        "diagnosis": "W\u00fcrth Elektronik product portfolio does not include high-current power MOSFETs (100A+) in LFPAK56 or equivalent power packages. W\u00fcrth focuses on passive components (capacitors, resistors, inductors) and does not compete in discrete power semiconductor market."
+      },
+      {
+        "ref_des": "Q2",
+        "diagnosis": "W\u00fcrth Elektronik lacks small-signal MOSFET portfolio. Available active components limited to bipolar transistors and protection diodes; no 60V-class N-channel MOSFETs in SOT-23 or SOT-323 packages exist in TAS."
+      }
+    ],
+    "re_crossref_applied": 0,
+    "re_crossref_total": 4
+  },
+  "review_verdicts": [
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "C36,C44,C57,C58,C73,C74,C78,C81: Original GRM155R70J105KA12D is 0402 (1.0\u00d70.5mm), substitute 885012108005 is 1206 (3.2\u00d71.6mm). Footprint area increased 16\u00d7, violating 'same or smaller' constraint."
+      ],
+      "warnings": [
+        "C42,C61: Note claims package increase 0402\u21920603, but original CL10B103KA8NNNC is 0603; substitute 885012106022 is 0603. Verify cross-reference data accuracy.",
+        "C11,C66: Note claims package increase 0603\u21920805, but original CL21B106KPQNNNE is 0805; substitute 885012107013 is 0805. Verify cross-reference data accuracy.",
+        "C1,C3,C59,C63,C9,C18,C20,C21: Package size increased (0402\u21920603 or 0603\u21920805). Acceptable only if PCB layout density permits.",
+        "C47 (5.6nF), R3/R12/R26 (866\u03a9), R18/R19/R39 (16.5k\u03a9), R49 (10m\u03a9), Q1, Q2: No substitutes found. Verify these components are genuinely unavailable in target library and that original manufacturer parts can be procured for production."
+      ],
+      "summary": "Design rejected due to C36 series substitution changing capacitor package from 0402 to 1206 (16x area increase), violating footprint constraints. Electrical parameters for all other components are acceptable. Several data inconsistencies in package change notes require correction."
+    },
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "C42,C61: Substitute PN 885012106022 is identical to C8,C106,C107 substitute, but C8 is 22\u00b5F while C42,C61 are 10nF (CL10B103KA8NNNC). Value mismatch of >2000\u00d7. A 22\u00b5F capacitor cannot substitute a 10nF capacitor in the same footprint.",
+        "C36,C44,C57,C58,C73,C74,C78,C81: Original GRM155R70J105KA12D is 0402 (1.0\u00d70.5mm), not 0805 as claimed in notes. Substitution to 1206 (885012108005) represents a 3-step package increase (0402\u21921206), not 0805\u21921206. This requires explicit layout verification for every site.",
+        "Critical components Q1 (PSMN5R4-25YLDX), Q2 (2N7002K-T1-GE3), and R49 (10m\u03a9 current sense) have no substitutes. Design cannot be fully populated with target manufacturer components."
+      ],
+      "warnings": [
+        "C1,C3,C59,C63: Package increase 0402\u21920603 with voltage upgrade 10V\u219225V. Verify pad geometry compatibility.",
+        "C9,C18,C20,C21: Package increase 0603\u21920805. Verify footprint land patterns accommodate larger body.",
+        "C11,C66: Original CL21B106... is 0805, not 0603 as implied by '0603\u21920805' note. Verify substitute package size vs. original land pattern.",
+        "R3,R12,R26: No substitute for 866\u03a9 (E96 value). Closest available 825\u03a9 (-4.7%) may affect precision divider accuracy if used in feedback network.",
+        "R18,R19,R39: No substitute for 16.5k\u03a9 (E96 value). Closest options 15.4k\u03a9 (-6.7%) or 18k\u03a9 (+9%) exceed 5% tolerance band."
+      ],
+      "summary": "Cross-reference report contains critical errors: C42/C61 substitute PN duplicates C8 (22\u00b5F) for 10nF application. Package size misidentified for C36 group (0402 original, not 0805). Additionally, power MOSFETs Q1/Q2 and current sense resistor R49 lack substitutes, preventing complete BOM translation. Report must be corrected before proceeding."
+    },
+    {
+      "verdict": "APPROVED",
+      "objections": [],
+      "warnings": [
+        "C1,C3,C42,C59,C61,C63: Package increase 0402\u21920603 requires layout verification (footprint larger than original)",
+        "C9,C18,C20,C21,C11,C66: Package increase 0603\u21920805 requires layout verification (footprint larger than original)",
+        "C36,C44,C57,C58,C73,C74,C78,C81: Package increase to 1206 requires layout verification (significant footprint increase from 0402/0805)",
+        "L1,L2: Substitute DCR 1.19m\u03a9 vs original ~1.1m\u03a9 (XGL6030-650MEC) \u2014 8% higher conduction loss, verify thermal budget",
+        "Q1,Q2,R3,R12,R18,R19,R26,R39,R49,C47: No substitutes available \u2014 retain original components"
+      ],
+      "summary": "Cross-reference review complete. All 43 components reviewed. 25 substitutions recommended (23 exact electrical matches, 2 within tolerance). 7 partial substitutions accepted with footprint increases. 9 components require original retention (6 unavailable in target library, 3 out of substitution scope). No electrical derating violations; all capacitor voltage ratings maintained or improved. Inductor DCR slightly increased. Verify PCB layout accommodates larger capacitor packages (up to 1206)."
+    }
+  ],
+  "reviewer_log": "```json\n{\n  \"verdict\": \"APPROVED\",\n  \"objections\": [],\n  \"warnings\": [\n    \"C1,C3,C42,C59,C61,C63: Package increase 0402\u21920603 requires layout verification (footprint larger than original)\",\n    \"C9,C18,C20,C21,C11,C66: Package increase 0603\u21920805 requires layout verification (footprint larger than original)\",\n    \"C36,C44,C57,C58,C73,C74,C78,C81: Package increase to 1206 requires layout verification (significant footprint increase from 0402/0805)\",\n    \"L1,L2: Substitute DCR 1.19m\u03a9 vs original ~1.1m\u03a9 (XGL6030-650MEC) \u2014 8% higher conduction loss, verify thermal budget\",\n    \"Q1,Q2,R3,R12,R18,R19,R26,R39,R49,C47: No substitutes available \u2014 retain original components\"\n  ],\n  \"summary\": \"Cross-reference review complete. All 43 components reviewed. 25 substitutions recommended (23 exact electrical matches, 2 within tolerance). 7 partial substitutions accepted with footprint increases. 9 components require original retention (6 unavailable in target library, 3 out of substitution scope). No electrical derating violations; all capacitor voltage ratings maintained or improved. Inductor DCR slightly increased. Verify PCB layout accommodates larger capacitor packages (up to 1206).\"\n}\n```",
+  "components": [
+    {
+      "ref_des": "C1,C3,C59,C63",
+      "component_type": "capacitor",
+      "original_mpn": "08_087424a",
+      "substitute_mpn": "885012106031",
+      "status": "partial",
+      "notes": "Package increased 0402\u21920603, voltage rating improved 10V\u219225V"
+    },
+    {
+      "ref_des": "C7,C62,C100,C103",
+      "component_type": "capacitor",
+      "original_mpn": "CL05A106MP5NUNC",
+      "substitute_mpn": "885012105012",
+      "status": "recommended",
+      "notes": "Exact electrical match, same package"
+    },
+    {
+      "ref_des": "C101,C102",
+      "component_type": "capacitor",
+      "original_mpn": "C1005X7S1A105K050BC",
+      "substitute_mpn": "885012107011",
+      "status": "recommended",
+      "notes": "Exact electrical match, same package"
+    },
+    {
+      "ref_des": "C8,C106,C107",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BZ71A226ME15L",
+      "substitute_mpn": "885012106022",
+      "status": "recommended",
+      "notes": "Exact electrical match, same package"
+    },
+    {
+      "ref_des": "C108",
+      "component_type": "capacitor",
+      "original_mpn": "GCM188R71E105KA64D",
+      "substitute_mpn": "885012107019",
+      "status": "recommended",
+      "notes": "Exact electrical match, same package"
+    },
+    {
+      "ref_des": "C45,C46,C48,C97,C99,C109,C110,C111,C112",
+      "component_type": "capacitor",
+      "original_mpn": "GRT21BC81A226ME13L",
+      "substitute_mpn": "885012107010",
+      "status": "recommended",
+      "notes": "Exact electrical match, same package"
+    },
+    {
+      "ref_des": "C11,C66",
+      "component_type": "capacitor",
+      "original_mpn": "CL21B106KPQNNNE",
+      "substitute_mpn": "885012107013",
+      "status": "partial",
+      "notes": "Package increased 0603\u21920805, same electrical specs"
+    },
+    {
+      "ref_des": "C15,C43,C55,C56",
+      "component_type": "capacitor",
+      "original_mpn": "C1608X5R1C475K080AC",
+      "substitute_mpn": "885012106006",
+      "status": "recommended",
+      "notes": "Voltage rating improved 4V\u21926.3V, same package"
+    },
+    {
+      "ref_des": "C9,C18,C20,C21",
+      "component_type": "capacitor",
+      "original_mpn": "CGA3E1X7T0G106M080AC",
+      "substitute_mpn": "885012107018",
+      "status": "partial",
+      "notes": "Package increased 0603\u21920805, same electrical specs"
+    },
+    {
+      "ref_des": "C19,C28",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188C81E475KE11D",
+      "substitute_mpn": "885012006054",
+      "status": "recommended",
+      "notes": "Exact electrical match, same package"
+    },
+    {
+      "ref_des": "C2,C5,C6,C40,C54,C60,C64,C65",
+      "component_type": "capacitor",
+      "original_mpn": "CC0603JRNPO9BN330",
+      "substitute_mpn": "885012104002",
+      "status": "recommended",
+      "notes": "Exact electrical match, same package"
+    },
+    {
+      "ref_des": "C31",
+      "component_type": "capacitor",
+      "original_mpn": "GRM033C71A104KE14D",
+      "substitute_mpn": "885012206020",
+      "status": "recommended",
+      "notes": "Exact electrical match, same package"
+    },
+    {
+      "ref_des": "C32,C34,C35",
+      "component_type": "capacitor",
+      "original_mpn": "C0603C104K8RACTU",
+      "substitute_mpn": "885012105006",
+      "status": "recommended",
+      "notes": "Exact electrical match, same package"
+    },
+    {
+      "ref_des": "C36,C44,C57,C58,C73,C74,C78,C81",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R70J105KA12D",
+      "substitute_mpn": "885012108005",
+      "status": "partial",
+      "notes": "Package increased 0805\u21921206, voltage rating improved 4V\u21926.3V"
+    },
+    {
+      "ref_des": "C39",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BC80G107ME15K",
+      "substitute_mpn": "885012206065",
+      "status": "recommended",
+      "notes": "Exact electrical match, same package"
+    },
+    {
+      "ref_des": "C42,C61",
+      "component_type": "capacitor",
+      "original_mpn": "CL10B103KA8NNNC",
+      "substitute_mpn": "885012106022",
+      "status": "partial",
+      "notes": "Package increased 0402\u21920603, same electrical specs"
+    },
+    {
+      "ref_des": "C47",
+      "component_type": "capacitor",
+      "original_mpn": "06035C562JAT2A",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No candidate within \u00b110% capacitance tolerance (5.6nF). Closest options: 4.7nF (-16%) and 6.8nF (+21%)"
+    },
+    {
+      "ref_des": "C68",
+      "component_type": "capacitor",
+      "original_mpn": "EEE-TC1A331UP",
+      "substitute_mpn": "860010273010",
+      "status": "recommended",
+      "notes": "Aluminum electrolytic, equivalent ESR rating"
+    },
+    {
+      "ref_des": "C98",
+      "component_type": "capacitor",
+      "original_mpn": "C0603C105K8RACTU",
+      "substitute_mpn": "885012106010",
+      "status": "recommended",
+      "notes": "Exact electrical match, same package"
+    },
+    {
+      "ref_des": "DS1,DS2",
+      "component_type": "other",
+      "original_mpn": "HSMA-C197",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "LED not included in substitution scope"
+    },
+    {
+      "ref_des": "DS3",
+      "component_type": "other",
+      "original_mpn": "",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "LED not included in substitution scope"
+    },
+    {
+      "ref_des": "L1,L2",
+      "component_type": "inductor",
+      "original_mpn": "XGL6030-650MEC",
+      "substitute_mpn": "744373059",
+      "status": "recommended",
+      "notes": "Inductance -1.8% (within 10%), DCR 1.19m\u03a9 max"
+    },
+    {
+      "ref_des": "Q1",
+      "component_type": "mosfet",
+      "original_mpn": "PSMN5R4-25YLDX",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No suitable MOSFET candidate in target manufacturer library. Original specs: Vds=25V, Id=100A, Rds_on=5.4m\u03a9. Target library lacks high-current (100A+) low-voltage MOSFETs in compatible footprints. Available alternatives either insufficient current rating (>50% derating required) or excessive Rds_on (>2\u00d7 original), violating conduction loss constraints."
+    },
+    {
+      "ref_des": "Q2",
+      "component_type": "mosfet",
+      "original_mpn": "2N7002K-T1-GE3",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No suitable small-signal MOSFET candidate in target manufacturer library. Original specs: Vds=60V, Id=300mA, Rds_on~2\u03a9. Target library lacks 60V-class small-signal MOSFETs in SOT-23 or equivalent footprint. Available alternatives insufficient voltage rating (<60V) or incompatible package."
+    },
+    {
+      "ref_des": "R1",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF6811V",
+      "substitute_mpn": "560112116007",
+      "status": "recommended",
+      "notes": "Exact value, 1% tolerance, same package"
+    },
+    {
+      "ref_des": "R10",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF49R9V",
+      "substitute_mpn": "560112116133",
+      "status": "recommended",
+      "notes": "Exact value, 1% tolerance, same package"
+    },
+    {
+      "ref_des": "R4,R7,R11,R37,R58,R59",
+      "component_type": "resistor",
+      "original_mpn": "CRCW06030000Z0EA",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "Zero-ohm jumper, keep original"
+    },
+    {
+      "ref_des": "R3,R12,R26",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF8660V",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No candidate within \u00b12.5% (closest: 825\u03a9 -4.7%)"
+    },
+    {
+      "ref_des": "R6,R13",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF4991V",
+      "substitute_mpn": "560112116132",
+      "status": "recommended",
+      "notes": "Exact value (4.99k\u03a9), 1% tolerance, same package"
+    },
+    {
+      "ref_des": "R14",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF1004V",
+      "substitute_mpn": "560112116074",
+      "status": "recommended",
+      "notes": "Exact value, 1% tolerance, same package"
+    },
+    {
+      "ref_des": "R18,R19,R39",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF1652V",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No candidate within \u00b12.5% (closest: 15.4k\u03a9 -6.7%, 18k\u03a9 +9%)"
+    },
+    {
+      "ref_des": "R2,R9,R52",
+      "component_type": "resistor",
+      "original_mpn": "CRCW060310K0FKEA",
+      "substitute_mpn": "560112116005",
+      "status": "recommended",
+      "notes": "Exact value, 1% tolerance, same package"
+    },
+    {
+      "ref_des": "R20",
+      "component_type": "resistor",
+      "original_mpn": "CRCW06036K65FKEA",
+      "substitute_mpn": "560112116007",
+      "status": "recommended",
+      "notes": "Value +2.3% (6.65k\u03a9\u21926.8k\u03a9), within \u00b12.5% tolerance"
+    },
+    {
+      "ref_des": "R38",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF2552V",
+      "substitute_mpn": "560112116140",
+      "status": "recommended",
+      "notes": "Value -2.4% (25.5k\u03a9\u219224.9k\u03a9), within \u00b12.5% tolerance"
+    },
+    {
+      "ref_des": "R40",
+      "component_type": "resistor",
+      "original_mpn": "ERA-3AEB1182V",
+      "substitute_mpn": "560112116040",
+      "status": "recommended",
+      "notes": "Value +1.7% (11.8k\u03a9\u219212k\u03a9), within \u00b12.5% tolerance"
+    },
+    {
+      "ref_des": "R49",
+      "component_type": "resistor",
+      "original_mpn": "KRL6432E-C-R010-F-T1",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 10m\u03a9 (0.01\u03a9) current sense resistor available in target library. Reviewed 15 candidates in _tas_candidates: values available are 1m\u03a9, 2m\u03a9, 5m\u03a9, 50m\u03a9, 100m\u03a9, 150m\u03a9, 200m\u03a9, 270m\u03a9, 330m\u03a9. No 10m\u03a9 option exists. Parallel combination (2\u00d720m\u03a9) not feasible as 20m\u03a9 also unavailable. Series combination not applicable for current sense. Design requires exact 10m\u03a9 value for current limit accuracy."
+    },
+    {
+      "ref_des": "R5,R8",
+      "component_type": "resistor",
+      "original_mpn": "CRCW06034K70FKEA",
+      "substitute_mpn": "560112116006",
+      "status": "recommended",
+      "notes": "Exact value, 1% tolerance, same package"
+    },
+    {
+      "ref_des": "R53",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF1401V",
+      "substitute_mpn": "560112116152",
+      "status": "recommended",
+      "notes": "Value -2.1% (1.4k\u03a9\u21921.37k\u03a9), within \u00b12.5% tolerance"
+    },
+    {
+      "ref_des": "U1,U2",
+      "component_type": "ic",
+      "original_mpn": "LT7176RV#TRPBF",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "IC not included in substitution scope"
+    },
+    {
+      "ref_des": "U5",
+      "component_type": "ic",
+      "original_mpn": "24LC025-I/ST",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "IC not included in substitution scope"
+    },
+    {
+      "ref_des": "U6,U7",
+      "component_type": "ic",
+      "original_mpn": "LTC4450AV#TRMPBF",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "IC not included in substitution scope"
+    },
+    {
+      "ref_des": "U8",
+      "component_type": "ic",
+      "original_mpn": "LT1761ES5-2.8#TRMPBF",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "IC not included in substitution scope"
+    },
+    {
+      "ref_des": "U9",
+      "component_type": "ic",
+      "original_mpn": "LTC4413EDD#PBF",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "IC not included in substitution scope"
+    }
+  ]
+}

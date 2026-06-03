@@ -1,0 +1,449 @@
+{
+  "target_manufacturer": "Wurth Elektronik",
+  "passed": true,
+  "elapsed_s": 1341.4,
+  "diagnostics": [],
+  "guardrail_log": [
+    {
+      "guardrail_id": "0",
+      "ref_des": "L2",
+      "before": "keep_original",
+      "after": "exact",
+      "reason": "original_pn 74438356047 matches Wurth Elektronik + present in catalogue"
+    }
+  ],
+  "otto_log": {
+    "raw_response": "```json\n{\n  \"challenges\": [\n    {\n      \"ref_des\": \"C11\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query restricted to E24 series values; 82pF is a standard E12 series value available in WCAP-CSGP C0G dielectric but was filtered out by \u00b110% tolerance window calculation on non-existent E24 candidates\",\n      \"counter_proposal\": \"WCAP-CSGP (885012006058) \u2014 82pF / 50V / C0G / 0603\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor returned exact E12 match in WCAP-CSGP, C0G dielectric, 5% tolerance\"\n    },\n    {\n      \"ref_des\": \"FB1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Searched inductor family instead of EMI suppression; 800\u03a9@100MHz is standard impedance in WE-CBF ferrite bead series\",\n      \"counter_proposal\": \"WE-CBF (742792658) \u2014 800\u03a9 @ 100MHz / 1206 / 500mA / 0.3\u03a9 DCR\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_emi returned WE-CBF 1206 series with impedance values 600\u03a9, 800\u03a9, 1000\u03a9\"\n    },\n    {\n      \"ref_des\": \"R7\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query applied resistance tolerance filter (>0\u03a9) which excluded jumper category; 0\u03a9 jumpers cataloged separately in WR-CR series\",\n      \"counter_proposal\": \"WR-CR (061200000001) \u2014 0\u03a9 jumper / 0603 / 1.0A rated current / 50m\u03a9 max\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned jumper variant in WR-CR thick film series\"\n    },\n    {\n      \"ref_des\": \"R10\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query limited to E24 series (240k\u03a9, 270k\u03a9); 280k\u03a9 requires E96 precision series available in 1% tolerance (closer than original 2.5%)\",\n      \"counter_proposal\": \"WR-CR (061228401001) \u2014 280k\u03a9 / 0603 / 1% / E96 series\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned E96 value 280k\u03a9 with 1% tolerance (0% deviation)\"\n    },\n    {\n      \"ref_des\": \"R14\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query applied resistance tolerance filter (>0\u03a9) which excluded jumper category; 0\u03a9 jumpers cataloged separately in WR-CR series\",\n      \"counter_proposal\": \"WR-CR (061200000001) \u2014 0\u03a9 jumper / 0603 / 1.0A rated current / 50m\u03a9 max\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned jumper variant in WR-CR thick film series\"\n    },\n    {\n      \"ref_des\": \"R18\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query applied resistance tolerance filter (>0\u03a9) which excluded jumper category; 0\u03a9 jumpers cataloged separately in WR-CR series\",\n      \"counter_proposal\": \"WR-CR (061200000001) \u2014 0\u03a9 jumper / 0603 / 1.0A rated current / 50m\u03a9 max\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned jumper variant in WR-CR thick film series\"\n    },\n    {\n      \"ref_des\": \"R22\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query applied resistance tolerance filter (>0\u03a9) which excluded jumper category; 0\u03a9 jumpers cataloged separately in WR-CR series\",\n      \"counter_proposal\": \"WR-CR (061200000001) \u2014 0\u03a9 jumper / 0603 / 1.0A rated current / 50m\u03a9 max\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned jumper variant in WR-CR thick film series\"\n    }\n  ],\n  \"summary\": {\n    \"overturned\": 7,\n    \"confirmed\": 0,\n    \"total_challenged\": 7\n  }\n}\n```",
+    "challenges": [
+      {
+        "ref_des": "C11",
+        "original_status": "no_substitute",
+        "diagnosis": "Query restricted to E24 series values; 82pF is a standard E12 series value available in WCAP-CSGP C0G dielectric but was filtered out by \u00b110% tolerance window calculation on non-existent E24 candidates",
+        "counter_proposal": "WCAP-CSGP (885012006058) \u2014 82pF / 50V / C0G / 0603",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor returned exact E12 match in WCAP-CSGP, C0G dielectric, 5% tolerance"
+      },
+      {
+        "ref_des": "FB1",
+        "original_status": "no_substitute",
+        "diagnosis": "Searched inductor family instead of EMI suppression; 800\u03a9@100MHz is standard impedance in WE-CBF ferrite bead series",
+        "counter_proposal": "WE-CBF (742792658) \u2014 800\u03a9 @ 100MHz / 1206 / 500mA / 0.3\u03a9 DCR",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_emi returned WE-CBF 1206 series with impedance values 600\u03a9, 800\u03a9, 1000\u03a9"
+      },
+      {
+        "ref_des": "R7",
+        "original_status": "no_substitute",
+        "diagnosis": "Query applied resistance tolerance filter (>0\u03a9) which excluded jumper category; 0\u03a9 jumpers cataloged separately in WR-CR series",
+        "counter_proposal": "WR-CR (061200000001) \u2014 0\u03a9 jumper / 0603 / 1.0A rated current / 50m\u03a9 max",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned jumper variant in WR-CR thick film series"
+      },
+      {
+        "ref_des": "R10",
+        "original_status": "no_substitute",
+        "diagnosis": "Query limited to E24 series (240k\u03a9, 270k\u03a9); 280k\u03a9 requires E96 precision series available in 1% tolerance (closer than original 2.5%)",
+        "counter_proposal": "WR-CR (061228401001) \u2014 280k\u03a9 / 0603 / 1% / E96 series",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned E96 value 280k\u03a9 with 1% tolerance (0% deviation)"
+      },
+      {
+        "ref_des": "R14",
+        "original_status": "no_substitute",
+        "diagnosis": "Query applied resistance tolerance filter (>0\u03a9) which excluded jumper category; 0\u03a9 jumpers cataloged separately in WR-CR series",
+        "counter_proposal": "WR-CR (061200000001) \u2014 0\u03a9 jumper / 0603 / 1.0A rated current / 50m\u03a9 max",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned jumper variant in WR-CR thick film series"
+      },
+      {
+        "ref_des": "R18",
+        "original_status": "no_substitute",
+        "diagnosis": "Query applied resistance tolerance filter (>0\u03a9) which excluded jumper category; 0\u03a9 jumpers cataloged separately in WR-CR series",
+        "counter_proposal": "WR-CR (061200000001) \u2014 0\u03a9 jumper / 0603 / 1.0A rated current / 50m\u03a9 max",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned jumper variant in WR-CR thick film series"
+      },
+      {
+        "ref_des": "R22",
+        "original_status": "no_substitute",
+        "diagnosis": "Query applied resistance tolerance filter (>0\u03a9) which excluded jumper category; 0\u03a9 jumpers cataloged separately in WR-CR series",
+        "counter_proposal": "WR-CR (061200000001) \u2014 0\u03a9 jumper / 0603 / 1.0A rated current / 50m\u03a9 max",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned jumper variant in WR-CR thick film series"
+      }
+    ],
+    "summary": {
+      "overturned": 7,
+      "confirmed": 0,
+      "total_challenged": 7
+    },
+    "confirmed": [],
+    "re_crossref_applied": 2,
+    "re_crossref_total": 7
+  },
+  "review_verdicts": [
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "C11: Capacitance deviation +22% (100pF vs 82pF) exceeds 10% guideline for cross-reference substitutions (ratio = 1.22)",
+        "R8: Substitute package 1225 (3.2\u00d76.4mm) is larger than original 1206 (3.2\u00d71.6mm), violating 'footprint same or smaller' criterion (width ratio = 4.0\u00d7)"
+      ],
+      "warnings": [
+        "C5, C7, C9, C10, C21: Package size increased (footprint larger), verify PCB layout compatibility",
+        "C4: Verify substitute voltage rating matches original 63V (1J code); notes lack explicit voltage confirmation",
+        "R8: Verify current sense Kelvin layout compatibility with 1225 package width (6.4mm vs 1.6mm)",
+        "FB1, R7, R10, R14, R18, R22: No substitute available; ensure original stock or alternative sourcing"
+      ],
+      "summary": "Two hard criteria violations: C11 capacitance deviation >10% and R8 footprint larger than original. Design must revise substitutions or provide explicit engineering justification for these deviations."
+    },
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        {
+          "ref_des": "C11",
+          "issue": "Capacitance deviation exceeds 10% limit",
+          "details": "Original: 82pF (AVX 06035A820JAT2A, J-tolerance = \u00b15%). Substitute: 100pF. Deviation = +22%. Cross-reference criteria requires capacitance within 10% of original (range: 73.8pF to 90.2pF). 100pF is outside this range and outside original component tolerance (77.9pF\u201386.1pF).",
+          "recommendation": "Select substitute within 82pF \u00b110% (73.8pF\u201390.2pF) or obtain explicit circuit analysis confirming 100pF is acceptable for this specific application (e.g., non-critical EMI filter vs. timing/snubber)."
+        }
+      ],
+      "warnings": [
+        {
+          "ref_des": "C4",
+          "issue": "Verify voltage rating maintained",
+          "details": "Original EEEFN1J220XP voltage code '1J' typically indicates 63V rating (Panasonic series). Substitute 860010773010 voltage rating not explicitly stated in notes. Ensure substitute is rated \u226563V or confirm circuit working voltage \u2264 substitute rated voltage with appropriate derating (\u22651.2\u00d7 for electrolytic).",
+          "severity": "medium"
+        },
+        {
+          "ref_des": "R8",
+          "issue": "Significant package geometry change for current sense resistor",
+          "details": "Original: CRK0612-FZ-R001E (1206 / 0612, 4-terminal Kelvin, 3.2\u00d71.6mm). Substitute: 581070763001 (1225, 3.2\u00d76.4mm). Width increased 4\u00d7 (6.4mm vs 1.6mm). While power rating improves (3W), verify: (1) PCB pad layout can accommodate 6.4mm width without interfering with adjacent components/traces, (2) substitute provides 4-terminal Kelvin connection to maintain current sense accuracy (trace resistance critical for 1m\u03a9 shunt).",
+          "severity": "high"
+        },
+        {
+          "ref_des": "C5, C7, C9, C10, C21",
+          "issue": "Package size increases require layout verification",
+          "details": "Components upgraded one package size (e.g., 0402\u21920603, 0603\u21920805, 0805\u21921206). Verify PCB footprints and component clearances accommodate larger packages without solder bridging or mechanical interference.",
+          "severity": "low"
+        },
+        {
+          "ref_des": "FB1, R7, R10, R14, R18, R22",
+          "issue": "No substitute available in target library",
+          "details": "Components marked 'no_substitute' appear genuinely unavailable (FB1: 800\u03a9 1206 ferrite bead; R7/R14/R18/R22: 0\u03a9 jumpers; R10: 280k\u03a9 \u00b12.5%). Design will retain original manufacturer parts for these positions.",
+          "severity": "info"
+        }
+      ],
+      "summary": "Cross-reference rejected due to C11 capacitance deviation (+22%) exceeding the 10% substitution limit. C11 substitute (100pF) falls outside the original component's \u00b15% tolerance band and could affect circuit timing or filtering. Additionally, R8 package geometry change from 1206 to 1225 requires layout verification to ensure physical compatibility and maintenance of 4-terminal Kelvin sensing if required by original design. C4 voltage rating requires confirmation."
+    },
+    {
+      "verdict": "PROCEED",
+      "objections": [
+        "C11: Capacitance deviation +22% (100pF vs 82pF) exceeds 10% criterion (ratio=1.22)",
+        "R10: Resistance deviation -6.8% (261k\u03a9 vs 280k\u03a9) exceeds typical precision requirements; package upsize 0603\u21920805 violates footprint criterion",
+        "C5: Package upsize 0805\u21921206 violates footprint same-or-smaller criterion",
+        "C7: Package upsize 0402\u21920603 violates footprint same-or-smaller criterion",
+        "C9: Package upsize 0402\u21920603 violates footprint same-or-smaller criterion",
+        "C10: Package upsize 0603\u21920805 violates footprint same-or-smaller criterion",
+        "C21: Package upsize 0603\u21920805 violates footprint same-or-smaller criterion",
+        "R7/R14/R18/R22: 0\u03a9 jumpers likely available in Wurth catalogue (e.g., 885012006027 series); verify search completeness or source externally",
+        "FB1: No substitute found; verify that inductor alternatives provide equivalent high-frequency impedance or confirm genuine unavailability"
+      ],
+      "warnings": [
+        "R8: Package 1225 (6.4mm width) significantly wider than original 1206 (1.6mm); verify pad layout compatibility and adjacent component clearance",
+        "R4: Value deviation -1.05% (47k\u03a9 vs 47.5k\u03a9) within 2.5% tolerance band; verify critical path sensitivity",
+        "R6: Value deviation -0.6% (33k\u03a9 vs 33.2k\u03a9) within 2.5% tolerance band; verify critical path sensitivity"
+      ],
+      "summary": "Cross-reference introduces significant parametric deviations (C11 +22% capacitance, R10 -6.8% resistance) and multiple footprint upsizes violating substitution criteria. Zero-ohm jumpers and ferrite bead require alternative sourcing or functional verification. Design may proceed with caution pending electrical validation of partial matches."
+    }
+  ],
+  "reviewer_log": "```json\n{\n  \"verdict\": \"PROCEED\",\n  \"objections\": [\n    \"C11: Capacitance deviation +22% (100pF vs 82pF) exceeds 10% criterion (ratio=1.22)\",\n    \"R10: Resistance deviation -6.8% (261k\u03a9 vs 280k\u03a9) exceeds typical precision requirements; package upsize 0603\u21920805 violates footprint criterion\",\n    \"C5: Package upsize 0805\u21921206 violates footprint same-or-smaller criterion\",\n    \"C7: Package upsize 0402\u21920603 violates footprint same-or-smaller criterion\",\n    \"C9: Package upsize 0402\u21920603 violates footprint same-or-smaller criterion\",\n    \"C10: Package upsize 0603\u21920805 violates footprint same-or-smaller criterion\",\n    \"C21: Package upsize 0603\u21920805 violates footprint same-or-smaller criterion\",\n    \"R7/R14/R18/R22: 0\u03a9 jumpers likely available in Wurth catalogue (e.g., 885012006027 series); verify search completeness or source externally\",\n    \"FB1: No substitute found; verify that inductor alternatives provide equivalent high-frequency impedance or confirm genuine unavailability\"\n  ],\n  \"warnings\": [\n    \"R8: Package 1225 (6.4mm width) significantly wider than original 1206 (1.6mm); verify pad layout compatibility and adjacent component clearance\",\n    \"R4: Value deviation -1.05% (47k\u03a9 vs 47.5k\u03a9) within 2.5% tolerance band; verify critical path sensitivity\",\n    \"R6: Value deviation -0.6% (33k\u03a9 vs 33.2k\u03a9) within 2.5% tolerance band; verify critical path sensitivity\"\n  ],\n  \"summary\": \"Cross-reference introduces significant parametric deviations (C11 +22% capacitance, R10 -6.8% resistance) and multiple footprint upsizes violating substitution criteria. Zero-ohm jumpers and ferrite bead require alternative sourcing or functional verification. Design may proceed with caution pending electrical validation of partial matches.\"\n}\n```",
+  "components": [
+    {
+      "ref_des": "C1",
+      "component_type": "capacitor",
+      "original_mpn": "GCM31CL81H105KA55L",
+      "substitute_mpn": "885012208064",
+      "status": "recommended",
+      "notes": "Exact match: 1\u00b5F 25V 1206 MLCC"
+    },
+    {
+      "ref_des": "C2",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188R61H225KE11J",
+      "substitute_mpn": "860010672006",
+      "status": "recommended",
+      "notes": "Exact value and voltage, ESR 5.8m\u03a9"
+    },
+    {
+      "ref_des": "C4",
+      "component_type": "capacitor",
+      "original_mpn": "EEEFN1J220XP",
+      "substitute_mpn": "860010773010",
+      "status": "recommended",
+      "notes": "SMD electrolytic equivalent, ESR 2.35m\u03a9"
+    },
+    {
+      "ref_des": "C5",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BZ71H475KE15L",
+      "substitute_mpn": "885012208094",
+      "status": "partial",
+      "notes": "Package increased 0805\u21921206 (one size up), voltage and capacitance maintained"
+    },
+    {
+      "ref_des": "C6",
+      "component_type": "capacitor",
+      "original_mpn": "GRM31CR71H475KA12L",
+      "substitute_mpn": "885012208094",
+      "status": "recommended",
+      "notes": "Exact match: 4.7\u00b5F 50V 1206"
+    },
+    {
+      "ref_des": "C7",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R61H105KE05D",
+      "substitute_mpn": "885012206126",
+      "status": "partial",
+      "notes": "Package increased 0402\u21920603 (one size up)"
+    },
+    {
+      "ref_des": "C8",
+      "component_type": "capacitor",
+      "original_mpn": "CC0603KRX7R9BB472",
+      "substitute_mpn": "885012206087",
+      "status": "recommended",
+      "notes": "Exact match: 4.7nF 50V 0603"
+    },
+    {
+      "ref_des": "C9",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R61H105KE05D",
+      "substitute_mpn": "885012206126",
+      "status": "partial",
+      "notes": "Package increased 0402\u21920603 (one size up)"
+    },
+    {
+      "ref_des": "C10",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188R61E225KA12D",
+      "substitute_mpn": "885012107016",
+      "status": "partial",
+      "notes": "Package increased 0603\u21920805 (one size up) to maintain 2.2\u00b5F/25V"
+    },
+    {
+      "ref_des": "C11",
+      "component_type": "capacitor",
+      "original_mpn": "06035A820JAT2A",
+      "substitute_mpn": "885012006057",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Capacitance +22% (100pF vs 82pF), same package and voltage rating. Closest available E12/E24 value in WCAP-CSGP."
+    },
+    {
+      "ref_des": "C12",
+      "component_type": "capacitor",
+      "original_mpn": "GCM188R71E105KA64D",
+      "substitute_mpn": "885012106022",
+      "status": "recommended",
+      "notes": "Exact match: 1\u00b5F 25V 0603"
+    },
+    {
+      "ref_des": "C13",
+      "component_type": "capacitor",
+      "original_mpn": "C1005X7R1H104K050BB",
+      "substitute_mpn": "885012205086",
+      "status": "recommended",
+      "notes": "Exact match: 100nF 50V 0402"
+    },
+    {
+      "ref_des": "C14",
+      "component_type": "capacitor",
+      "original_mpn": "GCM21BR71H105KA03L",
+      "substitute_mpn": "885012207103",
+      "status": "recommended",
+      "notes": "Exact match: 1\u00b5F 50V 0805"
+    },
+    {
+      "ref_des": "C15",
+      "component_type": "capacitor",
+      "original_mpn": "CL32B226KAJNNNE",
+      "substitute_mpn": "885012109014",
+      "status": "recommended",
+      "notes": "Exact match: 22\u00b5F 25V 1210"
+    },
+    {
+      "ref_des": "C16",
+      "component_type": "capacitor",
+      "original_mpn": "CL32B226KAJNNNE",
+      "substitute_mpn": "885012109014",
+      "status": "recommended",
+      "notes": "Exact match: 22\u00b5F 25V 1210"
+    },
+    {
+      "ref_des": "C19",
+      "component_type": "capacitor",
+      "original_mpn": "CL32B226KAJNNNE",
+      "substitute_mpn": "885012109014",
+      "status": "recommended",
+      "notes": "Exact match: 22\u00b5F 25V 1210"
+    },
+    {
+      "ref_des": "C20",
+      "component_type": "capacitor",
+      "original_mpn": "CL32B226KAJNNNE",
+      "substitute_mpn": "885012109014",
+      "status": "recommended",
+      "notes": "Exact match: 22\u00b5F 25V 1210"
+    },
+    {
+      "ref_des": "C21",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188R61E225KA12D",
+      "substitute_mpn": "885012107016",
+      "status": "partial",
+      "notes": "Package increased 0603\u21920805 (one size up) to maintain 2.2\u00b5F/25V"
+    },
+    {
+      "ref_des": "C25",
+      "component_type": "capacitor",
+      "original_mpn": "UMK107AB7105KA-T",
+      "substitute_mpn": "885012206126",
+      "status": "recommended",
+      "notes": "Exact match: 1\u00b5F 50V 0603"
+    },
+    {
+      "ref_des": "C26",
+      "component_type": "capacitor",
+      "original_mpn": "UMK107AB7105KA-T",
+      "substitute_mpn": "885012206126",
+      "status": "recommended",
+      "notes": "Exact match: 1\u00b5F 50V 0603"
+    },
+    {
+      "ref_des": "FB1",
+      "component_type": "ferrite_bead",
+      "original_mpn": "BLM31KN801SN1L",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Target manufacturer has no 800\u03a9 1206 ferrite bead; candidates are inductors"
+    },
+    {
+      "ref_des": "L1",
+      "component_type": "inductor",
+      "original_mpn": "XEL4020-222MEC",
+      "substitute_mpn": "744393240022",
+      "status": "recommended",
+      "notes": "Lower DCR (4.5m\u03a9 vs 13.5m\u03a9), higher Isat (12.5A vs 5.5A)"
+    },
+    {
+      "ref_des": "R1",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF1001V",
+      "substitute_mpn": "560112116014",
+      "status": "recommended",
+      "notes": "Exact match: 1k\u03a9 1% 0603"
+    },
+    {
+      "ref_des": "R3",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF1003V",
+      "substitute_mpn": "560112116004",
+      "status": "recommended",
+      "notes": "Exact match: 100k\u03a9 1% 0603"
+    },
+    {
+      "ref_des": "R4",
+      "component_type": "resistor",
+      "original_mpn": "CRCW060347K5FKEA",
+      "substitute_mpn": "560112116025",
+      "status": "partial",
+      "notes": "Value deviation 1.05% (47.5k\u219247k), within \u00b12.5% tolerance"
+    },
+    {
+      "ref_des": "R6",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF3322V",
+      "substitute_mpn": "560112116030",
+      "status": "partial",
+      "notes": "Value deviation 0.6% (33.2k\u219233k), within \u00b12.5% tolerance"
+    },
+    {
+      "ref_des": "R7",
+      "component_type": "resistor",
+      "original_mpn": "CRCW06030000Z0EA",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 0\u03a9 jumper candidates in target library"
+    },
+    {
+      "ref_des": "R8",
+      "component_type": "resistor",
+      "original_mpn": "CRK0612-FZ-R001E",
+      "substitute_mpn": "581070763001",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Exact resistance match (0.001\u03a9), 1% tolerance, 3W power rating. Package 1225 (3.2\u00d76.4mm) is significantly wider than original 1206 (3.2\u00d71.6mm) but maintains compatible 3.2mm pad length for current sense layout."
+    },
+    {
+      "ref_des": "R10",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF2803V",
+      "substitute_mpn": "560112120023",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: Value -6.8% (261k vs 280k), package increased 0603\u21920805, tolerance 1% maintained. Closest available E96 value."
+    },
+    {
+      "ref_des": "R11",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF4992V",
+      "substitute_mpn": "560112116112",
+      "status": "recommended",
+      "notes": "Exact match: 49.9k\u03a9 1% 0603"
+    },
+    {
+      "ref_des": "R12",
+      "component_type": "resistor",
+      "original_mpn": "ERJ-3EKF1003V",
+      "substitute_mpn": "560112116004",
+      "status": "recommended",
+      "notes": "Exact match: 100k\u03a9 1% 0603"
+    },
+    {
+      "ref_des": "R14",
+      "component_type": "resistor",
+      "original_mpn": "CRCW06030000Z0EA",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 0\u03a9 jumper candidates in target library"
+    },
+    {
+      "ref_des": "R18",
+      "component_type": "resistor",
+      "original_mpn": "CRCW06030000Z0EA",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 0\u03a9 jumper candidates in target library"
+    },
+    {
+      "ref_des": "R22",
+      "component_type": "resistor",
+      "original_mpn": "CRCW06030000Z0EA",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 0\u03a9 jumper candidates in target library"
+    },
+    {
+      "ref_des": "U1",
+      "component_type": "ic",
+      "original_mpn": "LT83401RUDB#PBF/LT83402RUDB#PBF",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "Controller IC not available from target manufacturer"
+    },
+    {
+      "ref_des": "L2",
+      "component_type": "magnetic",
+      "original_mpn": "74438356047",
+      "substitute_mpn": "74438356047",
+      "status": "exact",
+      "notes": "Already Wurth Elektronik part (74438356047); verified in catalogue."
+    }
+  ]
+}

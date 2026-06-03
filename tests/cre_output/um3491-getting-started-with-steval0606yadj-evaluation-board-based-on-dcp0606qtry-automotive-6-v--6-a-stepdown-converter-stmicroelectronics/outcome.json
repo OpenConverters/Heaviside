@@ -1,0 +1,40 @@
+{
+  "name": "um3491-getting-started-with-steval0606yadj-evaluation-board-based-on-dcp0606qtry-automotive-6-v--6-a-stepdown-converter-stmicroelectronics",
+  "passed": false,
+  "elapsed_s": 513.8,
+  "topology": "synchronous buck",
+  "vin_max": 6.0,
+  "vout": 3.3,
+  "pout": 19.8,
+  "bom_count": 17,
+  "comparisons": [
+    {
+      "sim_eff": 0.9663786423019421,
+      "claimed_eff": 0.91,
+      "delta_pp": 5.637864230194212,
+      "sim_vout": 3.362903,
+      "claimed_vout": 3.3,
+      "vout_err": 1.9061515151515267,
+      "passed": false,
+      "diagnosis": ""
+    },
+    {
+      "sim_eff": 0.9814674476680763,
+      "claimed_eff": 0.91,
+      "delta_pp": 7.146744766807622,
+      "sim_vout": 3.391632,
+      "claimed_vout": 3.3,
+      "vout_err": 2.7767272727272774,
+      "passed": false,
+      "diagnosis": "```json\n{\n  \"verdict\": \"REJECTED\",\n  \"objections\": [\n    \"Simulated efficiency (98.15%) exceeds claimed reference (91.0%) by 7.15pp, violating the 5pp maximum gap threshold for model validation.\",\n   "
+    }
+  ],
+  "diagnostics": [
+    "failed to fetch inductor XGL4030-471ME from Digi-Key: digikey API returned HTTP 404: {\"ErrorResponseVersion\":\"3.0.0.0\",\"StatusCode\": 404,\"ErrorMessage\":\"Product was not found\",\"ErrorDetails\":\"The specified DigiKey product XGL4030-471ME was not found\",\"RequestId\":\"2e0832c3-fa38-40a4-cede-16c75bb46d01\",\"ValidationErrors\":[]}",
+    "testbench: Vin_min=2.9V < Vout\u00d71.2=4.0V \u2014 simulating at Vin_nom instead (MKF does not model 100% duty).",
+    "testbench: inductor DCR not available in TAS \u2014 simulation uses ideal inductor (no winding loss)",
+    "testbench diagnosis: ```json\n{\n  \"verdict\": \"REJECTED\",\n  \"objections\": [\n    \"Simulated efficiency (98.15%) exceeds claimed reference (91.0%) by 7.15pp, violating the 5pp maximum gap threshold for model validation.\",\n   ",
+    "testbench waveform Vout_ripple: sim=15.895mV analytical=0.179mV ratio=88.99\u00d7 \u2014 outside [0.5\u00d7, 2\u00d7]",
+    "no design to review"
+  ]
+}

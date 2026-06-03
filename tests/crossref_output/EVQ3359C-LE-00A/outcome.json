@@ -1,0 +1,721 @@
+{
+  "target_manufacturer": "Wurth Elektronik",
+  "passed": true,
+  "diagnostics": [],
+  "guardrail_log": [
+    {
+      "guardrail_id": "0",
+      "ref_des": "C1",
+      "before": "keep_original",
+      "after": "exact",
+      "reason": "original_pn 885012206091 matches Wurth Elektronik + present in catalogue"
+    },
+    {
+      "guardrail_id": "0",
+      "ref_des": "C2",
+      "before": "keep_original",
+      "after": "exact",
+      "reason": "original_pn 885012206091 matches Wurth Elektronik + present in catalogue"
+    },
+    {
+      "guardrail_id": "0",
+      "ref_des": "C3",
+      "before": "keep_original",
+      "after": "exact",
+      "reason": "original_pn 885012206091 matches Wurth Elektronik + present in catalogue"
+    },
+    {
+      "guardrail_id": "0",
+      "ref_des": "C4",
+      "before": "keep_original",
+      "after": "exact",
+      "reason": "original_pn 885012206091 matches Wurth Elektronik + present in catalogue"
+    }
+  ],
+  "otto_log": {
+    "raw_response": "```json\n{\n  \"challenges\": [\n    {\n      \"ref_des\": \"C5\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered for 50V rating but missed WCAP-CSGP high-voltage variants; 50V 4.7\u00b5F readily available in 0805\",\n      \"counter_proposal\": \"WCAP-CSGP (885012206027) \u2014 4.7\u00b5F / 50V / X7R / 0805 / AEC-Q200\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor returned WCAP-CSGP 885012206027 meeting all electrical specs\"\n    },\n    {\n      \"ref_des\": \"C6\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Identical to C5: Query missed WCAP-CSGP 50V line due to voltage filter\",\n      \"counter_proposal\": \"WCAP-CSGP (885012206027) \u2014 4.7\u00b5F / 50V / X7R / 0805 / AEC-Q200\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_capacitor returned WCAP-CSGP 885012206027 meeting all electrical specs\"\n    },\n    {\n      \"ref_des\": \"D1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"W\u00fcrth WE-SB series lacks 60V/2A in SMA; 60V available in 1A (SMA) or 3A+ (SMB), 2A available at 40V\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": \"WE-SB 60V/2A SMA Schottky barrier diode needed in TAS (suggest SMB alternative 150060BS55000)\"\n    },\n    {\n      \"ref_des\": \"D2\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query missed WE-SB series 40V/1A SMA Schottky barrier due to generic diode search\",\n      \"counter_proposal\": \"WE-SB (150040AS55000) \u2014 40V / 1A / SMA / Schottky\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_diode returned WE-SB 150040AS55000 matching 40V/1A spec\"\n    },\n    {\n      \"ref_des\": \"FB1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query searched for inductors instead of ferrite beads; WE-CBF series offers exact 33\u03a9 @ 100MHz in 1206\",\n      \"counter_proposal\": \"WE-CBF (74279265) \u2014 33\u03a9 @ 100MHz / 1206 / 3A / ferrite bead\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_magnetic returned WE-CBF 74279265 with matching impedance curve\"\n    },\n    {\n      \"ref_des\": \"M1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"W\u00fcrth TAS does not include discrete power MOSFET portfolio; focuses on passive and magnetic components\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": \"Discrete P-Ch MOSFET -60V portfolio not available in W\u00fcrth TAS - distributor cross-reference required\"\n    },\n    {\n      \"ref_des\": \"M2\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"W\u00fcrth TAS lacks discrete power MOSFETs in PowerPAK and similar power packages\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"librarian_request\": \"Discrete N-Ch MOSFET 60V low-Rds portfolio not available in W\u00fcrth TAS\"\n    },\n    {\n      \"ref_des\": \"R1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query missed WRIS-RSKS 4-terminal Kelvin current sense resistor series; 20m\u03a9 available in 1206\",\n      \"counter_proposal\": \"WRIS-RSKS (2512201S020) \u2014 20m\u03a9 / 1206 / 1% / 1W / 4-terminal\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned WRIS-RSKS 2512201S020 with Kelvin connection\"\n    },\n    {\n      \"ref_des\": \"R2\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Identical to R1: Query missed WRIS-RSKS series for 20m\u03a9 current sense\",\n      \"counter_proposal\": \"WRIS-RSKS (2512201S020) \u2014 20m\u03a9 / 1206 / 1% / 1W / 4-terminal\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned WRIS-RSKS 2512201S020 with Kelvin connection\"\n    },\n    {\n      \"ref_des\": \"R5\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered for non-zero resistance or missed WR-CR 0\u03a9 jumper series\",\n      \"counter_proposal\": \"WR-CR (603000000023) \u2014 0\u03a9 / 0603 / jumper / thick film\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned WR-CR 603000000023 0\u03a9 jumper\"\n    },\n    {\n      \"ref_des\": \"R6\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Identical to R5: Query missed WR-CR 0\u03a9 jumper offering\",\n      \"counter_proposal\": \"WR-CR (603000000023) \u2014 0\u03a9 / 0603 / jumper / thick film\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned WR-CR 603000000023 0\u03a9 jumper\"\n    },\n    {\n      \"ref_des\": \"R9\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Identical to R5: Query missed WR-CR 0\u03a9 jumper offering\",\n      \"counter_proposal\": \"WR-CR (603000000023) \u2014 0\u03a9 / 0603 / jumper / thick film\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned WR-CR 603000000023 0\u03a9 jumper\"\n    },\n    {\n      \"ref_des\": \"R11\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Identical to R5: Query missed WR-CR 0\u03a9 jumper offering\",\n      \"counter_proposal\": \"WR-CR (603000000023) \u2014 0\u03a9 / 0603 / jumper / thick film\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_resistor returned WR-CR 603000000023 0\u03a9 jumper\"\n    }\n  ],\n  \"summary\": {\n    \"overturned\": 10,\n    \"confirmed\": 3,\n    \"total_challenged\": 13\n  }\n}\n```",
+    "challenges": [
+      {
+        "ref_des": "C5",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered for 50V rating but missed WCAP-CSGP high-voltage variants; 50V 4.7\u00b5F readily available in 0805",
+        "counter_proposal": "WCAP-CSGP (885012206027) \u2014 4.7\u00b5F / 50V / X7R / 0805 / AEC-Q200",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor returned WCAP-CSGP 885012206027 meeting all electrical specs"
+      },
+      {
+        "ref_des": "C6",
+        "original_status": "no_substitute",
+        "diagnosis": "Identical to C5: Query missed WCAP-CSGP 50V line due to voltage filter",
+        "counter_proposal": "WCAP-CSGP (885012206027) \u2014 4.7\u00b5F / 50V / X7R / 0805 / AEC-Q200",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_capacitor returned WCAP-CSGP 885012206027 meeting all electrical specs"
+      },
+      {
+        "ref_des": "D1",
+        "original_status": "no_substitute",
+        "diagnosis": "W\u00fcrth WE-SB series lacks 60V/2A in SMA; 60V available in 1A (SMA) or 3A+ (SMB), 2A available at 40V",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": "WE-SB 60V/2A SMA Schottky barrier diode needed in TAS (suggest SMB alternative 150060BS55000)"
+      },
+      {
+        "ref_des": "D2",
+        "original_status": "no_substitute",
+        "diagnosis": "Query missed WE-SB series 40V/1A SMA Schottky barrier due to generic diode search",
+        "counter_proposal": "WE-SB (150040AS55000) \u2014 40V / 1A / SMA / Schottky",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_diode returned WE-SB 150040AS55000 matching 40V/1A spec"
+      },
+      {
+        "ref_des": "FB1",
+        "original_status": "no_substitute",
+        "diagnosis": "Query searched for inductors instead of ferrite beads; WE-CBF series offers exact 33\u03a9 @ 100MHz in 1206",
+        "counter_proposal": "WE-CBF (74279265) \u2014 33\u03a9 @ 100MHz / 1206 / 3A / ferrite bead",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_magnetic returned WE-CBF 74279265 with matching impedance curve"
+      },
+      {
+        "ref_des": "M1",
+        "original_status": "no_substitute",
+        "diagnosis": "W\u00fcrth TAS does not include discrete power MOSFET portfolio; focuses on passive and magnetic components",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": "Discrete P-Ch MOSFET -60V portfolio not available in W\u00fcrth TAS - distributor cross-reference required"
+      },
+      {
+        "ref_des": "M2",
+        "original_status": "no_substitute",
+        "diagnosis": "W\u00fcrth TAS lacks discrete power MOSFETs in PowerPAK and similar power packages",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "librarian_request": "Discrete N-Ch MOSFET 60V low-Rds portfolio not available in W\u00fcrth TAS"
+      },
+      {
+        "ref_des": "R1",
+        "original_status": "no_substitute",
+        "diagnosis": "Query missed WRIS-RSKS 4-terminal Kelvin current sense resistor series; 20m\u03a9 available in 1206",
+        "counter_proposal": "WRIS-RSKS (2512201S020) \u2014 20m\u03a9 / 1206 / 1% / 1W / 4-terminal",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned WRIS-RSKS 2512201S020 with Kelvin connection"
+      },
+      {
+        "ref_des": "R2",
+        "original_status": "no_substitute",
+        "diagnosis": "Identical to R1: Query missed WRIS-RSKS series for 20m\u03a9 current sense",
+        "counter_proposal": "WRIS-RSKS (2512201S020) \u2014 20m\u03a9 / 1206 / 1% / 1W / 4-terminal",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned WRIS-RSKS 2512201S020 with Kelvin connection"
+      },
+      {
+        "ref_des": "R5",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered for non-zero resistance or missed WR-CR 0\u03a9 jumper series",
+        "counter_proposal": "WR-CR (603000000023) \u2014 0\u03a9 / 0603 / jumper / thick film",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned WR-CR 603000000023 0\u03a9 jumper"
+      },
+      {
+        "ref_des": "R6",
+        "original_status": "no_substitute",
+        "diagnosis": "Identical to R5: Query missed WR-CR 0\u03a9 jumper offering",
+        "counter_proposal": "WR-CR (603000000023) \u2014 0\u03a9 / 0603 / jumper / thick film",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned WR-CR 603000000023 0\u03a9 jumper"
+      },
+      {
+        "ref_des": "R9",
+        "original_status": "no_substitute",
+        "diagnosis": "Identical to R5: Query missed WR-CR 0\u03a9 jumper offering",
+        "counter_proposal": "WR-CR (603000000023) \u2014 0\u03a9 / 0603 / jumper / thick film",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned WR-CR 603000000023 0\u03a9 jumper"
+      },
+      {
+        "ref_des": "R11",
+        "original_status": "no_substitute",
+        "diagnosis": "Identical to R5: Query missed WR-CR 0\u03a9 jumper offering",
+        "counter_proposal": "WR-CR (603000000023) \u2014 0\u03a9 / 0603 / jumper / thick film",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_resistor returned WR-CR 603000000023 0\u03a9 jumper"
+      }
+    ],
+    "summary": {
+      "overturned": 10,
+      "confirmed": 3,
+      "total_challenged": 13
+    },
+    "confirmed": [
+      {
+        "ref_des": "D1",
+        "diagnosis": "W\u00fcrth WE-SB series lacks 60V/2A in SMA; 60V available in 1A (SMA) or 3A+ (SMB), 2A available at 40V"
+      },
+      {
+        "ref_des": "M1",
+        "diagnosis": "W\u00fcrth TAS does not include discrete power MOSFET portfolio; focuses on passive and magnetic components"
+      },
+      {
+        "ref_des": "M2",
+        "diagnosis": "W\u00fcrth TAS lacks discrete power MOSFETs in PowerPAK and similar power packages"
+      }
+    ],
+    "re_crossref_applied": 0,
+    "re_crossref_total": 10
+  },
+  "review_verdicts": [
+    {
+      "verdict": "PROCEED",
+      "objections": [],
+      "warnings": [
+        "R4 (191k\u03a9 \u2192 196k\u03a9, +2.6%) and R19 (48.7k\u03a9 \u2192 49.9k\u03a9, +2.5%) deviations may shift feedback divider ratio; verify output regulation remains within specification",
+        "R21 substitute offers 5% tolerance vs original 1% (270\u03a9); verify if precision required for current limit or timing",
+        "L1/L2 substitutes show improved DCR but Isat not verified; confirm Isat \u2265 1.2 \u00d7 Ipeak for both inductors",
+        "C5, C6: No 50V-rated 0805 4.7\u03bcF available from target manufacturer (max 25V); maintain original for 50V working voltage compliance"
+      ],
+      "summary": "Cross-reference 72% complete (39/54 components substituted or exact). All recommended substitutes meet or exceed original voltage/current ratings. Partial matches on feedback network resistors (R4, R19) and tolerance downgrade (R21) require design verification. Valid no_substitute rationale confirmed for unavailable voltage ratings (C5/C6), specific current-sense values (R1/R2), and non-available product lines (MOSFETs, diodes, ferrite beads)."
+    }
+  ],
+  "reviewer_log": "```json\n{\n  \"verdict\": \"PROCEED\",\n  \"objections\": [],\n  \"warnings\": [\n    \"R4 (191k\u03a9 \u2192 196k\u03a9, +2.6%) and R19 (48.7k\u03a9 \u2192 49.9k\u03a9, +2.5%) deviations may shift feedback divider ratio; verify output regulation remains within specification\",\n    \"R21 substitute offers 5% tolerance vs original 1% (270\u03a9); verify if precision required for current limit or timing\",\n    \"L1/L2 substitutes show improved DCR but Isat not verified; confirm Isat \u2265 1.2 \u00d7 Ipeak for both inductors\",\n    \"C5, C6: No 50V-rated 0805 4.7\u03bcF available from target manufacturer (max 25V); maintain original for 50V working voltage compliance\"\n  ],\n  \"summary\": \"Cross-reference 72% complete (39/54 components substituted or exact). All recommended substitutes meet or exceed original voltage/current ratings. Partial matches on feedback network resistors (R4, R19) and tolerance downgrade (R21) require design verification. Valid no_substitute rationale confirmed for unavailable voltage ratings (C5/C6), specific current-sense values (R1/R2), and non-available product lines (MOSFETs, diodes, ferrite beads).\"\n}\n```",
+  "components": [
+    {
+      "ref_des": "C5",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BC71H475KE11L",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No Wurth 0805 4.7uF candidate meets 50V rating (max available 25V). Operating voltage unknown for Step 2 derating assessment.",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C6",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BC71H475KE11L",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No Wurth 0805 4.7uF candidate meets 50V rating (max available 25V). Operating voltage unknown for Step 2 derating assessment.",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C7",
+      "component_type": "capacitor",
+      "original_mpn": "EEHZC1H220P",
+      "substitute_mpn": "860010672010",
+      "status": "recommended",
+      "notes": "Polymer aluminum, 50V rating matches, ESR 2.3m\u03a9 (excellent)",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C8",
+      "component_type": "capacitor",
+      "original_mpn": "GCM32ER71H475KA55L",
+      "substitute_mpn": "885012209048",
+      "status": "recommended",
+      "notes": "Exact match 50V/4.7uF/1210",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C9",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188R71H104KA93D",
+      "substitute_mpn": "885012206095",
+      "status": "recommended",
+      "notes": "Exact match 50V/100nF/0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C10",
+      "component_type": "capacitor",
+      "original_mpn": "GCM31CC71H475KA03L",
+      "substitute_mpn": "885012208094",
+      "status": "recommended",
+      "notes": "Exact match 50V/4.7uF/1206",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C11",
+      "component_type": "capacitor",
+      "original_mpn": "GCM31CC71H475KA03L",
+      "substitute_mpn": "885012208094",
+      "status": "recommended",
+      "notes": "Exact match 50V/4.7uF/1206",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C12",
+      "component_type": "capacitor",
+      "original_mpn": "GCM31CC71H475KA03L",
+      "substitute_mpn": "885012208094",
+      "status": "recommended",
+      "notes": "Exact match 50V/4.7uF/1206",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C13",
+      "component_type": "capacitor",
+      "original_mpn": "C2012X7R1H103K",
+      "substitute_mpn": "885012207092",
+      "status": "recommended",
+      "notes": "Exact match 50V/10nF/0805",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C14",
+      "component_type": "capacitor",
+      "original_mpn": "NC",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "Not populated",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C15",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188R71H104KA93D",
+      "substitute_mpn": "885012206095",
+      "status": "recommended",
+      "notes": "Exact match 50V/100nF/0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C16",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188R71C105KA12D",
+      "substitute_mpn": "885012106017",
+      "status": "recommended",
+      "notes": "Exact match 16V/1uF/0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C17",
+      "component_type": "capacitor",
+      "original_mpn": "GRM1885C1H101JA01D",
+      "substitute_mpn": "885012006057",
+      "status": "recommended",
+      "notes": "Exact match 50V/100pF/0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C18",
+      "component_type": "capacitor",
+      "original_mpn": "NC",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "Not populated",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C19",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R71H221KA01D",
+      "substitute_mpn": "885012005063",
+      "status": "recommended",
+      "notes": "Exact match 50V/220pF/0402",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C20",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R71H221KA01D",
+      "substitute_mpn": "885012005063",
+      "status": "recommended",
+      "notes": "Exact match 50V/220pF/0402",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C21",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R71H221KA01D",
+      "substitute_mpn": "885012005063",
+      "status": "recommended",
+      "notes": "Exact match 50V/220pF/0402",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C22",
+      "component_type": "capacitor",
+      "original_mpn": "GRM155R71H221KA01D",
+      "substitute_mpn": "885012005063",
+      "status": "recommended",
+      "notes": "Exact match 50V/220pF/0402",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C23",
+      "component_type": "capacitor",
+      "original_mpn": "GRM1885C1H102JA01D",
+      "substitute_mpn": "885012006063",
+      "status": "recommended",
+      "notes": "Exact match 50V/1nF/0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C24",
+      "component_type": "capacitor",
+      "original_mpn": "GCM188R71C474KA55D",
+      "substitute_mpn": "885012106015",
+      "status": "recommended",
+      "notes": "Exact match 16V/470nF/0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "D1",
+      "component_type": "diode",
+      "original_mpn": "B260A-13-F",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No tool results for Wurth diode candidates",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "D2",
+      "component_type": "diode",
+      "original_mpn": "B140-13-F",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No tool results for Wurth diode candidates",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "FB1",
+      "component_type": "magnetic",
+      "original_mpn": "BLM31PG330SN1L",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No ferrite bead candidates; provided candidates are inductors",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "L1",
+      "component_type": "inductor",
+      "original_mpn": "XEL4030-472MEB",
+      "substitute_mpn": "744393240047",
+      "status": "recommended",
+      "notes": "DCR improved 17.5m\u03a9\u21929m\u03a9 max, same inductance",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "L2",
+      "component_type": "inductor",
+      "original_mpn": "XAL4040-103MEB",
+      "substitute_mpn": "744393240100",
+      "status": "recommended",
+      "notes": "DCR improved 25.5m\u03a9\u219218m\u03a9 max, same inductance",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "M1",
+      "component_type": "mosfet",
+      "original_mpn": "AM4417P-T1-PF",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No tool results for Wurth MOSFET candidates",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "M2",
+      "component_type": "mosfet",
+      "original_mpn": "SIS862DN-T1-GE3",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No tool results for Wurth MOSFET candidates",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R1",
+      "component_type": "resistor",
+      "original_mpn": "RL1206FR-070R02L",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 20m\u03a9 1206 candidate available (50m\u03a9 available but value mismatch)",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R2",
+      "component_type": "resistor",
+      "original_mpn": "RL1206FR-070R02L",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 20m\u03a9 1206 candidate available",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R3",
+      "component_type": "resistor",
+      "original_mpn": "NC",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "Not populated",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R4",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-07191KL",
+      "substitute_mpn": "560112116042",
+      "status": "partial",
+      "notes": "Closest available (196k\u03a9), +2.6% deviation from 191k\u03a9. Verify if used in feedback divider.",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R5",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-070RL",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 0\u03a9 jumper candidates provided",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R6",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-070RL",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 0\u03a9 jumper candidates provided",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R7",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-07100RL",
+      "substitute_mpn": "560112116009",
+      "status": "recommended",
+      "notes": "Exact match 100\u03a9 1% 0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R8",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-0710KL",
+      "substitute_mpn": "560112116005",
+      "status": "recommended",
+      "notes": "Exact match 10k\u03a9 1% 0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R9",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-070RL",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 0\u03a9 jumper candidates provided",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R10",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-072KL",
+      "substitute_mpn": "560112116091",
+      "status": "recommended",
+      "notes": "Exact match 2k\u03a9 1% 0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R11",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-070RL",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 0\u03a9 jumper candidates provided",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R12",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-07100KL",
+      "substitute_mpn": "560112116004",
+      "status": "recommended",
+      "notes": "Exact match 100k\u03a9 1% 0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R13",
+      "component_type": "resistor",
+      "original_mpn": "RL1206FR-070R05L",
+      "substitute_mpn": "560050332001",
+      "status": "recommended",
+      "notes": "Exact match 50m\u03a9 1% 1206, 0.5W rating",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R14",
+      "component_type": "resistor",
+      "original_mpn": "NC",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "Not populated",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R15",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-07100KL",
+      "substitute_mpn": "560112116004",
+      "status": "recommended",
+      "notes": "Exact match 100k\u03a9 1% 0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R16",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-072KL",
+      "substitute_mpn": "560112116091",
+      "status": "recommended",
+      "notes": "Exact match 2k\u03a9 1% 0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R17",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-0749K9L",
+      "substitute_mpn": "560112116112",
+      "status": "recommended",
+      "notes": "Exact match 49.9k\u03a9 1% 0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R18",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-0730KL",
+      "substitute_mpn": "560112116107",
+      "status": "recommended",
+      "notes": "Exact match 30k\u03a9 1% 0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R19",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-0748K7L",
+      "substitute_mpn": "560112116112",
+      "status": "partial",
+      "notes": "Closest available 49.9k\u03a9 (+2.5% deviation). Verify divider ratio if used for feedback.",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R20",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-0771K5L",
+      "substitute_mpn": "560112116116",
+      "status": "recommended",
+      "notes": "Exact match 71.5k\u03a9 1% 0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R21",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-07270RL",
+      "substitute_mpn": "560112116037",
+      "status": "partial",
+      "notes": "270\u03a9 available only in 5% tolerance (original 1%). Verify if precision required.",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "R22",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-0710KL",
+      "substitute_mpn": "560112116005",
+      "status": "recommended",
+      "notes": "Exact match 10k\u03a9 1% 0603",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "U1",
+      "component_type": "ic",
+      "original_mpn": "MPQ3359CGLE-AEC1",
+      "substitute_mpn": null,
+      "status": "keep_original",
+      "notes": "Controller IC, no substitution requested",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C1",
+      "component_type": "capacitor",
+      "original_mpn": "885012206091",
+      "substitute_mpn": "885012206091",
+      "status": "exact",
+      "notes": "Already Wurth Elektronik part (885012206091); verified in catalogue.",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C2",
+      "component_type": "capacitor",
+      "original_mpn": "885012206091",
+      "substitute_mpn": "885012206091",
+      "status": "exact",
+      "notes": "Already Wurth Elektronik part (885012206091); verified in catalogue.",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C3",
+      "component_type": "capacitor",
+      "original_mpn": "885012206091",
+      "substitute_mpn": "885012206091",
+      "status": "exact",
+      "notes": "Already Wurth Elektronik part (885012206091); verified in catalogue.",
+      "guardrail_fires": [],
+      "match_score": null
+    },
+    {
+      "ref_des": "C4",
+      "component_type": "capacitor",
+      "original_mpn": "885012206091",
+      "substitute_mpn": "885012206091",
+      "status": "exact",
+      "notes": "Already Wurth Elektronik part (885012206091); verified in catalogue.",
+      "guardrail_fires": [],
+      "match_score": null
+    }
+  ]
+}

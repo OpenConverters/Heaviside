@@ -1022,11 +1022,35 @@ def _active_clamp_forward_op_budget(
     tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
 ) -> dict[str, float | None]:
     fsw = _spec_fsw(spec, op_index)
-    vout, iout = _spec_vout_iout(spec, op_index)
     vin = _spec_vin_nominal(spec)
-    n = _turns_ratio(spec)
-    duty = vout * n / vin if vin > 0 else 0.0
-    ipri = iout / n
+
+    # Per-rail operating point — mirrors the two-switch forward budget, but
+    # the active clamp replaces the reset diodes with Q_clamp + C_clamp and
+    # the regulated duty may exceed 0.5 (clamp absorbs the reset
+    # volt-seconds). The regulated rail (0) sets the duty; every rail shares
+    # the common primary excitation, so the primary current is the sum of
+    # reflected secondary currents.
+    op = (spec.get("operatingPoints") or [{}])
+    op_i = op[op_index] if op_index < len(op) else (op[0] if op else {})
+    vouts = op_i.get("outputVoltages") or []
+    iouts = op_i.get("outputCurrents") or []
+    ratios = spec.get("desiredTurnsRatios") or [_turns_ratio(spec)]
+    n_rails = max(len(vouts), len(iouts), len(ratios), 1)
+
+    def _rail(seq: Any, i: int, fallback: float) -> float:
+        return float(seq[i]) if i < len(seq) else float(fallback)
+
+    n0 = _rail(ratios, 0, 1.0)
+    vout0 = _rail(vouts, 0, 0.0)
+    duty = vout0 * n0 / vin if vin > 0 else 0.0
+
+    # Reflected primary current = Σ Iout_i / n_i.
+    ipri = 0.0
+    for i in range(n_rails):
+        n_i = _rail(ratios, i, 1.0)
+        if n_i > 0:
+            ipri += _rail(iouts, i, 0.0) / n_i
+    # Clamp lifts V_DS to Vin/(1-D) during the off-time.
     vds_off = vin / (1.0 - duty) if duty < 1.0 else vin
 
     budget: dict[str, float | None] = {}
@@ -1038,14 +1062,22 @@ def _active_clamp_forward_op_budget(
         _find_named(tas, "Q_clamp"), "Q_clamp",
         duty=(1.0 - duty), i_on=ipri, vds_off=vds_off, fsw=fsw,
     ))
-    budget.update(_diode_loss(
-        _find_named(tas, "D1"), "D1",
-        duty_off=duty, i_fwd=iout, vr=vout, fsw=fsw,
-    ))
-    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
+    # Per-rail output stage: forward rectifier (D_fwd{i}), freewheel
+    # diode (D_fw{i}), output choke (L_out{i}) and output cap (C_out{i}).
+    for i in range(n_rails):
+        vout_i = _rail(vouts, i, vout0)
+        iout_i = _rail(iouts, i, 0.0)
+        budget.update(_diode_loss(
+            _find_named(tas, f"D_fwd{i}"), f"D_fwd{i}",
+            duty_off=duty, i_fwd=iout_i, vr=vout_i, fsw=fsw,
+        ))
+        budget.update(_diode_loss(
+            _find_named(tas, f"D_fw{i}"), f"D_fw{i}",
+            duty_off=(1.0 - duty), i_fwd=iout_i, vr=vout_i, fsw=fsw,
+        ))
+        budget.update(_inductor_loss_keyed(_find_named(tas, f"L_out{i}"), f"L_out{i}"))
+        budget.update(_cap_esr_loss(_find_named(tas, f"C_out{i}"), f"C_out{i}"))
     budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
-    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
-    budget.update(_cap_esr_loss(cout, "C_out"))
     return budget
 
 

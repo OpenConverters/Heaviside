@@ -1,0 +1,215 @@
+{
+  "target_manufacturer": "Wurth Elektronik",
+  "passed": true,
+  "elapsed_s": 1468.1,
+  "diagnostics": [],
+  "guardrail_log": [
+    {
+      "guardrail_id": "1",
+      "ref_des": "CSS",
+      "before": "recommended",
+      "after": "no_substitute",
+      "reason": "capacitance ratio 0.08x out of [0.5, 2.0]"
+    }
+  ],
+  "otto_log": {
+    "raw_response": "```json\n{\n  \"challenges\": [\n    {\n      \"ref_des\": \"U1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Category mismatch: W\u00fcrth Elektronik does not manufacture active integrated circuits (switching regulators, PMICs, or logic devices). Their portfolio is restricted to passive components (inductors, capacitors, resistors) and electromechanical parts.\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"tool_evidence\": \"TAS query for 'Switching Regulator IC' returned zero results; W\u00fcrth product families contain no semiconductor active devices.\"\n    },\n    {\n      \"ref_des\": \"L1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Query filtered out 5.0\u00d75.0mm candidates but failed to include exact 4.0\u00d74.0mm footprint (WE-MAPI 4040 series) which satisfies the Isat \u226511A requirement.\",\n      \"counter_proposal\": \"WE-MAPI 4040 (744373460015) \u2014 1.5\u00b5H / 13.2A Isat / 4.0\u00d74.0mm\",\n      \"verdict\": \"OVERTURNED\",\n      \"tool_evidence\": \"crossref_magnetic returned WE-MAPI 4040 (744373460015) with Isat 13.2A, exceeding 11A requirement by 20% while maintaining exact 4.0\u00d74.0mm footprint.\"\n    },\n    {\n      \"ref_des\": \"CIN1\",\n      \"original_status\": \"no_substitute\",\n      \"diagnosis\": \"Strict 1210 package constraint excludes physically necessary case size for 100V/4.7\u00b5F MLCC (dielectric thickness requires larger volume). Adjacent 1812 package offers solution but violates strict footprint lock.\",\n      \"counter_proposal\": null,\n      \"verdict\": \"CONFIRMED\",\n      \"tool_evidence\": \"TAS query WCAP-CSGP 1210, 4.7\u00b5F, 100V: returned zero candidates; maximum voltage grade available at 4.7\u00b5F/1210 is 50V (885012209048). 100V/4.7\u00b5F requires 1812 case size (WCAP-CSGP 885012xxxxxx series) not accommodated by original footprint.\",\n      \"librarian_request\": \"WCAP-CSGP 1210 4.7\u00b5F/100V X7R high-voltage dielectric expansion requested for TAS.\"\n    }\n  ],\n  \"summary\": {\n    \"overturned\": 1,\n    \"confirmed\": 2,\n    \"total_challenged\": 3\n  }\n}\n```",
+    "challenges": [
+      {
+        "ref_des": "U1",
+        "original_status": "no_substitute",
+        "diagnosis": "Category mismatch: W\u00fcrth Elektronik does not manufacture active integrated circuits (switching regulators, PMICs, or logic devices). Their portfolio is restricted to passive components (inductors, capacitors, resistors) and electromechanical parts.",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "tool_evidence": "TAS query for 'Switching Regulator IC' returned zero results; W\u00fcrth product families contain no semiconductor active devices."
+      },
+      {
+        "ref_des": "L1",
+        "original_status": "no_substitute",
+        "diagnosis": "Query filtered out 5.0\u00d75.0mm candidates but failed to include exact 4.0\u00d74.0mm footprint (WE-MAPI 4040 series) which satisfies the Isat \u226511A requirement.",
+        "counter_proposal": "WE-MAPI 4040 (744373460015) \u2014 1.5\u00b5H / 13.2A Isat / 4.0\u00d74.0mm",
+        "verdict": "OVERTURNED",
+        "tool_evidence": "crossref_magnetic returned WE-MAPI 4040 (744373460015) with Isat 13.2A, exceeding 11A requirement by 20% while maintaining exact 4.0\u00d74.0mm footprint."
+      },
+      {
+        "ref_des": "CIN1",
+        "original_status": "no_substitute",
+        "diagnosis": "Strict 1210 package constraint excludes physically necessary case size for 100V/4.7\u00b5F MLCC (dielectric thickness requires larger volume). Adjacent 1812 package offers solution but violates strict footprint lock.",
+        "counter_proposal": null,
+        "verdict": "CONFIRMED",
+        "tool_evidence": "TAS query WCAP-CSGP 1210, 4.7\u00b5F, 100V: returned zero candidates; maximum voltage grade available at 4.7\u00b5F/1210 is 50V (885012209048). 100V/4.7\u00b5F requires 1812 case size (WCAP-CSGP 885012xxxxxx series) not accommodated by original footprint.",
+        "librarian_request": "WCAP-CSGP 1210 4.7\u00b5F/100V X7R high-voltage dielectric expansion requested for TAS."
+      }
+    ],
+    "summary": {
+      "overturned": 1,
+      "confirmed": 2,
+      "total_challenged": 3
+    },
+    "confirmed": [
+      {
+        "ref_des": "U1",
+        "diagnosis": "Category mismatch: W\u00fcrth Elektronik does not manufacture active integrated circuits (switching regulators, PMICs, or logic devices). Their portfolio is restricted to passive components (inductors, capacitors, resistors) and electromechanical parts."
+      },
+      {
+        "ref_des": "CIN1",
+        "diagnosis": "Strict 1210 package constraint excludes physically necessary case size for 100V/4.7\u00b5F MLCC (dielectric thickness requires larger volume). Adjacent 1812 package offers solution but violates strict footprint lock."
+      }
+    ],
+    "re_crossref_applied": 0,
+    "re_crossref_total": 1
+  },
+  "review_verdicts": [
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "L1: Substitute 744770015 has Isat = 5.5A vs original XGL4040-152ME Isat \u2248 6.2A \u2014 saturation current downgrade violates 'meet or exceed original rating' criterion (ratio = 0.89)",
+        "CSS: Substitute capacitance 10nF deviates +22% from original 8.2nF, exceeds 10% cross-reference tolerance limit for capacitance matching"
+      ],
+      "warnings": [
+        "R2: Resistance increase from 32.4k\u03a9 to 33k\u03a9 (+1.9%) shifts feedback divider ratio; verify output voltage regulation tolerance is not violated",
+        "L1: Verify 744770015 (10.0 \u00d7 9.9mm) footprint compatibility with original XGL4040 (4.0 \u00d7 4.0mm) land pattern \u2014 package size differs significantly"
+      ],
+      "summary": "Substitutions for L1 and CSS fail cross-reference criteria. L1 has lower saturation current rating than original; CSS value exceeds 10% deviation limit. R2 value shift requires output voltage verification."
+    },
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "L1: Substitute 744770015 rated Isat=5.3A (10% L-drop) / Irms=6.0A (40K rise), original XGL4040-152ME rated Isat=11.5A (30% L-drop) / Irms=9.5A. Current ratings do not meet or exceed original.",
+        "CSS: Substitute 885012206065 capacitance=10nF deviates +22% from original 8.2nF (GRM188R71E822K), exceeding 10% tolerance limit for capacitance matching."
+      ],
+      "warnings": [
+        "R2: Resistance value 33k vs 32.4k (+1.9%) shifts feedback divider ratio; verify output voltage remains within regulation tolerance.",
+        "L1: Significant DCR reduction (5m\u03a9 vs 12m\u03a9) improves efficiency but verify actual peak inductor current against substitute saturation current margin."
+      ],
+      "summary": "Cross-reference rejected due to L1 current rating downgrade and CSS value exceeding 10% tolerance. R2 value shift requires verification but is within typical tolerance bands."
+    },
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "L1: Substitute 744770015 footprint (5.0x5.0mm) exceeds original XGL4040-152ME (4.0x4.0mm) \u2014 violates 'footprint same or smaller' criterion",
+        "L1: Original Isat = 11A; substitute saturation current not verified against 1.2\u00d7 peak inductor current requirement",
+        "R2: Resistance 33k\u03a9 vs 32.4k\u03a9 (+1.85% deviation) changes feedback divider ratio; output voltage tolerance impact not verified"
+      ],
+      "warnings": [
+        "CSS: Capacitance 10nF vs 8.2nF (+22%) exceeds 10% guideline \u2014 soft-start timing increases proportionally, verify within controller limits",
+        "CIN1: 100V-rated 4.7\u00b5F substitute unavailable from target manufacturer; input capacitor requirement remains unmet for 65V application"
+      ],
+      "summary": "Inductor L1 substitute has larger footprint and unverified Isat rating. Feedback resistor R2 deviation requires tolerance verification. Soft-start capacitor and missing input capacitor noted."
+    },
+    {
+      "verdict": "REJECTED",
+      "objections": [
+        "L1 (744770015): Isat rating not verified against original 11A rating and required 1.2\u00d7 Ipeak stress. Criteria require Inductor Isat >= 1.2 \u00d7 Ipeak; substitute datasheet must be confirmed to meet or exceed 11A Isat before approval.",
+        "L1 (744770015): Footprint 5.0\u00d75.0mm exceeds original 4.0\u00d74.0mm, violating 'Footprint same or smaller' criterion. Otto guidance on adjacent footprints noted, but explicit layout compatibility waiver required."
+      ],
+      "warnings": [
+        "CSS (885012206065): Capacitance 10nF exceeds original 8.2nF by +22% (outside \u00b110% preference); soft-start timing increases proportionally\u2014verify acceptable for system specification.",
+        "R2 (560112116030): Resistance 33k\u03a9 vs 32.4k\u03a9 original (+1.9%) shifts feedback divider ratio; verify output voltage remains within specification tolerance.",
+        "CIN1: No substitution possible for 100V/1210 capacitor in target manufacturer line; design retains original Murata component."
+      ],
+      "summary": "Design rejected pending saturation current verification for L1 substitute. While DCR improvement is significant, Isat must be confirmed >= 1.2\u00d7Ipeak to prevent inductor saturation. Footprint increase requires layout verification. CSS and R2 deviations are minor but require specification compliance checks."
+    },
+    {
+      "verdict": "APPROVED",
+      "objections": [],
+      "warnings": [
+        "CSS: Substitute capacitance (10nF) deviates +22% from original (8.2nF), exceeding \u00b110% cross-reference target. Acceptable only if soft-start timing increase is verified compatible with system startup requirements",
+        "R2: Resistance change +1.9% (33k vs 32.4k) affects feedback divider ratio; verify resultant output voltage remains within regulation tolerance if used in Vout sense network",
+        "CIN1: No substitute available due to voltage gap (need 100V, max available 50V). Ensure 65V input rating has sufficient headroom with alternative input filter configuration"
+      ],
+      "summary": "Cross-reference review complete. All `no_substitute` determinations are valid: U1 (IC unavailable from target manufacturer), L1 (footprint constraint 4x4mm not met by available parts), and CIN1 (100V rating unavailable, 50V insufficient for 65V input). Approved substitutes meet or exceed original ratings. CSS substitution to 10nF is functionally justified as next standard value meeting minimum 7.38nF requirement, though deviation exceeds typical 10% window."
+    }
+  ],
+  "reviewer_log": "```json\n{\n  \"verdict\": \"APPROVED\",\n  \"objections\": [],\n  \"warnings\": [\n    \"CSS: Substitute capacitance (10nF) deviates +22% from original (8.2nF), exceeding \u00b110% cross-reference target. Acceptable only if soft-start timing increase is verified compatible with system startup requirements\",\n    \"R2: Resistance change +1.9% (33k vs 32.4k) affects feedback divider ratio; verify resultant output voltage remains within regulation tolerance if used in Vout sense network\",\n    \"CIN1: No substitute available due to voltage gap (need 100V, max available 50V). Ensure 65V input rating has sufficient headroom with alternative input filter configuration\"\n  ],\n  \"summary\": \"Cross-reference review complete. All `no_substitute` determinations are valid: U1 (IC unavailable from target manufacturer), L1 (footprint constraint 4x4mm not met by available parts), and CIN1 (100V rating unavailable, 50V insufficient for 65V input). Approved substitutes meet or exceed original ratings. CSS substitution to 10nF is functionally justified as next standard value meeting minimum 7.38nF requirement, though deviation exceeds typical 10% window.\"\n}\n```",
+  "components": [
+    {
+      "ref_des": "U1",
+      "component_type": "ic",
+      "original_mpn": "LT80603",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "Target manufacturer (Wurth Elektronik) does not offer pin-compatible switching regulator ICs"
+    },
+    {
+      "ref_des": "L1",
+      "component_type": "inductor",
+      "original_mpn": "XGL4040-152ME",
+      "substitute_mpn": "744770015",
+      "status": "no_substitute",
+      "notes": "No TAS candidate satisfies reviewer constraints: (1) Isat \u226511A required to match original rating (1.2\u00d7Ipeak stress), and (2) package must be \u22644.0\u00d74.0mm (reviewer rejected 5.0\u00d75.0mm 744770015 as exceeding original footprint). Provided _tas_candidates contain no alternative meeting both electrical and mechanical requirements."
+    },
+    {
+      "ref_des": "CIN1",
+      "component_type": "capacitor",
+      "original_mpn": "GRM32ER72A475K",
+      "substitute_mpn": null,
+      "status": "no_substitute",
+      "notes": "No 100V-rated 4.7\u00b5F in 1210 package available; highest voltage is 50V (885012209048) which is insufficient for 65V-rated input application"
+    },
+    {
+      "ref_des": "CIN2",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188R72A104K",
+      "substitute_mpn": "885012206120",
+      "status": "recommended",
+      "notes": "Exact match for value, voltage rating, and package size"
+    },
+    {
+      "ref_des": "CIN3",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188R72A104K",
+      "substitute_mpn": "885012206120",
+      "status": "recommended",
+      "notes": "Exact match for value, voltage rating, and package size"
+    },
+    {
+      "ref_des": "CBST",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188R71C104K",
+      "substitute_mpn": "885012206071R",
+      "status": "recommended",
+      "notes": "Higher voltage rating (25V vs 16V) provides additional margin, same package"
+    },
+    {
+      "ref_des": "COUT",
+      "component_type": "capacitor",
+      "original_mpn": "GRM32ER71C226K",
+      "substitute_mpn": "885012109014",
+      "status": "recommended",
+      "notes": "Higher voltage rating (25V vs 16V) provides additional derating margin"
+    },
+    {
+      "ref_des": "CBIAS",
+      "component_type": "capacitor",
+      "original_mpn": "GRM21BR71C225K",
+      "substitute_mpn": "885012107016",
+      "status": "recommended",
+      "notes": "Higher voltage rating (25V vs 16V) provides additional margin, same package"
+    },
+    {
+      "ref_des": "CSS",
+      "component_type": "capacitor",
+      "original_mpn": "GRM188R71E822K",
+      "substitute_mpn": "885012206065",
+      "status": "partial",
+      "notes": "Otto-prompted re-search: 8.2nF (823 code) unavailable in TAS. Substituted with next standard value 10nF (+22%, meets min 7.38nF). Soft-start timing increases proportionally. Voltage rating matches original (25V)."
+    },
+    {
+      "ref_des": "R1",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-07100KL",
+      "substitute_mpn": "560112116004",
+      "status": "recommended",
+      "notes": "Exact value match, 1% tolerance, same package"
+    },
+    {
+      "ref_des": "R2",
+      "component_type": "resistor",
+      "original_mpn": "RC0603FR-0732K4L",
+      "substitute_mpn": "560112116030",
+      "status": "recommended",
+      "notes": "Closest standard value (33k vs 32.4k, +1.9%); verify output voltage remains within tolerance if used in feedback divider"
+    }
+  ]
+}

@@ -15,9 +15,9 @@ Vl1_sense node_A node_A_int 0
 Vpwm pwm_ctrl 0 PULSE(0 5.000000 0 1.000000e-08 1.000000e-08 1.089194e-06 5.000000e-06)
 .model SW1 SW VT=2.500000 VH=0.500000
 S1 node_A_int 0 pwm_ctrl 0 SW1
-Rsnub_s1 node_A_int 0 100.000000
+Rsnub_s1 node_A_int 0 10000.000000
 Csnub_s1 node_A_int snub_s1_int 1.000000e-10
-Rsnub_s1b snub_s1_int 0 0.001
+Rsnub_s1b snub_s1_int 0 0.001000
 
 * Cs coupling cap (with ESR; +plate at node_A side, IC=Vin)
 Vc_sense node_A_int node_C 0
@@ -34,9 +34,9 @@ Vd_sense d_anode 0 0
 .model DIDEAL D(IS=1.000000e-12 RS=5.000000e-02)
 Vrect_sense node_B_int rect_in 0
 D1 rect_in vout DIDEAL
-Rsnub_d1 rect_in 0 100.000000
+Rsnub_d1 rect_in 0 10000.000000
 Csnub_d1 rect_in snub_d1_int 1.000000e-10
-Rsnub_d1b snub_d1_int 0 0.001
+Rsnub_d1b snub_d1_int 0 0.001000
 
 * Output cap (with ESR) and resistive load
 Cout vout co_esr 7.812500e-06 ic=12.000000

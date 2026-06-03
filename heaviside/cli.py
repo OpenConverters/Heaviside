@@ -199,21 +199,30 @@ def design(
             )
             raise typer.Exit(code=5) from None
 
+        # Save transformer Lm before clobbering — ACF needs it below.
+        orig_lm = spec_json.get("desiredMagnetizingInductance")
         if lm is not None:
             magnetizing_inductance = float(lm)
         else:
             magnetizing_inductance = components.L_authoritative
-            # Stamp into the spec so the existing extract.py /
-            # stress.py / sim.runner readers all see MKF's L.
             spec_json["desiredInductance"] = magnetizing_inductance
             spec_json["desiredMagnetizingInductance"] = magnetizing_inductance
+
+    # For ACF the main magnetic is the output choke; the deck's Lpri
+    # must be the transformer Lm from the original spec.
+    lm_for_deck = magnetizing_inductance
+    if (topology == "active_clamp_forward"
+            and components is not None
+            and isinstance(orig_lm, (int, float)) and orig_lm > 0
+            and orig_lm > 5 * magnetizing_inductance):
+        lm_for_deck = float(orig_lm)
 
     try:
         _, tas = decompose_from_spec(
             topology,
             spec_json,
             turns_ratios=turns_ratios,
-            magnetizing_inductance=magnetizing_inductance,
+            magnetizing_inductance=lm_for_deck,
             bridge_simulation_mode=mode,
         )
     except DecomposerError as exc:
@@ -231,12 +240,20 @@ def design(
                 SelectionError,
                 assemble_bom_from_tas,
             )
+            from heaviside.pipeline.stress import StressDerivationError
             try:
                 assemble_bom_from_tas(tas, topology=topology, spec=spec_json)
             except SelectionError as exc:
                 typer.echo(
                     f"warn: BOM selection failed for {topology!r} — "
                     f"realism gate will FAIL on the affected components. "
+                    f"Detail: {exc}",
+                    err=True,
+                )
+            except StressDerivationError as exc:
+                typer.echo(
+                    f"warn: BOM skipped for {topology!r} — "
+                    f"spec missing fields for stress derivation. "
                     f"Detail: {exc}",
                     err=True,
                 )
@@ -285,13 +302,16 @@ def design(
         # realism gate keeps sim-dependent checks UNAVAILABLE if both
         # paths fail.
         try:
+            from heaviside.sim.parasitics import inject_parasitics
+
             netlist, _ = decompose_from_spec(
                 topology,
                 spec_json,
                 turns_ratios=turns_ratios,
-                magnetizing_inductance=magnetizing_inductance,
+                magnetizing_inductance=lm_for_deck,
                 bridge_simulation_mode=mode,
             )
+            netlist = inject_parasitics(netlist, tas)
             sim_result = None
             is_closed_loop = False
             ops = spec_json.get("operatingPoints") or [{}]
@@ -415,6 +435,462 @@ def validate(
                 typer.echo(f"  [{v.code}] {v.path}: {v.message}", err=True)
 
     raise typer.Exit(code=0 if report.ok else 1)
+
+
+@app.command()
+def auto_design(
+    spec: Path = typer.Argument(..., help="Converter spec JSON file."),
+    n_candidates: int = typer.Option(3, "--candidates", "-n", help="Fast-Pareto candidates per topology."),
+    pick_criteria: str = typer.Option("lowest_losses", "--criteria", help="Pareto pick criteria."),
+    out: Path | None = typer.Option(None, "--out", help="Write best outcome TAS to this path."),
+    report_path: Path | None = typer.Option(None, "--report", help="Write HTML report for best outcome."),
+) -> None:
+    """Full auto-design: topology selection → magnetic pick → simulate → realism gate.
+
+    Runs the complete della Pollock pipeline unattended. Returns the
+    best-passing topology or reports all verdicts if none pass.
+    """
+    from heaviside.pipeline.full_design import (
+        FullDesignError,
+        full_design,
+    )
+    from heaviside.pipeline.topology_screen import feasible_topology_names
+
+    spec_json = _load_spec(spec)
+
+    selector_fn = lambda s: (feasible_topology_names(s), "static screen (no LLM)")
+
+    try:
+        stage1, stage2, outcomes = full_design(
+            spec_json,
+            n_candidates_per_topology=n_candidates,
+            pick_criteria=pick_criteria,
+            parallel=False,
+            selector_fn=selector_fn,
+        )
+    except FullDesignError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+
+    typer.echo(
+        f"stage1: {len(stage1.reconciliation.chosen)} topologies "
+        f"({', '.join(stage1.reconciliation.chosen)})",
+        err=True,
+    )
+    typer.echo(
+        f"stage2: {len(stage2.picks)} magnetic picks, "
+        f"{len(stage2.failures)} failures",
+        err=True,
+    )
+
+    best = None
+    for o in outcomes:
+        v = o.verdict_dict
+        verdict = v["verdict"] if v else "no_verdict"
+        summary = v.get("summary", {}) if v else {}
+        p = summary.get("pass", 0)
+        f_ = summary.get("fail", 0)
+        gk = "APPROVED" if o.gatekeeper and o.gatekeeper.approved else "BLOCKED"
+        topo = o.pick.topology.name
+        diag = "; ".join(o.diagnostics) if o.diagnostics else ""
+        typer.echo(
+            f"  {topo:30s} {verdict:10s} {gk:8s} pass={p} fail={f_}  {diag}",
+            err=True,
+        )
+        if o.gatekeeper and o.gatekeeper.warnings:
+            for w in o.gatekeeper.warnings[:3]:
+                typer.echo(f"    ⚠ {w}", err=True)
+        if best is None and verdict == "pass" and gk == "APPROVED":
+            best = o
+
+    if best:
+        typer.echo(f"\nbest: {best.pick.topology.name}", err=True)
+        if best.report:
+            typer.echo(best.report)
+        if out and best.tas:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(best.tas, indent=2) + "\n")
+            typer.echo(f"wrote {out}", err=True)
+        if report_path:
+            from heaviside.report import render_html
+            html = render_html(best)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(html)
+            typer.echo(f"wrote HTML report: {report_path}", err=True)
+    else:
+        typer.echo("\nno topology passed the realism gate + gatekeeper", err=True)
+        raise typer.Exit(code=6)
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Bind address."),
+    port: int = typer.Option(8000, help="Bind port."),
+    reload: bool = typer.Option(False, help="Auto-reload on code changes."),
+    mcp: bool = typer.Option(False, "--mcp", help="Start MCP server (stdio) instead of REST API."),
+) -> None:
+    """Start Heaviside as a server (REST API or MCP)."""
+    if mcp:
+        import asyncio
+        from heaviside.mcp_server import main as mcp_main
+        asyncio.run(mcp_main())
+    else:
+        import uvicorn
+        uvicorn.run(
+            "heaviside.api:app",
+            host=host,
+            port=port,
+            reload=reload,
+        )
+
+
+@app.command()
+def lessons(
+    topology: str | None = typer.Option(None, "--topology", "-t", help="Filter by topology."),
+    category: str | None = typer.Option(None, "--category", "-c", help="Filter by category."),
+    severity: str | None = typer.Option(None, "--severity", "-s", help="Filter by severity."),
+    max_age: int | None = typer.Option(None, "--max-age", help="Max age in days."),
+    suggestions_only: bool = typer.Option(False, "--suggestions", help="Show only lessons with suggestions."),
+) -> None:
+    """Query the teacher's lesson store."""
+    from heaviside.pipeline.teacher import load_lessons, summarize_lessons
+
+    all_lessons = load_lessons(
+        topology=topology, category=category, severity=severity, max_age_days=max_age,
+    )
+    if suggestions_only:
+        all_lessons = [l for l in all_lessons if l.suggestion]
+
+    if not all_lessons:
+        typer.echo("no lessons found")
+        return
+
+    typer.echo(summarize_lessons(all_lessons))
+    typer.echo("")
+    for l in all_lessons:
+        sev_marker = {"error": "!!", "warning": "!", "info": "."}
+        marker = sev_marker.get(l.severity, "?")
+        typer.echo(f"[{marker}] {l.topology:25s} {l.category:22s} {l.detail[:80]}")
+        if l.suggestion:
+            typer.echo(f"    -> {l.suggestion}")
+
+
+@app.command()
+def reverse_engineer(
+    reference: str = typer.Argument(..., help="Reference design name (e.g. 'TI TIDA-050072')."),
+    pdf: Path | None = typer.Option(None, "--pdf", help="Path to reference design PDF."),
+    out: Path | None = typer.Option(None, "--out", help="Write outcome JSON to this path."),
+    report_path: Path | None = typer.Option(None, "--report", help="Write HTML report."),
+    verbose: bool = typer.Option(False, "--verbose"),
+) -> None:
+    """Reverse-engineer a reference design: PDF → BOM → design → review."""
+    from heaviside.pipeline.cre_pipeline import run_cre_pipeline
+
+    outcome = run_cre_pipeline(reference, pdf_path=pdf, verbose=verbose)
+
+    typer.echo(f"CRE: {'PASSED' if outcome.passed else 'FAILED'}", err=True)
+    if outcome.ref_spec:
+        s = outcome.ref_spec
+        typer.echo(
+            f"  {s.topology}: {s.vin_min}-{s.vin_max}V → {s.vout}V/{s.iout}A ({s.pout}W)",
+            err=True,
+        )
+    typer.echo(f"  BOM: {len(outcome.ref_bom)} components", err=True)
+    if outcome.diagnostics:
+        for d in outcome.diagnostics:
+            typer.echo(f"  diag: {d}", err=True)
+
+    if out:
+        import json as _json
+        payload = {
+            "reference": outcome.reference,
+            "passed": outcome.passed,
+            "ref_spec": outcome.ref_spec.__dict__ if outcome.ref_spec else None,
+            "ref_bom": list(outcome.ref_bom),
+            "review_verdicts": list(outcome.review_verdicts),
+            "diagnostics": list(outcome.diagnostics),
+        }
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(_json.dumps(payload, indent=2) + "\n")
+        typer.echo(f"wrote {out}", err=True)
+
+    if not outcome.passed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def crossref(
+    bom_file: Path = typer.Argument(..., help="Source BOM JSON file."),
+    manufacturer: str = typer.Option(..., "--mfr", help="Target manufacturer."),
+    context: str | None = typer.Option(None, "--context", help="Circuit context description."),
+    out: Path | None = typer.Option(None, "--out", help="Write outcome JSON to this path."),
+    verbose: bool = typer.Option(False, "--verbose"),
+) -> None:
+    """Cross-reference a BOM to a target manufacturer."""
+    import json as _json
+
+    from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
+
+    bom_data = _json.loads(bom_file.read_text())
+    if not isinstance(bom_data, list):
+        bom_data = bom_data.get("bom", bom_data.get("components", []))
+
+    outcome = run_crossref_pipeline(
+        bom_data, manufacturer, circuit_context=context, verbose=verbose,
+    )
+
+    typer.echo(f"Crossref: {'PASSED' if outcome.passed else 'FAILED'}", err=True)
+    typer.echo(f"  Target: {outcome.target_manufacturer}", err=True)
+    n_exact = sum(1 for c in outcome.components if c.status == "exact")
+    n_rec = sum(1 for c in outcome.components if c.status == "recommended")
+    n_part = sum(1 for c in outcome.components if c.status == "partial")
+    n_none = sum(1 for c in outcome.components if c.status == "no_substitute")
+    n_keep = sum(1 for c in outcome.components if c.status == "keep_original")
+    typer.echo(
+        f"  exact={n_exact} recommended={n_rec} partial={n_part} "
+        f"no_substitute={n_none} keep_original={n_keep}",
+        err=True,
+    )
+    if outcome.guardrail_log:
+        typer.echo(f"  guardrail fires: {len(outcome.guardrail_log)}", err=True)
+
+    for c in outcome.components:
+        status_mark = {
+            "exact": "+", "recommended": "~", "partial": "?",
+            "no_substitute": "X", "keep_original": "=",
+        }.get(c.status.value, "?")
+        sub = c.substitute_mpn or "-"
+        typer.echo(f"  [{status_mark}] {c.ref_des:8s} {c.original_mpn:20s} → {sub}")
+
+    if out:
+        payload = {
+            "target_manufacturer": outcome.target_manufacturer,
+            "passed": outcome.passed,
+            "components": [
+                {
+                    "ref_des": c.ref_des,
+                    "component_type": c.component_type,
+                    "original_mpn": c.original_mpn,
+                    "substitute_mpn": c.substitute_mpn,
+                    "status": c.status.value,
+                    "notes": c.notes,
+                }
+                for c in outcome.components
+            ],
+            "guardrail_fires": list(outcome.guardrail_log),
+            "diagnostics": list(outcome.diagnostics),
+        }
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(_json.dumps(payload, indent=2) + "\n")
+        typer.echo(f"wrote {out}", err=True)
+
+    if not outcome.passed:
+        raise typer.Exit(code=1)
+
+
+librarian_app = typer.Typer(help="TAS component librarian — fetch, validate, audit.")
+app.add_typer(librarian_app, name="librarian")
+
+
+@librarian_app.command()
+def search(
+    mpn: str = typer.Argument(..., help="Manufacturer part number to look up."),
+    category: str = typer.Option(
+        None, "--category", "-c",
+        help="TAS category (mosfets, diodes, capacitors, resistors, magnetics, igbts). "
+             "Auto-detected from distributor data if omitted.",
+    ),
+    apply: bool = typer.Option(
+        False, "--apply",
+        help="Append to TAS/data/<category>.ndjson after validation.",
+    ),
+    distributor: str = typer.Option(
+        "digikey", "--distributor", "-d",
+        help="Distributor API to query (digikey or mouser).",
+    ),
+) -> None:
+    """Fetch a component by MPN from a distributor API, convert to TAS, and optionally append.
+
+    Exit codes:
+      0 — fetched (and appended if --apply)
+      1 — MPN not found or conversion failed
+      2 — credentials missing or API error
+      3 — validation failed (component data doesn't pass schema)
+      4 — duplicate (component already in TAS)
+    """
+    from heaviside.librarian.fetcher.base import DistributorError
+    from heaviside.librarian.tas import LibrarianError
+
+    try:
+        if distributor == "digikey":
+            from heaviside.librarian.fetcher.digikey import DigiKeyClient
+            from heaviside.librarian.fetcher.convert import (
+                convert_digikey_to_tas_capacitor,
+                convert_digikey_to_tas_diode,
+                convert_digikey_to_tas_igbt,
+                convert_digikey_to_tas_mosfet,
+                convert_digikey_to_tas_resistor,
+            )
+            with DigiKeyClient() as client:
+                product = client.get_product(mpn)
+            converters = {
+                "mosfets": convert_digikey_to_tas_mosfet,
+                "diodes": convert_digikey_to_tas_diode,
+                "igbts": convert_digikey_to_tas_igbt,
+                "capacitors": convert_digikey_to_tas_capacitor,
+                "resistors": convert_digikey_to_tas_resistor,
+            }
+        elif distributor == "mouser":
+            from heaviside.librarian.fetcher.mouser import MouserClient
+            from heaviside.librarian.fetcher.convert import (
+                convert_mouser_to_tas_capacitor,
+                convert_mouser_to_tas_diode,
+                convert_mouser_to_tas_igbt,
+                convert_mouser_to_tas_mosfet,
+                convert_mouser_to_tas_resistor,
+            )
+            with MouserClient() as client:
+                product = client.get_product(mpn)
+            converters = {
+                "mosfets": convert_mouser_to_tas_mosfet,
+                "diodes": convert_mouser_to_tas_diode,
+                "igbts": convert_mouser_to_tas_igbt,
+                "capacitors": convert_mouser_to_tas_capacitor,
+                "resistors": convert_mouser_to_tas_resistor,
+            }
+        else:
+            typer.echo(f"error: unknown distributor {distributor!r}", err=True)
+            raise typer.Exit(code=2)
+    except DistributorError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+    if category is None:
+        from heaviside.librarian.fetcher.convert import detect_category
+        category = detect_category(product, distributor)
+        if category is None:
+            typer.echo(
+                f"error: could not auto-detect category for {mpn!r}. "
+                "Use --category to specify.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+    typer.echo(f"category: {category}", err=True)
+
+    converter = converters.get(category)
+    if converter is None:
+        typer.echo(f"error: no converter for category {category!r}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        component = converter(product)
+    except Exception as exc:
+        typer.echo(f"error: conversion failed: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+
+    typer.echo(json.dumps(component, indent=2))
+
+    if apply:
+        try:
+            from heaviside.librarian.tas import add_component, component_exists
+
+            if component_exists(category, component):
+                typer.echo(f"duplicate: {mpn} already in TAS/{category}.ndjson", err=True)
+                raise typer.Exit(code=4)
+            add_component(category, component)
+            typer.echo(f"appended to TAS/data/{category}.ndjson", err=True)
+        except LibrarianError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=3) from None
+
+
+@librarian_app.command()
+def audit(
+    category: str = typer.Argument(
+        None,
+        help="Category to audit (mosfets, diodes, capacitors, resistors, magnetics, igbts). "
+             "Omit to audit all.",
+    ),
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Emit the report as JSON.",
+    ),
+) -> None:
+    """Audit TAS/data for pipeline-critical fields.
+
+    Reports missing fields per component type (Isat, DCR, ESR, Coss,
+    Vth, Qg, Qrr, etc.) without modifying any data. The output shows
+    pass rate and top failure reasons per category.
+
+    Exit codes:
+      0 — all categories at 100%
+      1 — at least one category has failures
+      2 — tooling error
+    """
+    from heaviside.librarian.auditor import (
+        AUDITABLE_CATEGORIES,
+        CategoryAudit,
+        audit_all,
+        audit_category,
+    )
+
+    categories_to_run = [category] if category else None
+    results: dict[str, CategoryAudit] = {}
+    total_pass = 0
+    total_count = 0
+    any_fail = False
+
+    try:
+        if categories_to_run:
+            for cat in categories_to_run:
+                results[cat] = audit_category(cat, on_corruption="report")
+        else:
+            results = audit_all(on_corruption="report")
+    except Exception as exc:
+        typer.echo(f"error: audit failed: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+    for cat, r in results.items():
+        total_pass += r.passed
+        total_count += r.total
+        if r.failures:
+            any_fail = True
+
+    if as_json:
+        report: dict[str, object] = {}
+        for cat, r in results.items():
+            top_misses = sorted(r.critical_field_misses.items(), key=lambda x: -x[1])[:5]
+            report[cat] = {
+                "total": r.total,
+                "passed": r.passed,
+                "failed": len(r.failures),
+                "pass_rate": round(r.passed / r.total, 4) if r.total else 0,
+                "top_critical_misses": top_misses,
+            }
+        report["overall"] = {
+            "total": total_count,
+            "passed": total_pass,
+            "failed": total_count - total_pass,
+            "pass_rate": round(total_pass / total_count, 4) if total_count else 0,
+        }
+        typer.echo(json.dumps(report, indent=2))
+    else:
+        for cat, r in results.items():
+            pct = round(100 * r.passed / r.total, 1) if r.total else 0
+            n_fail = len(r.failures)
+            status = "PASS" if n_fail == 0 else "FAIL"
+            typer.echo(
+                f"  {cat:20s} {status:4s}  {r.passed:>6d}/{r.total:<6d}  ({pct}%)"
+            )
+            if r.critical_field_misses:
+                top = sorted(r.critical_field_misses.items(), key=lambda x: -x[1])[:3]
+                fields = ", ".join(f"{f}({n})" for f, n in top)
+                typer.echo(f"  {'':20s}       missing: {fields}")
+        if total_count:
+            pct = round(100 * total_pass / total_count, 1)
+            typer.echo(f"  {'overall':20s}       {total_pass:>6d}/{total_count:<6d}  ({pct}%)")
+
+    raise typer.Exit(code=0 if not any_fail else 1)
 
 
 if __name__ == "__main__":

@@ -5,11 +5,14 @@
 * DC Input
 Vin vin_dc 0 48
 
+* §8a.5 input-current sense
+Vq1_sense vin_dc q1_drain 0
+
 * PWM Main Switch
-Vpwm pwm_ctrl 0 PULSE(0 5 0 10n 10n 2.25e-06 5e-06)
-.model SW1 SW VT=2.5 VH=0.5
-.model DIDEAL D(IS=1e-14 RS=1e-6)
-S1 vin_dc sw_node pwm_ctrl 0 SW1
+Vpwm pwm_ctrl 0 PULSE(0 5 0 1e-08 1e-08 2.25e-06 5e-06)
+.model SW1 SW VT=2.5 VH=0.5 RON=0.01 ROFF=1e+06
+.model DIDEAL D(IS=1.000000e-12 RS=5.000000e-02)
+S1 q1_drain sw_node pwm_ctrl 0 SW1
 
 * Primary current sense
 Vpri_sense sw_node pri_in 0
@@ -21,9 +24,9 @@ Lsec0 sec0_in 0 2.500000e-04
 Kpri_sec0 Lpri Lsec0 0.9999
 
 * Active Clamp Circuit
-Vpwm_clamp clamp_ctrl 0 PULSE(0 5 0.000002 10n 10n 0.000003 0.000005)
+Vpwm_clamp clamp_ctrl 0 PULSE(0 5.000000 2.350000e-06 1.000000e-08 1.000000e-08 2.550000e-06 5.000000e-06)
 S_clamp clamp_cap sw_node clamp_ctrl 0 SW1
-Cclamp clamp_cap 0 1.000000e-05 IC=39.272727
+Cclamp clamp_cap 0 1.000000e-05 IC=42.352941
 Rclamp clamp_cap 0 1MEG
 
 * Secondary 0 output stage
@@ -37,12 +40,12 @@ Cout0 vout0 0 100u IC=12.000000
 Rload0 vout0 0 2.400000
 
 * Transient Analysis
-.tran 2.500000e-08 5.000000e-05 2.500000e-05
+.tran 2.500000e-08 5.000000e-05 2.500000e-05 UIC
 
 * Output signals
-.save v(pri_in) i(Vpri_sense) v(vin_dc) i(Vin) v(sec0_in) i(Vsec_sense0) v(vout0)
+.save v(pri_in) i(Vpri_sense) v(vin_dc) i(Vin) i(Vq1_sense) v(sec0_in) i(Vsec_sense0) v(vout0)
 
-.options RELTOL=0.001 ABSTOL=1e-9 VNTOL=1e-6 ITL1=1000 ITL4=1000
-.ic v(vout0)=12.000000
+.options RELTOL=0.001000 ABSTOL=1.000000e-09 VNTOL=1.000000e-06 ITL1=1000 ITL4=1000
+.ic v(vout0)=12
 
 .end

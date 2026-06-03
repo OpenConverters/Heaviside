@@ -1,5 +1,12 @@
 # Heaviside AGENTS.md
 
+> **MKF is authoritative for all magnetics math.** Before implementing
+> magnetics calculations or assuming a PyOM API, consult
+> [`../../OpenMagnetics/MKF/CAPABILITIES.md`](../../OpenMagnetics/MKF/CAPABILITIES.md).
+> No `B_sat·N·A_e/L` (or any analytical magnetics formula) in Heaviside —
+> call PyOM. If the capability you need isn't in CAPABILITIES.md, ask;
+> don't reimplement it here.
+
 **Read this before touching the repo. It encodes the design rules that make Heaviside different from Proteus.**
 
 ## Autonomy (per-repo override of global CLAUDE.md)
