@@ -32,7 +32,16 @@ from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 # ---------------------------------------------------------------------------
 
 
-def _lout_mas(N: int = 14) -> dict:
+def _lout_mas(N: int = 14, *, L: float = 4.7e-6) -> dict:
+    """Full MAS root for the output choke L_out0, matching the shape the
+    real bridge-attach phase produces: the wound/gapped magnetic device
+    under ``core``/``coil`` PLUS an ``outputs`` envelope carrying the
+    inductance MKF actually achieved.  The extractor harvests the
+    achieved ``L`` from ``outputs[*].inductance.magnetizingInductance
+    .magnetizingInductance.nominal`` (and would also accept
+    ``inputs.designRequirements.magnetizingInductance.nominal``); both
+    are provided here so the fixture survives either harvest path.
+    """
     return {
         "core": {
             "processedDescription": {
@@ -57,6 +66,16 @@ def _lout_mas(N: int = 14) -> dict:
             {"name": "Primary", "numberTurns": N, "numberParallels": 1,
              "isolationSide": "primary"},
         ]},
+        "inputs": {
+            "designRequirements": {
+                "magnetizingInductance": {"nominal": L},
+            },
+        },
+        "outputs": [
+            {"inductance": {"magnetizingInductance": {
+                "magnetizingInductance": {"nominal": L},
+            }}},
+        ],
     }
 
 
@@ -360,11 +379,20 @@ class TestStructuralFailures:
         with pytest.raises(EnrichmentError, match="'sec_top'"):
             enrich_tas_for_realism(tas, topology="push_pull", spec=_pp_spec())
 
-    def test_missing_desiredInductance_throws(self):
-        spec = _pp_spec()
-        del spec["desiredInductance"]
-        with pytest.raises(EnrichmentError, match="desiredInductance"):
-            enrich_tas_for_realism(_pp_tas(), topology="push_pull", spec=spec)
+    def test_missing_achieved_inductance_throws(self):
+        """Push-pull harvests the achieved choke inductance from the L_out
+        MAS root (the figure MKF actually realised), NOT from a spec
+        request.  Strip both inductance sources from the L_out MAS and the
+        extractor must throw rather than silently default."""
+        tas = _pp_tas()
+        for stage in tas["topology"]["stages"]:
+            if stage.get("role") == "outputRectifier":
+                for c in stage["circuit"]["components"]:
+                    if c.get("name") == "L_out0":
+                        c["mas"].pop("outputs", None)
+                        c["mas"].pop("inputs", None)
+        with pytest.raises(EnrichmentError, match="full MAS root|inductance"):
+            enrich_tas_for_realism(tas, topology="push_pull", spec=_pp_spec())
 
     def test_missing_lout_mas_throws(self):
         tas = _pp_tas()
