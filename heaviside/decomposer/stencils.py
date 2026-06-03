@@ -994,6 +994,33 @@ def _isolation_stage(
     }
 
 
+def _secondary_count(deck: SpiceDeck) -> int:
+    """Count secondary windings (Lsec0, Lsec1, …) the MKF generator emitted.
+
+    Multi-output transformer decks carry one ``LsecN`` winding per output
+    rail; the count drives how many output-rectifier stages the stencil
+    builds. Always ≥1 for a transformer topology.
+    """
+    n = 0
+    while True:
+        try:
+            deck.by_refdes(f"Lsec{n}")
+        except KeyError:
+            break
+        n += 1
+    return n
+
+
+def _coupling_kinds(deck: SpiceDeck) -> dict[str, str]:
+    """Every coupling element in the deck, refdes → "coupling".
+
+    The MKF generator names primary↔secondary couplings ``K0…K{N-1}`` and
+    secondary↔secondary couplings ``K2_i_j``; rather than enumerate the
+    generator's scheme, accept any parsed coupling as part of T1.
+    """
+    return {el.refdes: "coupling" for el in deck.elements if el.kind == "coupling"}
+
+
 def _isolated_control_stage(
     driven_components: tuple[str, ...],
     *,
@@ -1035,19 +1062,29 @@ def _isolated_control_stage(
 # Real BOM = {Q1=S1, T1 (Lpri+Lsec0+K0), D_out0=Dout0, C_out0=Cout0}.
 
 
-_FLYBACK_REAL_KINDS = {
-    "S1":     "switch",
-    "Lpri":   "inductor",     # → T1.pri
-    "Lsec0":  "inductor",     # → T1.sec0
-    "K0":     "coupling",     # → T1 coupling
-    "Dout0":  "diode",
-    "Cout0":  "capacitor",
-}
+def _flyback_real_kinds(deck: SpiceDeck) -> dict[str, str]:
+    """Expected real-component set for a flyback deck with N secondaries."""
+    n = _secondary_count(deck)
+    kinds: dict[str, str] = {"S1": "switch", "Lpri": "inductor"}
+    for i in range(n):
+        kinds[f"Lsec{i}"] = "inductor"
+        kinds[f"Dout{i}"] = "diode"
+        kinds[f"Cout{i}"] = "capacitor"
+    kinds.update(_coupling_kinds(deck))   # K0…, K2_i_j → T1 couplings
+    return kinds
 
 
 def flyback(deck: SpiceDeck) -> TasTopology:
-    """Decompose an MKF flyback deck into the canonical TAS flyback topology."""
-    _validate_real_set(deck, "flyback", _FLYBACK_REAL_KINDS)
+    """Decompose an MKF flyback deck into the canonical TAS flyback topology.
+
+    Supports N output rails: each ``Lsec{i}``/``Dout{i}``/``Cout{i}`` triple
+    becomes an isolated secondary winding + output-rectifier stage feeding
+    ``Vout{i}``. The control loop closes around ``Vout0`` (primary rail).
+    """
+    _validate_real_set(deck, "flyback", _flyback_real_kinds(deck))
+    n_sec = _secondary_count(deck)
+    if n_sec < 1:
+        raise StencilError("flyback: deck has no secondary winding (Lsec0)")
 
     switching_cell = {
         "name": "primary_switch",
@@ -1060,25 +1097,29 @@ def flyback(deck: SpiceDeck) -> TasTopology:
         },
     }
 
+    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
     isolation = _isolation_stage(
-        ("pri", "sec0"),
+        windings,
         input_wire="switch_node",
-        output_wires=("sec0_node",),
+        output_wires=tuple(f"sec{i}_node" for i in range(n_sec)),
     )
 
-    output_rectifier_0 = {
-        "name": "output_0",
-        "role": "outputRectifier",
-        "inputPort":  {"type": "hfAc",  "wire": "sec0_node"},
-        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
-        "circuit": {
-            "components": [
-                _component("diode",     "D_out0"),    # ← Dout0
-                _component("capacitor", "C_out0"),    # ← Cout0
-            ],
-            "connections": [],
-        },
-    }
+    output_rectifiers = [
+        {
+            "name": f"output_{i}",
+            "role": "outputRectifier",
+            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_node"},
+            "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
+            "circuit": {
+                "components": [
+                    _component("diode",     f"D_out{i}"),   # ← Dout{i}
+                    _component("capacitor", f"C_out{i}"),   # ← Cout{i}
+                ],
+                "connections": [],
+            },
+        }
+        for i in range(n_sec)
+    ]
 
     control = _isolated_control_stage(("Q1",))
 
@@ -1097,33 +1138,34 @@ def flyback(deck: SpiceDeck) -> TasTopology:
                 {"component": "T1", "pin": "pri.1"},
             ],
         },
-        {
-            "name": "sec0_node",
+    ]
+    for i in range(n_sec):
+        inter_stage.append({
+            "name": f"sec{i}_node",
             "kind": "wire",
             "endpoints": [
-                {"component": "T1",     "pin": "sec0.2"},
-                {"component": "D_out0", "pin": "A"},
+                {"component": "T1",        "pin": f"sec{i}.2"},
+                {"component": f"D_out{i}", "pin": "A"},
             ],
-        },
-        {
-            "name": "Vout0",
+        })
+        inter_stage.append({
+            "name": f"Vout{i}",
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "D_out0", "pin": "K"},
-                {"component": "C_out0", "pin": "1"},
+                {"component": f"D_out{i}", "pin": "K"},
+                {"component": f"C_out{i}", "pin": "1"},
             ],
-        },
-        _gnd_wire(
-            ("T1",     "pri.2"),
-            ("T1",     "sec0.1"),
-            ("C_out0", "2"),
-        ),
-        *_gate_wires("Q1"),
-    ]
+        })
+    inter_stage.append(_gnd_wire(
+        ("T1", "pri.2"),
+        *[("T1", f"sec{i}.1") for i in range(n_sec)],
+        *[(f"C_out{i}", "2") for i in range(n_sec)],
+    ))
+    inter_stage.extend(_gate_wires("Q1"))
 
     return {
-        "stages": [switching_cell, isolation, output_rectifier_0, control],
+        "stages": [switching_cell, isolation, *output_rectifiers, control],
         "interStageCircuit": inter_stage,
     }
 
