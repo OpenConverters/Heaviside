@@ -1646,21 +1646,41 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
 # Real BOM = {Q1, T1, D_pri, C_pri, D_out0, C_out0}.
 
 
-_ISOBB_REAL_KINDS = {
-    "S1":         "switch",
-    "Lpri":       "inductor",
-    "Lsec0":      "inductor",
-    "Kpri_sec0":  "coupling",
-    "Dpri":       "diode",
-    "Cpri":       "capacitor",
-    "Dsec0":      "diode",
-    "Cout0":      "capacitor",
-}
+def _isobb_real_kinds(deck: SpiceDeck) -> dict[str, str]:
+    """Expected real-component set for an isolated buck-boost deck with N
+    isolated secondaries (in addition to the mandatory primary buck-boost
+    rail). The MKF generator always emits the primary rail (Dpri/Cpri) plus
+    one ``Lsec{i}``/``Dsec{i}``/``Cout{i}`` triple per secondary output."""
+    n = _secondary_count(deck)
+    kinds: dict[str, str] = {
+        "S1":   "switch",
+        "Lpri": "inductor",
+        "Dpri": "diode",
+        "Cpri": "capacitor",
+    }
+    for i in range(n):
+        kinds[f"Lsec{i}"] = "inductor"
+        kinds[f"Dsec{i}"] = "diode"
+        kinds[f"Cout{i}"] = "capacitor"
+    kinds.update(_coupling_kinds(deck))   # Kpri_sec{i}, Ksec{i}_{j} → T1
+    return kinds
 
 
 def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
-    """Decompose an MKF isolated buck-boost deck into TAS."""
-    _validate_real_set(deck, "isolated_buck_boost", _ISOBB_REAL_KINDS)
+    """Decompose an MKF isolated buck-boost deck into TAS.
+
+    This topology is structurally minimum two-output: a non-isolated primary
+    inverting buck-boost rail (``Vout_pri``, via D_pri/C_pri tapping the
+    switch node) plus N isolated secondary rails. Each ``Lsec{i}``/``Dsec{i}``
+    /``Cout{i}`` triple becomes one isolated secondary winding + output
+    rectifier feeding ``Vout{i}``. The control loop closes around the primary
+    rail (``Vout_pri``)."""
+    _validate_real_set(deck, "isolated_buck_boost", _isobb_real_kinds(deck))
+    n_sec = _secondary_count(deck)
+    if n_sec < 1:
+        raise StencilError(
+            "isolated_buck_boost: deck has no secondary winding (Lsec0)"
+        )
 
     switching_cell = {
         "name": "primary_switch",
@@ -1673,10 +1693,11 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
         },
     }
 
+    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
     isolation = _isolation_stage(
-        ("pri", "sec0"),
+        windings,
         input_wire="switch_node",
-        output_wires=("sec0_node",),
+        output_wires=tuple(f"sec{i}_node" for i in range(n_sec)),
     )
 
     # Primary inverting buck-boost output: D_pri taps the switch node
@@ -1695,19 +1716,22 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
         },
     }
 
-    output_rectifier_0 = {
-        "name": "output_0",
-        "role": "outputRectifier",
-        "inputPort":  {"type": "hfAc",  "wire": "sec0_node"},
-        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
-        "circuit": {
-            "components": [
-                _component("diode",     "D_out0"),  # ← Dsec0
-                _component("capacitor", "C_out0"),  # ← Cout0
-            ],
-            "connections": [],
-        },
-    }
+    output_rectifiers = [
+        {
+            "name": f"output_{i}",
+            "role": "outputRectifier",
+            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_node"},
+            "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
+            "circuit": {
+                "components": [
+                    _component("diode",     f"D_out{i}"),  # ← Dsec{i}
+                    _component("capacitor", f"C_out{i}"),  # ← Cout{i}
+                ],
+                "connections": [],
+            },
+        }
+        for i in range(n_sec)
+    ]
 
     control = _isolated_control_stage(("Q1",), sense_wire="Vout_pri")
 
@@ -1737,35 +1761,38 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
                 {"component": "C_pri", "pin": "1"},
             ],
         },
-        {
-            "name": "sec0_node",
+    ]
+    for i in range(n_sec):
+        inter_stage.append({
+            "name": f"sec{i}_node",
             "kind": "wire",
             "endpoints": [
-                {"component": "T1",     "pin": "sec0.2"},
-                {"component": "D_out0", "pin": "A"},
+                {"component": "T1",        "pin": f"sec{i}.2"},
+                {"component": f"D_out{i}", "pin": "A"},
             ],
-        },
-        {
-            "name": "Vout0",
+        })
+        inter_stage.append({
+            "name": f"Vout{i}",
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "D_out0", "pin": "K"},
-                {"component": "C_out0", "pin": "1"},
+                {"component": f"D_out{i}", "pin": "K"},
+                {"component": f"C_out{i}", "pin": "1"},
             ],
-        },
-        _gnd_wire(
-            ("T1",     "pri.2"),
-            ("T1",     "sec0.1"),
-            ("C_pri",  "2"),
-            ("C_out0", "2"),
-        ),
-        *_gate_wires("Q1"),
-    ]
+        })
+
+    # GND: all transformer return pins first (pri.2, sec{i}.1), then all
+    # output-cap returns (C_pri.2, C_out{i}.2) — matches the golden ordering.
+    gnd_endpoints = [("T1", "pri.2")]
+    gnd_endpoints += [("T1", f"sec{i}.1") for i in range(n_sec)]
+    gnd_endpoints += [("C_pri", "2")]
+    gnd_endpoints += [(f"C_out{i}", "2") for i in range(n_sec)]
+    inter_stage.append(_gnd_wire(*gnd_endpoints))
+    inter_stage.extend(_gate_wires("Q1"))
 
     return {
         "stages": [switching_cell, isolation, output_rectifier_pri,
-                   output_rectifier_0, control],
+                   *output_rectifiers, control],
         "interStageCircuit": inter_stage,
     }
 

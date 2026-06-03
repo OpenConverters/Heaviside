@@ -33,14 +33,21 @@ from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 # ---------------------------------------------------------------------------
 
 
-def _t1_mas(*, N_pri: int = 20, N_sec: int = 10) -> dict:
+def _t1_mas(*, N_pri: int = 20, N_sec: int = 10, L_pri: float | None = 47e-6) -> dict:
     """Isolated buck-boost T1 MAS: 2 windings (pri, sec0), one core.
 
     Higher N_pri (vs flybuck fixture) gives more Isat headroom since
     buck-boost primary current is higher (I_L_avg = Iout/(1-D)) than
     a pure buck at the same load.
+
+    The extractor harvests the MKF-*achieved* primary inductance from the
+    full MAS root (``outputs[*].inductance.magnetizingInductance.
+    magnetizingInductance.nominal``), the shape the real bridge-attach
+    phase produces — not from ``spec.desiredInductance``. ``L_pri`` seeds
+    that envelope (set ``None`` to omit it, exercising the extractor's
+    "no achieved inductance → throw" guard).
     """
-    return {
+    mas: dict = {
         "core": {
             "processedDescription": {
                 "effectiveParameters": {
@@ -65,6 +72,20 @@ def _t1_mas(*, N_pri: int = 20, N_sec: int = 10) -> dict:
              "isolationSide": "secondary"},
         ]},
     }
+    if L_pri is not None:
+        # Full MAS root: the simulation-derived magnetizing inductance MKF
+        # actually achieved for the wound + gapped core (mirrors the real
+        # design_magnetics output envelope).
+        mas["outputs"] = [
+            {
+                "inductance": {
+                    "magnetizingInductance": {
+                        "magnetizingInductance": {"nominal": L_pri},
+                    },
+                },
+            },
+        ]
+    return mas
 
 
 def _ibb_tas(*, t1_kwargs: dict | None = None) -> dict:
@@ -275,9 +296,11 @@ class TestStructuralFailures:
             enrich_tas_for_realism(tas, topology="isolated_buck_boost",
                                    spec=_ibb_spec())
 
-    def test_missing_desiredInductance_throws(self):
-        spec = _ibb_spec()
-        del spec["desiredInductance"]
-        with pytest.raises(EnrichmentError, match="desiredInductance"):
-            enrich_tas_for_realism(_ibb_tas(), topology="isolated_buck_boost",
-                                   spec=spec)
+    def test_missing_achieved_inductance_throws(self):
+        """L_pri comes from the MKF-achieved inductance in the full MAS
+        root, not from spec.desiredInductance. Omitting that envelope
+        must throw (no silent fallback)."""
+        tas = _ibb_tas(t1_kwargs={"L_pri": None})
+        with pytest.raises(EnrichmentError, match="MAS"):
+            enrich_tas_for_realism(tas, topology="isolated_buck_boost",
+                                   spec=_ibb_spec())
