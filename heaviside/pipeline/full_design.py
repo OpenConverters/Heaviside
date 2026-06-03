@@ -51,7 +51,7 @@ from heaviside.agents.magnetic_picker import (
     pareto_summary,
     pick_best_pareto,
 )
-from heaviside.bridge import MagneticDesign, design_magnetics_fast
+from heaviside.bridge import MagneticDesign, design_magnetics, design_magnetics_fast
 from heaviside.pipeline.topology_screen import (
     TopologyReconciliation,
     feasible_topology_names,
@@ -207,17 +207,49 @@ class Stage2Result:
                                             # where Pareto exploration failed
 
 
+def _is_transformer_topology(topology_name: str) -> bool:
+    """Transformer/isolated topologies need the converter-design adviser
+    (it derives turns ratios + magnetising L); the fast flux-density adviser
+    returns no core for them (powerMean 0)."""
+    try:
+        fam = get(topology_name).family
+    except Exception:  # noqa: BLE001 — unknown name → treat as non-transformer
+        return False
+    return fam.startswith("isolated") or fam == "resonant"
+
+
+def _augment_converter_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """Add the converter-level design constraints MKF's transformer models
+    require (duty-cycle ceiling + FET Vds budget). Harmless for non-isolated
+    topologies — their process_converter ignores unknown keys."""
+    spec.setdefault("maximumDutyCycle", 0.5)
+    if "maximumDrainSourceVoltage" not in spec:
+        iv = spec.get("inputVoltage") or {}
+        vmax = iv.get("maximum") or iv.get("nominal")
+        if vmax:
+            # Generous Vds budget so MKF can pick a sensible reflected voltage.
+            spec["maximumDrainSourceVoltage"] = round(float(vmax) * 3.0, 1)
+    return spec
+
+
 def _stage2_pick_one(args: tuple[str, dict, int, str, str]) -> dict[str, Any]:
     """Worker for the ProcessPoolExecutor. Pure data in / out so the
     pool can pickle it. Returns a payload dict the parent reassembles
     into a TopologyPick (or surfaces as a failure)."""
     topology_name, spec, n_candidates, criteria, core_mode = args
     try:
-        candidates = design_magnetics_fast(
-            topology_name, spec,
-            max_results=n_candidates,
-            core_mode=core_mode,
-        )
+        if _is_transformer_topology(topology_name):
+            # Slow converter-design adviser: MKF derives turns ratios + L.
+            candidates = design_magnetics(
+                topology_name, _augment_converter_spec(dict(spec)),
+                max_results=n_candidates, core_mode=core_mode,
+            )
+        else:
+            candidates = design_magnetics_fast(
+                topology_name, spec,
+                max_results=n_candidates,
+                core_mode=core_mode,
+            )
         idx = pick_best_pareto(candidates, criteria=criteria)
         return {
             "ok": True,
@@ -407,6 +439,10 @@ def stage3_realize(
                 turns_ratios.append(float(v))
         elif isinstance(tr, (int, float)):
             turns_ratios.append(float(tr))
+    # Make the MKF-derived turns ratios available to BOM assembly / analyst /
+    # stress (they read spec.desiredTurnsRatios for isolated topologies).
+    if turns_ratios:
+        spec_dict["desiredTurnsRatios"] = turns_ratios
 
     try:
         netlist, tas = decompose_from_spec(
@@ -681,6 +717,10 @@ def full_design(
                 progress_cb(msg, pct)
             except Exception:  # noqa: BLE001 — progress is best-effort, never fatal
                 pass
+
+    # Add converter-level constraints transformer topologies need (duty/Vds);
+    # ignored by non-isolated process_converter. Flows to stage 2 + stage 3.
+    spec = _augment_converter_spec(dict(spec))
 
     _emit("Screening feasible topologies", 5)
     stage1 = stage1_topology_screen(spec, selector_fn=selector_fn)
