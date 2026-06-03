@@ -562,6 +562,39 @@ def _compute_generic_loss_budget(
         else:
             budget["C_out_esr"] = None
 
+    # Isolated / multi-output topologies: the output rectifier(s) are named
+    # D_out{i} / C_out{i}, one per rail — NOT the buck-class D1 / C_out the
+    # block above looks for. Sum each rail's diode conduction (Vf · Iout_i,
+    # the average current delivered to that load) and output-cap ESR.
+    op = (spec.get("operatingPoints") or [{}])
+    op_i = op[op_index] if op_index < len(op) else (op[0] if op else {})
+    rail_iouts = op_i.get("outputCurrents") or []
+    i = 0
+    while True:
+        d_out = _find_named(tas, f"D_out{i}")
+        c_out = _find_named(tas, f"C_out{i}")
+        if d_out is None and c_out is None:
+            break
+        iout_i = float(rail_iouts[i]) if i < len(rail_iouts) else iout
+        if d_out is not None:
+            vf = d_out.get("vf_typ")
+            qrr = d_out.get("qrr")
+            budget[f"D_out{i}_conduction"] = (
+                iout_i * float(vf) if isinstance(vf, (int, float)) and vf >= 0 else None
+            )
+            if isinstance(qrr, (int, float)) and qrr >= 0:
+                budget[f"D_out{i}_switching"] = 0.5 * max(vin, vout) * float(qrr) * fsw
+        if c_out is not None:
+            esr = c_out.get("esr")
+            ripple_rms = c_out.get("ripple_current_stress")
+            budget[f"C_out{i}_esr"] = (
+                (float(ripple_rms) ** 2) * float(esr)
+                if isinstance(esr, (int, float)) and esr >= 0
+                and isinstance(ripple_rms, (int, float)) and ripple_rms >= 0
+                else None
+            )
+        i += 1
+
     return budget
 
 

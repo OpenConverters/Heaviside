@@ -575,8 +575,6 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     # + Rth and re-query at that temperature.)
     op = _require(spec, ("operatingPoints",), "buck spec")[0]
     t_amb = float(op.get("ambientTemperature", 25.0))
-    t_worst = max(t_amb, 100.0)
-
     # Authoritative Isat from PyOM. Falls back to the analytical
     # B_sat * N * A_e / L if PyOM is unavailable or rejects the MAS, with
     # provenance noting which path was taken.
@@ -584,7 +582,7 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     isat: float
     try:
         from PyOpenMagnetics import PyOpenMagnetics as _P
-        isat = float(_P.calculate_saturation_current(dict(mas), t_worst))
+        isat = float(_P.calculate_saturation_current(dict(mas), t_amb))
         if not (isat > 0):
             raise ValueError(f"PyOM returned non-positive isat: {isat!r}")
     except Exception as exc:
@@ -607,7 +605,7 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched_comp["ipeak_worst"] = round(ipeak_worst, 6)
     enriched_comp["isat_provenance"] = {
         "method": isat_method,
-        "temperature_c": t_worst,
+        "temperature_c": t_amb,
         # ``b_sat_T`` is the analytical-fallback B_sat (lowest across
         # the temperature curve). PyOM's authoritative path also uses
         # this curve internally but adjusts for the air gap, which the
@@ -721,7 +719,7 @@ def _enrich_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         mas, L, b_sat=b_sat, N=int(N), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="boost",
     )
 
@@ -823,13 +821,17 @@ def _enrich_flyback(tas: dict, spec: Mapping[str, Any]) -> None:
         raise EnrichmentError("flyback spec.operatingPoints[0].outputCurrents[0]: required numeric")
     if not isinstance(fsw, (int, float)) or fsw <= 0:
         raise EnrichmentError("flyback spec.operatingPoints[0].switchingFrequency: required positive number")
-    if len(vouts) > 1 or len(iouts) > 1:
+    # Multi-output: the regulated (rail 0) output sets the duty cycle, while the
+    # transformer's primary current / saturation is set by the TOTAL throughput
+    # power summed across every rail. Per-secondary diode/cap stresses are
+    # attributed downstream (analyst / stress), so the primary-referred magnetic
+    # enrichment only needs rail-0 voltage + total power.
+    if len(vouts) != len(iouts):
         raise EnrichmentError(
-            "flyback enrichment: multi-output flyback (more than one rail) not "
-            "yet supported — extractor would have to weight currents by turns "
-            "ratios per secondary, which is not implemented"
+            "flyback spec: outputVoltages and outputCurrents length mismatch"
         )
     vout, iout = float(vouts[0]), float(iouts[0])
+    pout_total = sum(float(v) * float(i) for v, i in zip(vouts, iouts))
     fsw = float(fsw)
 
     Lm = _required_inductance(spec, "desiredMagnetizingInductance", "flyback spec")
@@ -871,7 +873,7 @@ def _enrich_flyback(tas: dict, spec: Mapping[str, Any]) -> None:
     d_max = (vout * n) / (vmin + vout * n)
     d_min = (vout * n) / (vmax + vout * n)
 
-    Pout = vout * iout
+    Pout = pout_total
     I_in_max = Pout / (efficiency * vmin)
     Lm_worst = 0.8 * Lm
     ripple_worst = vmin * d_max / (Lm_worst * fsw)
@@ -881,7 +883,7 @@ def _enrich_flyback(tas: dict, spec: Mapping[str, Any]) -> None:
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         mas, Lm, b_sat=b_sat, N=int(Np), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="flyback",
     )
 
@@ -1022,7 +1024,7 @@ def _enrich_non_isolated_buckboost(
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat_L1, isat_prov_L1 = _compute_isat_authoritative(
         mas1, L1_H, b_sat=b_sat1, N=int(N1), A_e=float(A_e1),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label=f"{topology_name} L1",
     )
 
@@ -1052,7 +1054,7 @@ def _enrich_non_isolated_buckboost(
     A_e2, N2, b_sat2 = _mas_isat_inputs(mas2, f"{topology_name} L2 MAS")
     isat_L2, isat_prov_L2 = _compute_isat_authoritative(
         mas2, L2_H, b_sat=b_sat2, N=int(N2), A_e=float(A_e2),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label=f"{topology_name} L2",
     )
     isat_prov_L2["inductance_source"] = l2_source
@@ -1241,6 +1243,13 @@ def _winding_turns_by_name(
         # too when the caller asked for sec0.
         if aliased == "Secondary 0":
             aliased_splits.append("Secondary")
+        # LLC / CLLLC center-tapped: a single secondary (secondary 0)
+        # is split into "Secondary 0 Half 1" / "Secondary 0 Half 2".
+        # Enrichers ask for sec1 meaning "second half-winding", which
+        # aliases to "Secondary 1" — but there is no separate secondary
+        # 1, only the second half of secondary 0.  Accept that fallback.
+        if aliased == "Secondary 1":
+            aliased_splits.append("Secondary 0 Half 2")
     # Primary-side splits — push-pull emits 'Primary Half 1'/'Half 2'
     # for the centre-tapped primary. Aliases pri / pri_top / pri_bot
     # map to "Primary" via the table above; accept the split halves
@@ -1264,6 +1273,22 @@ def _winding_turns_by_name(
                     f"got {N!r}"
                 )
             return int(N)
+    # Suffix fallback: Weinberg L1 emits "L1a"/"L1b" but the enricher
+    # asks for "a"/"b".  Match any winding whose name ends with the
+    # requested name (case-sensitive).
+    if len(winding_name) <= 2:
+        for w in fd:
+            if not isinstance(w, Mapping):
+                continue
+            name = w.get("name")
+            if isinstance(name, str) and name.endswith(winding_name):
+                N = w.get("numberTurns")
+                if not isinstance(N, (int, float)) or N <= 0:
+                    raise EnrichmentError(
+                        f"{where}: winding {winding_name!r} numberTurns must be positive, "
+                        f"got {N!r}"
+                    )
+                return int(N)
     names = [w.get("name") for w in fd if isinstance(w, Mapping)]
     raise EnrichmentError(
         f"{where}: no winding named {winding_name!r} (have: {names})"
@@ -1351,7 +1376,7 @@ def _enrich_forward_family(
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         lout_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label=topology_name,
     )
 
@@ -1471,7 +1496,7 @@ def _enrich_isolated_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         mas, L_pri, b_sat=b_sat, N=int(N_pri), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="isolated_buck",
     )
 
@@ -1578,7 +1603,7 @@ def _enrich_isolated_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         mas, L_pri, b_sat=b_sat, N=int(N_pri), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="isolated_buck_boost",
     )
 
@@ -1707,7 +1732,7 @@ def _enrich_push_pull(tas: dict, spec: Mapping[str, Any]) -> None:
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         lout_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="push_pull",
     )
 
@@ -1842,7 +1867,7 @@ def _enrich_asymmetric_half_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         lout_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="asymmetric_half_bridge",
     )
 
@@ -1944,12 +1969,10 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
 
     d_max = 1.0 - n * vmin / (2.0 * vout)
     d_min = 1.0 - n * vmax / (2.0 * vout)
-    if d_min <= 0.5:
+    if d_min <= 0.0:
         raise EnrichmentError(
-            f"weinberg enrichment: D_min = {d_min:.4f} ≤ 0.5 at Vin_max = "
-            f"{vmax} V — Weinberg V1 requires per-switch D > 0.5 (overlap "
-            "mode) for boost-style step-up.  Either raise Vout or lower "
-            "the secondary/primary turns ratio (n)."
+            f"weinberg enrichment: D_min = {d_min:.4f} ≤ 0 at Vin_max = "
+            f"{vmax} V — degenerate (negative duty)."
         )
     if d_max >= 1.0:
         raise EnrichmentError(
@@ -1979,7 +2002,7 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
     interior = vout / (2.0 * n)
     if vmin < interior < vmax:
         candidates.append(interior)
-    ripple_worst = max(_ripple_at(v) for v in candidates)
+    ripple_worst = max(abs(_ripple_at(v)) for v in candidates)
 
     iL_avg_max = iout * vout / vmin       # input current at Vin_min
     ipeak_worst = iL_avg_max + ripple_worst / 2.0
@@ -1987,7 +2010,7 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         l1_mas, L, b_sat=b_sat, N=int(N_l1), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="weinberg",
     )
 
@@ -2130,7 +2153,7 @@ def _enrich_four_switch_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         mas, L, b_sat=b_sat, N=int(N), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="four_switch_buck_boost",
     )
 
@@ -2270,7 +2293,7 @@ def _enrich_llc(tas: dict, spec: Mapping[str, Any]) -> None:
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         lr_full_mas, L_r, b_sat=b_sat, N=int(N_lr), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="llc (series-resonant inductor)",
     )
 
@@ -2438,7 +2461,7 @@ def _enrich_phase_shifted_full_bridge(tas: dict, spec: Mapping[str, Any]) -> Non
     t_amb = float(op_spec[0].get("ambientTemperature", 25.0)) if isinstance(op_spec[0], Mapping) else 25.0
     isat, isat_prov = _compute_isat_authoritative(
         lout_full_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="phase_shifted_full_bridge (output choke)",
     )
 
@@ -2599,7 +2622,7 @@ def _enrich_dual_active_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         lr_full_mas, L_r, b_sat=b_sat, N=int(N_lr), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="dual_active_bridge (series commutation inductor)",
     )
 
@@ -2641,6 +2664,102 @@ def _enrich_dual_active_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # CLLLC (bidirectional symmetric resonant — dual full bridges + dual tanks)
 # ---------------------------------------------------------------------------
+
+
+def _enrich_cllc(tas: dict, spec: Mapping[str, Any]) -> None:
+    """Stamp duty + T1 Isat / Ipeak for the CLLC converter.
+
+    CLLC = bidirectional resonant: HV full bridge (Q1..Q4) drives a series
+    tank C_r1, then transformer T1 (pri, sec0), then secondary tank C_r2
+    feeding the LV sync-rect bridge (Q5..Q8).  L_r1 and L_r2 are absorbed
+    into T1's leakage model and do not appear as separate TAS components.
+
+    Forward-mode DC gain at primary resonance (same as CLLLC — both FB):
+
+      ``Vout = Vin / n``   with ``n = N_pri / N_sec``
+
+    Magnetizing peak current (triangular, FB drive → /4):
+
+      ``I_m_pk = Vin_max / (4 · L_m_worst · fsw)``
+
+    FHA load-reflected primary peak:
+
+      ``I_load_pk = (π / 2) · Iout / n``
+
+    Combined ipeak on the T1 primary (magnetizing + reflected load):
+
+      ``I_pk_worst = M_max · I_load_pk + I_m_pk``
+
+    Duty: 50 % complementary FB (frequency modulation regulates).
+    """
+    import math as _math
+    where = "cllc spec"
+    vmin, vmax = _vin_extremes(spec, where)
+    vout, iout, fsw = _operating_point(spec, where)
+
+    si, ci, t1_comp = _find_magnetic_in_stage_role(
+        tas, "isolation", "cllc enrichment (T1)"
+    )
+    if t1_comp.get("name") != "T1":
+        raise EnrichmentError(
+            f"cllc enrichment: expected first magnetic in isolation "
+            f"stage to be 'T1', found {t1_comp.get('name')!r}"
+        )
+    t1_full_mas = _read_full_mas_root(t1_comp, "cllc T1 MAS")
+    L_m = _harvest_inductance(t1_full_mas, "cllc T1 MAS")
+    t1_mas = _read_mas(t1_comp, "cllc T1 MAS")
+    A_e, N_pri, b_sat = _mas_isat_inputs(t1_mas, "cllc T1 MAS")
+    N_sec = _winding_turns_by_name(t1_mas, "sec0", "cllc T1 MAS")
+    n = float(N_pri) / float(N_sec)
+
+    M_at_vmin = (n * vout) / vmin
+    M_max = max(1.0, M_at_vmin)
+
+    i_load_pk = (_math.pi / 2.0) * (iout / n)
+    L_m_worst = 0.8 * L_m
+    i_mag_pk = vmax / (4.0 * L_m_worst * fsw)
+
+    op = _require(spec, ("operatingPoints",), "cllc spec")[0]
+    t_amb = float(op.get("ambientTemperature", 25.0))
+    isat, isat_prov = _compute_isat_authoritative(
+        t1_mas, L_m, b_sat=b_sat, N=int(N_pri), A_e=float(A_e),
+        temperature_c=t_amb,
+        topology_label="cllc (transformer magnetizing)",
+    )
+
+    tas["duty"]     = 0.5
+    tas["duty_min"] = 0.5
+    tas["duty_max"] = 0.5
+
+    enriched = dict(t1_comp)
+    enriched["isat"]        = round(isat, 6)
+    enriched["ipeak_worst"] = round(i_mag_pk, 6)
+    enriched["isat_provenance"] = isat_prov
+    enriched["ipeak_provenance"] = {
+        "method": (
+            "Vin_max / (4 * Lm_worst * fsw)  "
+            "[triangular magnetizing peak only — T1 is a transformer, "
+            "reflected load current does not bias the core; "
+            "full-bridge primary => /4; Lm_worst = 0.8 * Lm]"
+        ),
+        "role": "transformer_magnetizing",
+        "iout_A": iout,
+        "vout_V": vout,
+        "turns_ratio_n_pri_over_n_sec": round(n, 6),
+        "n_primary": N_pri,
+        "n_secondary": N_sec,
+        "vin_min_V": vmin,
+        "vin_max_V": vmax,
+        "fsw_Hz": fsw,
+        "gain_at_vin_min": round(M_at_vmin, 6),
+        "boost_factor_M_max": round(M_max, 6),
+        "i_load_pk_A": round(i_load_pk, 6),
+        "i_mag_pk_A": round(i_mag_pk, 6),
+        "Lm_H": L_m,
+        "Lm_worst_H": L_m_worst,
+        "duty_50pct_complementary_FB": True,
+    }
+    tas["topology"]["stages"][si]["circuit"]["components"][ci] = enriched
 
 
 def _enrich_clllc(tas: dict, spec: Mapping[str, Any]) -> None:
@@ -2749,7 +2868,7 @@ def _enrich_clllc(tas: dict, spec: Mapping[str, Any]) -> None:
     t_amb = float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         lr1_full_mas, L_r1, b_sat=b_sat, N=int(N_lr1), A_e=float(A_e),
-        temperature_c=max(t_amb, 100.0),
+        temperature_c=t_amb,
         topology_label="clllc (primary tank inductor)",
     )
 
@@ -2817,6 +2936,7 @@ _EXTRACTORS: dict[str, Callable[[dict, Mapping[str, Any]], None]] = {
     "dual_active_bridge": _enrich_dual_active_bridge,
     "dab": _enrich_dual_active_bridge,
     "clllc": _enrich_clllc,
+    "cllc": _enrich_cllc,
 }
 
 

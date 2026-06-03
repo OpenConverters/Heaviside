@@ -254,12 +254,30 @@ class TestFlybackFailureModes:
         with pytest.raises(EnrichmentError, match="efficiency"):
             enrich_tas_for_realism(_flyback_tas(), topology="flyback", spec=spec)
 
-    def test_multi_output_throws(self):
-        spec = _flyback_spec()
-        spec["operatingPoints"][0]["outputVoltages"] = [12.0, 5.0]
-        spec["operatingPoints"][0]["outputCurrents"] = [2.0, 1.0]
-        with pytest.raises(EnrichmentError, match="multi-output"):
-            enrich_tas_for_realism(_flyback_tas(), topology="flyback", spec=spec)
+    def test_multi_output_enriches_on_total_power(self):
+        """Multi-output flyback now enriches: the regulated rail (0) sets the
+        duty, and the primary current / saturation are referred from the TOTAL
+        throughput power summed across rails (per-secondary diode/cap stresses
+        are attributed downstream by the analyst)."""
+        single = _flyback_spec()
+        single["operatingPoints"][0]["outputVoltages"] = [12.0]
+        single["operatingPoints"][0]["outputCurrents"] = [2.0]
+        multi = _flyback_spec()
+        multi["operatingPoints"][0]["outputVoltages"] = [12.0, 5.0]
+        multi["operatingPoints"][0]["outputCurrents"] = [2.0, 1.0]
+
+        tas_s = enrich_tas_for_realism(_flyback_tas(), topology="flyback", spec=single)
+        tas_m = enrich_tas_for_realism(_flyback_tas(), topology="flyback", spec=multi)
+
+        def _ipeak(tas):
+            for st in tas["topology"]["stages"]:
+                for c in st["circuit"]["components"]:
+                    if "ipeak_worst" in c:
+                        return c["ipeak_worst"]
+            raise AssertionError("no ipeak_worst stamped")
+
+        # Adding a 5 W rail to a 24 W rail raises the primary peak current.
+        assert _ipeak(tas_m) > _ipeak(tas_s)
 
     def test_single_winding_transformer_throws(self):
         tas = _flyback_tas()
