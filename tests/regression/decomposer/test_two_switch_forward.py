@@ -95,7 +95,7 @@ def test_2sforward_tas_round_trip_shape() -> None:
     assert t1_pins == {"pri.1", "pri.2", "sec0.1", "sec0.2"}, t1_pins
 
     rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"] if not c["name"].startswith("P_")}
-    assert rect_names == {"D_fwd", "D_fw", "L_out0", "C_out0"}, rect_names
+    assert rect_names == {"D_fwd0", "D_fw0", "L_out0", "C_out0"}, rect_names
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {

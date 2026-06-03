@@ -43,8 +43,9 @@ Scope (Phase 2):
 
 from __future__ import annotations
 
+import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -132,7 +133,7 @@ class MagneticDesign:
 _HEAVISIDE_PYOM_SETTINGS: dict[str, Any] = {
     "circuitSimulatorIncludeSaturation": True,
     "circuitSimulatorIncludeMutualResistance": True,
-    "coreAdviserSaturationMargin": 1.2,
+    "coreAdviserSaturationMargin": 1.5,
 }
 
 _pyom_settings_applied: bool = False
@@ -163,7 +164,7 @@ def design_magnetics(
     converter_spec: Mapping[str, Any],
     *,
     max_results: int = 1,
-    core_mode: str = "available cores",
+    core_mode: str = "standard cores",
     use_ngspice: bool = False,
     weights: Mapping[str, float] | None = None,
 ) -> list[MagneticDesign]:
@@ -292,7 +293,7 @@ def design_magnetics_fast(
     converter_spec: Mapping[str, Any],
     *,
     max_results: int = 5,
-    core_mode: str = "available cores",
+    core_mode: str = "standard cores",
 ) -> list[MagneticDesign]:
     """Fast-mode magnetic candidates for Pareto exploration.
 
@@ -571,6 +572,66 @@ def _attach_one_capacitor(
     component["data"] = {"capacitor": {}, "inputs": spec.inputs}
 
 
+def _resolve_extra_role(
+    target: str,
+    tas_name: str,
+    available_roles: Collection[str],
+) -> str:
+    """Resolve a ``magnetic_binding`` role to the concrete PyOM extras key.
+
+    Most topologies expose a single extra magnetic per role (e.g.
+    ``outputInductor``) and the binding role *is* the PyOM key. Multi-
+    output forward-family topologies, however, emit one output inductor
+    *per rail*: MKF names them ``outputInductor`` for a single rail but
+    ``outputInductor_1``, ``outputInductor_2``, … (1-based) once there is
+    more than one secondary (see ``TwoSwitchForward::get_extra_components_inputs``).
+
+    The stencil names the matching TAS chokes ``L_out0``, ``L_out1``, …
+    (0-based). When the bound role is not present verbatim among the
+    PyOM-supplied roles, map the TAS rail index ``i`` (from ``L_out{i}``)
+    to MKF's 1-based per-rail name ``{role}_{i+1}``.
+
+    Returns the resolved key (guaranteed present in ``available_roles``)
+    or raises nothing here — the caller validates membership and emits the
+    rich BridgeError so the diagnostic stays in one place.
+    """
+    if target in available_roles:
+        return target
+    # Per-rail fan-out: L_out{i} → {role}_{i+1}.
+    m = re.fullmatch(r"L_out(\d+)", tas_name)
+    if m is not None:
+        indexed = f"{target}_{int(m.group(1)) + 1}"
+        if indexed in available_roles:
+            return indexed
+    return target
+
+
+def _binding_role(
+    name: str, binding: Mapping[str, str | None]
+) -> str | None | "_Unbound":
+    """Look up the binding role for a TAS magnetic ``name``.
+
+    Output chokes of a multi-output forward-family converter are named
+    ``L_out0``, ``L_out1``, … by the stencil but the registry only
+    declares the canonical single-rail ``L_out0`` entry. Treat any
+    ``L_out{i}`` (i ≥ 1) as sharing rail 0's binding role so the static
+    registry stays small while still covering N rails. Returns the
+    sentinel :data:`_UNBOUND` when ``name`` is genuinely unmapped.
+    """
+    if name in binding:
+        return binding[name]
+    if re.fullmatch(r"L_out\d+", name or "") and "L_out0" in binding:
+        return binding["L_out0"]
+    return _UNBOUND
+
+
+class _Unbound:
+    """Sentinel type for a TAS magnetic with no binding entry."""
+
+
+_UNBOUND = _Unbound()
+
+
 def attach_components_to_tas(
     tas: dict[str, Any],
     components: ConverterComponents,
@@ -620,7 +681,9 @@ def attach_components_to_tas(
         )
 
     tas_names = [c.get("name") for c in magnetics]
-    missing = [n for n in tas_names if n not in binding]
+    missing = [
+        n for n in tas_names if isinstance(_binding_role(n or "", binding), _Unbound)
+    ]
     if missing:
         raise BridgeError(
             f"attach_components_to_tas: TAS magnetics {missing} have no "
@@ -637,20 +700,26 @@ def attach_components_to_tas(
         )
 
     for component in magnetics:
-        name = component.get("name")
-        target = binding[name]
+        name = component.get("name") or ""
+        target = _binding_role(name, binding)
         if target is None:
             _attach_one(component, components.main_magnetic)
         else:
-            if target not in components.extra_magnetics:
+            # ``target`` is a role string (the _Unbound case was rejected
+            # by the missing-check above). Resolve per-rail fan-out.
+            assert isinstance(target, str)
+            resolved = _resolve_extra_role(
+                target, name, components.extra_magnetics.keys()
+            )
+            if resolved not in components.extra_magnetics:
                 raise BridgeError(
                     f"attach_components_to_tas: TAS magnetic {name!r} "
-                    f"is bound to PyOM extras role {target!r}, but "
-                    f"ConverterComponents.extra_magnetics has keys "
-                    f"{sorted(components.extra_magnetics)}. Did Phase B "
-                    f"complete?"
+                    f"is bound to PyOM extras role {target!r} (resolved "
+                    f"{resolved!r}), but ConverterComponents.extra_magnetics "
+                    f"has keys {sorted(components.extra_magnetics)}. Did "
+                    f"Phase B complete?"
                 )
-            _attach_one(component, components.extra_magnetics[target])
+            _attach_one(component, components.extra_magnetics[resolved])
 
     # ---- Capacitor extras (resonant topologies) ------------------------
     #
@@ -975,7 +1044,7 @@ def design_extra_magnetic(
     spec: ExtraMagneticSpec,
     *,
     max_results: int = 1,
-    core_mode: str = "available cores",
+    core_mode: str = "standard cores",
 ) -> list[MagneticDesign]:
     """Design a single extra magnetic from its pre-filled MAS::Inputs.
 
@@ -1296,7 +1365,7 @@ def design_converter_components(
     converter_spec: Mapping[str, Any],
     *,
     max_results: int = 1,
-    core_mode: str = "available cores",
+    core_mode: str = "standard cores",
     use_ngspice: bool = False,
     weights: Mapping[str, float] | None = None,
     min_isat_ratio: float = 1.2,
@@ -1431,7 +1500,7 @@ def design_converter_components(
         # max_results=1 here — orchestrator picks the best per role.
         # Callers wanting Pareto fronts should drive design_extra_magnetic
         # themselves.
-        results = design_extra_magnetic(ms, max_results=1, core_mode=core_mode)
+        results = design_extra_magnetic(ms, max_results=1, core_mode="available cores")
         extra_mag_designs[ms.name] = results[0]
 
     return ConverterComponents(

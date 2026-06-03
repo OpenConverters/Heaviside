@@ -1132,6 +1132,63 @@ def _find_magnetic_in_stage_role(
     )
 
 
+def _output_rectifier_stage_indices(
+    tas: Mapping[str, Any], expected: int, topology_name: str,
+) -> list[int]:
+    """Return the stage indices of every ``outputRectifier``-role stage,
+    in declaration order (= rail order).
+
+    Multi-output forward-family TAS emits one output-rectifier stage per
+    rail; this enumerates them so each rail's choke can be enriched. Throws
+    if the count does not match the spec's rail count (stencil / spec
+    drift) rather than silently enriching a subset.
+    """
+    topology = tas.get("topology")
+    if not isinstance(topology, Mapping):
+        raise EnrichmentError("tas.topology: must be a mapping")
+    stages = topology.get("stages")
+    if not isinstance(stages, list):
+        raise EnrichmentError("tas.topology.stages: must be a list")
+    idxs = [
+        si for si, st in enumerate(stages)
+        if isinstance(st, Mapping) and st.get("role") == "outputRectifier"
+    ]
+    if len(idxs) != expected:
+        raise EnrichmentError(
+            f"{topology_name} enrichment: spec has {expected} output rail(s) "
+            f"but TAS has {len(idxs)} outputRectifier stage(s) — stencil / "
+            "spec drift; refusing to enrich a mismatched rail set"
+        )
+    return idxs
+
+
+def _find_magnetic_comp_index_in_stage(
+    tas: Mapping[str, Any], stage_idx: int, where: str,
+) -> tuple[int, Mapping[str, Any]]:
+    """Return ``(comp_idx, comp)`` for the first magnetic in ``stage_idx``."""
+    stages = tas.get("topology", {}).get("stages", [])
+    if not isinstance(stages, list) or stage_idx >= len(stages):
+        raise EnrichmentError(f"{where}: stage index {stage_idx} out of range")
+    stage = stages[stage_idx]
+    circuit = stage.get("circuit") if isinstance(stage.get("circuit"), Mapping) else None
+    comps = circuit.get("components") if isinstance(circuit, Mapping) else None
+    if not isinstance(comps, list):
+        raise EnrichmentError(f"{where}: stage {stage_idx} has no components list")
+    for ci, c in enumerate(comps):
+        if not isinstance(c, Mapping):
+            continue
+        data = c.get("data")
+        if isinstance(data, Mapping) and "magnetic" in data:
+            return ci, c
+        if c.get("category") == "magnetic":
+            return ci, c
+    raise EnrichmentError(
+        f"{where}: no magnetic component found in outputRectifier stage "
+        f"{stage_idx} — stencil emission contract violated (each forward-family "
+        "output rail must carry an output choke)"
+    )
+
+
 def _find_named_magnetic_in_stage_role(
     tas: Mapping[str, Any], role: str, name: str, where: str,
 ) -> Mapping[str, Any]:
@@ -1338,19 +1395,40 @@ def _enrich_forward_family(
     """
     where = f"{topology_name} spec"
     vmin, vmax = _vin_extremes(spec, where)
-    vout, iout, fsw = _operating_point(spec, where)
+    op = _require(spec, ("operatingPoints",), where)[0]
+    if not isinstance(op, Mapping):
+        raise EnrichmentError(f"{where}.operatingPoints[0]: expected mapping")
+    vouts = op.get("outputVoltages")
+    iouts = op.get("outputCurrents")
+    fsw = op.get("switchingFrequency")
+    if not (isinstance(vouts, list) and vouts):
+        raise EnrichmentError(f"{where}.operatingPoints[0].outputVoltages: non-empty list")
+    if not (isinstance(iouts, list) and iouts):
+        raise EnrichmentError(f"{where}.operatingPoints[0].outputCurrents: non-empty list")
+    if len(vouts) != len(iouts):
+        raise EnrichmentError(
+            f"{topology_name} spec: outputVoltages and outputCurrents length mismatch"
+        )
+    if not isinstance(fsw, (int, float)) or fsw <= 0:
+        raise EnrichmentError(f"{where}.operatingPoints[0].switchingFrequency: positive number")
+    fsw = float(fsw)
+    n_rails = len(vouts)
+    t_amb = float(op.get("ambientTemperature", 25.0))
 
-    # T1 lives in the isolation stage; read its turns ratio.
+    # T1 lives in the isolation stage; read its turns ratios per rail.
     _, _, t1_comp = _find_magnetic_in_stage_role(
         tas, "isolation", f"{topology_name} enrichment (T1)"
     )
     t1_mas = _read_mas(t1_comp, f"{topology_name} T1 MAS")
     N_pri = _winding_turns_by_name(t1_mas, "pri", f"{topology_name} T1 MAS")
-    N_sec = _winding_turns_by_name(t1_mas, "sec0", f"{topology_name} T1 MAS")
-    n = float(N_pri) / float(N_sec)
 
-    d_max = vout * n / vmin
-    d_min = vout * n / vmax
+    # Duty cycle is set by the regulated rail (rail 0); the half-duty
+    # reset constraint and the published tas["duty"] reference rail 0.
+    vout0 = float(vouts[0])
+    N_sec0 = _winding_turns_by_name(t1_mas, "sec0", f"{topology_name} T1 MAS")
+    n0 = float(N_pri) / float(N_sec0)
+    d_max = vout0 * n0 / vmin
+    d_min = vout0 * n0 / vmax
     if enforce_half_duty and d_max >= 0.5:
         raise EnrichmentError(
             f"{topology_name} enrichment: D_max = {d_max:.3f} ≥ 0.5 — single/two-"
@@ -1358,51 +1436,64 @@ def _enrich_forward_family(
             "raise the turns ratio (more primary turns) or raise Vin_min."
         )
 
-    # L_out lives in the outputRectifier stage. Harvest its L from its
-    # OWN MAS (the value MKF achieved with the picked core + gap), not
-    # from spec.desiredInductance — see PSFB enricher comment.
-    so, co, lout_comp = _find_magnetic_in_stage_role(
-        tas, "outputRectifier", f"{topology_name} enrichment (L_out)"
-    )
-    lout_full_mas = _read_full_mas_root(lout_comp, f"{topology_name} L_out MAS")
-    L_out = _harvest_inductance(lout_full_mas, f"{topology_name} L_out MAS")
-    lout_mas = _read_mas(lout_comp, f"{topology_name} L_out MAS")
-    A_e, N_lout, b_sat = _mas_isat_inputs(lout_mas, f"{topology_name} L_out MAS")
-
-    L_worst = 0.8 * L_out
-    ripple_worst = vout * (1.0 - d_min) / (L_worst * fsw)
-    ipeak_worst = iout + ripple_worst / 2.0
-    op = _require(spec, ("operatingPoints",), f"{topology_name} spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
-    isat, isat_prov = _compute_isat_authoritative(
-        lout_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
-        temperature_c=t_amb,
-        topology_label=topology_name,
-    )
-
     tas["duty"] = round(d_max, 6)
     tas["duty_min"] = round(d_min, 6)
     tas["duty_max"] = round(d_max, 6)
 
-    enriched = dict(lout_comp)
-    enriched["isat"] = round(isat, 6)
-    enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = isat_prov
-    enriched["ipeak_provenance"] = {
-        "method": "Iout + ripple_worst/2 (buck-shaped on secondary at D_min, L*0.8)",
-        "role": "output_choke",
-        "iout_A": iout,
-        "vout_V": vout,
-        "turns_ratio_n": round(n, 6),
-        "n_primary": N_pri,
-        "n_secondary": N_sec,
-        "d_min": round(d_min, 6),
-        "ripple_worst_A_pp": round(ripple_worst, 6),
-        "vin_max_V": vmax,
-        "fsw_Hz": fsw,
-        "L_worst_H": L_worst,
-    }
-    tas["topology"]["stages"][so]["circuit"]["components"][co] = enriched
+    # Each output rail has its OWN choke (L_out{i}) in its OWN
+    # outputRectifier stage, carrying that rail's output current. Enrich
+    # every rail's choke so the realism gate Isat/Ipeak-checks all of
+    # them — leaving secondary chokes un-enriched would silently hide a
+    # saturation risk on rail ≥ 1.
+    out_stages = _output_rectifier_stage_indices(tas, n_rails, topology_name)
+    for rail, so in enumerate(out_stages):
+        vout_i = float(vouts[rail])
+        iout_i = float(iouts[rail])
+        N_sec_i = _winding_turns_by_name(
+            t1_mas, f"sec{rail}", f"{topology_name} T1 MAS"
+        )
+        n_i = float(N_pri) / float(N_sec_i)
+        # Secondary duty mirrors rail-0 duty (common primary excitation);
+        # the per-rail turns ratio is solved so V_sec_i = Vin·D/n_i = Vout_i.
+        d_min_i = vout_i * n_i / vmax
+
+        co, lout_comp = _find_magnetic_comp_index_in_stage(
+            tas, so, f"{topology_name} enrichment (L_out{rail})"
+        )
+        lout_full_mas = _read_full_mas_root(lout_comp, f"{topology_name} L_out{rail} MAS")
+        L_out = _harvest_inductance(lout_full_mas, f"{topology_name} L_out{rail} MAS")
+        lout_mas = _read_mas(lout_comp, f"{topology_name} L_out{rail} MAS")
+        A_e, N_lout, b_sat = _mas_isat_inputs(lout_mas, f"{topology_name} L_out{rail} MAS")
+
+        L_worst = 0.8 * L_out
+        ripple_worst = vout_i * (1.0 - d_min_i) / (L_worst * fsw)
+        ipeak_worst = iout_i + ripple_worst / 2.0
+        isat, isat_prov = _compute_isat_authoritative(
+            lout_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
+            temperature_c=t_amb,
+            topology_label=topology_name,
+        )
+
+        enriched = dict(lout_comp)
+        enriched["isat"] = round(isat, 6)
+        enriched["ipeak_worst"] = round(ipeak_worst, 6)
+        enriched["isat_provenance"] = isat_prov
+        enriched["ipeak_provenance"] = {
+            "method": "Iout + ripple_worst/2 (buck-shaped on secondary at D_min, L*0.8)",
+            "role": "output_choke",
+            "rail": rail,
+            "iout_A": iout_i,
+            "vout_V": vout_i,
+            "turns_ratio_n": round(n_i, 6),
+            "n_primary": N_pri,
+            "n_secondary": N_sec_i,
+            "d_min": round(d_min_i, 6),
+            "ripple_worst_A_pp": round(ripple_worst, 6),
+            "vin_max_V": vmax,
+            "fsw_Hz": fsw,
+            "L_worst_H": L_worst,
+        }
+        tas["topology"]["stages"][so]["circuit"]["components"][co] = enriched
 
 
 def _enrich_single_switch_forward(tas: dict, spec: Mapping[str, Any]) -> None:
