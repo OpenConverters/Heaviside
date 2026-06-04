@@ -5,13 +5,16 @@
 * DC Input
 Vin vin_dc 0 48
 
+* §8a.5 input-current sense
+Vq1_sense vin_dc q1_drain 0
+
 * PWM Switches (both controlled together)
-Vpwm pwm_ctrl 0 PULSE(0 5 0 10n 10n 1.1875e-06 5e-06)
-.model SW1 SW VT=2.500000 VH=0.100000 RON=0.050000 RON=0.1 ROFF=1MEG
+Vpwm pwm_ctrl 0 PULSE(0 5 0 1e-08 1e-08 1.1875e-06 5e-06)
+.model SW1 SW VT=2.500000 VH=0.100000 RON=0.050000 RON=0.1 ROFF=1.000000e+06
 .model DIDEAL D(IS=1.000000e-12 RS=5.000000e-02)
 
 * High-side switch S1 and clamp diode D1
-S1 vin_dc sw1_out pwm_ctrl 0 SW1
+S1 q1_drain sw1_out pwm_ctrl 0 SW1
 D1 0 sw1_out DIDEAL
 
 * Primary current sense
@@ -26,6 +29,9 @@ Kpri_sec0 Lpri Lsec0 0.9999
 * Low-side switch S2 and clamp diode D2
 S2 pri_gnd 0 pwm_ctrl 0 SW1
 D2 pri_gnd vin_dc DIDEAL
+
+* §8a.5 differential primary winding probe
+Evpri_w vpri_w 0 pri_in pri_gnd 1
 
 * Secondary 0 output stage
 Dfwd0 sec0_in sec0_rect DIDEAL
@@ -42,9 +48,9 @@ Rload0 vout0 0 2.500000
 .tran 2.500000e-08 5.000000e-05 2.500000e-05 UIC
 
 * Output signals
-.save v(pri_in) i(Vpri_sense) v(vin_dc) i(Vin) v(sec0_in) i(Vsec_sense0) v(vout0)
+.save v(pri_in) v(pri_gnd) v(vpri_w) i(Vpri_sense) v(vin_dc) i(Vin) i(Vq1_sense) v(sec0_in) i(Vsec_sense0) v(vout0)
 
-.options RELTOL=0.001 ABSTOL=1e-9 VNTOL=1e-6 ITL1=1000 ITL4=1000
-.ic v(vout0)=5.000000
+.options RELTOL=0.001000 ABSTOL=1.000000e-09 VNTOL=1.000000e-06 ITL1=1000 ITL4=1000
+.ic v(vout0)=5
 
 .end

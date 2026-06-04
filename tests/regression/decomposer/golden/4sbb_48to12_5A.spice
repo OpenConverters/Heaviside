@@ -43,7 +43,7 @@ Vout_sense vout out_load 0
 Rload out_load 0 2.400000
 
 * Transient analysis (UIC enables .ic)
-.tran 2.500000e-08 1.750000e-04 1.500000e-04 UIC
+.tran 2.500000e-08 1.750000e-04 1.450000e-04 UIC
 
 * Output signals
 .save v(vpri_diff) v(vin_dc) v(sw1) v(sw2) v(vout) i(Vin_sense) i(Vl_sense) i(Vsw2_sense) i(Vout_sense)
