@@ -51,7 +51,7 @@ from heaviside.agents.magnetic_picker import (
     pareto_summary,
     pick_best_pareto,
 )
-from heaviside.bridge import MagneticDesign, design_magnetics, design_magnetics_fast
+from heaviside.bridge import BridgeError, MagneticDesign, design_magnetics, design_magnetics_fast
 from heaviside.pipeline.topology_screen import (
     TopologyReconciliation,
     feasible_topology_names,
@@ -260,6 +260,20 @@ def _augment_converter_spec(
     # applied only when the topology is known to be the AHB.
     if topology == "asymmetric_half_bridge":
         spec.setdefault("rectifierType", "fullBridge")
+
+    # MKF's PhaseShiftedFullBridge requires a per-operating-point ``phaseShift``
+    # (PsfbOperatingPoint.from_json calls j.at("phaseShift"), degrees in
+    # [0,180]). It is the commanded phase shift between the two bridge legs;
+    # MKF maps it to the effective duty cycle D_eff = phaseShift/180 and sizes
+    # the turns ratio + magnetising/output inductance from it. MKF's own design
+    # path defaults the commanded duty to 0.7 when no phase shift is supplied,
+    # so command the equivalent 0.7·180 = 126° here. PSFB-only — other
+    # converter models do not read this key (nlohmann from_json ignores it).
+    if topology == "phase_shifted_full_bridge":
+        psfb_phase_shift = 0.7 * 180.0
+        for op in spec.get("operatingPoints") or []:
+            if isinstance(op, dict):
+                op.setdefault("phaseShift", psfb_phase_shift)
     return spec
 
 
@@ -271,10 +285,37 @@ def _stage2_pick_one(args: tuple[str, dict, int, str, str]) -> dict[str, Any]:
     try:
         if _is_transformer_topology(topology_name):
             # Slow converter-design adviser: MKF derives turns ratios + L.
-            candidates = design_magnetics(
-                topology_name, _augment_converter_spec(dict(spec), topology_name),
-                max_results=n_candidates, core_mode=core_mode,
-            )
+            aug = _augment_converter_spec(dict(spec), topology_name)
+            try:
+                candidates = design_magnetics(
+                    topology_name, aug,
+                    max_results=n_candidates, core_mode=core_mode,
+                )
+            except BridgeError as exc:
+                # Tier-2: MKF's MagneticFilterSaturation has no derating
+                # headroom, so with coreAdviserSaturationMargin=1.5 (set by
+                # the bridge) the stock-only catalogue (~1.5K cores) can leave
+                # zero candidates for high-step-down isolated topologies even
+                # though the full 10K-core catalogue has many. This mirrors
+                # the documented tier-2 fallback in
+                # bridge.design_converter_components: when stock-only yields
+                # zero designs, retry against the full catalogue (the same
+                # real cores stage 3 will design against). Only widens the
+                # search — no fabricated values. Re-raise anything else.
+                if "zero designs" not in str(exc):
+                    raise
+                # Widen the requested pool too: MKF's CoreAdviser prunes its
+                # top scorers in MagneticFilterSaturation, so a max_results=1
+                # request can still surface zero passers even against the full
+                # catalogue. Asking for a larger pool lets passing candidates
+                # appear; we keep the top n_candidates afterwards.
+                fallback_pool = max(int(n_candidates), 50)
+                candidates = design_magnetics(
+                    topology_name, aug,
+                    max_results=fallback_pool, core_mode=core_mode,
+                    use_only_cores_in_stock=False,
+                )
+                candidates = candidates[:max(int(n_candidates), 1)]
         else:
             candidates = design_magnetics_fast(
                 topology_name, spec,
@@ -447,6 +488,16 @@ def stage3_realize(
     spec_dict = _augment_converter_spec(dict(spec), topology)
     diagnostics: list[str] = []
 
+    # Bridge / resonant families model their switching cell as a single
+    # behavioural PULSE source by default, which leaves no real MOSFETs for
+    # the TAS decomposer's bridge stencils to bind (they require SA/SB/SC/SD,
+    # S1/S2, etc.). Request the "switch" deck so MKF emits real switches.
+    try:
+        _fam = pick.topology.family
+    except Exception:  # noqa: BLE001
+        _fam = ""
+    bridge_mode = "switch" if _fam in ("isolated_bridge", "resonant") else ""
+
     try:
         components = _bridge.design_converter_components(
             topology, spec_dict, max_results=1, use_ngspice=False,
@@ -480,6 +531,7 @@ def stage3_realize(
             topology, spec_dict,
             turns_ratios=turns_ratios,
             magnetizing_inductance=magnetizing_inductance,
+            bridge_simulation_mode=bridge_mode,
         )
     except DecomposerError as exc:
         return DesignOutcome(

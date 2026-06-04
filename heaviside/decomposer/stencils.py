@@ -2570,6 +2570,49 @@ def push_pull(deck: SpiceDeck) -> TasTopology:
 # rectified via the GND-relative loop.
 
 
+def _psfb_secondary_count(deck: SpiceDeck) -> int:
+    """Count PSFB secondary windings (``L_sec_o1``, ``L_sec_o2``, …).
+
+    The MKF PSFB generator names secondaries with a 1-based ``_o{i}``
+    suffix (one winding + center-tapped rectifier + output choke per
+    output rail). Always ≥1 for a transformer topology.
+    """
+    n = 0
+    while True:
+        try:
+            deck.by_refdes(f"L_sec_o{n + 1}")
+        except KeyError:
+            break
+        n += 1
+    return n
+
+
+def _psfb_real_kinds(deck: SpiceDeck) -> dict[str, str]:
+    """Expected real-component set for a PSFB deck with N secondaries.
+
+    Per-rail (1-based ``_o{i}`` in the deck, 0-based rail index in TAS):
+    one secondary winding ``L_sec_o{i}``, a 2-diode center-tapped
+    rectifier (``D_r1_o{i}`` / ``D_r2_o{i}``), an output choke
+    ``L_out_o{i}``, and an output capacitor ``C_out_o{i}``.
+    """
+    n = _psfb_secondary_count(deck)
+    kinds: dict[str, str] = {
+        "SA": "switch", "SB": "switch", "SC": "switch", "SD": "switch",
+        "L_series": "inductor",   # → L_r (seriesInductor)
+        "L_pri":    "inductor",   # → T1.pri
+    }
+    for i in range(1, n + 1):
+        kinds[f"L_sec_o{i}"] = "inductor"    # → T1.sec{i-1}
+        kinds[f"D_r1_o{i}"]  = "diode"
+        kinds[f"D_r2_o{i}"]  = "diode"
+        kinds[f"L_out_o{i}"] = "inductor"    # → L_out{i-1}
+        kinds[f"C_out_o{i}"] = "capacitor"   # → C_out{i-1}
+    kinds.update(_coupling_kinds(deck))      # K1…, Ksec-sec → T1 couplings
+    return kinds
+
+
+# Retained for the single-output regression / unit tests that import the
+# constant directly. The validator now uses the deck-driven _psfb_real_kinds.
 _PSFB_REAL_KINDS = {
     "SA":        "switch",
     "SB":        "switch",
@@ -2591,8 +2634,32 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
 
     Requires ``bridge_simulation_mode="switch"`` so SA/SB/SC/SD are real
     switches and not collapsed into a single behavioural source.
+
+    Supports N output rails: the MKF generator emits one
+    ``L_sec_o{i}`` winding + center-tapped rectifier
+    (``D_r1_o{i}`` / ``D_r2_o{i}``) + output choke ``L_out_o{i}`` +
+    output cap ``C_out_o{i}`` per rail (1-based ``_o{i}`` in the deck).
+    Each becomes an isolated secondary + ``outputRectifier`` stage
+    feeding ``Vout{i-1}`` (0-based in TAS). Rail 0 keeps the historical
+    ``D1`` / ``D2`` / ``sec_a`` / ``sec_b`` names; rails ≥ 1 carry an
+    ``_o{i}`` suffix. The control loop closes around ``Vout0``.
     """
-    _validate_real_set(deck, "phase_shifted_full_bridge", _PSFB_REAL_KINDS)
+    _validate_real_set(deck, "phase_shifted_full_bridge", _psfb_real_kinds(deck))
+    n_sec = _psfb_secondary_count(deck)
+    if n_sec < 1:
+        raise StencilError(
+            "phase_shifted_full_bridge: deck has no secondary winding "
+            "(L_sec_o1)"
+        )
+
+    # Per-rail TAS names. Rail 0 keeps the original single-output names
+    # so existing goldens / unit tests stay valid; rails ≥ 1 add _o{i}.
+    def _d1(i: int) -> str:    return "D1" if i == 0 else f"D1_o{i}"
+    def _d2(i: int) -> str:    return "D2" if i == 0 else f"D2_o{i}"
+    def _seca(i: int) -> str:  return "sec_a" if i == 0 else f"sec_a_o{i}"
+    def _secb(i: int) -> str:  return "sec_b" if i == 0 else f"sec_b_o{i}"
+    def _lout(i: int) -> str:  return f"L_out{i}"
+    def _cout(i: int) -> str:  return f"C_out{i}"
 
     inverter = {
         "name": "inverter",
@@ -2624,45 +2691,54 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
         },
     }
 
+    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
+    isolation_ports = []
+    for i in range(n_sec):
+        # Center-tapped secondary: both winding ends (sec_a / sec_b) are
+        # isolation outputs feeding the two-diode CT rectifier.
+        isolation_ports.append(
+            {"type": "hfAc", "wire": _seca(i), "name": _seca(i)})
+        isolation_ports.append(
+            {"type": "hfAc", "wire": _secb(i), "name": _secb(i)})
     isolation = {
         "name": "isolation",
         "role": "isolation",
         "inputPort": {"type": "hfAc", "wire": "pri_top"},
-        "outputPorts": [
-            {"type": "hfAc", "wire": "sec_a", "name": "sec_a"},
-            {"type": "hfAc", "wire": "sec_b", "name": "sec_b"},
-        ],
+        "outputPorts": isolation_ports,
         "circuit": {
-            "components": [_t1_component(("pri", "sec0"))],
+            "components": [_t1_component(windings)],
             "connections": [],
         },
     }
 
-    output_rectifier_0 = {
-        "name": "output_0",
-        "role": "outputRectifier",
-        "inputPort":  {"type": "hfAc",  "wire": "sec_a"},
-        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
-        "circuit": {
-            "components": [
-                _component("diode",     "D1"),       # ← D_r1_o1
-                _component("diode",     "D2"),       # ← D_r2_o1
-                _component("magnetic",  "L_out0"),   # ← L_out_o1
-                _component("capacitor", "C_out0"),   # ← C_out_o1
-            ],
-            "connections": [
-                {
-                    "name": "out_rect",
-                    "kind": "wire",
-                    "endpoints": [
-                        {"component": "D1",     "pin": "K"},
-                        {"component": "D2",     "pin": "K"},
-                        {"component": "L_out0", "pin": "1"},
-                    ],
-                },
-            ],
-        },
-    }
+    output_rectifiers = [
+        {
+            "name": f"output_{i}",
+            "role": "outputRectifier",
+            "inputPort":  {"type": "hfAc",  "wire": _seca(i)},
+            "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
+            "circuit": {
+                "components": [
+                    _component("diode",     _d1(i)),     # ← D_r1_o{i+1}
+                    _component("diode",     _d2(i)),     # ← D_r2_o{i+1}
+                    _component("magnetic",  _lout(i)),   # ← L_out_o{i+1}
+                    _component("capacitor", _cout(i)),   # ← C_out_o{i+1}
+                ],
+                "connections": [
+                    {
+                        "name": "out_rect" if i == 0 else f"out_rect_o{i}",
+                        "kind": "wire",
+                        "endpoints": [
+                            {"component": _d1(i),   "pin": "K"},
+                            {"component": _d2(i),   "pin": "K"},
+                            {"component": _lout(i), "pin": "1"},
+                        ],
+                    },
+                ],
+            },
+        }
+        for i in range(n_sec)
+    ]
 
     control = _isolated_control_stage(("Q_A", "Q_B", "Q_C", "Q_D"))
 
@@ -2695,44 +2771,45 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
                 {"component": "T1",  "pin": "pri.2"},
             ],
         },
-        {
-            "name": "sec_a",
+    ]
+    for i in range(n_sec):
+        inter_stage.append({
+            "name": _seca(i),
             "kind": "wire",
             "endpoints": [
-                {"component": "T1", "pin": "sec0.1"},
-                {"component": "D1", "pin": "A"},
+                {"component": "T1",     "pin": f"sec{i}.1"},
+                {"component": _d1(i),   "pin": "A"},
             ],
-        },
-        {
-            # MKF center-tap stub Rct_o1 ties sec_b to GND via 1µΩ;
-            # the stencil drops the stub and places D2.A on sec_b
-            # which then naturally reaches the output rectifier.
-            "name": "sec_b",
+        })
+        inter_stage.append({
+            # MKF center-tap stub Rct_o{i+1} ties sec_b to GND via 1µΩ;
+            # the stencil drops the stub and places D2.A on sec_b which
+            # then naturally reaches the output rectifier.
+            "name": _secb(i),
             "kind": "wire",
             "endpoints": [
-                {"component": "T1", "pin": "sec0.2"},
-                {"component": "D2", "pin": "A"},
+                {"component": "T1",     "pin": f"sec{i}.2"},
+                {"component": _d2(i),   "pin": "A"},
             ],
-        },
-        {
-            "name": "Vout0",
+        })
+        inter_stage.append({
+            "name": f"Vout{i}",
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "L_out0", "pin": "2"},
-                {"component": "C_out0", "pin": "1"},
+                {"component": _lout(i), "pin": "2"},
+                {"component": _cout(i), "pin": "1"},
             ],
-        },
-        _gnd_wire(
-            ("Q_B",     "S"),
-            ("Q_D",     "S"),
-            ("C_out0",  "2"),
-        ),
-        *_gate_wires("Q_A", "Q_B", "Q_C", "Q_D"),
-    ]
+        })
+    inter_stage.append(_gnd_wire(
+        ("Q_B", "S"),
+        ("Q_D", "S"),
+        *[(_cout(i), "2") for i in range(n_sec)],
+    ))
+    inter_stage.extend(_gate_wires("Q_A", "Q_B", "Q_C", "Q_D"))
 
     return {
-        "stages": [inverter, isolation, output_rectifier_0, control],
+        "stages": [inverter, isolation, *output_rectifiers, control],
         "interStageCircuit": inter_stage,
     }
 

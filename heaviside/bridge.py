@@ -167,12 +167,22 @@ def design_magnetics(
     core_mode: str = "standard cores",
     use_ngspice: bool = False,
     weights: Mapping[str, float] | None = None,
+    use_only_cores_in_stock: bool | None = None,
 ) -> list[MagneticDesign]:
     """Design the magnetic component(s) for a converter spec.
 
     Calls ``PyOpenMagnetics.design_magnetics_from_converter`` retrying
     each name variant registered for the topology (mirrors the existing
     ``heaviside.topologies.dispatch`` behaviour).
+
+    ``use_only_cores_in_stock`` (when not ``None``) pins PyOM's
+    ``useOnlyCoresInStock`` global setting for the duration of the call and
+    — crucially — folds it into the cache key. PyOM's saturation filter has
+    no derating headroom, so the stock-only subset can yield zero candidates
+    for high-step-down isolated topologies that the full catalogue serves.
+    Because the global setting is otherwise invisible to the cache, callers
+    that toggle it MUST pass it here, or a stock-only zero result would be
+    replayed for a full-catalogue retry with identical args.
 
     Parameters
     ----------
@@ -210,72 +220,93 @@ def design_magnetics(
     entry = topology if isinstance(topology, TopologyEntry) else get(topology)
     pyom = _import_pyom()
 
-    last_error: str | None = None
-    for variant in entry.pyom_names:
-        t0 = time.monotonic()
-        _spec_arg = dict(converter_spec)
-        _weights_arg = dict(weights) if weights is not None else None
-        result = cached_call(
-            "design_magnetics_from_converter",
-            (variant, _spec_arg, int(max_results), str(core_mode),
-             bool(use_ngspice), _weights_arg),
-            call=lambda v=variant, s=_spec_arg, w=_weights_arg: (
-                pyom.design_magnetics_from_converter(
-                    v, s, int(max_results), str(core_mode),
-                    bool(use_ngspice), w,
-                )
-            ),
-        )
-        elapsed = time.monotonic() - t0
+    # Pin useOnlyCoresInStock for the duration of the call when requested,
+    # restoring the prior value afterwards. The flag is also threaded into
+    # the cache key below so a stock-only and a full-catalogue call with
+    # otherwise-identical args never alias.
+    _prior_in_stock: bool | None = None
+    if use_only_cores_in_stock is not None:
+        try:
+            _prior_in_stock = bool(pyom.get_settings().get("useOnlyCoresInStock", True))
+        except Exception:  # noqa: BLE001
+            _prior_in_stock = None
+        pyom.set_settings({"useOnlyCoresInStock": bool(use_only_cores_in_stock)})
 
-        if not isinstance(result, dict):
-            raise BridgeError(
-                f"design_magnetics_from_converter({variant!r}) returned "
-                f"{type(result).__name__}, expected dict."
+    try:
+        last_error: str | None = None
+        for variant in entry.pyom_names:
+            t0 = time.monotonic()
+            _spec_arg = dict(converter_spec)
+            _weights_arg = dict(weights) if weights is not None else None
+            result = cached_call(
+                "design_magnetics_from_converter",
+                (variant, _spec_arg, int(max_results), str(core_mode),
+                 bool(use_ngspice), _weights_arg,
+                 # cache-key discriminator: None preserves the legacy key
+                 # (callers that never pin the flag get identical keys to
+                 # before); an explicit bool partitions the namespace.
+                 ("stock" if use_only_cores_in_stock else "allcores")
+                 if use_only_cores_in_stock is not None else None),
+                call=lambda v=variant, s=_spec_arg, w=_weights_arg: (
+                    pyom.design_magnetics_from_converter(
+                        v, s, int(max_results), str(core_mode),
+                        bool(use_ngspice), w,
+                    )
+                ),
             )
+            elapsed = time.monotonic() - t0
 
-        err = result.get("error")
-        if err is not None:
-            # PyOM uses "Unknown topology" to signal a missing binding —
-            # try the next variant. Any other error is fatal (no silent
-            # fallbacks to a different topology).
-            if isinstance(err, str) and "Unknown topology" in err:
-                last_error = err
-                continue
-            raise BridgeError(
-                f"PyOpenMagnetics rejected topology {variant!r}: {err}"
-            )
-
-        data = result.get("data")
-        if not isinstance(data, list):
-            raise BridgeError(
-                f"design_magnetics_from_converter({variant!r}) returned "
-                f"data={type(data).__name__}, expected list. "
-                f"Result keys: {sorted(result)}"
-            )
-        if not data:
-            raise BridgeError(
-                f"design_magnetics_from_converter({variant!r}) returned "
-                f"zero designs for spec. Loosen constraints or check "
-                f"converter inputs."
-            )
-
-        designs: list[MagneticDesign] = []
-        for raw in data:
-            if not isinstance(raw, dict) or "mas" not in raw:
+            if not isinstance(result, dict):
                 raise BridgeError(
                     f"design_magnetics_from_converter({variant!r}) returned "
-                    f"a design entry with no 'mas' field: keys={list(raw)}"
+                    f"{type(result).__name__}, expected dict."
                 )
-            designs.append(
-                MagneticDesign(
-                    scoring=float(raw.get("scoring", 0.0)),
-                    mas=raw["mas"],
-                    elapsed_s=elapsed,
+
+            err = result.get("error")
+            if err is not None:
+                # PyOM uses "Unknown topology" to signal a missing binding —
+                # try the next variant. Any other error is fatal (no silent
+                # fallbacks to a different topology).
+                if isinstance(err, str) and "Unknown topology" in err:
+                    last_error = err
+                    continue
+                raise BridgeError(
+                    f"PyOpenMagnetics rejected topology {variant!r}: {err}"
                 )
-            )
-        designs.sort(key=lambda d: d.scoring, reverse=True)
-        return designs
+
+            data = result.get("data")
+            if not isinstance(data, list):
+                raise BridgeError(
+                    f"design_magnetics_from_converter({variant!r}) returned "
+                    f"data={type(data).__name__}, expected list. "
+                    f"Result keys: {sorted(result)}"
+                )
+            if not data:
+                raise BridgeError(
+                    f"design_magnetics_from_converter({variant!r}) returned "
+                    f"zero designs for spec. Loosen constraints or check "
+                    f"converter inputs."
+                )
+
+            designs: list[MagneticDesign] = []
+            for raw in data:
+                if not isinstance(raw, dict) or "mas" not in raw:
+                    raise BridgeError(
+                        f"design_magnetics_from_converter({variant!r}) returned "
+                        f"a design entry with no 'mas' field: keys={list(raw)}"
+                    )
+                designs.append(
+                    MagneticDesign(
+                        scoring=float(raw.get("scoring", 0.0)),
+                        mas=raw["mas"],
+                        elapsed_s=elapsed,
+                    )
+                )
+            designs.sort(key=lambda d: d.scoring, reverse=True)
+            return designs
+    finally:
+        if use_only_cores_in_stock is not None and _prior_in_stock is not None:
+            pyom.set_settings({"useOnlyCoresInStock": _prior_in_stock})
 
     # Every variant returned "Unknown topology" — same condition as
     # ``topologies.dispatch.TopologyDispatchError`` but distinct symptom,
@@ -1343,6 +1374,7 @@ def _try_pick_main(
     weights: Mapping[str, float] | None,
     min_isat_ratio: float,
     strict: bool,
+    use_only_cores_in_stock: bool | None = None,
 ) -> tuple[MagneticDesign | None, list[MagneticDesign]]:
     """Single retrieval pass. Returns ``(picked_or_None_if_strict_miss,
     raw_candidates_list)``. The raw list is returned so the caller can
@@ -1352,6 +1384,7 @@ def _try_pick_main(
     candidates = design_magnetics(
         entry, converter_spec, max_results=pool,
         core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
+        use_only_cores_in_stock=use_only_cores_in_stock,
     )
     picked = _select_main_by_isat_margin(
         candidates, entry, converter_spec,
@@ -1426,16 +1459,26 @@ def design_converter_components(
     # For crashy topologies, tier-2 would also segfault (it widens the
     # pool), so disable strict mode → tier-1 falls back to candidates[0]
     # honestly and we never enter the tier-2 branch.
-    main, main_designs = _try_pick_main(
-        entry, converter_spec, pool=pool,
-        core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
-        min_isat_ratio=min_isat_ratio,
-        strict=(
-            not _is_crashy
-            and min_isat_ratio > 0
-            and int(fallback_pool_size) > pool
-        ),
-    )
+    try:
+        main, main_designs = _try_pick_main(
+            entry, converter_spec, pool=pool,
+            core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
+            min_isat_ratio=min_isat_ratio,
+            strict=(
+                not _is_crashy
+                and min_isat_ratio > 0
+                and int(fallback_pool_size) > pool
+            ),
+        )
+    except BridgeError as exc:
+        # Tier-1 (stock-only) found zero candidates. For high-step-down
+        # isolated topologies (e.g. PSFB) the ~1.5K stock subset can be
+        # exhausted by MKF's saturation filter while the full catalogue
+        # still serves. Treat as a strict-miss so the tier-2 full-catalogue
+        # escalation below runs; re-raise any other bridge failure.
+        if "zero designs" not in str(exc):
+            raise
+        main, main_designs = None, []
 
     if main is None:
         # Tier-2 retry: widen the candidate pool + flip
@@ -1454,36 +1497,35 @@ def design_converter_components(
         # have headroom to grow; if PyMKF gave us fewer (e.g. 8
         # of 10 requested), we know the accessible pool is small
         # and we stay within ~2x of that.
-        safe_pool = max(pool, 2 * len(main_designs)) if main_designs else pool
+        # When tier-1 returned candidates, cap the tier-2 pool at ~2x what
+        # PyMKF actually surfaced (SIGSEGV guard). When tier-1 returned NONE
+        # (stock-only exhausted by the saturation filter), the segfault guard
+        # does not apply — the full catalogue is a different, larger pool — so
+        # request the full fallback_pool_size to let passing candidates appear.
+        if main_designs:
+            safe_pool = max(pool, 2 * len(main_designs))
+        else:
+            safe_pool = int(fallback_pool_size)
         tier2_pool = min(int(fallback_pool_size), safe_pool)
-        if tier2_pool <= pool:
+        if tier2_pool <= pool and main_designs:
             # No room to actually escalate — accept tier-1's top scorer.
             main = main_designs[0]
         else:
-            pyom = _import_pyom()
-            try:
-                prior = pyom.get_settings()
-                prior_in_stock = bool(prior.get("useOnlyCoresInStock", True))
-            except Exception:
-                prior_in_stock = True
-            try:
-                if prior_in_stock:
-                    pyom.set_settings({"useOnlyCoresInStock": False})
-                main2, main_designs2 = _try_pick_main(
-                    entry, converter_spec,
-                    pool=tier2_pool,
-                    core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
-                    min_isat_ratio=min_isat_ratio,
-                    strict=False,  # last attempt: honest fallback to top scorer
-                )
-                main = main2
-                main_designs = main_designs2
-            finally:
-                if prior_in_stock:
-                    try:
-                        pyom.set_settings({"useOnlyCoresInStock": True})
-                    except Exception:
-                        pass
+            # Full-catalogue retry. Pass the flag explicitly so it (a) pins
+            # useOnlyCoresInStock=False around the call and (b) partitions the
+            # cache key — otherwise the stock-only zero/short result from
+            # tier-1 (same args) would be replayed and the escalation would be
+            # a no-op. design_magnetics restores the prior setting itself.
+            main2, main_designs2 = _try_pick_main(
+                entry, converter_spec,
+                pool=tier2_pool,
+                core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
+                min_isat_ratio=min_isat_ratio,
+                strict=False,  # last attempt: honest fallback to top scorer
+                use_only_cores_in_stock=False,
+            )
+            main = main2
+            main_designs = main_designs2
 
     if main is None:  # pragma: no cover — _try_pick_main with strict=False never returns None
         main = main_designs[0]

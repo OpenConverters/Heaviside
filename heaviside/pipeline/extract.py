@@ -2494,19 +2494,27 @@ def _enrich_phase_shifted_full_bridge(tas: dict, spec: Mapping[str, Any]) -> Non
     """
     where = "phase_shifted_full_bridge spec"
     vmin, vmax = _vin_extremes(spec, where)
+    # Rail 0 operating point (controls the duty written to the TAS root).
     vout, iout, fsw = _operating_point(spec, where)
 
-    # T1 in the isolation stage — windings pri / sec0.
+    op_spec = spec.get("operatingPoints") or [{}]
+    op0 = op_spec[0] if isinstance(op_spec[0], Mapping) else {}
+    vouts = op0.get("outputVoltages") or [vout]
+    iouts = op0.get("outputCurrents") or [iout]
+    n_rails = len(vouts)
+    t_amb = float(op0.get("ambientTemperature", 25.0))
+
+    # T1 in the isolation stage — windings pri / sec0 / sec1 / …
     _, _, t1_comp = _find_magnetic_in_stage_role(
         tas, "isolation", "phase_shifted_full_bridge enrichment (T1)"
     )
     t1_mas = _read_mas(t1_comp, "phase_shifted_full_bridge T1 MAS")
-    N_pri  = _winding_turns_by_name(t1_mas, "pri",  "phase_shifted_full_bridge T1 MAS")
-    N_sec0 = _winding_turns_by_name(t1_mas, "sec0", "phase_shifted_full_bridge T1 MAS")
-    n = float(N_sec0) / float(N_pri)   # secondary / primary
+    N_pri = _winding_turns_by_name(
+        t1_mas, "pri", "phase_shifted_full_bridge T1 MAS"
+    )
 
-    def _solve_d_eff(vin: float) -> float:
-        d = vout / (n * vin)
+    def _solve_d_eff(vin: float, n_rail: float, vout_rail: float) -> float:
+        d = vout_rail / (n_rail * vin)
         if d > 1.0:
             raise EnrichmentError(
                 f"phase_shifted_full_bridge enrichment: required "
@@ -2516,79 +2524,88 @@ def _enrich_phase_shifted_full_bridge(tas: dict, spec: Mapping[str, Any]) -> Non
             )
         return d
 
-    d_eff_max = _solve_d_eff(vmin)     # largest overlap at Vin_min
-    d_eff_min = _solve_d_eff(vmax)     # smallest overlap at Vin_max
-
-    # L_out0 (output choke) — lives in outputRectifier stage. Harvest
-    # its inductance from its OWN MAS (the L MKF actually achieved with
-    # the picked core + gap), never from a spec hint. The spec field
-    # ``desiredInductance`` is a request; MKF may pick something
-    # different to satisfy ripple / window constraints, and trusting
-    # the spec here is what made the old enricher compute isat against
-    # a 100× wrong L for the centre-tapped rectifier output choke.
-    so, co, lout_comp = _find_magnetic_in_stage_role(
-        tas, "outputRectifier", "phase_shifted_full_bridge enrichment (L_out0)"
-    )
-    lout_full_mas = _read_full_mas_root(
-        lout_comp, "phase_shifted_full_bridge L_out0 MAS"
-    )
-    L_out = _harvest_inductance(
-        lout_full_mas, "phase_shifted_full_bridge L_out0 MAS"
-    )
-    lout_mas = _read_mas(lout_comp, "phase_shifted_full_bridge L_out0 MAS")
-    A_e, N_lout, b_sat = _mas_isat_inputs(
-        lout_mas, "phase_shifted_full_bridge L_out0 MAS"
+    # Each rail has its OWN secondary winding (sec{rail}) + center-tapped
+    # rectifier + output choke (L_out{rail}) in its OWN outputRectifier
+    # stage. Enrich every rail's choke so the realism gate Isat/Ipeak-checks
+    # all of them — leaving a secondary rail un-enriched would hide a
+    # saturation risk on rail ≥ 1.
+    out_stages = _output_rectifier_stage_indices(
+        tas, n_rails, "phase_shifted_full_bridge"
     )
 
     fsw_eff = 2.0 * fsw
-    L_worst = 0.8 * L_out
-    # D_eff is already the full-period power-delivery fraction; the
-    # output choke sees that as its on-fraction directly (no 2× factor).
-    ripple_worst = vout * (1.0 - d_eff_min) / (L_worst * fsw_eff)
-    ipeak_worst = iout + ripple_worst / 2.0
+    for rail, so in enumerate(out_stages):
+        vout_i = float(vouts[rail])
+        iout_i = float(iouts[rail])
+        N_sec_i = _winding_turns_by_name(
+            t1_mas, f"sec{rail}", "phase_shifted_full_bridge T1 MAS"
+        )
+        n_i = float(N_sec_i) / float(N_pri)   # secondary / primary
 
-    # isat: delegate to MKF (PyOM) per "all magnetics math lives in MKF".
-    op_spec = spec.get("operatingPoints") or [{}]
-    t_amb = float(op_spec[0].get("ambientTemperature", 25.0)) if isinstance(op_spec[0], Mapping) else 25.0
-    isat, isat_prov = _compute_isat_authoritative(
-        lout_full_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
-        temperature_c=t_amb,
-        topology_label="phase_shifted_full_bridge (output choke)",
-    )
+        d_eff_max = _solve_d_eff(vmin, n_i, vout_i)  # largest overlap at Vin_min
+        d_eff_min = _solve_d_eff(vmax, n_i, vout_i)  # smallest overlap at Vin_max
 
-    tas["duty"]     = round(d_eff_max, 6)
-    tas["duty_min"] = round(d_eff_min, 6)
-    tas["duty_max"] = round(d_eff_max, 6)
+        # L_out{rail} (output choke). Harvest its inductance from its OWN
+        # MAS (the L MKF actually achieved with the picked core + gap),
+        # never from a spec hint.
+        co, lout_comp = _find_magnetic_comp_index_in_stage(
+            tas, so, f"phase_shifted_full_bridge enrichment (L_out{rail})"
+        )
+        lbl = f"phase_shifted_full_bridge L_out{rail} MAS"
+        lout_full_mas = _read_full_mas_root(lout_comp, lbl)
+        L_out = _harvest_inductance(lout_full_mas, lbl)
+        lout_mas = _read_mas(lout_comp, lbl)
+        A_e, N_lout, b_sat = _mas_isat_inputs(lout_mas, lbl)
 
-    enriched = dict(lout_comp)
-    enriched["isat"]        = round(isat, 6)
-    enriched["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched["isat_provenance"] = isat_prov
-    enriched["ipeak_provenance"] = {
-        "method": (
-            "Iout + ripple_worst/2 (buck-shaped on secondary at "
-            "D_eff_min, L*0.8, fsw_eff = 2*fsw via CT-FW rectifier "
-            "two-pulse output; D_eff = Vout/(n·Vin) is the full-period "
-            "power-delivery fraction, applied directly to L_out0 ripple)"
-        ),
-        "role": "output_choke",
-        "iout_A": iout,
-        "vout_V": vout,
-        "turns_ratio_n_sec0_over_n_pri": round(n, 6),
-        "n_primary": N_pri,
-        "n_secondary": N_sec0,
-        "d_eff_max": round(d_eff_max, 6),
-        "d_eff_min": round(d_eff_min, 6),
-        "ripple_worst_A_pp": round(ripple_worst, 6),
-        "vin_min_V": vmin,
-        "vin_max_V": vmax,
-        "fsw_per_switch_Hz": fsw,
-        "fsw_effective_Hz": fsw_eff,
-        "L_worst_H": L_worst,
-        "l_r_isat_modelled": False,
-        "t1_isat_modelled": False,
-    }
-    tas["topology"]["stages"][so]["circuit"]["components"][co] = enriched
+        L_worst = 0.8 * L_out
+        # D_eff is already the full-period power-delivery fraction; the
+        # output choke sees that as its on-fraction directly (no 2× factor).
+        ripple_worst = vout_i * (1.0 - d_eff_min) / (L_worst * fsw_eff)
+        ipeak_worst = iout_i + ripple_worst / 2.0
+
+        # isat: delegate to MKF (PyOM) per "all magnetics math lives in MKF".
+        isat, isat_prov = _compute_isat_authoritative(
+            lout_full_mas, L_out, b_sat=b_sat, N=int(N_lout), A_e=float(A_e),
+            temperature_c=t_amb,
+            topology_label="phase_shifted_full_bridge (output choke)",
+        )
+
+        if rail == 0:
+            # Rail 0 controls the converter-level duty written to the root.
+            tas["duty"]     = round(d_eff_max, 6)
+            tas["duty_min"] = round(d_eff_min, 6)
+            tas["duty_max"] = round(d_eff_max, 6)
+
+        enriched = dict(lout_comp)
+        enriched["isat"]        = round(isat, 6)
+        enriched["ipeak_worst"] = round(ipeak_worst, 6)
+        enriched["isat_provenance"] = isat_prov
+        enriched["ipeak_provenance"] = {
+            "method": (
+                "Iout + ripple_worst/2 (buck-shaped on secondary at "
+                "D_eff_min, L*0.8, fsw_eff = 2*fsw via CT-FW rectifier "
+                "two-pulse output; D_eff = Vout/(n·Vin) is the full-period "
+                "power-delivery fraction, applied directly to L_out ripple)"
+            ),
+            "role": "output_choke",
+            "rail": rail,
+            "iout_A": iout_i,
+            "vout_V": vout_i,
+            "turns_ratio_n_sec0_over_n_pri": round(n_i, 6),
+            "n_primary": N_pri,
+            "n_secondary": N_sec_i,
+            "d_eff_max": round(d_eff_max, 6),
+            "d_eff_min": round(d_eff_min, 6),
+            "ripple_worst_A_pp": round(ripple_worst, 6),
+            "vin_min_V": vmin,
+            "vin_max_V": vmax,
+            "fsw_per_switch_Hz": fsw,
+            "fsw_effective_Hz": fsw_eff,
+            "L_worst_H": L_worst,
+            "l_r_isat_modelled": False,
+            "t1_isat_modelled": False,
+        }
+        tas["topology"]["stages"][so]["circuit"]["components"][co] = enriched
 
 
 # ---------------------------------------------------------------------------

@@ -89,8 +89,20 @@ def _t1_mas(*, N_pri: int = 10, N_sec0: int = 1) -> dict:
     }
 
 
-def _lout_mas(N: int = 12) -> dict:
-    return {
+def _lout_mas(N: int = 12, *, L: float | None = 50e-6,
+              with_outputs: bool = True) -> dict:
+    """Output choke MAS.
+
+    The realism extractor harvests the inductance MKF *actually achieved*
+    from the full MAS root's ``outputs`` envelope
+    (``outputs[0].inductance.magnetizingInductance.magnetizingInductance.nominal``),
+    never from the spec hint. The real bridge-attach phase produces this
+    envelope; mirror its shape here so the fixture exercises the same
+    honest path. ``L`` is the achieved inductance (default 50 µH, matching
+    the spec's ``desiredInductance`` so the ripple/Isat assertions hold).
+    Set ``with_outputs=False`` to model an attach phase that never ran.
+    """
+    mas: dict = {
         "core": {
             "processedDescription": {
                 "effectiveParameters": {
@@ -111,6 +123,12 @@ def _lout_mas(N: int = 12) -> dict:
              "isolationSide": "primary"},
         ]},
     }
+    if with_outputs and L is not None:
+        mas["outputs"] = [
+            {"inductance": {"magnetizingInductance": {
+                "magnetizingInductance": {"nominal": L}}}},
+        ]
+    return mas
 
 
 def _psfb_tas(*, t1_kwargs: dict | None = None,
@@ -457,13 +475,17 @@ class TestStructuralFailures:
                                    topology="phase_shifted_full_bridge",
                                    spec=_psfb_spec())
 
-    def test_missing_desiredInductance_throws(self):
-        spec = _psfb_spec()
-        del spec["desiredInductance"]
-        with pytest.raises(EnrichmentError, match="desiredInductance"):
-            enrich_tas_for_realism(_psfb_tas(t1_kwargs=_t1_default()),
+    def test_missing_achieved_inductance_throws(self):
+        """The extractor harvests L from L_out0's own MAS ``outputs``
+        envelope (the inductance MKF achieved), never from the spec hint.
+        A fixture whose attach phase never ran (no outputs envelope) must
+        throw rather than silently fall back to the spec request."""
+        tas = _psfb_tas(t1_kwargs=_t1_default(),
+                        lout_kwargs={"with_outputs": False})
+        with pytest.raises(EnrichmentError, match="full MAS root"):
+            enrich_tas_for_realism(tas,
                                    topology="phase_shifted_full_bridge",
-                                   spec=spec)
+                                   spec=_psfb_spec())
 
     def test_missing_lout_mas_throws(self):
         tas = _psfb_tas(t1_kwargs=_t1_default())
