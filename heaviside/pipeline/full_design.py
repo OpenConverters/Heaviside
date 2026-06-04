@@ -303,6 +303,35 @@ def _augment_converter_spec(
         if fsws:
             spec.setdefault("minSwitchingFrequency", min(fsws) * 0.5)
             spec.setdefault("maxSwitchingFrequency", max(fsws) * 2.0)
+
+    # MKF's CLLLC (bidirectional symmetric resonant) is specified by the two
+    # DC bus voltages rather than a single input/output pair: AdvancedClllc /
+    # ClllcResonant from_json read ``highVoltageBusVoltage`` and
+    # ``lowVoltageBusVoltage`` via ``j.at(...)`` (both DimensionWithTolerance).
+    # The HV bus IS the converter's input voltage window; the LV bus is the
+    # regulated output rail. Mirror the spec's own values — no fabricated
+    # numbers. CLLLC-only: other converter models do not read these keys
+    # (nlohmann from_json ignores them), so this is harmless elsewhere.
+    if topology == "clllc":
+        iv = spec.get("inputVoltage")
+        if isinstance(iv, dict) and "highVoltageBusVoltage" not in spec:
+            spec["highVoltageBusVoltage"] = dict(iv)
+        if "lowVoltageBusVoltage" not in spec:
+            vouts = [
+                float(op["outputVoltages"][0])
+                for op in (spec.get("operatingPoints") or [])
+                if isinstance(op, dict)
+                and isinstance(op.get("outputVoltages"), (list, tuple))
+                and op["outputVoltages"]
+                and isinstance(op["outputVoltages"][0], (int, float))
+            ]
+            if vouts:
+                vlv = sum(vouts) / len(vouts)
+                spec["lowVoltageBusVoltage"] = {
+                    "minimum": min(vouts),
+                    "nominal": vlv,
+                    "maximum": max(vouts),
+                }
     return spec
 
 

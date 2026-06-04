@@ -88,6 +88,14 @@ _TRAN_RE = re.compile(
 # ``.save v(name) i(name) v(name) …`` (one ``.save`` line, possibly folded)
 _SAVE_PROBE_RE = re.compile(r"([vViI])\(([^)]+)\)")
 
+# Independent voltage-source instance line: ``V<name> n+ n- <value> …``.
+# ngspice always tracks the branch current of an independent voltage source
+# (``i(V<name>)``) regardless of whether it appears in ``.save`` — the source
+# is the canonical place to read true DC bus current. We surface these as
+# available probes so probe quadruples can reference the real input/output
+# source current even when MKF's ``.save`` line omits it.
+_VSOURCE_RE = re.compile(r"^\s*(V\w+)\s+\S+\s+\S+", re.IGNORECASE)
+
 
 def _parse_tran_window(deck: str) -> tuple[float, float]:
     """Return ``(t_start, t_stop)`` for the steady-state window.
@@ -163,6 +171,13 @@ def _saved_probes(deck: str) -> set[str]:
             continue
         for kind_tok, name in _SAVE_PROBE_RE.findall(line):
             probes.add(f"{kind_tok.lower()}({name.lower()})")
+    # Independent voltage-source branch currents are always available in
+    # ngspice (.meas i(V<name>) works without an explicit .save). Add them so
+    # probe quadruples can read true source current for power balance.
+    for raw in deck.splitlines():
+        m = _VSOURCE_RE.match(raw)
+        if m:
+            probes.add(f"i({m.group(1).lower()})")
     return probes
 
 
@@ -223,6 +238,25 @@ _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
         ("v(vin_dc)",   "i(vin)",   "v(vout_cap_o1)",   "i(vsec_sense_o1)"),
         ("v(vin_dc)",   "i(vin)",   "v(vout_pos_o1)",   "i(vsec_sense_o1)"),
         ("v(vin_dc1)",  "i(vdc1)",  "v(vout_cap_o1)",   "i(vsec_sense_o1)"),
+    ],
+    # CLLLC (bidirectional symmetric resonant, dual full bridge): the HV
+    # bridge sits on the input DC bus ``vdc_hv`` and the LV synchronous-rect
+    # bridge sits on the output DC bus ``vdc_lv``. The MKF deck saves the
+    # primary/secondary bridge ammeters as ``i(v_pri_bridge_sense)`` /
+    # ``i(v_sec_bridge_sense)``; there are no per-rail ``_o<N>`` choke probes
+    # because the LV bridge IS the rectifier (single bidirectional bus, no
+    # output choke). Distinct node names from the half-bridge resonant decks,
+    # so this needs its own quadruple.
+    # iin is the TRUE DC bus current i(vdc_hv) (the HV source branch current),
+    # NOT the AC tank ammeter i(v_pri_bridge_sense) — the tank current is a
+    # bidirectional AC waveform whose average underestimates real input power
+    # (only one bridge leg's DC component appears), inflating efficiency above
+    # unity. The LV side likewise has no DC output ammeter, only the AC bridge
+    # current, so iout is computed from the load resistor (Rload_LV) via the
+    # iin_p == iout_p rload-fallback: setting iout to the same i(vdc_hv) probe
+    # triggers _extract_rload, giving iout = vout / Rload exactly (12 V / 1.5 Ω).
+    "clllc": [
+        ("v(vdc_hv)", "i(vdc_hv)", "v(vdc_lv)", "i(vdc_hv)"),
     ],
     # Series resonant converter (SRC): half-bridge primary off a
     # capacitive divider whose DC source is ``Vdc_supply vdc_supply 0``
