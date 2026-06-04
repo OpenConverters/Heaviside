@@ -30,7 +30,18 @@ from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 # ---------------------------------------------------------------------------
 
 
-def _lout_mas(N: int = 14) -> dict:
+def _lout_mas(N: int = 14, *, L: float = 10e-6) -> dict:
+    """Full MAS root for the output choke L_out0, matching the shape the
+    real bridge-attach phase produces: the wound/gapped magnetic device
+    under ``core``/``coil`` PLUS an ``outputs`` envelope carrying the
+    inductance MKF actually achieved.  The extractor harvests the achieved
+    ``L`` from ``outputs[*].inductance.magnetizingInductance
+    .magnetizingInductance.nominal`` (and would also accept
+    ``inputs.designRequirements.magnetizingInductance.nominal``); both are
+    provided here so the fixture survives either harvest path.  ``L``
+    defaults to the spec's ``desiredInductance`` (10 µH) so the achieved
+    inductance is self-consistent with the Isat closed form under test.
+    """
     return {
         "core": {
             "processedDescription": {
@@ -55,6 +66,16 @@ def _lout_mas(N: int = 14) -> dict:
             {"name": "Primary", "numberTurns": N, "numberParallels": 1,
              "isolationSide": "primary"},
         ]},
+        "inputs": {
+            "designRequirements": {
+                "magnetizingInductance": {"nominal": L},
+            },
+        },
+        "outputs": [
+            {"inductance": {"magnetizingInductance": {
+                "magnetizingInductance": {"nominal": L},
+            }}},
+        ],
     }
 
 
@@ -364,10 +385,32 @@ class TestStructuralFailures:
             enrich_tas_for_realism(tas, topology="asymmetric_half_bridge",
                                     spec=_ahb_spec())
 
-    def test_missing_desiredInductance_throws(self):
+    def test_missing_lout_inductance_throws(self):
+        """The AHB extractor harvests the output-choke inductance from the
+        L_out MAS root MKF actually achieved (outputs / designRequirements
+        envelopes) — NOT from spec.desiredInductance.  An L_out MAS with no
+        usable inductance must raise (no silent fallback), per CLAUDE.md.
+        """
+        tas = _ahb_tas()
+        lout = _get_lout(tas)
+        # Strip both harvest paths: no outputs envelope, no inputs root.
+        lout["mas"].pop("outputs", None)
+        lout["mas"].pop("inputs", None)
+        with pytest.raises(EnrichmentError, match="full MAS root|usable inductance"):
+            enrich_tas_for_realism(tas,
+                                    topology="asymmetric_half_bridge",
+                                    spec=_ahb_spec())
+
+    def test_desiredInductance_not_required_lout_mas_is_authoritative(self):
+        """desiredInductance in spec is irrelevant to the AHB extractor:
+        the achieved L_out comes from the L_out MAS root.  Removing it from
+        the spec must NOT break enrichment."""
         spec = _ahb_spec()
         del spec["desiredInductance"]
-        with pytest.raises(EnrichmentError, match="desiredInductance"):
-            enrich_tas_for_realism(_ahb_tas(),
-                                    topology="asymmetric_half_bridge",
-                                    spec=spec)
+        out = enrich_tas_for_realism(
+            _ahb_tas(), topology="asymmetric_half_bridge", spec=spec,
+        )
+        # L_out harvested from MAS (10 µH) drives the ripple math.
+        assert _get_lout(out)["ipeak_provenance"]["L_worst_H"] == pytest.approx(
+            0.8 * 10e-6, rel=1e-9
+        )

@@ -218,10 +218,16 @@ def _is_transformer_topology(topology_name: str) -> bool:
     return fam.startswith("isolated") or fam == "resonant"
 
 
-def _augment_converter_spec(spec: dict[str, Any]) -> dict[str, Any]:
+def _augment_converter_spec(
+    spec: dict[str, Any], topology: str | None = None
+) -> dict[str, Any]:
     """Add the converter-level design constraints MKF's transformer models
     require (duty-cycle ceiling + FET Vds budget). Harmless for non-isolated
-    topologies — their process_converter ignores unknown keys."""
+    topologies — their process_converter ignores unknown keys.
+
+    ``topology`` enables model-specific augmentation (e.g. the AHB rectifier
+    type) without leaking the key into other converter models' specs.
+    """
     spec.setdefault("maximumDutyCycle", 0.5)
     if "maximumDrainSourceVoltage" not in spec:
         iv = spec.get("inputVoltage") or {}
@@ -229,6 +235,31 @@ def _augment_converter_spec(spec: dict[str, Any]) -> dict[str, Any]:
         if vmax:
             # Generous Vds budget so MKF can pick a sensible reflected voltage.
             spec["maximumDrainSourceVoltage"] = round(float(vmax) * 3.0, 1)
+
+    # MKF's AsymmetricHalfBridge requires a per-operating-point ``dutyCycle``
+    # (AhbOperatingPoint.from_json calls j.at("dutyCycle")). It is the
+    # *commanded* operating duty used for component sizing; MKF derives the
+    # turns ratio from ``maximumDutyCycle`` (sized at min Vin for headroom)
+    # and then sizes Lo/Lm/Cb/Co at this operating duty (falling back to
+    # maximumDutyCycle when the OP value is out of (0,1)). Setting the OP duty
+    # to the design's own duty ceiling makes the sizing self-consistent with
+    # the turns-ratio derivation. Harmless for other converter models —
+    # nlohmann from_json ignores keys it does not read.
+    max_d = float(spec.get("maximumDutyCycle", 0.5))
+    for op in spec.get("operatingPoints") or []:
+        if isinstance(op, dict):
+            op.setdefault("dutyCycle", max_d)
+
+    # AsymmetricHalfBridge: the decomposer stencil binds a full-bridge
+    # secondary rectifier (D_r1..D_r4). MKF's AHB model defaults to
+    # CENTER_TAPPED, which duplicates the single-output turns ratio to size 2
+    # and then trips its own ``turnsRatios.size() == numOutputs`` guard. Pin
+    # the rectifier to the full-bridge variant the stencil expects so the
+    # turns-ratio count matches the output count. AHB-only — other converter
+    # models do not read this key (or use an incompatible enum), so it is
+    # applied only when the topology is known to be the AHB.
+    if topology == "asymmetric_half_bridge":
+        spec.setdefault("rectifierType", "fullBridge")
     return spec
 
 
@@ -241,7 +272,7 @@ def _stage2_pick_one(args: tuple[str, dict, int, str, str]) -> dict[str, Any]:
         if _is_transformer_topology(topology_name):
             # Slow converter-design adviser: MKF derives turns ratios + L.
             candidates = design_magnetics(
-                topology_name, _augment_converter_spec(dict(spec)),
+                topology_name, _augment_converter_spec(dict(spec), topology_name),
                 max_results=n_candidates, core_mode=core_mode,
             )
         else:
@@ -413,7 +444,7 @@ def stage3_realize(
     from heaviside.sim.parasitics import inject_parasitics
 
     topology = pick.topology.name
-    spec_dict = dict(spec)
+    spec_dict = _augment_converter_spec(dict(spec), topology)
     diagnostics: list[str] = []
 
     try:
