@@ -2060,10 +2060,12 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
 
     d_max = 1.0 - n * vmin / (2.0 * vout)
     d_min = 1.0 - n * vmax / (2.0 * vout)
-    if d_min <= 0.0:
+    if d_min <= 0.5:
         raise EnrichmentError(
-            f"weinberg enrichment: D_min = {d_min:.4f} ≤ 0 at Vin_max = "
-            f"{vmax} V — degenerate (negative duty)."
+            f"weinberg enrichment: D_min = {d_min:.4f} ≤ 0.5 at Vin_max = "
+            f"{vmax} V — loses boost-mode operation; the overlap ripple "
+            "model ΔI = Vin·(2D-1)/(L·2·fsw) is only valid for D > 0.5 "
+            "(below it emits invalid buck-regime numbers)."
         )
     if d_max >= 1.0:
         raise EnrichmentError(

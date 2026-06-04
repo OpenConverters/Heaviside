@@ -32,7 +32,18 @@ from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 # ---------------------------------------------------------------------------
 
 
-def _l1_mas(N: int = 22) -> dict:
+def _l1_mas(N: int = 22, *, L: float = 100e-6) -> dict:
+    """Full MAS root for L1 (input coupled inductor), matching the shape
+    the real bridge-attach phase produces: the wound/gapped magnetic
+    device under ``core``/``coil`` PLUS the ``inputs``/``outputs``
+    envelopes carrying the inductance MKF actually achieved.  The
+    extractor harvests the achieved ``L`` via
+    :func:`_read_full_mas_root` + :func:`_harvest_inductance` from
+    ``outputs[*].inductance.magnetizingInductance.magnetizingInductance
+    .nominal`` (and would also accept
+    ``inputs.designRequirements.magnetizingInductance.nominal``); both
+    are provided so the fixture survives either harvest path.
+    """
     return {
         "core": {
             "processedDescription": {
@@ -57,6 +68,16 @@ def _l1_mas(N: int = 22) -> dict:
             {"name": "b", "numberTurns": N, "numberParallels": 1,
              "isolationSide": "primary"},
         ]},
+        "inputs": {
+            "designRequirements": {
+                "magnetizingInductance": {"nominal": L},
+            },
+        },
+        "outputs": [
+            {"inductance": {"magnetizingInductance": {
+                "magnetizingInductance": {"nominal": L},
+            }}},
+        ],
     }
 
 
@@ -383,16 +404,42 @@ class TestStructuralFailures:
             enrich_tas_for_realism(tas, topology="weinberg", spec=_wb_spec())
 
     def test_missing_a_winding_on_l1_throws(self):
+        # Rename L1 winding "a" to a name that does NOT end in "a" — the
+        # extractor's "L1a"/"L1b" suffix fallback (any name ending in the
+        # requested 1-2 char name) would otherwise silently match "alpha"
+        # / "primary_a" and hide the failure.
         tas = _wb_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "lineFilter":
                 stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][0]["name"] = "alpha"
+                    "functionalDescription"][0]["name"] = "winding_x"
         with pytest.raises(EnrichmentError, match="'a'"):
             enrich_tas_for_realism(tas, topology="weinberg", spec=_wb_spec())
 
-    def test_missing_desiredInductance_throws(self):
+    def test_missing_achieved_inductance_throws(self):
+        """Weinberg harvests the achieved L1 inductance from the L1 MAS
+        root (the figure MKF actually realised) via _read_full_mas_root +
+        _harvest_inductance, NOT from a spec request.  Strip both
+        inductance sources from the L1 MAS and the extractor must throw
+        rather than silently default."""
+        tas = _wb_tas()
+        for stage in tas["topology"]["stages"]:
+            if stage.get("role") == "lineFilter":
+                c = stage["circuit"]["components"][0]
+                c["mas"].pop("outputs", None)
+                c["mas"].pop("inputs", None)
+        with pytest.raises(EnrichmentError, match="full MAS root|inductance"):
+            enrich_tas_for_realism(tas, topology="weinberg", spec=_wb_spec())
+
+    def test_spec_present_but_inductance_mas_harvested(self):
+        """Even with desiredInductance absent from the spec, the extractor
+        succeeds because L1 inductance is harvested from the MAS root —
+        the spec field is not the source of truth for L."""
         spec = _wb_spec()
-        del spec["desiredInductance"]
-        with pytest.raises(EnrichmentError, match="desiredInductance"):
-            enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=spec)
+        spec.pop("desiredInductance", None)
+        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=spec)
+        l = _get_l1(out)
+        # L_worst = 0.8 * 100µH harvested from the MAS root.
+        assert l["ipeak_provenance"]["L_worst_H"] == pytest.approx(
+            0.8 * 100e-6, rel=1e-9
+        )
