@@ -833,22 +833,59 @@ def dual_active_bridge_stresses(
 def isolated_buck_stresses(
     spec: Mapping[str, Any], *, op_index: int = 0,
 ) -> ComponentStresses:
+    """Stresses for the isolated buck (flybuck).
+
+    The flybuck is a *synchronous buck* on the primary winding of the
+    coupled inductor T1, with one or more magnetically-isolated secondary
+    rails rectified open-loop. The primary winding IS the buck inductor —
+    it carries its own buck load (``Iout_pri`` = outputCurrents[0]) PLUS
+    every reflected secondary current (``Iout_i / N_i``), NOT a small
+    reflected-only current like a flyback secondary.
+
+      * Q1/Q2 see Vds ≈ Vin_max (half-bridge across the bus).
+      * I_L_pri (avg) = Iout_pri + Σ_i Iout_i / N_i.
+      * Id_stress = I_L_pri · (1 + ripple/2)  (peak primary winding current).
+      * Each secondary diode i blocks Vout_i + Vin_max/N_i and carries
+        Iout_i; the worst-case over rails sizes vr_stress / if_avg_stress.
+    """
     where = "isolated_buck spec"
     vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
-    vout, iout = _vout_iout(spec, where, op_index=op_index)
-    n = _turns_ratio(spec, where)
+    vout, iout_pri = _vout_iout(spec, where, op_index=op_index)
     ripple = _ripple_pp(spec)
+
+    op = _op_at(spec, op_index, where)
+    iouts = op.get("outputCurrents") or []
+    vouts = op.get("outputVoltages") or []
+    ratios = spec.get("desiredTurnsRatios") or []
+    # Fall back to the single-ratio helper when desiredTurnsRatios is absent
+    # (single-secondary specs that only carry one ratio).
+    n0 = _turns_ratio(spec, where)
+
+    # Primary winding (= buck inductor) average current: own load plus
+    # every reflected secondary current.
+    i_l_pri = float(iout_pri)
+    vr_worst = vout + vmax / n0
+    if_worst = float(iout_pri)
+    for i in range(1, len(iouts)):
+        n_i = float(ratios[i - 1]) if (i - 1) < len(ratios) else n0
+        if n_i <= 0:
+            n_i = n0
+        i_sec = float(iouts[i])
+        i_l_pri += i_sec / n_i
+        v_sec = float(vouts[i]) if i < len(vouts) else vout
+        vr_worst = max(vr_worst, v_sec + vmax / n_i)
+        if_worst = max(if_worst, i_sec)
+
     vds = vmax
-    ipri = iout / n * (1.0 + ripple / 2.0)
-    vr = vout + vmax / n
+    ipri_pk = i_l_pri * (1.0 + ripple / 2.0)
     return ComponentStresses(
         vds_stress=vds,
-        id_stress=ipri,
-        vr_stress=vr,
-        if_avg_stress=iout,
+        id_stress=ipri_pk,
+        vr_stress=vr_worst,
+        if_avg_stress=if_worst,
         v_working=vout,
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=i_l_pri * ripple / (2.0 * 3.0 ** 0.5),
     )
 
 

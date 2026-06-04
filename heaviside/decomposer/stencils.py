@@ -1563,21 +1563,49 @@ def active_clamp_forward(deck: SpiceDeck) -> TasTopology:
 # Controller regulates around Vout_pri — secondary is open-loop.
 
 
-_ISOBUCK_REAL_KINDS = {
-    "S1":         "switch",
-    "S2":         "switch",
-    "Lpri":       "inductor",
-    "Lsec0":      "inductor",
-    "Kpri_sec0":  "coupling",
-    "Cpri":       "capacitor",
-    "Dsec0":      "diode",
-    "Cout0":      "capacitor",
-}
+def _isobuck_real_kinds(deck: SpiceDeck) -> dict[str, str]:
+    """Expected real-component set for an isolated buck (flybuck) deck with N
+    isolated secondaries (in addition to the mandatory primary buck rail).
+
+    The MKF generator always emits the synchronous-buck primary (``S1``/``S2``
+    + ``Lpri`` + ``Cpri``) plus one ``Lsec{i}``/``Dsec{i}``/``Cout{i}`` triple
+    per isolated secondary output. All transformer couplings (``Kpri_sec{i}``,
+    ``Ksec{i}_{j}``) are accepted generically via :func:`_coupling_kinds`.
+    """
+    n = _secondary_count(deck)
+    kinds: dict[str, str] = {
+        "S1":   "switch",
+        "S2":   "switch",
+        "Lpri": "inductor",
+        "Cpri": "capacitor",
+    }
+    for i in range(n):
+        kinds[f"Lsec{i}"] = "inductor"
+        kinds[f"Dsec{i}"] = "diode"
+        kinds[f"Cout{i}"] = "capacitor"
+    kinds.update(_coupling_kinds(deck))   # Kpri_sec{i}, Ksec{i}_{j} → T1
+    return kinds
 
 
 def isolated_buck(deck: SpiceDeck) -> TasTopology:
-    """Decompose an MKF isolated buck (flybuck) deck into TAS."""
-    _validate_real_set(deck, "isolated_buck", _ISOBUCK_REAL_KINDS)
+    """Decompose an MKF isolated buck (flybuck) deck into TAS.
+
+    Flybuck = synchronous buck on the primary (``Q1`` HS, ``Q2`` LS, ``Lpri``
+    as the buck inductor + ``C_pri`` output cap) magnetically coupled to N
+    secondary windings, each rectifying to an isolated DC output. Each
+    ``Lsec{i}``/``Dsec{i}``/``Cout{i}`` triple becomes one isolated secondary
+    winding + output-rectifier stage feeding ``Vout{i}``. The control loop
+    closes around the primary buck rail (``Vout_pri``); the secondaries are
+    open-loop.
+
+    The single-secondary emission is byte-identical to the historical
+    hardcoded stencil (GND endpoint order preserved) so the golden stays
+    locked.
+    """
+    _validate_real_set(deck, "isolated_buck", _isobuck_real_kinds(deck))
+    n_sec = _secondary_count(deck)
+    if n_sec < 1:
+        raise StencilError("isolated_buck: deck has no secondary winding (Lsec0)")
 
     switching_cell = {
         "name": "primary_switch",
@@ -1594,11 +1622,12 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
     }
 
     # T1.pri.2 is NOT ground for flybuck — it sits on Vout_pri.
+    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
     isolation = _isolation_stage(
-        ("pri", "sec0"),
+        windings,
         input_wire="switch_node",
-        output_wires=("sec0_node",),  # pri.2 surfaces as Vout_pri directly
-    )
+        output_wires=tuple(f"sec{i}_node" for i in range(n_sec)),
+    )  # pri.2 surfaces as Vout_pri directly
 
     output_filter_pri = {
         "name": "output_pri",
@@ -1611,21 +1640,24 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
         },
     }
 
-    output_rectifier_0 = {
-        "name": "output_0",
-        "role": "outputRectifier",
-        "inputPort":  {"type": "hfAc",  "wire": "sec0_node"},
-        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
-        "circuit": {
-            "components": [
-                _component("diode",     "D_out0"),   # ← Dsec0
-                _component("capacitor", "C_out0"),   # ← Cout0
-            ],
-            "connections": [],
-        },
-    }
+    output_rectifiers = [
+        {
+            "name": f"output_{i}",
+            "role": "outputRectifier",
+            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_node"},
+            "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
+            "circuit": {
+                "components": [
+                    _component("diode",     f"D_out{i}"),   # ← Dsec{i}
+                    _component("capacitor", f"C_out{i}"),   # ← Cout{i}
+                ],
+                "connections": [],
+            },
+        }
+        for i in range(n_sec)
+    ]
 
-    # Flybuck regulates the primary output; secondary is open-loop.
+    # Flybuck regulates the primary output; secondaries are open-loop.
     control = _isolated_control_stage(("Q1", "Q2"), sense_wire="Vout_pri")
 
     inter_stage = [
@@ -1653,35 +1685,39 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
                 {"component": "C_pri", "pin": "1"},
             ],
         },
-        {
-            "name": "sec0_node",
+    ]
+    for i in range(n_sec):
+        inter_stage.append({
+            "name": f"sec{i}_node",
             "kind": "wire",
             "endpoints": [
-                {"component": "T1",     "pin": "sec0.2"},
-                {"component": "D_out0", "pin": "A"},
+                {"component": "T1",        "pin": f"sec{i}.2"},
+                {"component": f"D_out{i}", "pin": "A"},
             ],
-        },
-        {
-            "name": "Vout0",
+        })
+        inter_stage.append({
+            "name": f"Vout{i}",
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "D_out0", "pin": "K"},
-                {"component": "C_out0", "pin": "1"},
+                {"component": f"D_out{i}", "pin": "K"},
+                {"component": f"C_out{i}", "pin": "1"},
             ],
-        },
-        _gnd_wire(
-            ("Q2",     "S"),
-            ("T1",     "sec0.1"),
-            ("C_pri",  "2"),
-            ("C_out0", "2"),
-        ),
-        *_gate_wires("Q1", "Q2"),
-    ]
+        })
+
+    # GND endpoint ORDER preserved so the single-secondary golden stays
+    # byte-identical: Q2.S, then all transformer secondary returns
+    # (T1.sec{i}.1), then C_pri.2, then all output-cap returns (C_out{i}.2).
+    gnd_endpoints: list[tuple[str, str]] = [("Q2", "S")]
+    gnd_endpoints += [("T1", f"sec{i}.1") for i in range(n_sec)]
+    gnd_endpoints += [("C_pri", "2")]
+    gnd_endpoints += [(f"C_out{i}", "2") for i in range(n_sec)]
+    inter_stage.append(_gnd_wire(*gnd_endpoints))
+    inter_stage.extend(_gate_wires("Q1", "Q2"))
 
     return {
         "stages": [switching_cell, isolation, output_filter_pri,
-                   output_rectifier_0, control],
+                   *output_rectifiers, control],
         "interStageCircuit": inter_stage,
     }
 

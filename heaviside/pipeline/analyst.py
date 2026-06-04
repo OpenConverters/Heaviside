@@ -1470,28 +1470,72 @@ def run_dual_active_bridge_analyst(
 def _isolated_buck_op_budget(
     tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
 ) -> dict[str, float | None]:
-    fsw = _spec_fsw(spec, op_index)
-    vout, iout = _spec_vout_iout(spec, op_index)
-    vin = _spec_vin_nominal(spec)
-    n = _turns_ratio(spec)
-    duty = vout * n / vin if vin > 0 else 0.0
-    ipri = iout / n
+    """Flybuck loss budget.
 
-    budget: dict[str, float | None] = {}
-    # Half-bridge primary: Q1, Q2
-    for qname in ("Q1", "Q2"):
-        budget.update(_mosfet_loss(
-            _find_named(tas, qname), qname,
-            duty=duty, i_on=ipri, vds_off=vin, fsw=fsw,
-        ))
-    budget.update(_diode_loss(
-        _find_named(tas, "D1"), "D1",
-        duty_off=(1.0 - duty), i_fwd=iout, vr=vout, fsw=fsw,
+    The flybuck is a *synchronous buck* on the primary: ``Q1`` (HS) and
+    ``Q2`` (LS, sync rectifier) drive the transformer primary, which IS the
+    buck inductor. The primary buck rail (``Vout_pri`` = outputVoltages[0])
+    is regulated; each isolated secondary ``i`` (``Vout{i}``) rectifies
+    through ``D_out{i}`` into ``C_out{i}`` open-loop.
+
+      * duty       D = Vout_pri / Vin  (buck conversion ratio)
+      * I_L_pri    = Iout_pri + Σ_i Iout_i / N_i  (the primary winding
+        carries its own buck load PLUS every reflected secondary current)
+
+    The per-rail output rectifiers (``D_out{i}``/``C_out{i}``), the
+    transformer (``T1`` core+dcr) and the primary buck rail come from
+    :func:`_compute_generic_loss_budget`. The generic budget only models the
+    high-side switch ``Q1``; we add the low-side synchronous switch ``Q2``
+    and the primary buck output cap ``C_pri`` here.
+    """
+    fsw = _spec_fsw(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+
+    op = (spec.get("operatingPoints") or [{}])
+    op_i = op[op_index] if op_index < len(op) else (op[0] if op else {})
+    vouts = op_i.get("outputVoltages") or []
+    iouts = op_i.get("outputCurrents") or []
+    if not vouts or not iouts:
+        raise AnalystError(
+            f"operatingPoints[{op_index}].outputVoltages/outputCurrents required"
+        )
+    vout_pri = float(vouts[0])
+    iout_pri = float(iouts[0])
+
+    # Buck duty from the regulated primary rail.
+    duty = vout_pri / vin if vin > 0 else 0.0
+
+    # Primary winding (= buck inductor) current: own load + reflected
+    # secondaries. Secondary i reflects Iout_i / N_i to the primary.
+    ratios = spec.get("desiredTurnsRatios") or []
+    i_l_pri = iout_pri
+    for i in range(1, len(iouts)):
+        n_i = float(ratios[i - 1]) if (i - 1) < len(ratios) else 1.0
+        if n_i <= 0:
+            n_i = 1.0
+        i_l_pri += float(iouts[i]) / n_i
+
+    # Q1 (HS) + T1 + per-rail D_out{i}/C_out{i} from the generic budget. The
+    # generic switch model uses pri_current for the HS device conduction;
+    # sec_current is unused here (no buck-class D1 in a flybuck), so pass the
+    # primary current for both.
+    budget = _compute_generic_loss_budget(
+        tas, spec,
+        duty=duty, pri_current=i_l_pri, sec_current=i_l_pri,
+        op_index=op_index,
+    )
+
+    # Low-side synchronous rectifier Q2 conducts during the (1-D) interval,
+    # carrying the same primary winding current. vds_off = Vin (it blocks the
+    # full bus when the HS is on).
+    budget.update(_mosfet_loss(
+        _find_named(tas, "Q2"), "Q2",
+        duty=(1.0 - duty), i_on=i_l_pri, vds_off=vin, fsw=fsw,
     ))
-    budget.update(_inductor_loss_keyed(_find_named(tas, "L1"), "L1"))
-    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
-    cout = _find_named(tas, "C_out") or _find_named(tas, "Cout")
-    budget.update(_cap_esr_loss(cout, "C_out"))
+
+    # Primary buck output cap (named C_pri in the flybuck stencil, not the
+    # buck-class C_out the generic budget looks for).
+    budget.update(_cap_esr_loss(_find_named(tas, "C_pri"), "C_pri"))
     return budget
 
 

@@ -37,9 +37,20 @@ from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 # ---------------------------------------------------------------------------
 
 
-def _t1_mas(*, N_pri: int = 12, N_sec: int = 6) -> dict:
-    """Flybuck T1 MAS: 2 windings (pri, sec0), one core."""
-    return {
+def _t1_mas(
+    *, N_pri: int = 12, N_sec: int = 6, achieved_L: float | None = 22e-6,
+) -> dict:
+    """Flybuck T1 full-MAS root: 2 windings (pri, sec0), one core, plus the
+    ``outputs`` envelope MKF's bridge-attach phase populates.
+
+    The extractor harvests the *achieved* primary inductance from
+    ``outputs[*].inductance.magnetizingInductance.magnetizingInductance.nominal``
+    (the L of the wound + gapped core MKF actually picked), NOT from the
+    spec's ``desiredInductance``.  ``achieved_L=None`` drops the outputs
+    envelope entirely so the missing-achieved-inductance guard can be
+    exercised.
+    """
+    mas: dict = {
         "core": {
             "processedDescription": {
                 "effectiveParameters": {
@@ -66,6 +77,25 @@ def _t1_mas(*, N_pri: int = 12, N_sec: int = 6) -> dict:
              "isolationSide": "secondary"},
         ]},
     }
+    # Full-MAS-root envelope: the bridge attach phase writes the
+    # simulation-derived magnetizing inductance here. The extractor reads
+    # L_pri from this, not from spec.desiredInductance. ``achieved_L=None``
+    # keeps the envelope present but WITHOUT a usable inductance, so the
+    # missing-achieved-inductance guard fires (vs. the missing-envelope
+    # guard, which is a distinct failure).
+    if achieved_L is not None:
+        mas["outputs"] = [
+            {
+                "inductance": {
+                    "magnetizingInductance": {
+                        "magnetizingInductance": {"nominal": achieved_L},
+                    },
+                },
+            },
+        ]
+    else:
+        mas["outputs"] = [{}]
+    return mas
 
 
 def _flybuck_tas(*, t1_kwargs: dict | None = None) -> dict:
@@ -277,12 +307,16 @@ class TestStructuralFailures:
             enrich_tas_for_realism(tas, topology="isolated_buck",
                                    spec=_flybuck_spec())
 
-    def test_missing_desiredInductance_throws(self):
-        spec = _flybuck_spec()
-        del spec["desiredInductance"]
-        with pytest.raises(EnrichmentError, match="desiredInductance"):
-            enrich_tas_for_realism(_flybuck_tas(), topology="isolated_buck",
-                                   spec=spec)
+    def test_missing_achieved_inductance_throws(self):
+        """The extractor harvests L_pri from the T1 full-MAS-root
+        ``outputs[*].inductance.magnetizingInductance...nominal`` (what MKF
+        actually achieved), NOT from spec.desiredInductance. If the
+        bridge-attach phase never populated an achieved inductance, the
+        extractor must throw — never fall back to the spec target."""
+        tas = _flybuck_tas(t1_kwargs={"achieved_L": None})
+        with pytest.raises(EnrichmentError, match="inductance"):
+            enrich_tas_for_realism(tas, topology="isolated_buck",
+                                   spec=_flybuck_spec())
 
     def test_missing_switchingFrequency_throws(self):
         spec = _flybuck_spec()
