@@ -987,11 +987,16 @@ def full_design(
 
 
 def _stage4_adversarial_review(outcome: DesignOutcome) -> DesignOutcome:
-    """Run Ray (engineering) and Nicola (quality) on the best design."""
-    try:
-        from heaviside.agents.llm_call import call_agent, extract_json_block, LLMCallError
-    except ImportError:
-        return outcome
+    """Run Ray (engineering) and Nicola (quality) on the best design.
+
+    Per CLAUDE.md "no silent fallbacks": a reviewer agent that cannot produce
+    a verdict (LLM unreachable, timeout, or unparseable output even after
+    retries) is a HARD failure — a design without its adversarial review is not
+    a valid result, so we raise rather than quietly recording "0 reviews". A
+    reviewer that runs and returns a negative verdict is a valid review (not a
+    failure); that is recorded and surfaced, not raised.
+    """
+    from heaviside.agents.llm_call import LLMCallError, call_agent_json
 
     review_input = {
         "verdict": outcome.verdict_dict,
@@ -1007,22 +1012,23 @@ def _stage4_adversarial_review(outcome: DesignOutcome) -> DesignOutcome:
 
     for reviewer_name in ("ray", "nicola"):
         try:
-            raw = call_agent(
+            verdict_data = call_agent_json(
                 reviewer_name,
                 f"CONVERTER DESIGN REVIEW\n\n{json.dumps(review_input, indent=2)}",
                 max_tokens=8192,
+                max_retries=2,
+                json_mode=True,
             )
-            reviewer_log += f"\n--- {reviewer_name.upper()} ---\n{raw}\n"
-            try:
-                verdict_data = extract_json_block(raw)
-                verdict_data["reviewer"] = reviewer_name
-                review_verdicts.append(verdict_data)
-                verdict = verdict_data.get("verdict", "").upper()
-                logger.info("Stage 4 (%s): %s", reviewer_name, verdict)
-            except LLMCallError:
-                logger.warning("Stage 4 (%s): could not parse verdict", reviewer_name)
         except LLMCallError as exc:
-            logger.warning("Stage 4 (%s): failed: %s", reviewer_name, exc)
+            raise FullDesignError(
+                f"Stage 4 adversarial review: reviewer {reviewer_name!r} could "
+                f"not produce a verdict ({exc}). A design without its Ray+Nicola "
+                f"review is not a valid result — aborting (no silent fallback)."
+            ) from exc
+        verdict_data["reviewer"] = reviewer_name
+        review_verdicts.append(verdict_data)
+        reviewer_log += f"\n--- {reviewer_name.upper()} ---\n{json.dumps(verdict_data)}\n"
+        logger.info("Stage 4 (%s): %s", reviewer_name, verdict_data.get("verdict", "?"))
 
     return DesignOutcome(
         pick=outcome.pick,

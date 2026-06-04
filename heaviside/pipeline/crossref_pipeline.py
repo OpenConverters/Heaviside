@@ -1040,31 +1040,35 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
         "guardrail_fires": state.guardrail_log,
     }
 
-    # Run both reviewers
+    # Run both reviewers. Per CLAUDE.md "no silent fallbacks": a reviewer that
+    # cannot produce a verdict (LLM unreachable/timeout/unparseable even after
+    # retries) is a HARD failure — a cross-reference without its Ray+Nicola
+    # review is not a valid result, so raise rather than appending a diagnostic
+    # and proceeding. A reviewer that runs and returns NOT_APPROVED is a valid
+    # review (recorded below, drives state.passed), not a failure.
+    review_tokens = min(8192 + len(trimmed_xref) * 128, 16384)
     for reviewer_name in ("ray", "nicola"):
-        for attempt in range(max_attempts):
-            try:
-                review_tokens = 8192 + len(trimmed_xref) * 128
-                raw = call_agent(
-                    reviewer_name,
-                    f"CROSS-REFERENCE REVIEW\n\n{json.dumps(review_input, indent=2)}",
-                    max_tokens=min(review_tokens, 16384),
-                )
-                state.reviewer_log += f"\n--- {reviewer_name.upper()} ---\n{raw}\n"
-                verdict_data = extract_json_block(raw)
-                verdict_data["reviewer"] = reviewer_name
-                state.review_verdicts.append(verdict_data)
-                verdict = verdict_data.get("verdict", "").upper()
-                if verdict in ("APPROVED", "PROCEED"):
-                    logger.info("CR stage 7: %s %s", reviewer_name, verdict)
-                    break
-                logger.info("CR stage 7: %s %s (attempt %d)",
-                             reviewer_name, verdict, attempt + 1)
-            except LLMCallError as exc:
-                state.diagnostics.append(
-                    f"{reviewer_name} review attempt {attempt + 1} failed: {exc}"
-                )
-                break
+        try:
+            verdict_data = call_agent_json(
+                reviewer_name,
+                f"CROSS-REFERENCE REVIEW\n\n{json.dumps(review_input, indent=2)}",
+                max_tokens=review_tokens,
+                max_retries=max_attempts,
+                json_mode=True,
+            )
+        except LLMCallError as exc:
+            raise CrossRefPipelineError(
+                f"CR stage 7: reviewer {reviewer_name!r} could not produce a "
+                f"verdict ({exc}). A cross-reference without its Ray+Nicola "
+                f"review is not a valid result — aborting (no silent fallback)."
+            ) from exc
+        verdict_data["reviewer"] = reviewer_name
+        state.review_verdicts.append(verdict_data)
+        state.reviewer_log += (
+            f"\n--- {reviewer_name.upper()} ---\n{json.dumps(verdict_data)}\n"
+        )
+        logger.info("CR stage 7: %s %s", reviewer_name,
+                     verdict_data.get("verdict", "?"))
 
     # Pipeline passes only if both reviewers approved
     ray_approved = any(

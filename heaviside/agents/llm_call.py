@@ -60,6 +60,7 @@ def call_llm(
     *,
     temperature: float = 0.3,
     max_tokens: int = 4096,
+    json_mode: bool = False,
 ) -> str:
     """Send a chat completion request and return the assistant's text.
 
@@ -97,6 +98,11 @@ def call_llm(
     # Reasoning models (k2.5+) only accept temperature=1; omit it.
     if "k2" not in model:
         body["temperature"] = temperature
+    # Force a valid JSON object response (Moonshot/OpenAI-compatible). Needed
+    # for reviewer agents: kimi-k2.5 otherwise emits <scratchpad> reasoning with
+    # no parseable JSON block. The prompt must mention JSON (the reviewers do).
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
 
     try:
         response = httpx.post(
@@ -150,12 +156,13 @@ def call_agent(
     *,
     temperature: float = 0.3,
     max_tokens: int = 4096,
+    json_mode: bool = False,
 ) -> str:
     """Load a named agent prompt and call the LLM with it."""
     system_prompt = load_prompt(agent_name)
     return call_llm(
         system_prompt, user_message,
-        temperature=temperature, max_tokens=max_tokens,
+        temperature=temperature, max_tokens=max_tokens, json_mode=json_mode,
     )
 
 
@@ -166,13 +173,16 @@ def call_agent_json(
     temperature: float = 0.3,
     max_tokens: int = 4096,
     max_retries: int = 2,
+    json_mode: bool = False,
 ) -> dict[str, Any]:
     """Call an agent and parse its JSON response, with retries.
 
     On parse failure (no JSON block or invalid JSON), retries up to
     ``max_retries`` times with a slightly higher temperature to
-    encourage a different output format. Raises ``LLMCallError``
-    if all attempts fail.
+    encourage a different output format. ``json_mode`` forces the API to
+    return a JSON object (needed for reasoning models that otherwise emit
+    un-parseable scratchpad prose). Raises ``LLMCallError`` if all attempts
+    fail.
     """
     last_error: LLMCallError | None = None
     for attempt in range(1 + max_retries):
@@ -180,7 +190,7 @@ def call_agent_json(
             t = temperature + (attempt * 0.1)
             raw = call_agent(
                 agent_name, user_message,
-                temperature=min(t, 1.0), max_tokens=max_tokens,
+                temperature=min(t, 1.0), max_tokens=max_tokens, json_mode=json_mode,
             )
             return extract_json_block(raw)
         except LLMCallError as exc:
