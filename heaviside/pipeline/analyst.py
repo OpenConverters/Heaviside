@@ -1331,9 +1331,52 @@ def run_cllc_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
     _run_generic_analyst(tas, spec, _llc_op_budget)
 
 
+def _clllc_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    """CLLLC / dual-active-bridge loss budget.
+
+    CLLLC is a DUAL FULL BRIDGE — not the half-bridge + diode rectifier of LLC.
+    Primary HV bridge Q1–Q4 carries the reflected output current; the LV
+    synchronous-rectifier bridge Q5–Q8 carries the FULL output current (the
+    loss term the LLC budget missed entirely — it looked for diodes D1/D2 that
+    a synchronous-rectified converter does not have, leaving η ~0.999).
+    Resonant ⇒ ZVS, so switching loss ≈ 0; conduction dominates. In a full
+    bridge two diagonal FETs conduct each half-period (duty≈0.5 per device).
+    """
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+    n = _turns_ratio(spec)
+    ipri = iout / n if n else iout   # output current reflected to the HV side
+
+    budget: dict[str, float | None] = {}
+    # HV primary full bridge — reflected (small) current.
+    for q in ("Q1", "Q2", "Q3", "Q4"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, q), q,
+            duty=0.5, i_on=ipri, vds_off=vin, fsw=fsw, zvs=True,
+        ))
+    # LV synchronous-rectifier full bridge — full output current (dominant).
+    for q in ("Q5", "Q6", "Q7", "Q8"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, q), q,
+            duty=0.5, i_on=iout, vds_off=vout, fsw=fsw, zvs=True,
+        ))
+    # Resonant tank + transformer + bus caps (any that are present).
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    for lr in ("Lr", "Lr1", "Lr2"):
+        budget.update(_inductor_loss_keyed(_find_named(tas, lr), lr))
+    for cr in ("Cr", "Cr1", "Cr2"):
+        budget.update(_cap_esr_loss(_find_named(tas, cr), cr))
+    for c in ("C_bus_HV", "C_bus_LV", "C_out", "Cout"):
+        budget.update(_cap_esr_loss(_find_named(tas, c), c))
+    return budget
+
+
 def run_clllc_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
-    """CLLLC loss budget + Tj (same structure as LLC)."""
-    _run_generic_analyst(tas, spec, _llc_op_budget)
+    """CLLLC loss budget + Tj (dual full bridge — distinct from LLC)."""
+    _run_generic_analyst(tas, spec, _clllc_op_budget)
 
 
 # ---------------------------------------------------------------------------
