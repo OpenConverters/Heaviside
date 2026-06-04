@@ -13,11 +13,11 @@ Vl1_sense node_A node_A_int 0
 
 * PWM low-side switch on node_A
 Vpwm pwm_ctrl 0 PULSE(0 5.000000 0 1.000000e-08 1.000000e-08 1.089194e-06 5.000000e-06)
-.model SW1 SW VT=2.500000 VH=0.500000
+.model SW1 SW VT=2.500000 VH=0.100000 RON=0.050000
 S1 node_A_int 0 pwm_ctrl 0 SW1
 Rsnub_s1 node_A_int 0 10000.000000
 Csnub_s1 node_A_int snub_s1_int 1.000000e-10
-Rsnub_s1b snub_s1_int 0 0.001000
+Rsnub_s1b snub_s1_int 0 10000.000000
 
 * C1 coupling cap (with ESR)
 Vc1_sense node_A_int node_C 0
@@ -30,7 +30,7 @@ Vd_sense d_cath 0 0
 D1 node_B d_cath DIDEAL
 Rsnub_d1 node_B 0 10000.000000
 Csnub_d1 node_B snub_d1_int 1.000000e-10
-Rsnub_d1b snub_d1_int 0 0.001000
+Rsnub_d1b snub_d1_int 0 10000.000000
 
 * L2 output inductor (with DCR)
 L2 node_B l2_dcr_mid 3.128645e-05 ic=5.000000

@@ -5,17 +5,14 @@
 * DC Input
 Vin vin_dc 0 48
 
-* §8a.5 input-current sense
-Vq1_sense vin_dc q1_drain 0
-
 * High-side Switch
-Vpwm pwm_ctrl 0 PULSE(0 5 0 1.000000e-08 1.000000e-08 1.1875e-06 5e-06)
-.model SW1 SW VT=2.5 VH=0.5 RON=0.01 ROFF=1e+06
-S1 q1_drain sw_node pwm_ctrl 0 SW1
+Vpwm pwm_ctrl 0 PULSE(0 5 0 10n 10n 1.1875e-06 5e-06)
+.model SW1 SW VT=2.500000 VH=0.100000 RON=0.050000 RON=0.01 ROFF=1e6
+S1 vin_dc sw_node pwm_ctrl 0 SW1
 
 * Low-side Switch (Synchronous Rectifier)
-Vpwm_inv pwm_inv 0 PULSE(5 0 0 1.000000e-08 1.000000e-08 1.1875e-06 5e-06)
-.model SW2 SW VT=2.5 VH=0.5 RON=0.01 ROFF=1e+06
+Vpwm_inv pwm_inv 0 PULSE(5 0 0 10n 10n 1.1875e-06 5e-06)
+.model SW2 SW VT=2.500000 VH=0.100000 RON=0.050000 RON=0.01 ROFF=1e6
 S2 sw_node 0 pwm_inv 0 SW2
 
 * Coupled Inductor (Primary = Buck Inductor)
@@ -33,24 +30,24 @@ Kpri_sec0 Lpri Lsec0 1
 .model DIDEAL D(IS=1.000000e-12 RS=5.000000e-02 N=1.0)
 
 * Primary Output Stage (Buck - non-isolated)
-Cpri vpri_out 0 100u IC=12
-Rload_pri vpri_out 0 2.4
+Cpri vpri_out 0 100u IC=12.000000
+Rload_pri vpri_out 0 2.400000
 
 * Secondary 0 output stage (isolated)
 Rsec0 sec0_in sec0_node 0.01
 Dsec0 sec0_node sec0_rect DIDEAL
 Vsec_sense0 sec0_rect vout0 0
-Cout0 vout0 0 100u IC=5
-Rload0 vout0 0 5
+Cout0 vout0 0 100u IC=5.000000
+Rload0 vout0 0 5.000000
 
 * Transient Analysis
 .tran 2.500000e-08 5.000000e-05 2.500000e-05 UIC
 
 * Output signals
-.save v(sw_node) v(pri_in) v(vpri_out) v(vpri_diff) i(Vpri_sense) v(vin_dc) i(Vin) i(Vq1_sense) v(sec0_in) v(sec0_rect) i(Vsec_sense0) v(vout0)
+.save v(sw_node) v(pri_in) v(vpri_out) v(vpri_diff) i(Vpri_sense) v(vin_dc) i(Vin) v(sec0_in) v(sec0_rect) i(Vsec_sense0) v(vout0)
 
-.options RELTOL=0.001000 ABSTOL=1.000000e-09 VNTOL=1.000000e-06 ITL1=1000 ITL4=1000
-.ic v(vpri_out)=12
-.ic v(vout0)=5
+.options RELTOL=0.001 ABSTOL=1e-9 VNTOL=1e-6 ITL1=1000 ITL4=1000
+.ic v(vpri_out)=12.000000
+.ic v(vout0)=5.000000
 
 .end

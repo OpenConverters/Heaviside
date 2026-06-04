@@ -5,13 +5,10 @@
 * DC Input
 Vin vin_dc 0 48
 
-* §8a.5 input-current sense
-Vq1_sense vin_dc q1_drain 0
-
 * PWM Main Switch
-Vpwm pwm_ctrl 0 PULSE(0 5 0 1e-08 1e-08 2.11667e-06 5e-06)
-.model SW1 SW VT=2.5 VH=0.5 RON=1 ROFF=1.000000e+12
-S1 q1_drain pri_p pwm_ctrl 0 SW1
+Vpwm pwm_ctrl 0 PULSE(0 5 0 10n 10n 2.11667e-06 5e-06)
+.model SW1 SW VT=2.500000 VH=0.100000 RON=0.050000
+S1 vin_dc pri_p pwm_ctrl 0 SW1
 
 * Primary current sense
 Vpri_sense pri_p pri_in 0
@@ -33,8 +30,8 @@ Ddemag demag_sense vin_dc DIDEAL
 * Secondary 0 output stage
 Dfwd0 sec0_in sec0_rect DIDEAL
 Dfw0 0 sec0_rect DIDEAL
-Rsnub_fwd0 sec0_in sec0_rect 1MEG
-Rsnub_fw0 0 sec0_rect 1MEG
+Rsnub_fwd0 sec0_in sec0_rect 10000.000000MEG
+Rsnub_fw0 0 sec0_rect 10000.000000MEG
 Vsec_sense0 sec0_rect sec0_l_in 0
 Rlout0 sec0_l_in lout0 0.01
 Lout0 lout0 vout_c0 9.731250e-05
@@ -46,9 +43,9 @@ Rload0 vout0 0 2.400000
 .tran 2.500000e-08 5.000000e-05 2.500000e-05
 
 * Output signals
-.save v(pri_in) i(Vpri_sense) v(demag_in) i(Vdemag_sense) v(vin_dc) i(Vin) i(Vq1_sense) v(sec0_in) i(Vsec_sense0) v(vout0)
+.save v(pri_in) i(Vpri_sense) v(demag_in) i(Vdemag_sense) v(vin_dc) i(Vin) v(sec0_in) i(Vsec_sense0) v(vout0)
 
-.options RELTOL=0.001000 ABSTOL=1.000000e-09 VNTOL=1.000000e-06 ITL1=1000 ITL4=1000
-.ic v(vout0)=12
+.options RELTOL=0.001 ABSTOL=1e-9 VNTOL=1e-6 ITL1=1000 ITL4=1000
+.ic v(vout0)=12.000000
 
 .end

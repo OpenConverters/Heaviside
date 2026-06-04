@@ -7,7 +7,7 @@ Vin vin_dc 0 48
 
 * PWM Switch
 Vpwm pwm_ctrl 0 PULSE(0 5 0 1.000000e-08 1.000000e-08 1.724138e-06 5.000000e-06)
-.model SW1 SW VT=2.500000 VH=0.500000
+.model SW1 SW VT=2.500000 VH=0.100000 RON=0.050000
 S1 vin_dc pri_p pwm_ctrl 0 SW1
 Rsnub_s1 vin_dc pri_p 10000.000000
 Csnub_s1 vin_dc pri_p 1.000000e-10

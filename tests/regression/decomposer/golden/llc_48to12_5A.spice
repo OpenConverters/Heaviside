@@ -4,26 +4,26 @@
 * Ls=2.8601uH  Cr=295.215nF  Lm=1000uH
 *   output 0: Vout=12V Iout=5A n=2
 
-Vin vin_dc 0 48
+Vdc_supply vdc_supply 0 48
+Rdc_supply_dummy vdc_supply 0 1Meg
 
-.model SW1 SW VT=2.5 VH=0.8 RON=0.01 ROFF=1e+06
+.model SW1 SW VT=2.500000 VH=0.100000 RON=0.050000 RON=0.01 ROFF=1Meg
 .model DIDEAL D(IS=1.000000e-12 RS=5.000000e-02)
 
-Cbus_hi vin_dc mid_point 1u IC=24.000000
-Cbus_lo mid_point 0 1u IC=24.000000
-Rbal_hi vin_dc mid_point 100k
+Cbus_hi vdc_supply mid_point 1u IC=24
+Cbus_lo mid_point 0 1u IC=24
+Rbal_hi vdc_supply mid_point 100k
 Rbal_lo mid_point 0 100k
-Vpwm_HI pwm_HI 0 PULSE(0 5.000000 0 1.000000e-08 1.000000e-08 1.500000e-06 5.000000e-06)
-Vpwm_LO pwm_LO 0 PULSE(0 5.000000 2.500000e-06 1.000000e-08 1.000000e-08 1.500000e-06 5.000000e-06)
-Vq1_sense vin_dc qhi_drain 0
-SHI qhi_drain sw_node pwm_HI 0 SW1
+Vpwm_HI pwm_HI 0 PULSE(0 5 0 10n 10n 2.250000e-06 5.000000e-06)
+Vpwm_LO pwm_LO 0 PULSE(0 5 2.500000e-06 10n 10n 2.250000e-06 5.000000e-06)
+SHI vdc_supply sw_node pwm_HI 0 SW1
 DHI 0 sw_node DIDEAL
 SLO sw_node 0 pwm_LO 0 SW1
-DLO sw_node qhi_drain DIDEAL
-Rsnub_HI qhi_drain sw_node 10000.000000
-Csnub_HI qhi_drain sw_node 1.000000e-10
-Rsnub_LO sw_node 0 10000.000000
-Csnub_LO sw_node 0 1.000000e-10
+DLO sw_node vdc_supply DIDEAL
+Rsnub_HI vdc_supply sw_node 10000.000000k
+Csnub_HI vdc_supply sw_node 1.000000e-10n
+Rsnub_LO sw_node 0 10000.000000k
+Csnub_LO sw_node 0 1.000000e-10n
 Vpri_sense sw_node lr_in 0
 
 * Resonant tank (separate inductor)
@@ -39,10 +39,6 @@ K2 Lpri Lsec2_o1 9.990000e-01
 K3 Lsec1_o1 Lsec2_o1 9.990000e-01
 
 Rpri_ret pri_bot mid_point 0.001
-
-Evpri_w vpri_w 0 pri_top pri_bot 1
-Evsec1_w_o1 vsec1_w_o1 0 sec_top_sec_o1 sec_ct_o1 1
-Evsec2_w_o1 vsec2_w_o1 0 sec_ct_o1 sec_bot_sec_o1 1
 
 .model DRECT D(Is=1e-8 N=0.01 RS=0.01)
 * Output 1 rectifier (CT Vout=1.200000e+01V Rload=2.400000e+00)
@@ -62,11 +58,11 @@ Rload_o1 vout_cap_o1 vout_neg_o1 2.400000e+00
 
 .ic v(vout_cap_o1)=1.200000e+01 v(cr_ls)=0
 
-.options RELTOL=1.000000e-02 ABSTOL=1.000000e-07 VNTOL=1.000000e-04 ITL1=500 ITL4=500
-.options METHOD=GEAR TRTOL=7.000000
+.options RELTOL=0.01 ABSTOL=1e-7 VNTOL=1e-4 ITL1=500 ITL4=500
+.options METHOD=GEAR TRTOL=7
 
 .tran 2.500000e-08 4.000000e-05 1.500000e-05 2.500000e-08 UIC
 
-.save v(vin_dc) i(Vin) v(vpri_w) v(pri_top) v(pri_bot) i(Vpri_sense) i(Vq1_sense) v(sw_node) v(mid_point) v(sec_top_o1) v(sec_bot_o1) v(vsec1_w_o1) v(vsec2_w_o1) v(vout_pos_o1) v(vout_cap_o1) i(Vsec1_sense_o1) i(Vsec2_sense_o1) i(Vsec_sense_o1)
+.save v(vdc_supply) i(Vdc_supply) v(pri_top) v(pri_bot) i(Vpri_sense) v(sw_node) v(mid_point) v(sec_top_o1) v(sec_bot_o1) v(vout_pos_o1) v(vout_cap_o1) i(Vsec1_sense_o1) i(Vsec2_sense_o1) i(Vsec_sense_o1)
 
 .end
