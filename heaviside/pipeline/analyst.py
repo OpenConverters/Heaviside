@@ -1337,6 +1337,92 @@ def run_clllc_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Series resonant converter (SRC)
+# ---------------------------------------------------------------------------
+
+
+def _src_op_budget(
+    tas: dict[str, Any], spec: Mapping[str, Any], *, op_index: int = 0,
+) -> dict[str, float | None]:
+    """Series-resonant loss budget for one operating point.
+
+    SRC differs from LLC in two structural ways that matter for the
+    budget:
+
+    * The switching cell is the same half-bridge (Q_HI / Q_LO, ZVS), but
+      the device names follow the SRC stencil (``Q_HI``/``Q_LO`` not
+      ``Q1``/``Q2``) and the series-resonant inductor is ``L_r``.
+    * Each output rail uses a *full-bridge* diode rectifier
+      (``D_h1_{i}`` / ``D_h2_{i}`` / ``D_l1_{i}`` / ``D_l2_{i}``) instead
+      of LLC's centre-tapped two-diode rectifier. In a full bridge two
+      diodes (a diagonal pair) conduct the load current each half-cycle,
+      so each of the four diodes carries the rail current for ~50 % of
+      the period: conduction loss per diode = 0.5·Iout_i·Vf, and the
+      bridge always has two diodes in series with the load.
+
+    Multi-output: walks every rail (``Vout{i}``/``Iout{i}`` + per-rail
+    turns ratio) and sums the reflected primary current, mirroring the
+    generic multi-output loss summation used elsewhere.
+    """
+    fsw = _spec_fsw(spec, op_index)
+    vout, iout = _spec_vout_iout(spec, op_index)
+    vin = _spec_vin_nominal(spec)
+
+    op = (spec.get("operatingPoints") or [{}])
+    op_i = op[op_index] if op_index < len(op) else (op[0] if op else {})
+    vouts = op_i.get("outputVoltages") or [vout]
+    iouts = op_i.get("outputCurrents") or [iout]
+    ratios = spec.get("desiredTurnsRatios") or [_turns_ratio(spec)]
+    n_rails = max(len(vouts), len(iouts), 1)
+
+    def _rail(seq: Any, i: int, fallback: float) -> float:
+        return float(seq[i]) if i < len(seq) else float(fallback)
+
+    # Primary current = sum of reflected secondary load currents (each
+    # rail referred through its own turns ratio n_i = N_pri / N_sec_i).
+    ipri = 0.0
+    for i in range(n_rails):
+        iout_i = _rail(iouts, i, iout)
+        n_i = _rail(ratios, i, 1.0)
+        if n_i > 0:
+            ipri += iout_i / n_i
+
+    budget: dict[str, float | None] = {}
+    # Half-bridge primary switches (ZVS — resonant soft switching).
+    for qname in ("Q_HI", "Q_LO"):
+        budget.update(_mosfet_loss(
+            _find_named(tas, qname), qname,
+            duty=0.5, i_on=ipri, vds_off=vin, fsw=fsw, zvs=True,
+        ))
+
+    # Per-rail full-bridge diode rectifier: each of the 4 diodes conducts
+    # the rail current for ~50 % of the period.
+    for i in range(n_rails):
+        iout_i = _rail(iouts, i, iout)
+        vout_i = _rail(vouts, i, vout)
+        for dname in (f"D_h1_{i}", f"D_h2_{i}", f"D_l1_{i}", f"D_l2_{i}"):
+            budget.update(_diode_loss(
+                _find_named(tas, dname), dname,
+                duty_off=0.5, i_fwd=iout_i, vr=vout_i, fsw=fsw,
+            ))
+        budget.update(_cap_esr_loss(_find_named(tas, f"C_out{i}"), f"C_out{i}"))
+
+    # Resonant tank + transformer magnetics (losses straight from MAS).
+    budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
+    budget.update(_inductor_loss_keyed(_find_named(tas, "L_r"), "L_r"))
+    # Resonant capacitor C_r ESR loss.
+    budget.update(_cap_esr_loss(_find_named(tas, "C_r"), "C_r"))
+    return budget
+
+
+def run_series_resonant_analyst(
+    tas: dict[str, Any], spec: Mapping[str, Any],
+) -> None:
+    """Series-resonant converter loss budget + Tj."""
+    _run_generic_analyst(tas, spec, _src_op_budget)
+
+
+# ---------------------------------------------------------------------------
 # Dual active bridge
 # ---------------------------------------------------------------------------
 
@@ -1452,6 +1538,7 @@ _ANALYSTS: dict[str, Any] = {
     "llc": run_llc_analyst,
     "cllc": run_cllc_analyst,
     "clllc": run_clllc_analyst,
+    "series_resonant": run_series_resonant_analyst,
     "dual_active_bridge": run_dual_active_bridge_analyst,
     "isolated_buck": run_isolated_buck_analyst,
     "isolated_buck_boost": run_isolated_buck_boost_analyst,
@@ -1487,6 +1574,7 @@ __all__ = [
     "run_phase_shifted_full_bridge_analyst",
     "run_push_pull_analyst",
     "run_sepic_analyst",
+    "run_series_resonant_analyst",
     "run_single_switch_forward_analyst",
     "run_two_switch_forward_analyst",
     "run_weinberg_analyst",

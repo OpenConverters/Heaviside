@@ -263,6 +263,16 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         "process_src",
         "converter",
         "resonant",
+        # SRC mirrors the LLC binding shape: the main transformer T1
+        # (value=None) plus the external series-resonant inductor L_r,
+        # which MKF emits as a ``seriesInductor`` extras-magnetic role
+        # (Src.cpp ::generate_extras, role name "seriesInductor"). The
+        # resonant cap C_r is the ``resonantCapacitor`` extras-cap role
+        # (RESONANT application); the bridge stamps its CAS::Inputs so the
+        # librarian picks an MPN. (With a full-bridge diode rectifier SRC
+        # emits no output inductor — those only appear for CURRENT_DOUBLER.)
+        magnetic_binding={"T1": None, "L_r": "seriesInductor"},
+        capacitor_binding={"C_r": "resonantCapacitor"},
     ),
     TopologyEntry(
         "dual_active_bridge",

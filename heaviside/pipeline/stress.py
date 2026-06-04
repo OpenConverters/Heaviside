@@ -768,6 +768,39 @@ def clllc_stresses(
 
 
 # ---------------------------------------------------------------------------
+# Series resonant converter (SRC) — same half-bridge stress model as LLC
+# ---------------------------------------------------------------------------
+#
+# SRC shares LLC's half-bridge switching cell: each primary FET sees Vin
+# (Vds = Vmax), the resonant tank carries near-sinusoidal current so the
+# primary peak ≈ π/2 × Iout/n, and the per-rail full-bridge diode
+# rectifier blocks ≈ 2·Vout. (SRC has no Lm output branch, so there is no
+# additional magnetizing-current term to add to the switch stress — the
+# FHA-reflected load current dominates.)
+
+def series_resonant_stresses(
+    spec: Mapping[str, Any], *, op_index: int = 0,
+) -> ComponentStresses:
+    where = "series_resonant spec"
+    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
+    vout, iout = _vout_iout(spec, where, op_index=op_index)
+    n = _turns_ratio(spec, where)
+    vds = vmax  # half-bridge: each switch sees Vin
+    ipri_pk = (math.pi / 2.0) * iout / n
+    vr = 2.0 * vout  # full-bridge diode rectifier reverse blocking
+    return ComponentStresses(
+        vds_stress=vds,
+        id_stress=ipri_pk,
+        vr_stress=vr,
+        if_avg_stress=iout,
+        v_working=vout,
+        # Resonant: low ripple on output cap
+        i_ripple=0.05 * iout,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Dual active bridge (DAB) — Vds = Vin (primary), full bridge both sides
 # ---------------------------------------------------------------------------
 
@@ -873,6 +906,7 @@ _DERIVERS: dict[str, Any] = {
     "llc": llc_stresses,
     "cllc": cllc_stresses,
     "clllc": clllc_stresses,
+    "series_resonant": series_resonant_stresses,
     "dual_active_bridge": dual_active_bridge_stresses,
     "isolated_buck": isolated_buck_stresses,
     "isolated_buck_boost": isolated_buck_boost_stresses,

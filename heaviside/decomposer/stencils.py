@@ -2311,6 +2311,307 @@ def llc(deck: SpiceDeck) -> TasTopology:
 
 
 # -----------------------------------------------------------------------------
+# Series resonant converter (SRC) stencil
+# -----------------------------------------------------------------------------
+#
+# MKF deck (bridge_simulation_mode="switch", half-bridge, full-bridge diode
+# rectifier per rail — verified empirically against PyOpenMagnetics):
+#
+#   Cbus_hi vdc_supply mid_point 1u           ; capacitive divider top
+#   Cbus_lo mid_point 0 1u                     ; capacitive divider bottom
+#   Rbal_hi vdc_supply mid_point 100k          ; divider balancing
+#   Rbal_lo mid_point 0 100k
+#   Vpwm_HI/Vpwm_LO                            ; gate drives (drop)
+#   SHI vdc_supply sw_node pwm_HI 0 SW1        ; Q_HI.D=Vin Q_HI.S=sw_node
+#   DHI 0 sw_node DIDEAL                       ; body diode (drop, exact)
+#   SLO sw_node 0 pwm_LO 0 SW1                 ; Q_LO.D=sw_node Q_LO.S=0
+#   DLO sw_node vdc_supply DIDEAL              ; body diode (drop, exact)
+#   Rsnub_HI/Csnub_HI/Rsnub_LO/Csnub_LO        ; snubbers (drop)
+#   Vpri_sense sw_node cr_in 0                 ; ammeter (drop) → collapses cr_in→sw_node
+#
+#   * Resonant tank (series Lr + Cr, no Lm branch unlike LLC)
+#   Cr cr_in cr_lr                             ; C_r.1=sw_node C_r.2=cr_lr
+#   Lr cr_lr pri_top                           ; L_r.1=cr_lr L_r.2=pri_top
+#
+#   Lpri pri_top pri_bot                       ; T1.pri.1=pri_top T1.pri.2=pri_bot
+#   Lsec_o{i} sec_pos_sec_o{i} sec_neg_sec_o{i}; T1.sec{i-1} (1-based _o{i} in deck)
+#   K1 Lpri Lsec_o1 / K2 … / K3 …              ; couplings → T1
+#   Rpri_ret pri_bot mid_point 0.001           ; 1mΩ return (drop) → pri_bot→mid_point
+#
+#   * Per-rail full-bridge diode rectifier (1-based _o{i} in deck):
+#   Dh1_o{i} sec_pos_o{i} vout_pos_o{i}        ; A=sec_pos K=vout_pos
+#   Dh2_o{i} sec_neg_o{i} vout_pos_o{i}        ; A=sec_neg K=vout_pos
+#   Dl1_o{i} vout_neg_o{i} sec_pos_o{i}        ; A=vout_neg(=GND) K=sec_pos
+#   Dl2_o{i} vout_neg_o{i} sec_neg_o{i}        ; A=vout_neg(=GND) K=sec_neg
+#   Rsnh*/Csnh*                                ; rectifier snubbers (drop)
+#   Vsec_sense_o{i}/Vsec_ret_o{i}/Vgnd_o{i}    ; ammeters (drop)
+#   Resr_o{i} vout_pos_o{i} vout_cap_o{i}      ; Cout ESR (drop)
+#   Cout_o{i} vout_cap_o{i} vout_neg_o{i}      ; C_out{i-1}.1=vout_pos .2=vout_neg
+#   Rload_o{i}                                 ; load (drop)
+#
+# Mapping to TAS (Maksimović convention: the resonant tank belongs to the
+# ``inverter`` stage that emits hfAc):
+#
+#   inverter:        Q_HI, Q_LO, C_bus_hi, C_bus_lo, R_bal_hi, R_bal_lo,
+#                    C_r, L_r          dcBus Vin → hfAc pri_top
+#   isolation:       T1 (pri, sec0, … secN-1)   hfAc pri_top → N× hfAc sec{i}_node
+#   outputRectifier: D_h1{i}, D_h2{i}, D_l1{i}, D_l2{i}, C_out{i}
+#                                      hfAc sec{i}_node → dcOutput Vout{i}
+#   control:         U1 drives {Q_HI, Q_LO}, senses Vout0
+#
+# Multi-output: SRC is an isolated transformer with independent secondaries
+# (PyOM emits one Lsec_o{i} winding + full-bridge rectifier per rail), so the
+# stencil generalises to N rails exactly like the flyback / PSFB stencils.
+
+
+def _src_secondary_count(deck: SpiceDeck) -> int:
+    """Count SRC secondary windings (``Lsec_o1``, ``Lsec_o2``, …).
+
+    The MKF SRC generator names secondaries with a 1-based ``_o{i}``
+    suffix (one winding + full-bridge rectifier + output cap per rail).
+    Always ≥1 for a transformer topology.
+    """
+    n = 0
+    while True:
+        try:
+            deck.by_refdes(f"Lsec_o{n + 1}")
+        except KeyError:
+            break
+        n += 1
+    return n
+
+
+def _src_real_kinds(deck: SpiceDeck) -> dict[str, str]:
+    """Expected real-component set for an SRC deck with N secondaries.
+
+    Per-rail (1-based ``_o{i}`` in the deck, 0-based rail index in TAS):
+    one secondary winding ``Lsec_o{i}`` and a 4-diode full-bridge
+    rectifier (``Dh1_o{i}`` / ``Dh2_o{i}`` / ``Dl1_o{i}`` / ``Dl2_o{i}``)
+    feeding an output capacitor ``Cout_o{i}``.
+    """
+    n = _src_secondary_count(deck)
+    kinds: dict[str, str] = {
+        "Cbus_hi": "capacitor",
+        "Cbus_lo": "capacitor",
+        "Rbal_hi": "resistor",
+        "Rbal_lo": "resistor",
+        "SHI":     "switch",
+        "SLO":     "switch",
+        "Cr":      "capacitor",   # → C_r (resonant cap)
+        "Lr":      "inductor",    # → L_r (resonant/series inductor)
+        "Lpri":    "inductor",    # → T1.pri
+    }
+    for i in range(1, n + 1):
+        kinds[f"Lsec_o{i}"] = "inductor"     # → T1.sec{i-1}
+        kinds[f"Dh1_o{i}"]  = "diode"
+        kinds[f"Dh2_o{i}"]  = "diode"
+        kinds[f"Dl1_o{i}"]  = "diode"
+        kinds[f"Dl2_o{i}"]  = "diode"
+        kinds[f"Cout_o{i}"] = "capacitor"    # → C_out{i-1}
+    kinds.update(_coupling_kinds(deck))      # K1…, Ksec-sec → T1 couplings
+    return kinds
+
+
+def series_resonant(deck: SpiceDeck) -> TasTopology:
+    """Decompose an MKF series-resonant (SRC) deck (switch-mode) into TAS.
+
+    Requires ``bridge_simulation_mode="switch"`` so the half-bridge appears
+    as real ``SHI``/``SLO`` switches rather than a single behavioural pulse.
+
+    Supports N output rails: the MKF generator emits one ``Lsec_o{i}``
+    winding + full-bridge diode rectifier (``Dh1_o{i}`` / ``Dh2_o{i}`` /
+    ``Dl1_o{i}`` / ``Dl2_o{i}``) + output cap ``Cout_o{i}`` per rail
+    (1-based ``_o{i}`` in the deck). Each becomes an isolated secondary +
+    ``outputRectifier`` stage feeding ``Vout{i-1}`` (0-based in TAS). The
+    control loop closes around ``Vout0``.
+    """
+    _validate_real_set(deck, "series_resonant", _src_real_kinds(deck))
+    n_sec = _src_secondary_count(deck)
+    if n_sec < 1:
+        raise StencilError(
+            "series_resonant: deck has no secondary winding (Lsec_o1)"
+        )
+
+    # Per-rail TAS component names (0-based rail index ↔ 1-based deck _o{i}).
+    def _dh1(i: int) -> str:  return f"D_h1_{i}"
+    def _dh2(i: int) -> str:  return f"D_h2_{i}"
+    def _dl1(i: int) -> str:  return f"D_l1_{i}"
+    def _dl2(i: int) -> str:  return f"D_l2_{i}"
+    def _cout(i: int) -> str: return f"C_out{i}"
+
+    inverter = {
+        "name": "inverter",
+        "role": "inverter",
+        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "outputPorts": [{"type": "hfAc", "wire": "pri_top"}],
+        "circuit": {
+            "components": [
+                _component("mosfet",    "Q_HI"),       # ← SHI
+                _component("mosfet",    "Q_LO"),       # ← SLO
+                _component("capacitor", "C_bus_hi"),   # ← Cbus_hi
+                _component("capacitor", "C_bus_lo"),   # ← Cbus_lo
+                _component("resistor",  "R_bal_hi"),   # ← Rbal_hi
+                _component("resistor",  "R_bal_lo"),   # ← Rbal_lo
+                _component("capacitor", "C_r"),        # ← Cr
+                _component("magnetic",  "L_r"),        # ← Lr
+            ],
+            "connections": [
+                {
+                    # sw_node = HB midpoint; C_r.1 sits here (the Vpri_sense
+                    # ammeter between sw_node and cr_in is dropped, so the
+                    # two nodes collapse).
+                    "name": "sw_node",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "Q_HI", "pin": "S"},
+                        {"component": "Q_LO", "pin": "D"},
+                        {"component": "C_r",  "pin": "1"},
+                    ],
+                },
+                {
+                    "name": "resonant_mid",
+                    "kind": "wire",
+                    "endpoints": [
+                        {"component": "C_r", "pin": "2"},
+                        {"component": "L_r", "pin": "1"},
+                    ],
+                },
+            ],
+        },
+    }
+
+    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
+    isolation = {
+        "name": "isolation",
+        "role": "isolation",
+        "inputPort":  {"type": "hfAc", "wire": "pri_top"},
+        "outputPorts": [
+            {"type": "hfAc", "wire": f"sec{i}_pos", "name": f"sec{i}_pos"}
+            for i in range(n_sec)
+        ] + [
+            {"type": "hfAc", "wire": f"sec{i}_neg", "name": f"sec{i}_neg"}
+            for i in range(n_sec)
+        ],
+        "circuit": {
+            "components": [_t1_component(windings)],
+            "connections": [],
+        },
+    }
+
+    output_rectifiers = [
+        {
+            "name": f"output_{i}",
+            "role": "outputRectifier",
+            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_pos"},
+            "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
+            "circuit": {
+                "components": [
+                    _component("diode",     _dh1(i)),   # ← Dh1_o{i+1}
+                    _component("diode",     _dh2(i)),   # ← Dh2_o{i+1}
+                    _component("diode",     _dl1(i)),   # ← Dl1_o{i+1}
+                    _component("diode",     _dl2(i)),   # ← Dl2_o{i+1}
+                    _component("capacitor", _cout(i)),  # ← Cout_o{i+1}
+                ],
+                "connections": [],
+            },
+        }
+        for i in range(n_sec)
+    ]
+
+    control = _isolated_control_stage(("Q_HI", "Q_LO"))
+
+    inter_stage = [
+        {
+            "name": "Vin",
+            "kind": "externalPort",
+            "direction": "input",
+            "endpoints": [
+                {"component": "Q_HI",     "pin": "D"},
+                {"component": "C_bus_hi", "pin": "1"},
+                {"component": "R_bal_hi", "pin": "1"},
+            ],
+        },
+        {
+            # Bus midpoint = capacitive-divider centre + primary return.
+            # MKF ties T1.pri.2 here through Rpri_ret (1mΩ, dropped).
+            "name": "mid_point",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "C_bus_hi", "pin": "2"},
+                {"component": "C_bus_lo", "pin": "1"},
+                {"component": "R_bal_hi", "pin": "2"},
+                {"component": "R_bal_lo", "pin": "1"},
+                {"component": "T1",       "pin": "pri.2"},
+            ],
+        },
+        {
+            # L_r feeds T1.pri.1.
+            "name": "pri_top",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "L_r", "pin": "2"},
+                {"component": "T1",  "pin": "pri.1"},
+            ],
+        },
+    ]
+    for i in range(n_sec):
+        # sec{i}_pos = T1.sec{i}.1; full-bridge high diode anode + low diode
+        # cathode (the Vsec_sense_o{i+1} ammeter is dropped, collapsing
+        # sec_pos_sec_o{i+1} → sec_pos_o{i+1}).
+        inter_stage.append({
+            "name": f"sec{i}_pos",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1",     "pin": f"sec{i}.1"},
+                {"component": _dh1(i),  "pin": "A"},
+                {"component": _dl1(i),  "pin": "K"},
+            ],
+        })
+        # sec{i}_neg = T1.sec{i}.2; other full-bridge leg (the Vsec_ret_o{i+1}
+        # ammeter is dropped, collapsing sec_neg_sec_o{i+1} → sec_neg_o{i+1}).
+        inter_stage.append({
+            "name": f"sec{i}_neg",
+            "kind": "wire",
+            "endpoints": [
+                {"component": "T1",     "pin": f"sec{i}.2"},
+                {"component": _dh2(i),  "pin": "A"},
+                {"component": _dl2(i),  "pin": "K"},
+            ],
+        })
+        # Vout{i}+ = high-side diode cathodes + Cout.1 (the Resr_o{i+1} ESR
+        # between vout_pos and vout_cap is dropped, collapsing the nodes).
+        inter_stage.append({
+            "name": f"Vout{i}",
+            "kind": "externalPort",
+            "direction": "output",
+            "endpoints": [
+                {"component": _dh1(i),  "pin": "K"},
+                {"component": _dh2(i),  "pin": "K"},
+                {"component": _cout(i), "pin": "1"},
+            ],
+        })
+    # GND: low-side switch source, bus-divider bottom, and every rail's
+    # low-side diode anodes (vout_neg_o{i} = GND via the Vgnd_o{i} stub) +
+    # output-cap returns.
+    gnd_endpoints: list[tuple[str, str]] = [
+        ("Q_LO",     "S"),
+        ("C_bus_lo", "2"),
+        ("R_bal_lo", "2"),
+    ]
+    for i in range(n_sec):
+        gnd_endpoints.append((_dl1(i), "A"))
+        gnd_endpoints.append((_dl2(i), "A"))
+        gnd_endpoints.append((_cout(i), "2"))
+    inter_stage.append(_gnd_wire(*gnd_endpoints))
+    inter_stage.extend(_gate_wires("Q_HI", "Q_LO"))
+
+    return {
+        "stages": [inverter, isolation, *output_rectifiers, control],
+        "interStageCircuit": inter_stage,
+    }
+
+
+# -----------------------------------------------------------------------------
 # Push-pull stencil (center-tapped primary + center-tapped secondary)
 # -----------------------------------------------------------------------------
 #
@@ -4386,6 +4687,7 @@ STENCILS: dict[str, Callable[[SpiceDeck], TasTopology]] = {
     "isolated_buck": isolated_buck,
     "isolated_buck_boost": isolated_buck_boost,
     "llc": llc,
+    "series_resonant": series_resonant,
     "push_pull": push_pull,
     "phase_shifted_full_bridge": phase_shifted_full_bridge,
     "asymmetric_half_bridge": asymmetric_half_bridge,

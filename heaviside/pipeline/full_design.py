@@ -274,6 +274,35 @@ def _augment_converter_spec(
         for op in spec.get("operatingPoints") or []:
             if isinstance(op, dict):
                 op.setdefault("phaseShift", psfb_phase_shift)
+
+    # Frequency-modulated resonant converters (SRC, LLC, …) are sized by
+    # MKF from a switching-frequency *window* [minSwitchingFrequency,
+    # maxSwitchingFrequency] rather than a single fsw. Both Src::from_json
+    # and Llc::from_json read these via ``j.at(...)`` (required), and SRC's
+    # ``get_effective_resonant_frequency()`` seeds the tank's resonant
+    # frequency from the geometric mean ``sqrt(fmin·fmax)`` when no explicit
+    # resonantFrequency is given. The MKF reference designs (TestSrc.cpp)
+    # bracket the resonant frequency as fr·0.5 … fr·2.0; mirror that by
+    # centring the window (geometric mean) on the design's nominal operating
+    # fsw, so sqrt(fmin·fmax) == fsw and the per-OP fsw lands inside the
+    # [min·0.99, max·1.01] range guard SRC/LLC enforce in run_checks(). Only
+    # applied to resonant-family topologies — other converter models do not
+    # read these keys (nlohmann from_json ignores them).
+    try:
+        _fam = get(topology).family if topology else ""
+    except Exception:  # noqa: BLE001
+        _fam = ""
+    if _fam == "resonant":
+        fsws = [
+            float(op["switchingFrequency"])
+            for op in (spec.get("operatingPoints") or [])
+            if isinstance(op, dict)
+            and isinstance(op.get("switchingFrequency"), (int, float))
+            and float(op.get("switchingFrequency")) > 0
+        ]
+        if fsws:
+            spec.setdefault("minSwitchingFrequency", min(fsws) * 0.5)
+            spec.setdefault("maxSwitchingFrequency", max(fsws) * 2.0)
     return spec
 
 

@@ -162,8 +162,17 @@ def generate_netlist(
     cfg = dict(DEFAULT_SPICE_CONFIG)
     if spice_config:
         cfg.update(dict(spice_config))
+    # MKF's generate_ngspice_circuit dispatch keys on the PyOM *circuit*
+    # name, which for most topologies equals the canonical Python name but
+    # diverges for the series-resonant converter (canonical
+    # ``series_resonant`` → PyOM ``src``). Translate so the binding's
+    # topology switch (which only knows ``src``/``advanced_src``) matches.
+    # process_converter already resolves the alias on the design side; this
+    # keeps the netlist-generation side consistent. (DAB's ``dab`` alias is
+    # accepted directly by the dispatch, so only SRC needs remapping.)
+    ngspice_topology = "src" if topology == "series_resonant" else topology
     args: list[Any] = [
-        topology,
+        ngspice_topology,
         dict(converter_json),
         list(turns_ratios),
         float(magnetizing_inductance),

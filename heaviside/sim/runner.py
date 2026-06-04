@@ -224,6 +224,16 @@ _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
         ("v(vin_dc)",   "i(vin)",   "v(vout_pos_o1)",   "i(vsec_sense_o1)"),
         ("v(vin_dc1)",  "i(vdc1)",  "v(vout_cap_o1)",   "i(vsec_sense_o1)"),
     ],
+    # Series resonant converter (SRC): half-bridge primary off a
+    # capacitive divider whose DC source is ``Vdc_supply vdc_supply 0``
+    # (not ``Vin``/``Vin_dc`` like the other isolated families), feeding a
+    # full-bridge diode rectifier per rail. Input current is i(vdc_supply);
+    # the first output rail is at vout_cap_o1 with i(vsec_sense_o1) as the
+    # rail current. Per-rail ``_o<N>`` naming mirrors PSFB/DAB.
+    "series_resonant": [
+        ("v(vdc_supply)",  "i(vdc_supply)",  "v(vout_cap_o1)",  "i(vsec_sense_o1)"),
+        ("v(vdc_supply)",  "i(vdc_supply)",  "v(vout_pos_o1)",  "i(vsec_sense_o1)"),
+    ],
     # Buck / boost / cuk / sepic / zeta / 4SBB / flyback (single-output).
     # ``i(vl_sense)`` is the inductor current; for boost-family decks
     # the inductor sits in series with the input source, so i_L IS the
