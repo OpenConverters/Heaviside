@@ -2117,25 +2117,53 @@ def two_switch_forward(deck: SpiceDeck) -> TasTopology:
 #   control:         U1 drives {Q_HI, Q_LO}, senses Vout0
 
 
-_LLC_REAL_KINDS = {
-    "Cbus_hi":  "capacitor",
-    "Cbus_lo":  "capacitor",
-    "Rbal_hi":  "resistor",
-    "Rbal_lo":  "resistor",
-    "SHI":      "switch",
-    "SLO":      "switch",
-    "Cr":       "capacitor",
-    "Lr":       "inductor",
-    "Lpri":     "inductor",      # → T1.pri
-    "Lsec1_o1": "inductor",      # → T1.sec1 (upper half of CT)
-    "Lsec2_o1": "inductor",      # → T1.sec2 (lower half of CT)
-    "K1":       "coupling",      # → T1 coupling
-    "K2":       "coupling",
-    "K3":       "coupling",
-    "D1_o1":    "diode",
-    "D2_o1":    "diode",
-    "Cout_o1":  "capacitor",
-}
+def _llc_secondary_count(deck: SpiceDeck) -> int:
+    """Count LLC center-tapped secondary outputs (``Lsec1_o1``, ``Lsec1_o2``…).
+
+    The MKF LLC generator (CENTER_TAPPED rectifier — the canonical
+    default) names each output's upper half-winding ``Lsec1_o{i}`` with a
+    1-based ``_o{i}`` suffix; the lower half is ``Lsec2_o{i}`` and the
+    rectifier is ``D1_o{i}`` / ``D2_o{i}`` feeding ``Cout_o{i}``. Always
+    ≥1 for a transformer topology.
+    """
+    n = 0
+    while True:
+        try:
+            deck.by_refdes(f"Lsec1_o{n + 1}")
+        except KeyError:
+            break
+        n += 1
+    return n
+
+
+def _llc_real_kinds(deck: SpiceDeck) -> dict[str, str]:
+    """Expected real-component set for an LLC deck with N center-tapped rails.
+
+    Bridge + resonant tank (shared across all rails), then per-rail
+    (1-based ``_o{i}`` in the deck, 0-based rail index in TAS): two CT
+    half-windings ``Lsec1_o{i}`` / ``Lsec2_o{i}``, two rectifier diodes
+    ``D1_o{i}`` / ``D2_o{i}``, and an output cap ``Cout_o{i}``.
+    """
+    n = _llc_secondary_count(deck)
+    kinds: dict[str, str] = {
+        "Cbus_hi": "capacitor",
+        "Cbus_lo": "capacitor",
+        "Rbal_hi": "resistor",
+        "Rbal_lo": "resistor",
+        "SHI":     "switch",
+        "SLO":     "switch",
+        "Cr":      "capacitor",
+        "Lr":      "inductor",
+        "Lpri":    "inductor",      # → T1.pri
+    }
+    for i in range(1, n + 1):
+        kinds[f"Lsec1_o{i}"] = "inductor"     # → T1.sec1 of rail i-1 (upper half)
+        kinds[f"Lsec2_o{i}"] = "inductor"     # → T1.sec2 of rail i-1 (lower half)
+        kinds[f"D1_o{i}"]    = "diode"
+        kinds[f"D2_o{i}"]    = "diode"
+        kinds[f"Cout_o{i}"]  = "capacitor"    # → C_out{i-1}
+    kinds.update(_coupling_kinds(deck))       # K1…, pairwise → T1 couplings
+    return kinds
 
 
 def llc(deck: SpiceDeck) -> TasTopology:
@@ -2146,8 +2174,27 @@ def llc(deck: SpiceDeck) -> TasTopology:
     real ``SHI``/``SLO`` switches rather than a single ``Vbridge`` pulse.
     Raises :class:`StencilError` (via ``_validate_real_set``) if the
     deck instead contains a behavioural bridge.
+
+    Supports N output rails: the MKF generator emits a center-tapped
+    secondary pair (``Lsec1_o{i}`` / ``Lsec2_o{i}``) + two rectifier
+    diodes (``D1_o{i}`` / ``D2_o{i}``) + output cap ``Cout_o{i}`` per
+    rail (1-based ``_o{i}`` in the deck). Each becomes an isolated
+    secondary + ``outputRectifier`` stage feeding ``Vout{i-1}`` (0-based
+    in TAS), mirroring the flyback / SRC N-secondary pattern. The control
+    loop closes around ``Vout0``.
     """
-    _validate_real_set(deck, "llc", _LLC_REAL_KINDS)
+    _validate_real_set(deck, "llc", _llc_real_kinds(deck))
+    n_sec = _llc_secondary_count(deck)
+    if n_sec < 1:
+        raise StencilError("llc: deck has no secondary winding (Lsec1_o1)")
+    return _llc_build(n_sec)
+
+
+def _llc_build(n_sec: int) -> TasTopology:
+    # Per-rail TAS names (0-based rail index ↔ 1-based deck _o{i}).
+    def _d1(i: int) -> str:   return "D1" if i == 0 else f"D1_{i}"
+    def _d2(i: int) -> str:   return "D2" if i == 0 else f"D2_{i}"
+    def _cout(i: int) -> str: return f"C_out{i}"
 
     inverter = {
         "name": "inverter",
@@ -2187,43 +2234,61 @@ def llc(deck: SpiceDeck) -> TasTopology:
         },
     }
 
+    # Per-rail center-tapped winding / node names. Rail 0 keeps the legacy
+    # single-output names (``sec1``/``sec2`` windings, ``sec_top``/``sec_bot``/
+    # ``sec_ct`` wires) so the N==1 emission is byte-identical to before;
+    # rails ≥1 get an ``_{i}`` suffix.
+    def _w_top(i: int) -> str:  return "sec1" if i == 0 else f"sec1_{i}"
+    def _w_bot(i: int) -> str:  return "sec2" if i == 0 else f"sec2_{i}"
+    def _n_top(i: int) -> str:  return "sec_top" if i == 0 else f"sec_top_{i}"
+    def _n_bot(i: int) -> str:  return "sec_bot" if i == 0 else f"sec_bot_{i}"
+    def _n_ct(i: int) -> str:   return "sec_ct" if i == 0 else f"sec_ct_{i}"
+
+    windings: tuple[str, ...] = ("pri",)
+    for i in range(n_sec):
+        windings = windings + (_w_top(i), _w_bot(i))
+
     isolation = {
         "name": "isolation",
         "role": "isolation",
         "inputPort":  {"type": "hfAc", "wire": "pri_top"},
         "outputPorts": [
-            {"type": "hfAc", "wire": "sec_top", "name": "sec_top"},
-            {"type": "hfAc", "wire": "sec_bot", "name": "sec_bot"},
+            port
+            for i in range(n_sec)
+            for port in (
+                {"type": "hfAc", "wire": _n_top(i), "name": _n_top(i)},
+                {"type": "hfAc", "wire": _n_bot(i), "name": _n_bot(i)},
+            )
         ],
         "circuit": {
-            "components": [_t1_component(("pri", "sec1", "sec2"))],
+            "components": [_t1_component(windings)],
             "connections": [],
         },
     }
 
-    output_rectifier_0 = {
-        "name": "output_0",
-        "role": "outputRectifier",
-        "inputPort":  {"type": "hfAc", "wire": "sec_top"},
-        "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
-        "circuit": {
-            "components": [
-                _component("diode",     "D1"),       # ← D1_o1
-                _component("diode",     "D2"),       # ← D2_o1
-                _component("capacitor", "C_out0"),   # ← Cout_o1
-            ],
-            # D1.K / D2.K / C_out0.1 all sit on the Vout0 externalPort
-            # node — see interStageCircuit below. No stage-internal
-            # wires are needed; an intra-stage ``vout_pos`` that also
-            # listed C_out0.1 would put the pin on two wires at once and
-            # the writer would reject it as a duplicate net.
-            "connections": [],
-        },
-    }
+    output_rectifiers = [
+        {
+            "name": f"output_{i}",
+            "role": "outputRectifier",
+            "inputPort":  {"type": "hfAc", "wire": _n_top(i)},
+            "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
+            "circuit": {
+                "components": [
+                    _component("diode",     _d1(i)),     # ← D1_o{i+1}
+                    _component("diode",     _d2(i)),     # ← D2_o{i+1}
+                    _component("capacitor", _cout(i)),   # ← Cout_o{i+1}
+                ],
+                # D*.K / C_out{i}.1 all sit on the Vout{i} externalPort node
+                # (see interStageCircuit). No stage-internal wires needed.
+                "connections": [],
+            },
+        }
+        for i in range(n_sec)
+    ]
 
     control = _isolated_control_stage(("Q_HI", "Q_LO"))
 
-    inter_stage = [
+    inter_stage: list[dict[str, Any]] = [
         {
             "name": "Vin",
             "kind": "externalPort",
@@ -2258,54 +2323,54 @@ def llc(deck: SpiceDeck) -> TasTopology:
                 {"component": "T1",  "pin": "pri.1"},
             ],
         },
-        {
-            "name": "sec_top",
+    ]
+    for i in range(n_sec):
+        inter_stage.append({
+            "name": _n_top(i),
             "kind": "wire",
             "endpoints": [
-                {"component": "T1", "pin": "sec1.1"},
-                {"component": "D1", "pin": "A"},
+                {"component": "T1",    "pin": f"{_w_top(i)}.1"},
+                {"component": _d1(i),  "pin": "A"},
             ],
-        },
-        {
-            "name": "sec_bot",
+        })
+        inter_stage.append({
+            "name": _n_bot(i),
             "kind": "wire",
             "endpoints": [
-                {"component": "T1", "pin": "sec2.2"},
-                {"component": "D2", "pin": "A"},
+                {"component": "T1",    "pin": f"{_w_bot(i)}.2"},
+                {"component": _d2(i),  "pin": "A"},
             ],
-        },
-        {
-            # Center tap of the CT secondary = Vout-negative rail.
-            # Connects T1.sec1.2 and T1.sec2.1 to the output capacitor
-            # return.
-            "name": "sec_ct",
+        })
+        inter_stage.append({
+            # Center tap of this rail's CT secondary = its Vout-negative
+            # rail: T1.sec1.2 + T1.sec2.1 + the output-cap return.
+            "name": _n_ct(i),
             "kind": "wire",
             "endpoints": [
-                {"component": "T1",     "pin": "sec1.2"},
-                {"component": "T1",     "pin": "sec2.1"},
-                {"component": "C_out0", "pin": "2"},
+                {"component": "T1",      "pin": f"{_w_top(i)}.2"},
+                {"component": "T1",      "pin": f"{_w_bot(i)}.1"},
+                {"component": _cout(i),  "pin": "2"},
             ],
-        },
-        {
-            "name": "Vout0",
+        })
+        inter_stage.append({
+            "name": f"Vout{i}",
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "D1",     "pin": "K"},
-                {"component": "D2",     "pin": "K"},
-                {"component": "C_out0", "pin": "1"},
+                {"component": _d1(i),    "pin": "K"},
+                {"component": _d2(i),    "pin": "K"},
+                {"component": _cout(i),  "pin": "1"},
             ],
-        },
-        _gnd_wire(
-            ("C_bus_lo", "2"),
-            ("R_bal_lo", "2"),
-            ("Q_LO",     "S"),
-        ),
-        *_gate_wires("Q_HI", "Q_LO"),
-    ]
+        })
+    inter_stage.append(_gnd_wire(
+        ("C_bus_lo", "2"),
+        ("R_bal_lo", "2"),
+        ("Q_LO",     "S"),
+    ))
+    inter_stage.extend(_gate_wires("Q_HI", "Q_LO"))
 
     return {
-        "stages": [inverter, isolation, output_rectifier_0, control],
+        "stages": [inverter, isolation, *output_rectifiers, control],
         "interStageCircuit": inter_stage,
     }
 

@@ -41,61 +41,99 @@ from heaviside.pipeline.realism import CheckStatus
 # ---------------------------------------------------------------------------
 
 
-def _lr_mas(N: int = 18) -> dict:
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 1.2e-4,
-                    "effectiveLength": 0.07,
-                    "effectiveVolume": 8.4e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.36,
-                         "temperature": 100.0},
-                    ],
+def _mas_root(magnetic: dict, *, magnetizing_inductance: float) -> dict:
+    """Wrap a MAS *magnetic* sub-doc in the full MAS root MKF returns after
+    the bridge attach phase.
+
+    The realism extractor harvests the inductance MKF actually achieved from
+    ``outputs[*].inductance.magnetizingInductance.magnetizingInductance.nominal``
+    (see ``extract._harvest_inductance``). Stencil-only fixtures used to carry
+    just the ``core``/``coil`` device sub-doc; the extractor now (correctly)
+    requires the full root, so the fixtures provide a realistic ``outputs``
+    envelope alongside an ``inputs.designRequirements`` mirror — exactly the
+    shape ``bridge.design_magnetics`` produces.
+    """
+    root = dict(magnetic)
+    root["inputs"] = {
+        "designRequirements": {
+            "magnetizingInductance": {"nominal": magnetizing_inductance},
+        },
+    }
+    root["outputs"] = [
+        {
+            "inductance": {
+                "magnetizingInductance": {
+                    "magnetizingInductance": {"nominal": magnetizing_inductance},
                 },
             },
         },
-        "coil": {"functionalDescription": [
-            {"name": "winding", "numberTurns": N, "numberParallels": 1,
-             "isolationSide": "primary"},
-        ]},
-    }
+    ]
+    return root
+
+
+def _lr_mas(N: int = 18) -> dict:
+    return _mas_root(
+        {
+            "core": {
+                "processedDescription": {
+                    "effectiveParameters": {
+                        "effectiveArea": 1.2e-4,
+                        "effectiveLength": 0.07,
+                        "effectiveVolume": 8.4e-6,
+                    },
+                },
+                "functionalDescription": {
+                    "material": {
+                        "saturation": [
+                            {"magneticField": 393.0, "magneticFluxDensity": 0.36,
+                             "temperature": 100.0},
+                        ],
+                    },
+                },
+            },
+            "coil": {"functionalDescription": [
+                {"name": "winding", "numberTurns": N, "numberParallels": 1,
+                 "isolationSide": "primary"},
+            ]},
+        },
+        # L_r = 60 µH — matches _llc_spec desiredInductance.
+        magnetizing_inductance=60e-6,
+    )
 
 
 def _t1_mas(*, N_pri: int = 24, N_sec1: int = 2) -> dict:
     """3-winding CT-secondary transformer.  ``n = N_pri/N_sec1``."""
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 1.8e-4,
-                    "effectiveLength": 0.09,
-                    "effectiveVolume": 1.62e-5,
+    return _mas_root(
+        {
+            "core": {
+                "processedDescription": {
+                    "effectiveParameters": {
+                        "effectiveArea": 1.8e-4,
+                        "effectiveLength": 0.09,
+                        "effectiveVolume": 1.62e-5,
+                    },
+                },
+                "functionalDescription": {
+                    "material": {
+                        "saturation": [
+                            {"magneticField": 393.0, "magneticFluxDensity": 0.30,
+                             "temperature": 100.0},
+                        ],
+                    },
                 },
             },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.30,
-                         "temperature": 100.0},
-                    ],
-                },
-            },
+            "coil": {"functionalDescription": [
+                {"name": "pri",  "numberTurns": N_pri,  "numberParallels": 1,
+                 "isolationSide": "primary"},
+                {"name": "sec1", "numberTurns": N_sec1, "numberParallels": 1,
+                 "isolationSide": "secondary"},
+                {"name": "sec2", "numberTurns": N_sec1, "numberParallels": 1,
+                 "isolationSide": "secondary"},
+            ]},
         },
-        "coil": {"functionalDescription": [
-            {"name": "pri",  "numberTurns": N_pri,  "numberParallels": 1,
-             "isolationSide": "primary"},
-            {"name": "sec1", "numberTurns": N_sec1, "numberParallels": 1,
-             "isolationSide": "secondary"},
-            {"name": "sec2", "numberTurns": N_sec1, "numberParallels": 1,
-             "isolationSide": "secondary"},
-        ]},
-    }
+        # L_m = 300 µH — matches _llc_spec desiredMagnetizingInductance.
+        magnetizing_inductance=300e-6,
+    )
 
 
 def _llc_tas(*, t1_kwargs: dict | None = None,
@@ -370,18 +408,34 @@ class TestStructuralFailures:
         with pytest.raises(EnrichmentError, match="'sec1'"):
             enrich_tas_for_realism(tas, topology="llc", spec=_llc_spec())
 
-    def test_missing_desiredInductance_throws(self):
-        spec = _llc_spec()
-        del spec["desiredInductance"]
-        with pytest.raises(EnrichmentError, match="desiredInductance"):
-            enrich_tas_for_realism(_llc_tas(), topology="llc", spec=spec)
+    def test_missing_lr_inductance_in_mas_throws(self):
+        """L_r's achieved inductance is harvested from its MAS root (the
+        authoritative MKF figure), not the spec. Strip both inductance
+        sources from L_r's MAS and the extractor must throw rather than
+        fall back."""
+        tas = _llc_tas()
+        for stage in tas["topology"]["stages"]:
+            if stage.get("role") == "inverter":
+                for c in stage["circuit"]["components"]:
+                    if c.get("name") == "L_r":
+                        c["mas"].pop("outputs", None)
+                        c["mas"].pop("inputs", None)
+        with pytest.raises(EnrichmentError, match="L_r MAS"):
+            enrich_tas_for_realism(tas, topology="llc", spec=_llc_spec())
 
-    def test_missing_desiredMagnetizingInductance_throws(self):
-        spec = _llc_spec()
-        del spec["desiredMagnetizingInductance"]
-        with pytest.raises(EnrichmentError,
-                           match="desiredMagnetizingInductance"):
-            enrich_tas_for_realism(_llc_tas(), topology="llc", spec=spec)
+    def test_missing_t1_inductance_in_mas_throws(self):
+        """T1's magnetizing inductance is harvested from its MAS root, not
+        the spec. Strip both inductance sources and the extractor must
+        throw."""
+        tas = _llc_tas()
+        for stage in tas["topology"]["stages"]:
+            if stage.get("role") == "isolation":
+                for c in stage["circuit"]["components"]:
+                    if c.get("name") == "T1":
+                        c["mas"].pop("outputs", None)
+                        c["mas"].pop("inputs", None)
+        with pytest.raises(EnrichmentError, match="T1 MAS"):
+            enrich_tas_for_realism(tas, topology="llc", spec=_llc_spec())
 
     def test_missing_lr_mas_throws(self):
         tas = _llc_tas()
