@@ -42,7 +42,16 @@ from heaviside.pipeline.realism import CheckStatus
 # ---------------------------------------------------------------------------
 
 
-def _lr_mas(N: int = 8) -> dict:
+def _lr_mas(N: int = 8, *, inductance: float = 20e-6) -> dict:
+    """Full MAS root for the series commutation inductor L_r.
+
+    Mirrors the real bridge-attach shape: the wound + gapped device
+    sub-document (core / coil) lives at the top level *and* the
+    simulation-derived ``outputs`` envelope carries the inductance MKF
+    actually achieved.  The DAB extractor harvests L from this MAS root
+    (``_harvest_inductance``) — it does NOT read ``spec.desiredInductance``
+    for the magnetic — so the fixture must supply it here.
+    """
     return {
         "core": {
             "processedDescription": {
@@ -63,6 +72,15 @@ def _lr_mas(N: int = 8) -> dict:
             {"name": "winding", "numberTurns": N, "numberParallels": 1,
              "isolationSide": "primary"},
         ]},
+        # Full-root envelopes MKF returns from the bridge-attach phase.
+        "inputs": {"designRequirements": {
+            "magnetizingInductance": {"nominal": inductance},
+        }},
+        "outputs": [{
+            "inductance": {"magnetizingInductance": {
+                "magnetizingInductance": {"nominal": inductance},
+            }},
+        }],
     }
 
 
@@ -375,11 +393,21 @@ class TestStructuralFailures:
         with pytest.raises(EnrichmentError, match="'sec0'"):
             enrich_tas_for_realism(tas, topology="dab", spec=_dab_spec())
 
-    def test_missing_desiredInductance_throws(self):
-        spec = _dab_spec()
-        del spec["desiredInductance"]
-        with pytest.raises(EnrichmentError, match="desiredInductance"):
-            enrich_tas_for_realism(_dab_tas(), topology="dab", spec=spec)
+    def test_missing_lr_inductance_throws(self):
+        """The DAB extractor harvests L_r from the magnetic's full MAS
+        root (achieved inductance), NOT from ``spec.desiredInductance``.
+        A MAS root with no usable inductance must therefore throw."""
+        tas = _dab_tas()
+        for stage in tas["topology"]["stages"]:
+            if stage.get("role") == "isolation":
+                for c in stage["circuit"]["components"]:
+                    if c.get("name") == "L_r":
+                        # Strip both inductance envelopes, keep the device
+                        # sub-doc so _read_full_mas_root still resolves.
+                        c["mas"]["outputs"] = [{}]
+                        del c["mas"]["inputs"]
+        with pytest.raises(EnrichmentError, match="inductance"):
+            enrich_tas_for_realism(tas, topology="dab", spec=_dab_spec())
 
     def test_missing_lr_mas_throws(self):
         tas = _dab_tas()

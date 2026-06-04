@@ -168,9 +168,14 @@ def generate_netlist(
     # ``series_resonant`` → PyOM ``src``). Translate so the binding's
     # topology switch (which only knows ``src``/``advanced_src``) matches.
     # process_converter already resolves the alias on the design side; this
-    # keeps the netlist-generation side consistent. (DAB's ``dab`` alias is
-    # accepted directly by the dispatch, so only SRC needs remapping.)
-    ngspice_topology = "src" if topology == "series_resonant" else topology
+    # keeps the netlist-generation side consistent. The dual active bridge's
+    # canonical name ``dual_active_bridge`` maps to the binding's ``dab``
+    # circuit key the same way SRC's ``series_resonant`` maps to ``src``.
+    _NGSPICE_TOPOLOGY_ALIASES = {
+        "series_resonant": "src",
+        "dual_active_bridge": "dab",
+    }
+    ngspice_topology = _NGSPICE_TOPOLOGY_ALIASES.get(topology, topology)
     args: list[Any] = [
         ngspice_topology,
         dict(converter_json),
