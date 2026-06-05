@@ -18,12 +18,14 @@ const manufacturers = ref([])
 const mode = ref('bom')
 const modes = [
   { label: 'Paste BOM', value: 'bom' },
+  { label: 'Upload BOM (CSV/XLSX)', value: 'csv' },
   { label: 'From URL', value: 'url' },
   { label: 'Upload PDF', value: 'pdf' },
 ]
 const bomText = ref('')
 const url = ref('')
 const pdfFile = ref(null)
+const bomFile = ref(null)
 const running = ref(false)
 const status = ref('')
 const result = ref(null)
@@ -39,6 +41,7 @@ onMounted(async () => {
 })
 
 function onPdf(e) { pdfFile.value = e.target.files?.[0] || null }
+function onBom(e) { bomFile.value = e.target.files?.[0] || null }
 
 async function run() {
   error.value = null; result.value = null; running.value = true; status.value = 'submitting…'
@@ -47,6 +50,9 @@ async function run() {
     if (mode.value === 'pdf') {
       if (!pdfFile.value) throw new Error('choose a PDF first')
       ;({ job_id } = await api.submitCrossrefPdf(pdfFile.value, target.value))
+    } else if (mode.value === 'csv') {
+      if (!bomFile.value) throw new Error('choose a CSV or Excel BOM file first')
+      ;({ job_id } = await api.submitCrossrefBom(bomFile.value, target.value))
     } else if (mode.value === 'url') {
       if (!url.value.trim()) throw new Error('enter a design URL first')
       ;({ job_id } = await api.submitCrossrefUrl({ url: url.value.trim(), target_manufacturer: target.value }))
@@ -80,6 +86,11 @@ async function run() {
       <label class="fld-label">Source BOM (JSON list of components)</label>
       <Textarea v-model="bomText" rows="8" style="width:100%"
                 placeholder='[{"ref_des":"L1","component_type":"magnetic","value":"4.7uH"}]' />
+    </div>
+    <div v-else-if="mode === 'csv'" class="field" style="margin-top:.4rem">
+      <label class="fld-label">BOM file (CSV, TSV, or .xlsx)</label>
+      <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,text/csv" @change="onBom" />
+      <p class="muted" style="font-size:.8rem">A bare component list — no reference design needed. Recognised columns: MPN / Part Number, Manufacturer, Category/Type, Ref, Value, Voltage. Each part is cross-referenced to the target manufacturer.</p>
     </div>
     <div v-else-if="mode === 'url'" class="field" style="margin-top:.4rem">
       <label class="fld-label">Reference-design URL</label>

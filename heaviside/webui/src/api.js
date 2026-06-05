@@ -27,17 +27,24 @@ export const api = {
   submitDesign: (body) => jpost('/jobs/design', body),
   submitCrossref: (body) => jpost('/jobs/crossref', body),
   submitCrossrefUrl: (body) => jpost('/jobs/crossref/from-url', body),
-  submitCrossrefPdf: (file, target) => {
-    const fd = new FormData()
-    fd.append('file', file)
-    return fetch(
-      `/jobs/crossref/from-pdf?target_manufacturer=${encodeURIComponent(target)}`,
-      { method: 'POST', body: fd },
-    ).then((r) => {
-      if (!r.ok) throw new Error(`upload → ${r.status}`)
-      return r.json()
-    })
-  },
+  submitCrossrefPdf: (file, target) => uploadCrossref('from-pdf', file, target),
+  submitCrossrefBom: (file, target) => uploadCrossref('from-bom', file, target),
+}
+
+// Shared multipart upload for the file-based cross-reference endpoints.
+async function uploadCrossref(path, file, target) {
+  const fd = new FormData()
+  fd.append('file', file)
+  const r = await fetch(
+    `/jobs/crossref/${path}?target_manufacturer=${encodeURIComponent(target)}`,
+    { method: 'POST', body: fd },
+  )
+  if (!r.ok) {
+    let detail = `${r.status}`
+    try { detail = (await r.json()).detail || detail } catch (e) { /* keep status */ }
+    throw new Error(`upload → ${detail}`)
+  }
+  return r.json()
 }
 
 // Poll a job until terminal; calls onTick(job) each poll. Returns the result.

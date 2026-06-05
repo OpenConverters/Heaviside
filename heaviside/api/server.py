@@ -490,6 +490,37 @@ async def submit_crossref_from_pdf(
     return {"job_id": registry.submit("crossref_pdf", run)}
 
 
+@app.post("/jobs/crossref/from-bom")
+async def submit_crossref_from_bom(
+    target_manufacturer: str,
+    file: UploadFile = File(...),
+) -> dict[str, str]:
+    """Upload a bare BOM (CSV/TSV/XLSX) → cross-reference each component to the
+    target manufacturer. No reference-design extraction — the file IS the
+    component list. The BOM is parsed up front so a malformed file fails fast
+    with 422 instead of inside the background job."""
+    from heaviside.api.jobs import registry
+    from heaviside.pipeline.bom_import import BomImportError, parse_bom_file
+
+    raw = await file.read()
+    orig_name = file.filename or "bom.csv"
+    try:
+        source_bom = parse_bom_file(raw, orig_name)
+    except BomImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def run(update: Any) -> dict[str, Any]:
+        from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
+        update(
+            f"Cross-referencing {len(source_bom)} parts from {orig_name} "
+            f"→ {target_manufacturer}"
+        )
+        outcome = run_crossref_pipeline(source_bom, target_manufacturer)
+        return _crossref_outcome_dict(outcome)
+
+    return {"job_id": registry.submit("crossref_bom", run)}
+
+
 class CrossRefUrlRequest(BaseModel):
     url: str
     target_manufacturer: str
