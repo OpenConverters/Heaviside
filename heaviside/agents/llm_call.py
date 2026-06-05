@@ -202,6 +202,53 @@ def call_agent_json(
     raise last_error  # type: ignore[misc]
 
 
+_VALID_REVIEWER_VERDICTS = {"APPROVED", "REJECTED", "INCOMPLETE"}
+
+
+def normalize_reviewer_verdict(data: dict[str, Any], reviewer_name: str) -> dict[str, Any]:
+    """Validate + normalize a Ray/Nicola reviewer JSON verdict in place.
+
+    The reviewer output contract is a JSON object with a string ``verdict``
+    in {APPROVED, REJECTED, INCOMPLETE} plus an ``objections`` array. Under
+    ``json_mode`` a reviewer that ignores the contract still returns *valid*
+    JSON — it echoes the input dict, or dumps reasoning into ``{"scratchpad":
+    ...}`` — which would otherwise sail through ``extract_json_block`` and be
+    recorded as a real review. This raises ``LLMCallError`` on any
+    contract violation so the caller's fail-loud path converts it into a
+    pipeline error instead of a silent fake "review" (CLAUDE.md: no silent
+    fallbacks). ``NOT_APPROVED`` is accepted as an alias for ``REJECTED``.
+    """
+    if not isinstance(data, dict):
+        raise LLMCallError(
+            f"{reviewer_name} verdict is {type(data).__name__}, expected a JSON object"
+        )
+    raw = data.get("verdict")
+    if not isinstance(raw, str) or not raw.strip():
+        raise LLMCallError(
+            f"{reviewer_name} response has no string 'verdict' field "
+            f"(keys={sorted(data)[:8]}) — reviewer did not follow the JSON "
+            f"output contract (likely a json_mode echo/scratchpad blob)"
+        )
+    v = raw.strip().upper()
+    if v in ("NOT_APPROVED", "NOT APPROVED", "REJECT", "REJECTED."):
+        v = "REJECTED"
+    if v not in _VALID_REVIEWER_VERDICTS:
+        raise LLMCallError(
+            f"{reviewer_name} verdict {raw!r} is not one of "
+            f"{sorted(_VALID_REVIEWER_VERDICTS)}"
+        )
+    data["verdict"] = v
+    objections = data.get("objections")
+    if objections is None:
+        data["objections"] = objections = []
+    if not isinstance(objections, list):
+        raise LLMCallError(
+            f"{reviewer_name} 'objections' is {type(objections).__name__}, "
+            f"expected a JSON array"
+        )
+    return data
+
+
 def _repair_truncated_json(text: str) -> str:
     """Try to close truncated JSON by adding missing brackets/braces."""
     text = text.rstrip()

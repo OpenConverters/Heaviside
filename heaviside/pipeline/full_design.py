@@ -1007,7 +1007,11 @@ def _stage4_adversarial_review(outcome: DesignOutcome) -> DesignOutcome:
     reviewer that runs and returns a negative verdict is a valid review (not a
     failure); that is recorded and surfaced, not raised.
     """
-    from heaviside.agents.llm_call import LLMCallError, call_agent_json
+    from heaviside.agents.llm_call import (
+        LLMCallError,
+        call_agent_json,
+        normalize_reviewer_verdict,
+    )
 
     review_input = {
         "verdict": outcome.verdict_dict,
@@ -1030,11 +1034,13 @@ def _stage4_adversarial_review(outcome: DesignOutcome) -> DesignOutcome:
                 max_retries=2,
                 json_mode=True,
             )
+            verdict_data = normalize_reviewer_verdict(verdict_data, reviewer_name)
         except LLMCallError as exc:
             raise FullDesignError(
                 f"Stage 4 adversarial review: reviewer {reviewer_name!r} could "
-                f"not produce a verdict ({exc}). A design without its Ray+Nicola "
-                f"review is not a valid result — aborting (no silent fallback)."
+                f"not produce a valid verdict ({exc}). A design without its "
+                f"Ray+Nicola review is not a valid result — aborting (no silent "
+                f"fallback)."
             ) from exc
         verdict_data["reviewer"] = reviewer_name
         review_verdicts.append(verdict_data)

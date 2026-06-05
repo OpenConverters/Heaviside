@@ -34,6 +34,7 @@ from heaviside.agents.llm_call import (
     call_agent,
     call_agent_json,
     extract_json_block,
+    normalize_reviewer_verdict,
 )
 from heaviside.pipeline.crossref import (
     CrossRefOutcome,
@@ -1056,10 +1057,11 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
                 max_retries=max_attempts,
                 json_mode=True,
             )
+            verdict_data = normalize_reviewer_verdict(verdict_data, reviewer_name)
         except LLMCallError as exc:
             raise CrossRefPipelineError(
                 f"CR stage 7: reviewer {reviewer_name!r} could not produce a "
-                f"verdict ({exc}). A cross-reference without its Ray+Nicola "
+                f"valid verdict ({exc}). A cross-reference without its Ray+Nicola "
                 f"review is not a valid result — aborting (no silent fallback)."
             ) from exc
         verdict_data["reviewer"] = reviewer_name
