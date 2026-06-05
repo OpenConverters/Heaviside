@@ -51,7 +51,13 @@ from heaviside.agents.magnetic_picker import (
     pareto_summary,
     pick_best_pareto,
 )
-from heaviside.bridge import BridgeError, MagneticDesign, design_magnetics, design_magnetics_fast
+from heaviside.bridge import (
+    BridgeError,
+    MagneticDesign,
+    design_magnetics,
+    design_magnetics_fast,
+    select_fast_by_isat_margin,
+)
 from heaviside.pipeline.topology_screen import (
     TopologyReconciliation,
     feasible_topology_names,
@@ -375,9 +381,14 @@ def _stage2_pick_one(args: tuple[str, dict, int, str, str]) -> dict[str, Any]:
                 )
                 candidates = candidates[:max(int(n_candidates), 1)]
         else:
-            candidates = design_magnetics_fast(
+            # Fast path: apply the slow path's Isat post-filter so the
+            # picked core clears gap-aware Isat >= 1.2*Ipeak_worst (the
+            # realism gate's criterion). Without this the fast adviser's
+            # lowest-loss top scorer can be undersized against worst-case
+            # peak current and fail inductor_isat_margin downstream.
+            candidates = select_fast_by_isat_margin(
                 topology_name, spec,
-                max_results=n_candidates,
+                n_candidates=n_candidates,
                 core_mode=core_mode,
             )
         idx = pick_best_pareto(candidates, criteria=criteria)

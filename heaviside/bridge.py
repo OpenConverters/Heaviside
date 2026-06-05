@@ -1364,6 +1364,72 @@ def _select_main_by_isat_margin(
     return None if strict else candidates[0]
 
 
+def select_fast_by_isat_margin(
+    topology: str | TopologyEntry,
+    spec: Mapping[str, Any],
+    *,
+    n_candidates: int,
+    core_mode: str = "standard cores",
+    min_isat_ratio: float = 1.2,
+    widen_pool: int = 50,
+) -> list[MagneticDesign]:
+    """Fast-path magnetic candidates with the slow path's Isat post-filter.
+
+    :func:`design_magnetics_fast` returns candidates sorted by ascending
+    losses only; its top scorer is the smallest core that passes MKF's
+    flux-density saturation filter — which can still be undersized against
+    the worst-case PEAK current (gap-aware ``Isat < min_isat_ratio *
+    Ipeak_worst``). The slow path guards against this in
+    :func:`_select_main_by_isat_margin`; the fast path historically did
+    not, so non-isolated topologies (buck/boost/cuk) could surface a core
+    the realism gate then fails on ``inductor_isat_margin``.
+
+    This applies the SAME criterion — gap-aware ``Isat`` (PyOM's
+    ``calculate_saturation_current``, gap-aware) against the SAME
+    ``Ipeak_worst`` (``_IPEAK_WORST`` registry, which mirrors the realism
+    gate's stress formulas) — so fast-path selection and the realism gate
+    agree. Pure orchestration over MKF math; no duplicated magnetics.
+
+    Returns the clearing subset (order preserved) when non-empty. If the
+    initial pool has no clearing candidate, re-requests a larger fast pool
+    (``widen_pool``) and re-filters — the fast adviser returns larger,
+    higher-Isat cores further down its loss-sorted list. If STILL nothing
+    clears — or the topology/spec yields no ``Ipeak_worst`` (no registered
+    computer, or incomplete spec) — returns the unfiltered candidates so
+    the realism gate fails the design honestly rather than this layer
+    silently hiding it (CLAUDE.md: no silent defaults; matches the slow
+    path's ``strict=False`` fallthrough).
+    """
+    entry = topology if isinstance(topology, TopologyEntry) else get(topology)
+    candidates = design_magnetics_fast(
+        entry, spec, max_results=n_candidates, core_mode=core_mode,
+    )
+    if min_isat_ratio <= 0 or not candidates:
+        return candidates
+    ipeak_fn = _IPEAK_WORST.get(entry.name)
+    if ipeak_fn is None:
+        return candidates
+    ipeak = ipeak_fn(spec)
+    if ipeak is None or ipeak <= 0:
+        return candidates
+    L = spec.get("desiredInductance")
+    if not isinstance(L, (int, float)) or L <= 0:
+        return candidates
+    threshold = float(min_isat_ratio) * float(ipeak)
+
+    def _clears(c: MagneticDesign) -> bool:
+        isat = _isat_from_mas(c.magnetic, float(L))
+        return isat is not None and isat >= threshold
+
+    clearing = [c for c in candidates if _clears(c)]
+    if not clearing and n_candidates < widen_pool:
+        widened = design_magnetics_fast(
+            entry, spec, max_results=widen_pool, core_mode=core_mode,
+        )
+        clearing = [c for c in widened if _clears(c)]
+    return clearing if clearing else candidates
+
+
 def _try_pick_main(
     entry: TopologyEntry,
     converter_spec: Mapping[str, Any],
@@ -1529,6 +1595,42 @@ def design_converter_components(
 
     if main is None:  # pragma: no cover — _try_pick_main with strict=False never returns None
         main = main_designs[0]
+
+    # Tier-3 (energy-storage inductors only): the SLOW CoreAdviser can
+    # collapse to a couple of undersized, over-inductance candidates for
+    # non-isolated inductors — the inductance-validity filter and the
+    # diverse loss-sorted pool live on the FAST adviser path, not here. So
+    # even tier-2's full-catalogue retry can fail to surface a core whose
+    # gap-aware Isat clears the worst-case peak. When that happens AND the
+    # fast path surfaces a real catalogue core that DOES clear the same
+    # margin, prefer it. Guarded so it NEVER overrides a slow pick that
+    # already clears — it cannot regress topologies the slow path satisfies
+    # (their main_isat >= threshold, so the branch is skipped). Same
+    # gap-aware Isat criterion as the realism gate; pure orchestration.
+    if min_isat_ratio > 0 and entry.name in _IPEAK_WORST:
+        _ipeak = _IPEAK_WORST[entry.name](converter_spec)
+        if isinstance(_ipeak, (int, float)) and _ipeak > 0:
+            _threshold = float(min_isat_ratio) * float(_ipeak)
+            _main_L = _harvest_authoritative_inductance(main.mas)
+            _main_isat = (
+                _isat_from_mas(main.magnetic, _main_L)
+                if isinstance(_main_L, (int, float)) and _main_L > 0
+                else None
+            )
+            if _main_isat is None or _main_isat < _threshold:
+                for _cand in select_fast_by_isat_margin(
+                    entry, converter_spec, n_candidates=5,
+                    core_mode=core_mode, min_isat_ratio=min_isat_ratio,
+                ):
+                    _cL = _harvest_authoritative_inductance(_cand.mas)
+                    _ci = (
+                        _isat_from_mas(_cand.magnetic, _cL)
+                        if isinstance(_cL, (int, float)) and _cL > 0
+                        else None
+                    )
+                    if _ci is not None and _ci >= _threshold:
+                        main = _cand
+                        break
 
     mag_specs, cap_specs = extra_components(
         entry,
