@@ -216,7 +216,14 @@ def normalize_reviewer_verdict(data: dict[str, Any], reviewer_name: str) -> dict
     recorded as a real review. This raises ``LLMCallError`` on any
     contract violation so the caller's fail-loud path converts it into a
     pipeline error instead of a silent fake "review" (CLAUDE.md: no silent
-    fallbacks). ``NOT_APPROVED`` is accepted as an alias for ``REJECTED``.
+    fallbacks).
+
+    The reviewers' personas have strong native verdict vocabulary — Ray says
+    "PROCEED WITH CAUTION" for grudging approval and "NOT ACCEPTABLE" for
+    rejection; Nicola says "NOT_APPROVED". These ARE valid reviews, so they are
+    mapped onto the canonical enum rather than aborting the pipeline. Only a
+    genuinely missing/unparseable verdict (echo, scratchpad blob, or wording
+    that maps to nothing) raises.
     """
     if not isinstance(data, dict):
         raise LLMCallError(
@@ -229,12 +236,31 @@ def normalize_reviewer_verdict(data: dict[str, Any], reviewer_name: str) -> dict
             f"(keys={sorted(data)[:8]}) — reviewer did not follow the JSON "
             f"output contract (likely a json_mode echo/scratchpad blob)"
         )
-    v = raw.strip().upper()
-    if v in ("NOT_APPROVED", "NOT APPROVED", "REJECT", "REJECTED."):
+    vu = raw.strip().upper()
+    # Canonicalise the reviewers' natural verdict phrasing onto the enum.
+    # Order matters: INCOMPLETE and the NOT-* rejections are checked before
+    # the approval synonyms so "NOT APPROVED"/"NOT ACCEPTABLE" don't fall
+    # through to an approval match.
+    if vu in _VALID_REVIEWER_VERDICTS:
+        v = vu
+    elif "INCOMPLETE" in vu:
+        v = "INCOMPLETE"
+    elif (
+        "NOT ACCEPTABLE" in vu or "NOT_ACCEPTABLE" in vu
+        or "NOT APPROVED" in vu or "NOT_APPROVED" in vu
+        or vu.startswith("REJECT") or vu in ("FAIL", "BLOCK", "BLOCKED", "NO")
+    ):
         v = "REJECTED"
+    elif (
+        "PROCEED" in vu or vu.startswith("APPROV")
+        or vu in ("PASS", "ACCEPT", "ACCEPTED", "OK")
+    ):
+        v = "APPROVED"
+    else:
+        v = vu  # unknown wording → fails the enum check below (fail-loud)
     if v not in _VALID_REVIEWER_VERDICTS:
         raise LLMCallError(
-            f"{reviewer_name} verdict {raw!r} is not one of "
+            f"{reviewer_name} verdict {raw!r} maps to nothing in "
             f"{sorted(_VALID_REVIEWER_VERDICTS)}"
         )
     data["verdict"] = v
