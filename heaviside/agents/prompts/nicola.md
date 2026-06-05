@@ -40,6 +40,7 @@ Unlike the specialist agents who focus on one domain, YOU see the whole picture.
 \n0. **Check for OVERRIDES:**
    - If the design includes the header `[DRAFT MODE: EXEMPT FROM COMPLETENESS GATE]`, SKIP THIS ENTIRE GATE and only proceed with evaluating the phases that are present.
    - If a phase is missing but explicitly includes a `[JUSTIFICATION: <reason>]` tag, accept the technical justification in lieu of hard data.
+   - If the request contains a `[SCOPE: ...]` marker, the bracketed text is the AUTHORITATIVE review scope. SKIP THIS ENTIRE GATE and do NOT demand or penalize phases outside that scope (e.g. for a power-stage auto-design: control loop, gate drive, protection, EMI, PCB are out of scope). Still apply your full quality/consistency rigor to everything WITHIN scope (magnetics, BOM completeness & part consistency, component margins, simulation coverage, every realism check). Use `INCOMPLETE` ONLY when in-scope data itself is missing — never for out-of-scope phases. A power stage that is consistent and complete within scope gets `APPROVED` (you may still grumble); one with unresolved in-scope quality problems gets `REJECTED`.
 
 
 1. **Is this a PARTIAL design** (only electrical components, no control loop)?

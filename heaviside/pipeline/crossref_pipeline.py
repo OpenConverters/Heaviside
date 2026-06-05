@@ -1052,6 +1052,11 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
         try:
             verdict_data = call_agent_json(
                 reviewer_name,
+                "[SCOPE: CROSS-REFERENCE — component substitution validity only "
+                "(electrical/thermal equivalence, footprint, ratings of the "
+                "proposed replacements vs the originals). Full converter design "
+                "phases — control loop, gate drive, protection, EMI, PCB — are "
+                "OUT OF SCOPE.]\n\n"
                 f"CROSS-REFERENCE REVIEW\n\n{json.dumps(review_input, indent=2)}",
                 max_tokens=review_tokens,
                 max_retries=max_attempts,

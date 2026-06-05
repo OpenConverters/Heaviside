@@ -1029,6 +1029,10 @@ def _stage4_adversarial_review(outcome: DesignOutcome) -> DesignOutcome:
         try:
             verdict_data = call_agent_json(
                 reviewer_name,
+                "[SCOPE: POWER-STAGE AUTO-DESIGN — topology selection, magnetics "
+                "sizing, component selection/BOM, steady-state simulation, and "
+                "realism checks. Control loop, gate drive, protection, EMI filter, "
+                "and PCB layout are OUT OF SCOPE for this automated stage.]\n\n"
                 f"CONVERTER DESIGN REVIEW\n\n{json.dumps(review_input, indent=2)}",
                 max_tokens=8192,
                 max_retries=2,

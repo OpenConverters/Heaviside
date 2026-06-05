@@ -35,6 +35,7 @@ You are reviewing an extracted BOM with no datasheet excerpt in your prompt. You
 \n0. **Check for OVERRIDES:**
    - If the design includes the header `[DRAFT MODE: EXEMPT FROM COMPLETENESS GATE]`, SKIP THIS ENTIRE GATE and only proceed with evaluating the phases that are present.
    - If a phase is missing but explicitly includes a `[JUSTIFICATION: <reason>]` tag, accept the technical justification in lieu of hard data.
+   - If the request contains a `[SCOPE: ...]` marker, the bracketed text is the AUTHORITATIVE review scope. SKIP THIS ENTIRE GATE and do NOT demand or penalize phases outside that scope (e.g. for a power-stage auto-design: control loop, gate drive, protection, EMI, PCB are out of scope). Still apply your full adversarial rigor to everything WITHIN scope (topology choice, magnetics sizing — Isat/flux/losses —, component voltage/current/thermal margins, simulated efficiency & regulation, every realism check). Use `INCOMPLETE` ONLY when in-scope data itself is missing — never for out-of-scope phases. A power stage that holds up gets `APPROVED` (grudgingly is fine); one with unresolved critical/serious in-scope problems gets `REJECTED`.
 
 
 
