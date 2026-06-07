@@ -30,11 +30,10 @@ from typing import Any
 
 from heaviside.bridge import MagneticDesign, design_magnetics_fast
 
-
 PARETO_CRITERIA: tuple[str, ...] = (
-    "lowest_losses",         # PyOM's default sort (ascending scoring)
-    "smallest_volume",       # pick by core effectiveVolume
-    "highest_isat_headroom", # pick by Bsat/Bpeak ratio if available
+    "lowest_losses",  # PyOM's default sort (ascending scoring)
+    "smallest_volume",  # pick by core effectiveVolume
+    "highest_isat_headroom",  # pick by Bsat/Bpeak ratio if available
 )
 
 
@@ -56,12 +55,14 @@ def _candidate_summary(d: MagneticDesign, *, index: int) -> dict[str, Any]:
     fd_core = core.get("functionalDescription", {}) if isinstance(core, Mapping) else {}
     shape = fd_core.get("shape") if isinstance(fd_core, Mapping) else None
     shape_name = (
-        shape["name"] if isinstance(shape, Mapping) and "name" in shape
+        shape["name"]
+        if isinstance(shape, Mapping) and "name" in shape
         else (shape if isinstance(shape, str) else None)
     )
     material = fd_core.get("material") if isinstance(fd_core, Mapping) else None
     material_name = (
-        material["name"] if isinstance(material, Mapping) and "name" in material
+        material["name"]
+        if isinstance(material, Mapping) and "name" in material
         else (material if isinstance(material, str) else None)
     )
     gapping = fd_core.get("gapping") if isinstance(fd_core, Mapping) else None
@@ -118,51 +119,48 @@ def pick_best_pareto(
     if not designs:
         raise MagneticPickerError("designs is empty — no candidates to pick from")
     if criteria not in PARETO_CRITERIA:
-        raise MagneticPickerError(
-            f"unknown criteria {criteria!r}; supported: {PARETO_CRITERIA}"
-        )
+        raise MagneticPickerError(f"unknown criteria {criteria!r}; supported: {PARETO_CRITERIA}")
 
     if criteria == "lowest_losses":
         # PyOM returns ascending losses (lower scoring = better).
         return min(range(len(designs)), key=lambda i: designs[i].scoring)
     if criteria == "smallest_volume":
+
         def _vol(d: MagneticDesign) -> float:
             v = (
                 d.magnetic.get("core", {})
-                 .get("processedDescription", {})
-                 .get("effectiveParameters", {})
-                 .get("effectiveVolume")
+                .get("processedDescription", {})
+                .get("effectiveParameters", {})
+                .get("effectiveVolume")
             )
             if not isinstance(v, (int, float)) or v <= 0:
                 raise MagneticPickerError(
                     f"candidate has no usable effectiveVolume: shape={d.core_shape_name!r}"
                 )
             return float(v)
+
         return min(range(len(designs)), key=lambda i: _vol(designs[i]))
     if criteria == "highest_isat_headroom":
         # Headroom proxy: more turns + larger A_e at the same target L
         # means more Bsat headroom. Use the product N × A_e as a rough
         # ranking — exact isat lives in MKF; we just rank candidates.
         def _headroom_proxy(d: MagneticDesign) -> float:
-            fd_core = d.magnetic.get("core", {}).get("functionalDescription", {})
             ep = (
                 d.magnetic.get("core", {})
-                 .get("processedDescription", {})
-                 .get("effectiveParameters", {})
+                .get("processedDescription", {})
+                .get("effectiveParameters", {})
             )
             a_e = ep.get("effectiveArea")
             fd_coil = d.magnetic.get("coil", {}).get("functionalDescription")
             n_turns = (
-                fd_coil[0].get("numberTurns")
-                if isinstance(fd_coil, list) and fd_coil
-                else None
+                fd_coil[0].get("numberTurns") if isinstance(fd_coil, list) and fd_coil else None
             )
             if not isinstance(a_e, (int, float)) or not isinstance(n_turns, int):
                 raise MagneticPickerError(
-                    f"candidate missing N/A_e for headroom proxy: "
-                    f"shape={d.core_shape_name!r}"
+                    f"candidate missing N/A_e for headroom proxy: shape={d.core_shape_name!r}"
                 )
             return float(n_turns) * float(a_e)
+
         return max(range(len(designs)), key=lambda i: _headroom_proxy(designs[i]))
     # Unreachable per the PARETO_CRITERIA guard above.
     raise MagneticPickerError(f"criteria {criteria!r} not implemented")
@@ -182,7 +180,8 @@ def pareto_pick_main(
     rerank without a second PyOM call.
     """
     candidates = design_magnetics_fast(
-        topology, converter_spec,
+        topology,
+        converter_spec,
         max_results=int(n_candidates),
         core_mode=core_mode,
     )

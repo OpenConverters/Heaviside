@@ -79,7 +79,8 @@ def render_html(outcome: Any) -> str:
             for b in bom:
                 margins = b.get("margins", {})
                 margin_str = ", ".join(
-                    f"{k}={v:.2f}" for k, v in margins.items()
+                    f"{k}={v:.2f}"
+                    for k, v in margins.items()
                     if isinstance(v, (int, float)) and v != float("inf")
                 )
                 lines.append(
@@ -100,13 +101,10 @@ def render_html(outcome: Any) -> str:
         s = v.get("summary", {})
         lines.append(f"<h2>Realism Gate: <span class='{css}'>{_e(verdict.upper())}</span></h2>")
         lines.append(
-            f"<p>pass={s.get('pass',0)} fail={s.get('fail',0)} "
-            f"unavailable={s.get('unavailable',0)} n/a={s.get('not_applicable',0)}</p>"
+            f"<p>pass={s.get('pass', 0)} fail={s.get('fail', 0)} "
+            f"unavailable={s.get('unavailable', 0)} n/a={s.get('not_applicable', 0)}</p>"
         )
-        lines.append(
-            "<table><tr><th>Check</th><th>Status</th>"
-            "<th>Value</th><th>Margin</th></tr>"
-        )
+        lines.append("<table><tr><th>Check</th><th>Status</th><th>Value</th><th>Margin</th></tr>")
         for c in v.get("checks", []):
             status = c.get("status", "?")
             css_cls = status.replace(" ", "_")

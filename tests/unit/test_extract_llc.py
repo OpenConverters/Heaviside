@@ -33,7 +33,7 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus
-
+from tests.unit._real_mas import isat_of, real_magnetic
 
 # ---------------------------------------------------------------------------
 # Fixtures — minimal LLC TAS matching the stencil's (inverter, isolation,
@@ -72,107 +72,88 @@ def _mas_root(magnetic: dict, *, magnetizing_inductance: float) -> dict:
 
 
 def _lr_mas(N: int = 18) -> dict:
+    """L_r resonant inductor: a complete, PyOM-evaluable gapped magnetic
+    (built by :func:`real_magnetic` so ``calculate_saturation_current``
+    returns real MKF physics) wrapped in the full MAS root with the
+    achieved-inductance envelopes the extractor harvests."""
     return _mas_root(
-        {
-            "core": {
-                "processedDescription": {
-                    "effectiveParameters": {
-                        "effectiveArea": 1.2e-4,
-                        "effectiveLength": 0.07,
-                        "effectiveVolume": 8.4e-6,
-                    },
-                },
-                "functionalDescription": {
-                    "material": {
-                        "saturation": [
-                            {"magneticField": 393.0, "magneticFluxDensity": 0.36,
-                             "temperature": 100.0},
-                        ],
-                    },
-                },
-            },
-            "coil": {"functionalDescription": [
-                {"name": "winding", "numberTurns": N, "numberParallels": 1,
-                 "isolationSide": "primary"},
-            ]},
-        },
+        real_magnetic(
+            shape="ETD 29/16/10",
+            material="3C95",
+            gap_mm=1.0,
+            windings=[
+                {"name": "winding", "turns": N, "side": "primary"},
+            ],
+        ),
         # L_r = 60 µH — matches _llc_spec desiredInductance.
         magnetizing_inductance=60e-6,
     )
 
 
 def _t1_mas(*, N_pri: int = 24, N_sec1: int = 2) -> dict:
-    """3-winding CT-secondary transformer.  ``n = N_pri/N_sec1``."""
+    """3-winding CT-secondary transformer.  ``n = N_pri/N_sec1``.
+
+    T1 is deliberately NOT Isat-stamped, so the extractor harvests only
+    the winding turns for the turns ratio; a complete real magnetic with
+    the three named windings is all that's needed (no gap → transformer)."""
     return _mas_root(
-        {
-            "core": {
-                "processedDescription": {
-                    "effectiveParameters": {
-                        "effectiveArea": 1.8e-4,
-                        "effectiveLength": 0.09,
-                        "effectiveVolume": 1.62e-5,
-                    },
-                },
-                "functionalDescription": {
-                    "material": {
-                        "saturation": [
-                            {"magneticField": 393.0, "magneticFluxDensity": 0.30,
-                             "temperature": 100.0},
-                        ],
-                    },
-                },
-            },
-            "coil": {"functionalDescription": [
-                {"name": "pri",  "numberTurns": N_pri,  "numberParallels": 1,
-                 "isolationSide": "primary"},
-                {"name": "sec1", "numberTurns": N_sec1, "numberParallels": 1,
-                 "isolationSide": "secondary"},
-                {"name": "sec2", "numberTurns": N_sec1, "numberParallels": 1,
-                 "isolationSide": "secondary"},
-            ]},
-        },
+        real_magnetic(
+            shape="ETD 34/17/11",
+            material="3C95",
+            gap_mm=0.0,
+            windings=[
+                {"name": "pri", "turns": N_pri, "side": "primary"},
+                {"name": "sec1", "turns": N_sec1, "side": "secondary"},
+                {"name": "sec2", "turns": N_sec1, "side": "secondary"},
+            ],
+        ),
         # L_m = 300 µH — matches _llc_spec desiredMagnetizingInductance.
         magnetizing_inductance=300e-6,
     )
 
 
-def _llc_tas(*, t1_kwargs: dict | None = None,
-             lr_kwargs: dict | None = None) -> dict:
+def _llc_tas(*, t1_kwargs: dict | None = None, lr_kwargs: dict | None = None) -> dict:
     t1_kwargs = dict(t1_kwargs or {})
     lr_kwargs = dict(lr_kwargs or {})
-    return {"topology": {
-        "stages": [
-            {
-                "name": "inverter",
-                "role": "inverter",
-                "circuit": {"components": [
-                    {"name": "Q_HI", "data": "placeholder"},
-                    {"name": "Q_LO", "data": "placeholder"},
-                    {"name": "C_r",  "data": "placeholder"},
-                    {"name": "L_r",  "category": "magnetic",
-                     "mas": _lr_mas(**lr_kwargs)},
-                ]},
-            },
-            {
-                "name": "isolation",
-                "role": "isolation",
-                "circuit": {"components": [
-                    {"name": "T1", "category": "magnetic",
-                     "mas": _t1_mas(**t1_kwargs)},
-                ]},
-            },
-            {
-                "name": "output_0",
-                "role": "outputRectifier",
-                "circuit": {"components": [
-                    {"name": "D1",     "data": "placeholder"},
-                    {"name": "D2",     "data": "placeholder"},
-                    {"name": "C_out0", "data": "placeholder"},
-                ]},
-            },
-        ],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "inverter",
+                    "role": "inverter",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q_HI", "data": "placeholder"},
+                            {"name": "Q_LO", "data": "placeholder"},
+                            {"name": "C_r", "data": "placeholder"},
+                            {"name": "L_r", "category": "magnetic", "mas": _lr_mas(**lr_kwargs)},
+                        ]
+                    },
+                },
+                {
+                    "name": "isolation",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "category": "magnetic", "mas": _t1_mas(**t1_kwargs)},
+                        ]
+                    },
+                },
+                {
+                    "name": "output_0",
+                    "role": "outputRectifier",
+                    "circuit": {
+                        "components": [
+                            {"name": "D1", "data": "placeholder"},
+                            {"name": "D2", "data": "placeholder"},
+                            {"name": "C_out0", "data": "placeholder"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 def _llc_spec() -> dict:
@@ -186,15 +167,17 @@ def _llc_spec() -> dict:
     """
     return {
         "inputVoltage": {"minimum": 350.0, "maximum": 420.0, "nominal": 400.0},
-        "desiredInductance": 60e-6,                      # L_r
-        "desiredMagnetizingInductance": 300e-6,          # L_m
+        "desiredInductance": 60e-6,  # L_r
+        "desiredMagnetizingInductance": 300e-6,  # L_m
         "efficiency": 0.96,
-        "operatingPoints": [{
-            "outputVoltages": [12.0],
-            "outputCurrents": [20.0],
-            "switchingFrequency": 100_000.0,
-            "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [12.0],
+                "outputCurrents": [20.0],
+                "switchingFrequency": 100_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
     }
 
 
@@ -222,10 +205,8 @@ def _get_t1(tas: dict) -> dict:
 
 
 class TestDuty:
-
     def test_duty_is_50pct_at_both_vin_extremes(self):
-        out = enrich_tas_for_realism(_llc_tas(), topology="llc",
-                                     spec=_llc_spec())
+        out = enrich_tas_for_realism(_llc_tas(), topology="llc", spec=_llc_spec())
         assert out["duty"] == 0.5
         assert out["duty_min"] == 0.5
         assert out["duty_max"] == 0.5
@@ -233,7 +214,8 @@ class TestDuty:
     def test_duty_independent_of_turns_ratio(self):
         out = enrich_tas_for_realism(
             _llc_tas(t1_kwargs={"N_pri": 40, "N_sec1": 1}),
-            topology="llc", spec=_llc_spec(),
+            topology="llc",
+            spec=_llc_spec(),
         )
         assert out["duty"] == 0.5
 
@@ -250,26 +232,25 @@ class TestDuty:
 
 
 class TestTurnsRatioAndGain:
-
     def test_turns_ratio_recorded(self):
         out = enrich_tas_for_realism(
             _llc_tas(t1_kwargs={"N_pri": 30, "N_sec1": 3}),
-            topology="llc", spec=_llc_spec(),
+            topology="llc",
+            spec=_llc_spec(),
         )
         lr = _get_lr(out)
-        assert lr["ipeak_provenance"][
-            "turns_ratio_n_pri_over_n_sec1"] == pytest.approx(10.0, rel=1e-6)
+        assert lr["ipeak_provenance"]["turns_ratio_n_pri_over_n_sec1"] == pytest.approx(
+            10.0, rel=1e-6
+        )
         assert lr["ipeak_provenance"]["n_primary"] == 30
         assert lr["ipeak_provenance"]["n_secondary_half"] == 3
 
     def test_gain_at_vin_min_recorded(self):
-        out = enrich_tas_for_realism(_llc_tas(), topology="llc",
-                                     spec=_llc_spec())
+        out = enrich_tas_for_realism(_llc_tas(), topology="llc", spec=_llc_spec())
         lr = _get_lr(out)
         # n = 12, Vout = 12, Vin_min = 350 ⇒ M = 24·12/350 ≈ 0.8229
         expected = 24.0 * 12.0 / 350.0
-        assert lr["ipeak_provenance"]["gain_at_vin_min"] == pytest.approx(
-            expected, rel=1e-4)
+        assert lr["ipeak_provenance"]["gain_at_vin_min"] == pytest.approx(expected, rel=1e-4)
         # Boost factor saturates at 1.0 when super-resonant.
         assert lr["ipeak_provenance"]["boost_factor_M_max"] == 1.0
 
@@ -281,8 +262,7 @@ class TestTurnsRatioAndGain:
         out = enrich_tas_for_realism(_llc_tas(), topology="llc", spec=spec)
         lr = _get_lr(out)
         expected_M = 24.0 * 24.0 / 350.0
-        assert lr["ipeak_provenance"]["boost_factor_M_max"] == pytest.approx(
-            expected_M, rel=1e-4)
+        assert lr["ipeak_provenance"]["boost_factor_M_max"] == pytest.approx(expected_M, rel=1e-4)
 
 
 # ---------------------------------------------------------------------------
@@ -291,31 +271,24 @@ class TestTurnsRatioAndGain:
 
 
 class TestIpeak:
-
     def test_load_reflected_component(self):
-        out = enrich_tas_for_realism(_llc_tas(), topology="llc",
-                                     spec=_llc_spec())
+        out = enrich_tas_for_realism(_llc_tas(), topology="llc", spec=_llc_spec())
         lr = _get_lr(out)
         # I_load_pk = (π/2) · Iout/n = π/2 · 20/12
         expected = (math.pi / 2.0) * (20.0 / 12.0)
-        assert lr["ipeak_provenance"]["i_load_pk_A"] == pytest.approx(
-            expected, rel=1e-6)
+        assert lr["ipeak_provenance"]["i_load_pk_A"] == pytest.approx(expected, rel=1e-6)
 
     def test_magnetizing_component_uses_vin_max_and_l_worst(self):
-        out = enrich_tas_for_realism(_llc_tas(), topology="llc",
-                                     spec=_llc_spec())
+        out = enrich_tas_for_realism(_llc_tas(), topology="llc", spec=_llc_spec())
         lr = _get_lr(out)
         # Im_pk = Vin_max / (8 · Lm_worst · fsw)
         Lm_worst = 0.8 * 300e-6
         expected = 420.0 / (8.0 * Lm_worst * 100_000.0)
-        assert lr["ipeak_provenance"]["i_mag_pk_A"] == pytest.approx(
-            expected, rel=1e-6)
-        assert lr["ipeak_provenance"]["Lm_worst_H"] == pytest.approx(
-            Lm_worst, rel=1e-12)
+        assert lr["ipeak_provenance"]["i_mag_pk_A"] == pytest.approx(expected, rel=1e-6)
+        assert lr["ipeak_provenance"]["Lm_worst_H"] == pytest.approx(Lm_worst, rel=1e-12)
 
     def test_ipeak_combines_components_with_boost_factor(self):
-        out = enrich_tas_for_realism(_llc_tas(), topology="llc",
-                                     spec=_llc_spec())
+        out = enrich_tas_for_realism(_llc_tas(), topology="llc", spec=_llc_spec())
         lr = _get_lr(out)
         p = lr["ipeak_provenance"]
         expected = p["boost_factor_M_max"] * p["i_load_pk_A"] + p["i_mag_pk_A"]
@@ -328,19 +301,20 @@ class TestIpeak:
 
 
 class TestIsat:
-
     def test_isat_uses_lr_mas(self):
-        out = enrich_tas_for_realism(_llc_tas(), topology="llc",
-                                     spec=_llc_spec())
+        out = enrich_tas_for_realism(_llc_tas(), topology="llc", spec=_llc_spec())
         lr = _get_lr(out)
-        # B_sat = 0.36, N = 18, A_e = 1.2e-4, L = 60e-6
-        expected = 0.36 * 18 * 1.2e-4 / 60e-6
-        assert lr["isat"] == pytest.approx(expected, rel=1e-4)
+        # Ground truth = MKF: the stamped Isat must equal PyOM's
+        # saturation current for the L_r magnetic at the op-point ambient
+        # (25 °C), NOT an analytical formula. Computing it here on the same
+        # L_r MAS the extractor harvested also proves L_r was the source.
+        expected = isat_of(_lr_mas(), temperature_c=25.0)
+        assert lr["isat"] == pytest.approx(expected, rel=1e-3)
+        assert "PyOM" in lr["isat_provenance"]["method"]
         assert "llc" in lr["isat_provenance"]["method"]
 
     def test_t1_is_not_isat_stamped(self):
-        out = enrich_tas_for_realism(_llc_tas(), topology="llc",
-                                     spec=_llc_spec())
+        out = enrich_tas_for_realism(_llc_tas(), topology="llc", spec=_llc_spec())
         t1 = _get_t1(out)
         assert "isat" not in t1
         assert "ipeak_worst" not in t1
@@ -352,18 +326,14 @@ class TestIsat:
 
 
 class TestRealismIntegration:
-
     def test_end_to_end_realism_evaluates(self):
         spec = _llc_spec()
-        enriched = enrich_tas_for_realism(_llc_tas(), topology="llc",
-                                          spec=spec)
+        enriched = enrich_tas_for_realism(_llc_tas(), topology="llc", spec=spec)
         r = evaluate_tas(enriched, topology="llc", spec=spec)
         check_status = {c.name: c.status for c in r.checks}
         for name in ("duty_cycle_bounds", "inductor_isat_margin"):
-            assert check_status.get(name) in (CheckStatus.PASS,
-                                              CheckStatus.FAIL), (
-                f"{name} must be evaluated (PASS/FAIL), got "
-                f"{check_status.get(name)}"
+            assert check_status.get(name) in (CheckStatus.PASS, CheckStatus.FAIL), (
+                f"{name} must be evaluated (PASS/FAIL), got {check_status.get(name)}"
             )
 
 
@@ -373,7 +343,6 @@ class TestRealismIntegration:
 
 
 class TestStructuralFailures:
-
     def test_missing_isolation_stage_throws(self):
         tas = _llc_tas()
         tas["topology"]["stages"] = [
@@ -394,8 +363,9 @@ class TestStructuralFailures:
         tas = _llc_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][0]["name"] = "primary"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][0][
+                    "name"
+                ] = "primary"
         with pytest.raises(EnrichmentError, match="'pri'"):
             enrich_tas_for_realism(tas, topology="llc", spec=_llc_spec())
 
@@ -403,8 +373,9 @@ class TestStructuralFailures:
         tas = _llc_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][1]["name"] = "secondary1"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][1][
+                    "name"
+                ] = "secondary1"
         with pytest.raises(EnrichmentError, match="'sec1'"):
             enrich_tas_for_realism(tas, topology="llc", spec=_llc_spec())
 

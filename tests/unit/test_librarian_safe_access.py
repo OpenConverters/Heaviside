@@ -22,7 +22,6 @@ import pytest
 
 from heaviside.librarian import safe_access as sa
 
-
 # ---------------------------------------------------------------------------
 # Path isolation
 # ---------------------------------------------------------------------------
@@ -50,16 +49,14 @@ def _seed(category: str, lines: list[str]) -> Path:
 
 
 class TestCategoryWhitelist:
-
     def test_acquire_lock_rejects_unknown(self):
         with pytest.raises(sa.UnknownCategoryError, match="mosftets"):
             with sa.acquire_lock("mosftets"):
                 pass
 
     def test_safe_append_rejects_unknown(self):
-        with pytest.raises(sa.UnknownCategoryError):
-            with sa.safe_append("typo_category"):
-                pass
+        with pytest.raises(sa.UnknownCategoryError), sa.safe_append("typo_category"):
+            pass
 
     def test_transaction_rejects_unknown(self):
         with pytest.raises(sa.UnknownCategoryError):
@@ -83,7 +80,6 @@ class TestCategoryWhitelist:
 
 
 class TestLockBasics:
-
     def test_lock_dir_created_on_first_use(self):
         assert not sa.LOCK_DIR.exists()
         with sa.acquire_lock("mosfets"):
@@ -114,12 +110,15 @@ class TestLockBasics:
 # ---------------------------------------------------------------------------
 
 
-def _hold_lock(data_dir: str, lock_dir: str, ready_path: str,
-               release_path: str, category: str) -> None:
+def _hold_lock(
+    data_dir: str, lock_dir: str, ready_path: str, release_path: str, category: str
+) -> None:
     """Helper for cross-process lock test; not a test itself."""
     import os as _os
     import time as _time
+
     from heaviside.librarian import safe_access as _sa
+
     _sa.TAS_DATA_DIR = Path(data_dir)
     _sa.LOCK_DIR = Path(lock_dir)
     with _sa.acquire_lock(category, timeout_s=10.0):
@@ -132,14 +131,12 @@ def _hold_lock(data_dir: str, lock_dir: str, ready_path: str,
 
 
 class TestMutualExclusion:
-
     def test_second_acquirer_times_out_while_first_holds(self, tmp_path):
         ready = tmp_path / "ready"
         release = tmp_path / "release"
         proc = mp.Process(
             target=_hold_lock,
-            args=(str(sa.TAS_DATA_DIR), str(sa.LOCK_DIR),
-                  str(ready), str(release), "mosfets"),
+            args=(str(sa.TAS_DATA_DIR), str(sa.LOCK_DIR), str(ready), str(release), "mosfets"),
         )
         proc.start()
         try:
@@ -156,17 +153,14 @@ class TestMutualExclusion:
         finally:
             release.write_text("go")
             proc.join(timeout=10.0)
-            assert proc.exitcode == 0, (
-                f"holder subprocess exit={proc.exitcode}"
-            )
+            assert proc.exitcode == 0, f"holder subprocess exit={proc.exitcode}"
 
     def test_second_acquirer_proceeds_after_first_releases(self, tmp_path):
         ready = tmp_path / "ready"
         release = tmp_path / "release"
         proc = mp.Process(
             target=_hold_lock,
-            args=(str(sa.TAS_DATA_DIR), str(sa.LOCK_DIR),
-                  str(ready), str(release), "diodes"),
+            args=(str(sa.TAS_DATA_DIR), str(sa.LOCK_DIR), str(ready), str(release), "diodes"),
         )
         proc.start()
         try:
@@ -195,7 +189,6 @@ class TestMutualExclusion:
 
 
 class TestDescribeLock:
-
     def test_describe_returns_none_when_no_lock(self):
         assert sa.describe_lock("mosfets") is None
 
@@ -228,14 +221,11 @@ class TestDescribeLock:
 
 
 class TestSafeAppend:
-
     def test_appends_to_existing_file(self):
         _seed("mosfets", ['{"a":1}\n'])
         with sa.safe_append("mosfets") as fh:
             fh.write('{"b":2}\n')
-        assert (sa.TAS_DATA_DIR / "mosfets.ndjson").read_text() == (
-            '{"a":1}\n{"b":2}\n'
-        )
+        assert (sa.TAS_DATA_DIR / "mosfets.ndjson").read_text() == ('{"a":1}\n{"b":2}\n')
 
     def test_creates_file_on_first_append(self):
         with sa.safe_append("mosfets") as fh:
@@ -255,7 +245,6 @@ class TestSafeAppend:
 
 
 class TestTransaction:
-
     def test_read_returns_empty_for_missing_file(self):
         with sa.Transaction("mosfets") as txn:
             assert txn.read() == []
@@ -271,9 +260,7 @@ class TestTransaction:
             lines = txn.read()
             lines.append('{"b":2}\n')
             txn.write(lines)
-        assert (sa.TAS_DATA_DIR / "mosfets.ndjson").read_text() == (
-            '{"a":1}\n{"b":2}\n'
-        )
+        assert (sa.TAS_DATA_DIR / "mosfets.ndjson").read_text() == ('{"a":1}\n{"b":2}\n')
 
     def test_successful_write_removes_backup(self):
         _seed("mosfets", ['{"a":1}\n'])
@@ -284,29 +271,22 @@ class TestTransaction:
 
     def test_backup_retained_when_exception_raised_after_write(self):
         _seed("mosfets", ['{"original":1}\n'])
-        with pytest.raises(RuntimeError, match="boom"):
-            with sa.Transaction("mosfets") as txn:
-                txn.write(['{"new":1}\n'])
-                raise RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"), sa.Transaction("mosfets") as txn:
+            txn.write(['{"new":1}\n'])
+            raise RuntimeError("boom")
         # File contains the new content (write committed), but backup
         # is retained for forensics.
-        assert (sa.TAS_DATA_DIR / "mosfets.ndjson").read_text() == (
-            '{"new":1}\n'
-        )
-        assert (sa.TAS_DATA_DIR / "mosfets.ndjson.bak").read_text() == (
-            '{"original":1}\n'
-        )
+        assert (sa.TAS_DATA_DIR / "mosfets.ndjson").read_text() == ('{"new":1}\n')
+        assert (sa.TAS_DATA_DIR / "mosfets.ndjson.bak").read_text() == ('{"original":1}\n')
 
     def test_tmp_cleaned_up_on_exception_without_write(self):
         _seed("mosfets", ['{"a":1}\n'])
         # Force a failure mid-transaction by writing manually to the
         # tmp path, then raising.
-        with pytest.raises(RuntimeError):
-            with sa.Transaction("mosfets") as txn:
-                txn.temp_path.write_text("garbage")
-                raise RuntimeError("simulated crash")
-        assert not txn.temp_path.exists(), \
-            f"tmp file leaked: {txn.temp_path}"
+        with pytest.raises(RuntimeError), sa.Transaction("mosfets") as txn:
+            txn.temp_path.write_text("garbage")
+            raise RuntimeError("simulated crash")
+        assert not txn.temp_path.exists(), f"tmp file leaked: {txn.temp_path}"
 
     def test_write_rejects_string_argument(self):
         with sa.Transaction("mosfets") as txn:
@@ -332,13 +312,13 @@ class TestTransaction:
                 # non-blocking flock should fail because the
                 # transaction's fd holds it.
                 import fcntl
+
                 lock_path = sa.LOCK_DIR / "mosfets.lock"
                 fh = lock_path.open("a+")
                 try:
                     try:
-                        fcntl.flock(fh.fileno(),
-                                    fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    except BlockingIOError:
-                        raise sa.LockTimeoutError("competing fd blocked")
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError as exc:
+                        raise sa.LockTimeoutError("competing fd blocked") from exc
                 finally:
                     fh.close()

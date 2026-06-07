@@ -42,9 +42,9 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 # Real-part bindings (verified present in TAS/data/*.ndjson; see status doc).
 # -----------------------------------------------------------------------------
 BIND_BUCK = {
-    "Q1":    "TAS/data/mosfets.ndjson?mpn=EPC2019",
-    "D1":    "TAS/data/diodes.ndjson?mpn=STPS30L60CT",
-    "L1":    "TAS/data/magnetics.ndjson?mpn=744230121",
+    "Q1": "TAS/data/mosfets.ndjson?mpn=EPC2019",
+    "D1": "TAS/data/diodes.ndjson?mpn=STPS30L60CT",
+    "L1": "TAS/data/magnetics.ndjson?mpn=744230121",
     "C_out": "TAS/data/capacitors.ndjson?mpn=UPW1H102MHD",
 }
 
@@ -52,10 +52,12 @@ BIND_BOOST = dict(BIND_BUCK)  # identical PWM quartet
 
 
 INPUTS_BUCK = {
-    "operatingPoints": [{
-        "inputVoltage": 48.0,
-        "outputs": [{"name": "Vout", "current": 5.0}],
-    }],
+    "operatingPoints": [
+        {
+            "inputVoltage": 48.0,
+            "outputs": [{"name": "Vout", "current": 5.0}],
+        }
+    ],
     "designRequirements": {
         "switchingFrequency": {"nominal": 200_000.0},
         "outputs": [{"name": "Vout", "voltage": {"nominal": 12.0}}],
@@ -63,10 +65,12 @@ INPUTS_BUCK = {
 }
 
 INPUTS_BOOST = {
-    "operatingPoints": [{
-        "inputVoltage": 12.0,
-        "outputs": [{"name": "Vout", "current": 2.0}],
-    }],
+    "operatingPoints": [
+        {
+            "inputVoltage": 12.0,
+            "outputs": [{"name": "Vout", "current": 2.0}],
+        }
+    ],
     "designRequirements": {
         "switchingFrequency": {"nominal": 200_000.0},
         "outputs": [{"name": "Vout", "voltage": {"nominal": 48.0}}],
@@ -92,7 +96,9 @@ def _run_ngspice(deck: str) -> tuple[int, str]:
     try:
         result = subprocess.run(
             ["ngspice", "-b", path],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         return result.returncode, result.stdout + result.stderr
     finally:
@@ -128,8 +134,7 @@ def test_buck_writer_end_to_end():
     assert rc == 0, f"ngspice failed:\n{out}"
     # ngspice exits 0 on parse errors too — look for explicit error markers.
     for bad in ("Error:", "fatal", "aborted"):
-        assert bad.lower() not in out.lower(), \
-            f"ngspice reported {bad!r}:\n{out}"
+        assert bad.lower() not in out.lower(), f"ngspice reported {bad!r}:\n{out}"
     # Must have produced at least one simulation row (rows look like
     # "<idx>\t<time>\t<v1>\t<v2>" — check for the print header).
     assert "v(vin)" in out.lower() and "v(vout)" in out.lower()
@@ -157,6 +162,5 @@ def test_boost_writer_end_to_end():
     rc, out = _run_ngspice(deck)
     assert rc == 0, f"ngspice failed:\n{out}"
     for bad in ("Error:", "fatal", "aborted"):
-        assert bad.lower() not in out.lower(), \
-            f"ngspice reported {bad!r}:\n{out}"
+        assert bad.lower() not in out.lower(), f"ngspice reported {bad!r}:\n{out}"
     assert "v(vin)" in out.lower() and "v(vout)" in out.lower()

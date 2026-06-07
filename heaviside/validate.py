@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -66,9 +66,7 @@ _PEAS_ROOT_ID = "https://psma.com/peas/peas.json"
 
 # URI shape for component.data string form, e.g.
 # ``TAS/data/mosfets.ndjson?partNumber=C3M0032120K``.
-_DATA_URI_RE = re.compile(
-    r"^TAS/data/(?P<file>[a-zA-Z0-9_]+\.ndjson)(\?[A-Za-z0-9._=&%~+\-/:]*)?$"
-)
+_DATA_URI_RE = re.compile(r"^TAS/data/(?P<file>[a-zA-Z0-9_]+\.ndjson)(\?[A-Za-z0-9._=&%~+\-/:]*)?$")
 
 
 class ValidatorError(RuntimeError):
@@ -85,8 +83,7 @@ def _iter_schema_files() -> Iterable[Path]:
         root_path = _REPO_ROOT / root
         if not root_path.is_dir():
             continue
-        for p in root_path.rglob("*.json"):
-            yield p
+        yield from root_path.rglob("*.json")
 
 
 def _build_registry() -> tuple[Registry, dict[str, Any], dict[str, Any]]:
@@ -132,13 +129,9 @@ def _build_registry() -> tuple[Registry, dict[str, Any], dict[str, Any]]:
             peas_root = doc
 
     if tas_root is None:
-        raise ValidatorError(
-            f"TAS root schema not found (expected $id={_TAS_ROOT_ID!r})"
-        )
+        raise ValidatorError(f"TAS root schema not found (expected $id={_TAS_ROOT_ID!r})")
     if peas_root is None:
-        raise ValidatorError(
-            f"PEAS root schema not found (expected $id={_PEAS_ROOT_ID!r})"
-        )
+        raise ValidatorError(f"PEAS root schema not found (expected $id={_PEAS_ROOT_ID!r})")
 
     registry: Registry = Registry().with_resources(resources)
     return registry, tas_root, peas_root
@@ -153,9 +146,9 @@ def _build_registry() -> tuple[Registry, dict[str, Any], dict[str, Any]]:
 class Violation:
     """A single conformance failure."""
 
-    path: str               # JSON-pointer-ish path, e.g. "stages[0].circuit.components[2]"
-    code: str               # short machine-readable code, e.g. "tas_root", "peas_root", "uri_shape"
-    message: str            # human-readable explanation
+    path: str  # JSON-pointer-ish path, e.g. "stages[0].circuit.components[2]"
+    code: str  # short machine-readable code, e.g. "tas_root", "peas_root", "uri_shape"
+    message: str  # human-readable explanation
     component_name: str | None = None
     component_index: tuple[int, int] | None = None  # (stage_idx, comp_idx) if relevant
 
@@ -254,9 +247,7 @@ def _validate_tas_root(
     validator = Draft202012Validator(tas_root, registry=registry)
     out: list[Violation] = []
     try:
-        errors = sorted(
-            validator.iter_errors(tas), key=lambda e: list(e.absolute_path)
-        )
+        errors = sorted(validator.iter_errors(tas), key=lambda e: list(e.absolute_path))
     except (Unresolvable, SchemaError) as exc:
         # TAS root cross-references PEAS (via component.data oneOf),
         # which in turn cross-references MAS / CAS / SAS / RAS via
@@ -268,8 +259,7 @@ def _validate_tas_root(
                 path="tas",
                 code="schema_ref",
                 message=(
-                    "TAS root validation could not complete: schema "
-                    f"reference unresolvable ({exc})"
+                    f"TAS root validation could not complete: schema reference unresolvable ({exc})"
                 ),
             )
         ]
@@ -366,9 +356,7 @@ def _validate_component_peas(
     return out
 
 
-def _validate_uri_shape(
-    comp: Mapping[str, Any], si: int, ci: int
-) -> list[Violation]:
+def _validate_uri_shape(comp: Mapping[str, Any], si: int, ci: int) -> list[Violation]:
     data = comp.get("data")
     if not isinstance(data, str):
         return []
@@ -446,9 +434,7 @@ def validate_tas(
         document conforms.
     """
     if not isinstance(tas, Mapping):
-        raise ValidatorError(
-            f"validate_tas: tas must be a mapping, got {type(tas).__name__}"
-        )
+        raise ValidatorError(f"validate_tas: tas must be a mapping, got {type(tas).__name__}")
 
     registry, tas_root, peas_root = _registry()
 
@@ -457,9 +443,7 @@ def validate_tas(
 
     if strict:
         for si, ci, comp in _iter_components(tas):
-            violations.extend(
-                _validate_component_peas(comp, si, ci, registry, peas_root)
-            )
+            violations.extend(_validate_component_peas(comp, si, ci, registry, peas_root))
             violations.extend(_validate_uri_shape(comp, si, ci))
 
     return Report(violations=tuple(violations), strict=strict)
@@ -485,8 +469,8 @@ def validate_tas_file(
 
 __all__ = [
     "Report",
-    "Violation",
     "ValidatorError",
+    "Violation",
     "validate_tas",
     "validate_tas_file",
 ]

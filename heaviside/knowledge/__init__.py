@@ -48,8 +48,7 @@ def read_knowledge(name: str) -> str:
     """
     if not name or "/" in name or "\\" in name:
         raise ValueError(
-            f"read_knowledge: invalid name {name!r} — pass the bare "
-            "file stem, e.g. 'peas-schema'."
+            f"read_knowledge: invalid name {name!r} — pass the bare file stem, e.g. 'peas-schema'."
         )
     matches = sorted(KNOWLEDGE_ROOT.glob(f"**/{name}.md"))
     if not matches:

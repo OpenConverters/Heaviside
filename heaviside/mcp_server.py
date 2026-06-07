@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
 from typing import Any
 
 from mcp.server import Server
@@ -36,7 +35,10 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "topology": {"type": "string", "description": "Topology name (e.g. 'buck', 'flyback')"},
+                    "topology": {
+                        "type": "string",
+                        "description": "Topology name (e.g. 'buck', 'flyback')",
+                    },
                     "spec": {"type": "object", "description": "Converter spec JSON"},
                     "max_results": {"type": "integer", "default": 3},
                 },
@@ -128,22 +130,27 @@ def _design_magnetic(args: dict[str, Any]) -> str:
 
     try:
         candidates = design_magnetics_fast(
-            topology, spec, max_results=max_results,
+            topology,
+            spec,
+            max_results=max_results,
         )
     except BridgeError as exc:
         return json.dumps({"error": str(exc)})
 
-    return json.dumps({
-        "topology": topology,
-        "candidates": [
-            {
-                "scoring": c.scoring,
-                "core_shape": c.core_shape_name,
-                "elapsed_s": c.elapsed_s,
-            }
-            for c in candidates
-        ],
-    }, indent=2)
+    return json.dumps(
+        {
+            "topology": topology,
+            "candidates": [
+                {
+                    "scoring": c.scoring,
+                    "core_shape": c.core_shape_name,
+                    "elapsed_s": c.elapsed_s,
+                }
+                for c in candidates
+            ],
+        },
+        indent=2,
+    )
 
 
 def _design_bom(args: dict[str, Any]) -> str:
@@ -171,10 +178,7 @@ def _design_bom(args: dict[str, Any]) -> str:
 def _list_topologies() -> str:
     from heaviside.topologies.registry import CONVERTERS
 
-    return json.dumps([
-        {"name": e.name, "family": e.family}
-        for e in CONVERTERS
-    ], indent=2)
+    return json.dumps([{"name": e.name, "family": e.family} for e in CONVERTERS], indent=2)
 
 
 def _query_lessons(args: dict[str, Any]) -> str:
@@ -185,24 +189,28 @@ def _query_lessons(args: dict[str, Any]) -> str:
         severity=args.get("severity"),
         max_age_days=args.get("max_age_days"),
     )
-    return json.dumps({
-        "count": len(lessons),
-        "summary": summarize_lessons(lessons),
-        "lessons": [
-            {
-                "topology": l.topology,
-                "category": l.category,
-                "severity": l.severity,
-                "detail": l.detail,
-                "suggestion": l.suggestion,
-            }
-            for l in lessons[:20]
-        ],
-    }, indent=2)
+    return json.dumps(
+        {
+            "count": len(lessons),
+            "summary": summarize_lessons(lessons),
+            "lessons": [
+                {
+                    "topology": l.topology,
+                    "category": l.category,
+                    "severity": l.severity,
+                    "detail": l.detail,
+                    "suggestion": l.suggestion,
+                }
+                for l in lessons[:20]
+            ],
+        },
+        indent=2,
+    )
 
 
 def _reverse_engineer(args: dict[str, Any]) -> str:
     from pathlib import Path
+
     from heaviside.pipeline.cre_pipeline import run_cre_pipeline
 
     reference = args["reference"]
@@ -213,13 +221,16 @@ def _reverse_engineer(args: dict[str, Any]) -> str:
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 
-    return json.dumps({
-        "reference": outcome.reference,
-        "passed": outcome.passed,
-        "ref_spec": outcome.ref_spec.__dict__ if outcome.ref_spec else None,
-        "bom_count": len(outcome.ref_bom),
-        "diagnostics": list(outcome.diagnostics),
-    }, indent=2)
+    return json.dumps(
+        {
+            "reference": outcome.reference,
+            "passed": outcome.passed,
+            "ref_spec": outcome.ref_spec.__dict__ if outcome.ref_spec else None,
+            "bom_count": len(outcome.ref_bom),
+            "diagnostics": list(outcome.diagnostics),
+        },
+        indent=2,
+    )
 
 
 def _cross_reference(args: dict[str, Any]) -> str:
@@ -234,20 +245,23 @@ def _cross_reference(args: dict[str, Any]) -> str:
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 
-    return json.dumps({
-        "target_manufacturer": outcome.target_manufacturer,
-        "passed": outcome.passed,
-        "components": [
-            {
-                "ref_des": c.ref_des,
-                "original_mpn": c.original_mpn,
-                "substitute_mpn": c.substitute_mpn,
-                "status": c.status.value,
-            }
-            for c in outcome.components
-        ],
-        "diagnostics": list(outcome.diagnostics),
-    }, indent=2)
+    return json.dumps(
+        {
+            "target_manufacturer": outcome.target_manufacturer,
+            "passed": outcome.passed,
+            "components": [
+                {
+                    "ref_des": c.ref_des,
+                    "original_mpn": c.original_mpn,
+                    "substitute_mpn": c.substitute_mpn,
+                    "status": c.status.value,
+                }
+                for c in outcome.components
+            ],
+            "diagnostics": list(outcome.diagnostics),
+        },
+        indent=2,
+    )
 
 
 async def main() -> None:
@@ -257,4 +271,5 @@ async def main() -> None:
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())

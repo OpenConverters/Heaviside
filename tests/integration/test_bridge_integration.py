@@ -21,19 +21,20 @@ pyom = pytest.importorskip("PyOpenMagnetics", reason="PyOpenMagnetics not instal
 from heaviside import bridge  # noqa: E402
 from heaviside.decomposer import decompose_from_spec  # noqa: E402
 
-
 BUCK_SPEC: dict = {
     "inputVoltage": {"minimum": 36, "maximum": 60, "nominal": 48},
     "desiredInductance": 22e-6,
     "currentRippleRatio": 0.4,
     "diodeVoltageDrop": 0.7,
     "efficiency": 0.95,
-    "operatingPoints": [{
-        "outputVoltages": [12.0],
-        "outputCurrents": [5.0],
-        "switchingFrequency": 200_000,
-        "ambientTemperature": 25,
-    }],
+    "operatingPoints": [
+        {
+            "outputVoltages": [12.0],
+            "outputCurrents": [5.0],
+            "switchingFrequency": 200_000,
+            "ambientTemperature": 25,
+        }
+    ],
 }
 
 
@@ -50,16 +51,17 @@ def test_buck_end_to_end_bridge() -> None:
 
     # 2. Ask PyOM to design the buck inductor.
     designs = bridge.design_magnetics(
-        "buck", BUCK_SPEC, max_results=1, use_ngspice=False,
+        "buck",
+        BUCK_SPEC,
+        max_results=1,
+        use_ngspice=False,
     )
     assert len(designs) == 1
     top = designs[0]
     assert top.scoring > 0
     assert top.core_shape_name  # any non-empty string
     assert top.core_material_name
-    assert len(top.winding_names) == 1, (
-        f"buck has one winding, got {top.winding_names}"
-    )
+    assert len(top.winding_names) == 1, f"buck has one winding, got {top.winding_names}"
 
     # 3. Attach into TAS.
     bridge.attach_magnetics_to_tas(tas, designs)
@@ -87,12 +89,14 @@ ACF_SPEC: dict = {
     "diodeVoltageDrop": 0.5,
     "maximumDutyCycle": 0.45,
     "efficiency": 0.9,
-    "operatingPoints": [{
-        "outputVoltages": [12.0],
-        "outputCurrents": [5.0],
-        "switchingFrequency": 250_000,
-        "ambientTemperature": 25,
-    }],
+    "operatingPoints": [
+        {
+            "outputVoltages": [12.0],
+            "outputCurrents": [5.0],
+            "switchingFrequency": 250_000,
+            "ambientTemperature": 25,
+        }
+    ],
 }
 
 
@@ -117,11 +121,13 @@ def test_acf_multi_magnetic_end_to_end_bridge() -> None:
     )
 
     components = bridge.design_converter_components(
-        "active_clamp_forward", ACF_SPEC, max_results=1, use_ngspice=False,
+        "active_clamp_forward",
+        ACF_SPEC,
+        max_results=1,
+        use_ngspice=False,
     )
     assert components.main_magnetic.scoring > 0
-    assert len(components.main_magnetic.winding_names) >= 2, \
-        "ACF transformer must have ≥2 windings"
+    assert len(components.main_magnetic.winding_names) >= 2, "ACF transformer must have ≥2 windings"
     assert "outputInductor" in components.extra_magnetics
     assert components.extra_magnetics["outputInductor"].scoring > 0
     # Capacitor extras are spec-only — bridge doesn't design them.
@@ -142,8 +148,7 @@ def test_acf_multi_magnetic_end_to_end_bridge() -> None:
     assert by_name["L_out0"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
     # Distinct designs.
     assert (
-        by_name["T1"]["scoring"]
-        != by_name["L_out0"]["scoring"]
+        by_name["T1"]["scoring"] != by_name["L_out0"]["scoring"]
         or by_name["T1"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
         != by_name["L_out0"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
     )
@@ -159,12 +164,14 @@ LLC_SPEC: dict = {
     "desiredTurnsRatios": [16.0],
     "minSwitchingFrequency": 80_000.0,
     "maxSwitchingFrequency": 300_000.0,
-    "operatingPoints": [{
-        "outputVoltages": [12.0],
-        "outputCurrents": [5.0],
-        "switchingFrequency": 150_000,
-        "ambientTemperature": 25,
-    }],
+    "operatingPoints": [
+        {
+            "outputVoltages": [12.0],
+            "outputCurrents": [5.0],
+            "switchingFrequency": 150_000,
+            "ambientTemperature": 25,
+        }
+    ],
 }
 
 
@@ -180,6 +187,7 @@ def _llc_design_magnetics_is_safe() -> bool:
     """
     import subprocess
     import sys
+
     code = (
         "from PyOpenMagnetics import PyOpenMagnetics as P; "
         "spec={'inputVoltage':{'minimum':36.0,'nominal':48.0,'maximum':60.0},"
@@ -227,14 +235,15 @@ def test_llc_multi_magnetic_end_to_end_bridge() -> None:
     )
 
     components = bridge.design_converter_components(
-        "llc", LLC_SPEC, max_results=1, use_ngspice=False,
+        "llc",
+        LLC_SPEC,
+        max_results=1,
+        use_ngspice=False,
     )
     assert components.main_magnetic.scoring > 0
-    assert len(components.main_magnetic.winding_names) >= 2, \
-        "LLC transformer must have ≥2 windings"
+    assert len(components.main_magnetic.winding_names) >= 2, "LLC transformer must have ≥2 windings"
     assert "seriesInductor" in components.extra_magnetics, (
-        f"PyOM did not return seriesInductor extras-role; got "
-        f"{sorted(components.extra_magnetics)}"
+        f"PyOM did not return seriesInductor extras-role; got {sorted(components.extra_magnetics)}"
     )
     assert components.extra_magnetics["seriesInductor"].scoring > 0
     cap_names = [c.name for c in components.extra_capacitors]
@@ -256,8 +265,7 @@ def test_llc_multi_magnetic_end_to_end_bridge() -> None:
     assert by_name["L_r"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
     # The two designs must be distinct PyOM artefacts.
     assert (
-        by_name["T1"]["scoring"]
-        != by_name["L_r"]["scoring"]
+        by_name["T1"]["scoring"] != by_name["L_r"]["scoring"]
         or by_name["T1"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
         != by_name["L_r"]["data"]["magnetic"]["core"]["functionalDescription"]["shape"]
     )

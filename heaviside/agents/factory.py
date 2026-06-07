@@ -38,8 +38,8 @@ from heaviside.agents.tools import resolve_tools
 from heaviside.llm import ModelTier, classify_model, is_kimi_model
 
 __all__ = [
-    "PROMPTS_DIR",
     "DEFAULT_MODEL",
+    "PROMPTS_DIR",
     "AgentDefinition",
     "AgentLoadError",
     "available_agents",
@@ -57,13 +57,15 @@ PROMPTS_DIR: Path = Path(__file__).resolve().parent / "prompts"
 DEFAULT_MODEL: str = "kimi-k2.5"
 
 
-_KNOWN_FRONTMATTER_KEYS: frozenset[str] = frozenset({
-    "name",
-    "description",
-    "allowed_tools",
-    "model",
-    "tier_required",
-})
+_KNOWN_FRONTMATTER_KEYS: frozenset[str] = frozenset(
+    {
+        "name",
+        "description",
+        "allowed_tools",
+        "model",
+        "tier_required",
+    }
+)
 
 
 _FRONTMATTER_RE = re.compile(
@@ -98,7 +100,9 @@ def available_agents(prompts_dir: Path | None = None) -> list[str]:
 
 
 def load_agent_definition(
-    name: str, *, prompts_dir: Path | None = None,
+    name: str,
+    *,
+    prompts_dir: Path | None = None,
 ) -> AgentDefinition:
     """Read and parse ``<prompts_dir>/<name>.md`` without constructing an Agent.
 
@@ -131,14 +135,11 @@ def load_agent_definition(
     try:
         fm = yaml.safe_load(match.group("fm")) or {}
     except yaml.YAMLError as exc:
-        raise AgentLoadError(
-            f"{path}: invalid YAML frontmatter: {exc}"
-        ) from exc
+        raise AgentLoadError(f"{path}: invalid YAML frontmatter: {exc}") from exc
 
     if not isinstance(fm, dict):
         raise AgentLoadError(
-            f"{path}: frontmatter must decode to a mapping, got "
-            f"{type(fm).__name__}"
+            f"{path}: frontmatter must decode to a mapping, got {type(fm).__name__}"
         )
 
     unknown = set(fm) - _KNOWN_FRONTMATTER_KEYS
@@ -150,36 +151,27 @@ def load_agent_definition(
 
     for required in ("name", "description", "allowed_tools"):
         if required not in fm:
-            raise AgentLoadError(
-                f"{path}: frontmatter missing required key {required!r}"
-            )
+            raise AgentLoadError(f"{path}: frontmatter missing required key {required!r}")
 
     if fm["name"] != name:
         raise AgentLoadError(
-            f"{path}: frontmatter name {fm['name']!r} does not match "
-            f"filename stem {name!r}"
+            f"{path}: frontmatter name {fm['name']!r} does not match filename stem {name!r}"
         )
 
     allowed_tools = fm["allowed_tools"]
-    if not isinstance(allowed_tools, list) or not all(
-        isinstance(t, str) for t in allowed_tools
-    ):
+    if not isinstance(allowed_tools, list) or not all(isinstance(t, str) for t in allowed_tools):
         raise AgentLoadError(
-            f"{path}: allowed_tools must be a list[str], got "
-            f"{type(allowed_tools).__name__}"
+            f"{path}: allowed_tools must be a list[str], got {type(allowed_tools).__name__}"
         )
 
     model = fm.get("model")
     if model is not None and not isinstance(model, str):
-        raise AgentLoadError(
-            f"{path}: model must be a string, got {type(model).__name__}"
-        )
+        raise AgentLoadError(f"{path}: model must be a string, got {type(model).__name__}")
 
     tier_required = fm.get("tier_required")
     if tier_required is not None and not isinstance(tier_required, str):
         raise AgentLoadError(
-            f"{path}: tier_required must be a string, got "
-            f"{type(tier_required).__name__}"
+            f"{path}: tier_required must be a string, got {type(tier_required).__name__}"
         )
 
     return AgentDefinition(
@@ -276,7 +268,7 @@ def load_agent(
     # handed to Strands, which selects its own provider adapter.
     if is_kimi_model(chosen_model):
         if kimi_model_builder is None:
-            from heaviside.llm import build_kimi_model as kimi_model_builder  # noqa: PLC0415
+            from heaviside.llm import build_kimi_model as kimi_model_builder
         model_arg: Any = kimi_model_builder(model_id=chosen_model)
     else:
         model_arg = chosen_model
@@ -285,6 +277,7 @@ def load_agent(
         # Deferred import keeps strands optional for code paths that
         # never construct a live Agent (e.g. dataclass-only tests).
         from strands import Agent as _Agent
+
         agent_cls = _Agent
 
     return agent_cls(

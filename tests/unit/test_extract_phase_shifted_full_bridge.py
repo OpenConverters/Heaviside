@@ -31,70 +31,53 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus
-
+from tests.unit._real_mas import isat_of, real_magnetic
 
 # ---------------------------------------------------------------------------
 # Fixtures matching stencil roles: inverter / isolation / outputRectifier.
+#
+# All magnetics are now COMPLETE, PyOM-evaluable devices built by
+# :func:`real_magnetic` (real core shape + material + gap + winding list,
+# completed by ``magnetic_autocomplete``) so the extractor's Isat
+# enrichment — which delegates entirely to PyOM's
+# ``calculate_saturation_current`` and raises on rejection — gets genuine
+# gap-aware MKF physics rather than synthetic minimal-MAS PyOM rejects.
 # ---------------------------------------------------------------------------
 
 
 def _lr_mas(N: int = 6) -> dict:
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 1.0e-4,
-                    "effectiveLength": 0.05,
-                    "effectiveVolume": 5.0e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {"saturation": [
-                    {"magneticField": 393.0, "magneticFluxDensity": 0.30,
-                     "temperature": 100.0},
-                ]},
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "winding", "numberTurns": N, "numberParallels": 1,
-             "isolationSide": "primary"},
-        ]},
-    }
+    # Series resonant/leakage inductor; deliberately NOT Isat-stamped, so a
+    # complete real magnetic with the single named winding is all that's
+    # needed (extractor harvests nothing isat-bound from it).
+    return real_magnetic(
+        shape="ETD 29/16/10",
+        material="3C95",
+        gap_mm=1.0,
+        windings=[{"name": "winding", "turns": N, "side": "primary"}],
+    )
 
 
 def _t1_mas(*, N_pri: int = 10, N_sec0: int = 1) -> dict:
     """2-winding transformer.  ``n = N_sec0 / N_pri``."""
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 2.0e-4,
-                    "effectiveLength": 0.10,
-                    "effectiveVolume": 2.0e-5,
-                },
-            },
-            "functionalDescription": {
-                "material": {"saturation": [
-                    {"magneticField": 393.0, "magneticFluxDensity": 0.30,
-                     "temperature": 100.0},
-                ]},
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "pri",  "numberTurns": N_pri,  "numberParallels": 1,
-             "isolationSide": "primary"},
-            {"name": "sec0", "numberTurns": N_sec0, "numberParallels": 1,
-             "isolationSide": "secondary"},
-        ]},
-    }
+    return real_magnetic(
+        shape="ETD 34/17/11",
+        material="3C95",
+        gap_mm=0.0,
+        windings=[
+            {"name": "pri", "turns": N_pri, "side": "primary"},
+            {"name": "sec0", "turns": N_sec0, "side": "secondary"},
+        ],
+    )
 
 
-def _lout_mas(N: int = 12, *, L: float | None = 50e-6,
-              with_outputs: bool = True) -> dict:
+def _lout_mas(N: int = 12, *, L: float | None = 50e-6, with_outputs: bool = True) -> dict:
     """Output choke MAS.
 
-    The realism extractor harvests the inductance MKF *actually achieved*
-    from the full MAS root's ``outputs`` envelope
+    A complete, PyOM-evaluable gapped magnetic (built by
+    :func:`real_magnetic` so ``calculate_saturation_current`` returns real
+    gap-aware MKF physics) PLUS the simulation-derived ``outputs`` envelope
+    carrying the inductance MKF *actually achieved*.  The realism extractor
+    harvests the inductance from the full MAS root's ``outputs`` envelope
     (``outputs[0].inductance.magnetizingInductance.magnetizingInductance.nominal``),
     never from the spec hint. The real bridge-attach phase produces this
     envelope; mirror its shape here so the fixture exercises the same
@@ -102,77 +85,70 @@ def _lout_mas(N: int = 12, *, L: float | None = 50e-6,
     the spec's ``desiredInductance`` so the ripple/Isat assertions hold).
     Set ``with_outputs=False`` to model an attach phase that never ran.
     """
-    mas: dict = {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 1.5e-4,
-                    "effectiveLength": 0.06,
-                    "effectiveVolume": 9.0e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {"saturation": [
-                    {"magneticField": 393.0, "magneticFluxDensity": 0.42,
-                     "temperature": 100.0},
-                ]},
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "winding", "numberTurns": N, "numberParallels": 1,
-             "isolationSide": "primary"},
-        ]},
-    }
+    mas = real_magnetic(
+        shape="ETD 34/17/11",
+        material="3C95",
+        gap_mm=1.0,
+        windings=[{"name": "winding", "turns": N, "side": "primary"}],
+    )
     if with_outputs and L is not None:
         mas["outputs"] = [
-            {"inductance": {"magnetizingInductance": {
-                "magnetizingInductance": {"nominal": L}}}},
+            {"inductance": {"magnetizingInductance": {"magnetizingInductance": {"nominal": L}}}},
         ]
     return mas
 
 
-def _psfb_tas(*, t1_kwargs: dict | None = None,
-              lout_kwargs: dict | None = None,
-              lr_kwargs: dict | None = None) -> dict:
+def _psfb_tas(
+    *, t1_kwargs: dict | None = None, lout_kwargs: dict | None = None, lr_kwargs: dict | None = None
+) -> dict:
     t1_kwargs = dict(t1_kwargs or {})
     lout_kwargs = dict(lout_kwargs or {})
     lr_kwargs = dict(lr_kwargs or {})
-    return {"topology": {
-        "stages": [
-            {
-                "name": "inverter",
-                "role": "inverter",
-                "circuit": {"components": [
-                    {"name": "Q_A", "data": "placeholder"},
-                    {"name": "Q_B", "data": "placeholder"},
-                    {"name": "Q_C", "data": "placeholder"},
-                    {"name": "Q_D", "data": "placeholder"},
-                    {"name": "L_r", "category": "magnetic",
-                     "mas": _lr_mas(**lr_kwargs)},
-                ]},
-            },
-            {
-                "name": "isolation",
-                "role": "isolation",
-                "circuit": {"components": [
-                    {"name": "T1", "category": "magnetic",
-                     "mas": _t1_mas(**t1_kwargs)},
-                ]},
-            },
-            {
-                "name": "output_0",
-                "role": "outputRectifier",
-                "circuit": {"components": [
-                    {"name": "D1",     "data": "placeholder"},
-                    {"name": "D2",     "data": "placeholder"},
-                    {"name": "L_out0", "category": "magnetic",
-                     "mas": _lout_mas(**lout_kwargs)},
-                    {"name": "C_out0", "data": "placeholder"},
-                ]},
-            },
-        ],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "inverter",
+                    "role": "inverter",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q_A", "data": "placeholder"},
+                            {"name": "Q_B", "data": "placeholder"},
+                            {"name": "Q_C", "data": "placeholder"},
+                            {"name": "Q_D", "data": "placeholder"},
+                            {"name": "L_r", "category": "magnetic", "mas": _lr_mas(**lr_kwargs)},
+                        ]
+                    },
+                },
+                {
+                    "name": "isolation",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "category": "magnetic", "mas": _t1_mas(**t1_kwargs)},
+                        ]
+                    },
+                },
+                {
+                    "name": "output_0",
+                    "role": "outputRectifier",
+                    "circuit": {
+                        "components": [
+                            {"name": "D1", "data": "placeholder"},
+                            {"name": "D2", "data": "placeholder"},
+                            {
+                                "name": "L_out0",
+                                "category": "magnetic",
+                                "mas": _lout_mas(**lout_kwargs),
+                            },
+                            {"name": "C_out0", "data": "placeholder"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 def _psfb_spec() -> dict:
@@ -190,12 +166,14 @@ def _psfb_spec() -> dict:
         "inputVoltage": {"minimum": 400.0, "maximum": 420.0, "nominal": 410.0},
         "desiredInductance": 50e-6,
         "efficiency": 0.95,
-        "operatingPoints": [{
-            "outputVoltages": [48.0],
-            "outputCurrents": [25.0],
-            "switchingFrequency": 100_000.0,
-            "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [48.0],
+                "outputCurrents": [25.0],
+                "switchingFrequency": 100_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
     }
 
 
@@ -236,15 +214,15 @@ def _get_t1(tas: dict) -> dict:
 
 
 class TestDuty:
-
     def test_d_eff_at_vin_extremes(self):
         out = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs=_t1_default()),
-            topology="phase_shifted_full_bridge", spec=_psfb_spec(),
+            topology="phase_shifted_full_bridge",
+            spec=_psfb_spec(),
         )
         # n = 1/5 = 0.2
-        d_eff_max = 48.0 / (0.2 * 400.0)   # = 0.6
-        d_eff_min = 48.0 / (0.2 * 420.0)   # ≈ 0.5714
+        d_eff_max = 48.0 / (0.2 * 400.0)  # = 0.6
+        d_eff_min = 48.0 / (0.2 * 420.0)  # ≈ 0.5714
         assert out["duty_max"] == pytest.approx(d_eff_max, abs=1e-5)
         assert out["duty_min"] == pytest.approx(d_eff_min, abs=1e-5)
         assert out["duty"] == out["duty_max"]
@@ -252,7 +230,8 @@ class TestDuty:
     def test_voltage_transfer_round_trip(self):
         out = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs=_t1_default()),
-            topology="phase_shifted_full_bridge", spec=_psfb_spec(),
+            topology="phase_shifted_full_bridge",
+            spec=_psfb_spec(),
         )
         # Vout = n · Vin · D_eff with n = 0.2, Vin = 400, D = 0.6
         vout_reconstructed = 0.2 * 400.0 * out["duty_max"]
@@ -261,15 +240,14 @@ class TestDuty:
     def test_d_eff_consistent_with_voltage_transfer(self):
         out = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs=_t1_default()),
-            topology="phase_shifted_full_bridge", spec=_psfb_spec(),
+            topology="phase_shifted_full_bridge",
+            spec=_psfb_spec(),
         )
         lout = _get_lout(out)
         p = lout["ipeak_provenance"]
         # D_eff_max at Vin_min, D_eff_min at Vin_max.
-        assert p["d_eff_max"] == pytest.approx(48.0 / (0.2 * 400.0),
-                                               abs=1e-5)
-        assert p["d_eff_min"] == pytest.approx(48.0 / (0.2 * 420.0),
-                                               abs=1e-5)
+        assert p["d_eff_max"] == pytest.approx(48.0 / (0.2 * 400.0), abs=1e-5)
+        assert p["d_eff_min"] == pytest.approx(48.0 / (0.2 * 420.0), abs=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -278,11 +256,11 @@ class TestDuty:
 
 
 class TestRippleAndIsat:
-
     def test_ripple_at_d_eff_min(self):
         out = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs=_t1_default()),
-            topology="phase_shifted_full_bridge", spec=_psfb_spec(),
+            topology="phase_shifted_full_bridge",
+            spec=_psfb_spec(),
         )
         lout = _get_lout(out)
         p = lout["ipeak_provenance"]
@@ -300,22 +278,27 @@ class TestRippleAndIsat:
     def test_ipeak_is_iout_plus_half_ripple(self):
         out = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs=_t1_default()),
-            topology="phase_shifted_full_bridge", spec=_psfb_spec(),
+            topology="phase_shifted_full_bridge",
+            spec=_psfb_spec(),
         )
         lout = _get_lout(out)
         ripple = lout["ipeak_provenance"]["ripple_worst_A_pp"]
-        assert lout["ipeak_worst"] == pytest.approx(25.0 + ripple / 2.0,
-                                                    rel=1e-6)
+        assert lout["ipeak_worst"] == pytest.approx(25.0 + ripple / 2.0, rel=1e-6)
 
     def test_isat_uses_lout_mas(self):
         out = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs=_t1_default()),
-            topology="phase_shifted_full_bridge", spec=_psfb_spec(),
+            topology="phase_shifted_full_bridge",
+            spec=_psfb_spec(),
         )
         lout = _get_lout(out)
-        # B_sat = 0.42, N = 12, A_e = 1.5e-4, L = 50e-6
-        expected = 0.42 * 12 * 1.5e-4 / 50e-6
-        assert lout["isat"] == pytest.approx(expected, rel=1e-4)
+        # Ground truth = MKF: the stamped Isat must equal PyOM's saturation
+        # current for the L_out0 magnetic at the op-point ambient (25 °C),
+        # NOT an analytical formula. Computing it here on the same L_out0
+        # MAS the extractor harvested also proves L_out0 was the source.
+        expected = isat_of(_lout_mas(), temperature_c=25.0)
+        assert lout["isat"] == pytest.approx(expected, rel=1e-3)
+        assert "PyOM" in lout["isat_provenance"]["method"]
         assert "phase_shifted_full_bridge" in lout["isat_provenance"]["method"]
 
 
@@ -325,11 +308,11 @@ class TestRippleAndIsat:
 
 
 class TestNonBindingMagnetics:
-
     def test_lr_not_isat_stamped(self):
         out = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs=_t1_default()),
-            topology="phase_shifted_full_bridge", spec=_psfb_spec(),
+            topology="phase_shifted_full_bridge",
+            spec=_psfb_spec(),
         )
         lr = _get_lr(out)
         assert "isat" not in lr
@@ -338,7 +321,8 @@ class TestNonBindingMagnetics:
     def test_t1_not_isat_stamped(self):
         out = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs=_t1_default()),
-            topology="phase_shifted_full_bridge", spec=_psfb_spec(),
+            topology="phase_shifted_full_bridge",
+            spec=_psfb_spec(),
         )
         t1 = _get_t1(out)
         assert "isat" not in t1
@@ -347,7 +331,8 @@ class TestNonBindingMagnetics:
     def test_provenance_flags_record_unmodelled(self):
         out = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs=_t1_default()),
-            topology="phase_shifted_full_bridge", spec=_psfb_spec(),
+            topology="phase_shifted_full_bridge",
+            spec=_psfb_spec(),
         )
         lout = _get_lout(out)
         p = lout["ipeak_provenance"]
@@ -361,16 +346,15 @@ class TestNonBindingMagnetics:
 
 
 class TestTurnsRatio:
-
     def test_turns_ratio_recorded(self):
         out = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs={"N_pri": 8, "N_sec0": 2}),
-            topology="phase_shifted_full_bridge", spec=_psfb_spec(),
+            topology="phase_shifted_full_bridge",
+            spec=_psfb_spec(),
         )
         lout = _get_lout(out)
         p = lout["ipeak_provenance"]
-        assert p["turns_ratio_n_sec0_over_n_pri"] == pytest.approx(0.25,
-                                                                    rel=1e-6)
+        assert p["turns_ratio_n_sec0_over_n_pri"] == pytest.approx(0.25, rel=1e-6)
         assert p["n_primary"] == 8
         assert p["n_secondary"] == 2
 
@@ -381,21 +365,18 @@ class TestTurnsRatio:
 
 
 class TestRealismIntegration:
-
     def test_end_to_end_realism_evaluates(self):
         spec = _psfb_spec()
         enriched = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs=_t1_default()),
-            topology="phase_shifted_full_bridge", spec=spec,
+            topology="phase_shifted_full_bridge",
+            spec=spec,
         )
-        r = evaluate_tas(enriched, topology="phase_shifted_full_bridge",
-                         spec=spec)
+        r = evaluate_tas(enriched, topology="phase_shifted_full_bridge", spec=spec)
         check_status = {c.name: c.status for c in r.checks}
         for name in ("duty_cycle_bounds", "inductor_isat_margin"):
-            assert check_status.get(name) in (CheckStatus.PASS,
-                                              CheckStatus.FAIL), (
-                f"{name} must be evaluated (PASS/FAIL), got "
-                f"{check_status.get(name)}"
+            assert check_status.get(name) in (CheckStatus.PASS, CheckStatus.FAIL), (
+                f"{name} must be evaluated (PASS/FAIL), got {check_status.get(name)}"
             )
 
 
@@ -405,13 +386,13 @@ class TestRealismIntegration:
 
 
 class TestGainGuard:
-
     def test_d_eff_above_unity_throws(self):
         """n = 1/10 = 0.1 ⇒ D_eff = 48/(0.1·400) = 1.20 > 1.0."""
         with pytest.raises(EnrichmentError, match=r"D_eff"):
             enrich_tas_for_realism(
                 _psfb_tas(t1_kwargs={"N_pri": 10, "N_sec0": 1}),
-                topology="phase_shifted_full_bridge", spec=_psfb_spec(),
+                topology="phase_shifted_full_bridge",
+                spec=_psfb_spec(),
             )
 
     def test_d_eff_exactly_unity_passes(self):
@@ -420,7 +401,8 @@ class TestGainGuard:
         spec = _psfb_spec()
         out = enrich_tas_for_realism(
             _psfb_tas(t1_kwargs={"N_pri": 25, "N_sec0": 3}),
-            topology="phase_shifted_full_bridge", spec=spec,
+            topology="phase_shifted_full_bridge",
+            spec=spec,
         )
         assert out["duty_max"] == pytest.approx(1.0, abs=1e-5)
 
@@ -431,61 +413,50 @@ class TestGainGuard:
 
 
 class TestStructuralFailures:
-
     def test_missing_isolation_stage_throws(self):
         tas = _psfb_tas(t1_kwargs=_t1_default())
         tas["topology"]["stages"] = [
             s for s in tas["topology"]["stages"] if s.get("role") != "isolation"
         ]
         with pytest.raises(EnrichmentError, match="isolation"):
-            enrich_tas_for_realism(tas,
-                                   topology="phase_shifted_full_bridge",
-                                   spec=_psfb_spec())
+            enrich_tas_for_realism(tas, topology="phase_shifted_full_bridge", spec=_psfb_spec())
 
     def test_missing_outputrectifier_stage_throws(self):
         tas = _psfb_tas(t1_kwargs=_t1_default())
         tas["topology"]["stages"] = [
-            s for s in tas["topology"]["stages"]
-            if s.get("role") != "outputRectifier"
+            s for s in tas["topology"]["stages"] if s.get("role") != "outputRectifier"
         ]
         with pytest.raises(EnrichmentError, match="outputRectifier"):
-            enrich_tas_for_realism(tas,
-                                   topology="phase_shifted_full_bridge",
-                                   spec=_psfb_spec())
+            enrich_tas_for_realism(tas, topology="phase_shifted_full_bridge", spec=_psfb_spec())
 
     def test_missing_pri_winding_throws(self):
         tas = _psfb_tas(t1_kwargs=_t1_default())
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][0]["name"] = "primary"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][0][
+                    "name"
+                ] = "primary"
         with pytest.raises(EnrichmentError, match="'pri'"):
-            enrich_tas_for_realism(tas,
-                                   topology="phase_shifted_full_bridge",
-                                   spec=_psfb_spec())
+            enrich_tas_for_realism(tas, topology="phase_shifted_full_bridge", spec=_psfb_spec())
 
     def test_missing_sec0_winding_throws(self):
         tas = _psfb_tas(t1_kwargs=_t1_default())
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][1]["name"] = "secondary0"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][1][
+                    "name"
+                ] = "secondary0"
         with pytest.raises(EnrichmentError, match="'sec0'"):
-            enrich_tas_for_realism(tas,
-                                   topology="phase_shifted_full_bridge",
-                                   spec=_psfb_spec())
+            enrich_tas_for_realism(tas, topology="phase_shifted_full_bridge", spec=_psfb_spec())
 
     def test_missing_achieved_inductance_throws(self):
         """The extractor harvests L from L_out0's own MAS ``outputs``
         envelope (the inductance MKF achieved), never from the spec hint.
         A fixture whose attach phase never ran (no outputs envelope) must
         throw rather than silently fall back to the spec request."""
-        tas = _psfb_tas(t1_kwargs=_t1_default(),
-                        lout_kwargs={"with_outputs": False})
+        tas = _psfb_tas(t1_kwargs=_t1_default(), lout_kwargs={"with_outputs": False})
         with pytest.raises(EnrichmentError, match="full MAS root"):
-            enrich_tas_for_realism(tas,
-                                   topology="phase_shifted_full_bridge",
-                                   spec=_psfb_spec())
+            enrich_tas_for_realism(tas, topology="phase_shifted_full_bridge", spec=_psfb_spec())
 
     def test_missing_lout_mas_throws(self):
         tas = _psfb_tas(t1_kwargs=_t1_default())
@@ -495,6 +466,4 @@ class TestStructuralFailures:
                     if c.get("name") == "L_out0":
                         del c["mas"]
         with pytest.raises(EnrichmentError, match="MAS"):
-            enrich_tas_for_realism(tas,
-                                   topology="phase_shifted_full_bridge",
-                                   spec=_psfb_spec())
+            enrich_tas_for_realism(tas, topology="phase_shifted_full_bridge", spec=_psfb_spec())

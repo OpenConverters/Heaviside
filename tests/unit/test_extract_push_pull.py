@@ -23,7 +23,7 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
-
+from tests.unit._real_mas import isat_of, real_magnetic
 
 # ---------------------------------------------------------------------------
 # Fixtures (push-pull stencil: T1 has FOUR windings pri_top/pri_bot/
@@ -34,49 +34,37 @@ from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 
 def _lout_mas(N: int = 14, *, L: float = 4.7e-6) -> dict:
     """Full MAS root for the output choke L_out0, matching the shape the
-    real bridge-attach phase produces: the wound/gapped magnetic device
-    under ``core``/``coil`` PLUS an ``outputs`` envelope carrying the
-    inductance MKF actually achieved.  The extractor harvests the
-    achieved ``L`` from ``outputs[*].inductance.magnetizingInductance
-    .magnetizingInductance.nominal`` (and would also accept
-    ``inputs.designRequirements.magnetizingInductance.nominal``); both
-    are provided here so the fixture survives either harvest path.
+    real bridge-attach phase produces: a **complete, PyOM-evaluable**
+    wound/gapped magnetic device under ``core``/``coil`` (built by
+    :func:`real_magnetic` so ``calculate_saturation_current`` returns real
+    MKF physics) PLUS an ``outputs`` envelope carrying the inductance MKF
+    actually achieved.  The extractor harvests the achieved ``L`` from
+    ``outputs[*].inductance.magnetizingInductance.magnetizingInductance
+    .nominal`` (and would also accept
+    ``inputs.designRequirements.magnetizingInductance.nominal``); both are
+    provided here so the fixture survives either harvest path.
     """
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 8.0327e-5,
-                    "effectiveLength": 0.0909,
-                    "effectiveVolume": 7.3e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.4,
-                         "temperature": 100.0},
-                        {"magneticField": 392.0, "magneticFluxDensity": 0.473,
-                         "temperature": 25.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "Primary", "numberTurns": N, "numberParallels": 1,
-             "isolationSide": "primary"},
-        ]},
-        "inputs": {
-            "designRequirements": {
-                "magnetizingInductance": {"nominal": L},
-            },
-        },
-        "outputs": [
-            {"inductance": {"magnetizingInductance": {
-                "magnetizingInductance": {"nominal": L},
-            }}},
+    mas = real_magnetic(
+        shape="ETD 29/16/10",
+        material="3C95",
+        gap_mm=1.0,
+        windings=[
+            {"name": "Primary", "turns": N, "side": "primary"},
         ],
+    )
+    mas["inputs"] = {
+        "designRequirements": {"magnetizingInductance": {"nominal": L}},
     }
+    mas["outputs"] = [
+        {
+            "inductance": {
+                "magnetizingInductance": {
+                    "magnetizingInductance": {"nominal": L},
+                }
+            }
+        },
+    ]
+    return mas
 
 
 def _t1_mas(*, N_pri: int = 8, N_sec: int = 4) -> dict:
@@ -84,73 +72,65 @@ def _t1_mas(*, N_pri: int = 8, N_sec: int = 4) -> dict:
 
     Symmetric center-tapped construction is the defining structural
     property of push-pull, so ``numberTurns`` is identical for the two
-    primary halves and identical for the two secondary halves.
+    primary halves and identical for the two secondary halves.  T1 is
+    deliberately NOT Isat-stamped (alternating-polarity drive resets the
+    core every cycle); the extractor harvests only its winding turns, so a
+    complete real magnetic with the four named half-windings is all that's
+    needed.
     """
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 1.5e-4,
-                    "effectiveLength": 0.05,
-                    "effectiveVolume": 7.5e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.32,
-                         "temperature": 100.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "pri_top", "numberTurns": N_pri, "numberParallels": 1,
-             "isolationSide": "primary"},
-            {"name": "pri_bot", "numberTurns": N_pri, "numberParallels": 1,
-             "isolationSide": "primary"},
-            {"name": "sec_top", "numberTurns": N_sec, "numberParallels": 1,
-             "isolationSide": "secondary"},
-            {"name": "sec_bot", "numberTurns": N_sec, "numberParallels": 1,
-             "isolationSide": "secondary"},
-        ]},
-    }
+    return real_magnetic(
+        shape="ETD 34/17/11",
+        material="3C95",
+        gap_mm=0.0,
+        windings=[
+            {"name": "pri_top", "turns": N_pri, "side": "primary"},
+            {"name": "pri_bot", "turns": N_pri, "side": "primary"},
+            {"name": "sec_top", "turns": N_sec, "side": "secondary"},
+            {"name": "sec_bot", "turns": N_sec, "side": "secondary"},
+        ],
+    )
 
 
 def _pp_tas(*, t1_kwargs: dict | None = None) -> dict:
     t1_kwargs = dict(t1_kwargs or {})
-    return {"topology": {
-        "stages": [
-            {
-                "name": "primary_switch",
-                "role": "switchingCell",
-                "circuit": {"components": [
-                    {"name": "Q1", "data": "placeholder"},
-                    {"name": "Q2", "data": "placeholder"},
-                ]},
-            },
-            {
-                "name": "isolation",
-                "role": "isolation",
-                "circuit": {"components": [
-                    {"name": "T1", "category": "magnetic",
-                     "mas": _t1_mas(**t1_kwargs)},
-                ]},
-            },
-            {
-                "name": "output_0",
-                "role": "outputRectifier",
-                "circuit": {"components": [
-                    {"name": "D1",    "data": "placeholder"},
-                    {"name": "D2",    "data": "placeholder"},
-                    {"name": "L_out0", "category": "magnetic",
-                     "mas": _lout_mas()},
-                    {"name": "C_out0", "data": "placeholder"},
-                ]},
-            },
-        ],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "primary_switch",
+                    "role": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "data": "placeholder"},
+                            {"name": "Q2", "data": "placeholder"},
+                        ]
+                    },
+                },
+                {
+                    "name": "isolation",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "category": "magnetic", "mas": _t1_mas(**t1_kwargs)},
+                        ]
+                    },
+                },
+                {
+                    "name": "output_0",
+                    "role": "outputRectifier",
+                    "circuit": {
+                        "components": [
+                            {"name": "D1", "data": "placeholder"},
+                            {"name": "D2", "data": "placeholder"},
+                            {"name": "L_out0", "category": "magnetic", "mas": _lout_mas()},
+                            {"name": "C_out0", "data": "placeholder"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 def _pp_spec() -> dict:
@@ -163,12 +143,14 @@ def _pp_spec() -> dict:
         "inputVoltage": {"minimum": 36.0, "maximum": 60.0, "nominal": 48.0},
         "desiredInductance": 4.7e-6,
         "efficiency": 0.92,
-        "operatingPoints": [{
-            "outputVoltages": [12.0],
-            "outputCurrents": [5.0],
-            "switchingFrequency": 100_000.0,
-            "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [12.0],
+                "outputCurrents": [5.0],
+                "switchingFrequency": 100_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
     }
 
 
@@ -187,11 +169,12 @@ def _get_lout(tas: dict) -> dict:
 
 
 class TestPushPullMath:
-
     def test_duty_uses_effective_form(self):
         """D_eff_max = Vout·n / Vin_min, D_eff_min = Vout·n / Vin_max."""
         out = enrich_tas_for_realism(
-            _pp_tas(), topology="push_pull", spec=_pp_spec(),
+            _pp_tas(),
+            topology="push_pull",
+            spec=_pp_spec(),
         )
         # n = 8/4 = 2 ⇒ D_eff_max = 12·2/36 = 0.6667, D_eff_min = 12·2/60 = 0.4
         assert out["duty_max"] == pytest.approx(12.0 * 2.0 / 36.0, rel=1e-5)
@@ -200,7 +183,9 @@ class TestPushPullMath:
 
     def test_per_switch_duty_is_half_of_effective(self):
         out = enrich_tas_for_realism(
-            _pp_tas(), topology="push_pull", spec=_pp_spec(),
+            _pp_tas(),
+            topology="push_pull",
+            spec=_pp_spec(),
         )
         l = _get_lout(out)
         # D_q_max = D_eff_max / 2 = 0.3333
@@ -216,42 +201,50 @@ class TestPushPullMath:
         doubles, silently inflating reported Ipeak by a factor of two.
         """
         out = enrich_tas_for_realism(
-            _pp_tas(), topology="push_pull", spec=_pp_spec(),
+            _pp_tas(),
+            topology="push_pull",
+            spec=_pp_spec(),
         )
         l = _get_lout(out)
         L_worst = 0.8 * 4.7e-6
         d_eff_min = 12.0 * 2.0 / 60.0
         fsw_eff = 2.0 * 100_000.0
         expected = 12.0 * (1.0 - d_eff_min) / (L_worst * fsw_eff)
-        assert l["ipeak_provenance"]["ripple_worst_A_pp"] == pytest.approx(
-            expected, rel=1e-6
-        )
+        assert l["ipeak_provenance"]["ripple_worst_A_pp"] == pytest.approx(expected, rel=1e-6)
         # Provenance must explicitly record the doubled output frequency.
-        assert l["ipeak_provenance"]["fsw_effective_Hz"] == pytest.approx(
-            2.0 * 100_000.0
-        )
-        assert l["ipeak_provenance"]["fsw_per_switch_Hz"] == pytest.approx(
-            100_000.0
-        )
+        assert l["ipeak_provenance"]["fsw_effective_Hz"] == pytest.approx(2.0 * 100_000.0)
+        assert l["ipeak_provenance"]["fsw_per_switch_Hz"] == pytest.approx(100_000.0)
 
     def test_ipeak_is_iout_plus_half_ripple(self):
         out = enrich_tas_for_realism(
-            _pp_tas(), topology="push_pull", spec=_pp_spec(),
+            _pp_tas(),
+            topology="push_pull",
+            spec=_pp_spec(),
         )
         l = _get_lout(out)
         ripple = l["ipeak_provenance"]["ripple_worst_A_pp"]
         assert l["ipeak_worst"] == pytest.approx(5.0 + ripple / 2.0, rel=1e-6)
 
     def test_isat_uses_lout_mas_not_t1(self):
-        """B_sat·N·A_e / L_out using L_out0's own MAS, not T1's."""
+        """Isat from L_out0's own MAS, not T1's.
+
+        Ground truth = MKF: the stamped Isat must equal PyOM's saturation
+        current for the L_out0 magnetic at the op-point ambient (25 °C),
+        NOT an analytical formula.  Computing it here on the same L_out0
+        MAS the extractor harvested also proves L_out0 (not T1) was the
+        source.
+        """
         out = enrich_tas_for_realism(
-            _pp_tas(), topology="push_pull", spec=_pp_spec(),
+            _pp_tas(),
+            topology="push_pull",
+            spec=_pp_spec(),
         )
         l = _get_lout(out)
-        expected = 0.4 * 14 * 8.0327e-5 / 4.7e-6
-        assert l["isat"] == pytest.approx(expected, rel=1e-4)
-        assert l["isat_provenance"]["effective_area_m2"] == 8.0327e-5
-        assert l["isat_provenance"]["b_sat_T"] == pytest.approx(0.4)
+        expected = isat_of(_lout_mas(), temperature_c=25.0)
+        assert l["isat"] == pytest.approx(expected, rel=1e-3)
+        assert "PyOM" in l["isat_provenance"]["method"]
+        b_sat_T = l["isat_provenance"]["b_sat_T"]
+        assert 0.2 < b_sat_T < 0.6
         # Provenance must mark this as the push_pull variant so a
         # future refactor can't silently re-use the forward wrapper.
         assert "push_pull" in l["isat_provenance"]["method"]
@@ -259,7 +252,9 @@ class TestPushPullMath:
     def test_t1_is_not_isat_stamped(self):
         """Alternating-polarity drive resets T1's core every cycle."""
         out = enrich_tas_for_realism(
-            _pp_tas(), topology="push_pull", spec=_pp_spec(),
+            _pp_tas(),
+            topology="push_pull",
+            spec=_pp_spec(),
         )
         for stage in out["topology"]["stages"]:
             if stage.get("role") == "isolation":
@@ -277,16 +272,18 @@ class TestPushPullMath:
             spec=_pp_spec(),
         )
         l = _get_lout(out)
-        assert l["ipeak_provenance"][
-            "turns_ratio_n_pri_top_over_n_sec_top"
-        ] == pytest.approx(2.0, rel=1e-6)
+        assert l["ipeak_provenance"]["turns_ratio_n_pri_top_over_n_sec_top"] == pytest.approx(
+            2.0, rel=1e-6
+        )
         assert l["ipeak_provenance"]["n_primary_half"] == 4
         assert l["ipeak_provenance"]["n_secondary_half"] == 2
 
     def test_end_to_end_realism_passes(self):
         spec = _pp_spec()
         enriched = enrich_tas_for_realism(
-            _pp_tas(), topology="push_pull", spec=spec,
+            _pp_tas(),
+            topology="push_pull",
+            spec=spec,
         )
         r = evaluate_tas(enriched, topology="push_pull", spec=spec)
         assert r.verdict is RealismVerdict.PASS
@@ -302,7 +299,6 @@ class TestPushPullMath:
 
 
 class TestOverlapGuard:
-
     def test_d_eff_above_one_throws(self):
         """n=4 ⇒ D_eff_max = 12·4/36 = 1.333 — must throw."""
         with pytest.raises(EnrichmentError, match=r"D_eff_max"):
@@ -343,7 +339,6 @@ class TestOverlapGuard:
 
 
 class TestStructuralFailures:
-
     def test_missing_isolation_stage_throws(self):
         tas = _pp_tas()
         tas["topology"]["stages"] = [
@@ -355,8 +350,7 @@ class TestStructuralFailures:
     def test_missing_outputRectifier_stage_throws(self):
         tas = _pp_tas()
         tas["topology"]["stages"] = [
-            s for s in tas["topology"]["stages"]
-            if s.get("role") != "outputRectifier"
+            s for s in tas["topology"]["stages"] if s.get("role") != "outputRectifier"
         ]
         with pytest.raises(EnrichmentError, match="outputRectifier"):
             enrich_tas_for_realism(tas, topology="push_pull", spec=_pp_spec())
@@ -365,8 +359,9 @@ class TestStructuralFailures:
         tas = _pp_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][0]["name"] = "primary_upper"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][0][
+                    "name"
+                ] = "primary_upper"
         with pytest.raises(EnrichmentError, match="'pri_top'"):
             enrich_tas_for_realism(tas, topology="push_pull", spec=_pp_spec())
 
@@ -374,8 +369,9 @@ class TestStructuralFailures:
         tas = _pp_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][2]["name"] = "secondary_upper"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][2][
+                    "name"
+                ] = "secondary_upper"
         with pytest.raises(EnrichmentError, match="'sec_top'"):
             enrich_tas_for_realism(tas, topology="push_pull", spec=_pp_spec())
 
@@ -391,7 +387,7 @@ class TestStructuralFailures:
                     if c.get("name") == "L_out0":
                         c["mas"].pop("outputs", None)
                         c["mas"].pop("inputs", None)
-        with pytest.raises(EnrichmentError, match="full MAS root|inductance"):
+        with pytest.raises(EnrichmentError, match=r"full MAS root|inductance"):
             enrich_tas_for_realism(tas, topology="push_pull", spec=_pp_spec())
 
     def test_missing_lout_mas_throws(self):

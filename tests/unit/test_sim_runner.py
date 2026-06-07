@@ -30,16 +30,19 @@ from heaviside.sim.runner import (
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("token,expected", [
-    ("2.5e-8", 2.5e-8),
-    ("250u",   250e-6),
-    ("250us",  250e-6),
-    ("100n",   100e-9),
-    ("1m",     1e-3),
-    ("5k",     5e3),
-    ("3meg",   3e6),
-    ("0.5",    0.5),
-])
+@pytest.mark.parametrize(
+    "token,expected",
+    [
+        ("2.5e-8", 2.5e-8),
+        ("250u", 250e-6),
+        ("250us", 250e-6),
+        ("100n", 100e-9),
+        ("1m", 1e-3),
+        ("5k", 5e3),
+        ("3meg", 3e6),
+        ("0.5", 0.5),
+    ],
+)
 def test_spice_time_parses_common_forms(token: str, expected: float) -> None:
     assert _spice_time(token) == pytest.approx(expected)
 
@@ -119,9 +122,13 @@ def test_patch_tran_raises_on_missing_tran() -> None:
 def test_inject_meas_splices_before_end() -> None:
     deck = ".tran 1u 10m\nL1 a b 1m\n.end\n"
     annotated = _inject_meas(
-        deck, t_start=7.5e-3, t_stop=10e-3,
-        vin="v(vin_dc)", iin="i(vin_sense)",
-        vout="v(vout)", iout="i(vl_sense)",
+        deck,
+        t_start=7.5e-3,
+        t_stop=10e-3,
+        vin="v(vin_dc)",
+        iin="i(vin_sense)",
+        vout="v(vout)",
+        iout="i(vl_sense)",
     )
     # All four .meas directives present.
     assert annotated.count(".meas tran hsv_") == 4
@@ -165,8 +172,14 @@ def test_parse_meas_output_ignores_unrelated_lines() -> None:
 def test_stamp_simulation_results_writes_op0_block() -> None:
     tas: dict = {}
     result = SimResult(
-        vin=48.0, iin=1.5, vout=12.0, iout=5.0,
-        pin=72.0, pout=60.0, total_losses=12.0, efficiency=0.833,
+        vin=48.0,
+        iin=1.5,
+        vout=12.0,
+        iout=5.0,
+        pin=72.0,
+        pout=60.0,
+        total_losses=12.0,
+        efficiency=0.833,
     )
     stamp_simulation_results(tas, result)
     assert tas["simulation_results"]["op0"]["vin"] == 48.0

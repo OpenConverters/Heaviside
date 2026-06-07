@@ -44,12 +44,12 @@ class ComponentStresses:
     a synchronous-rectifier buck has no D1 → vr_stress=None).
     """
 
-    vds_stress: float | None     # MOSFET drain-source max
-    id_stress: float | None      # MOSFET drain current max (continuous)
-    vr_stress: float | None      # Diode reverse-voltage max
+    vds_stress: float | None  # MOSFET drain-source max
+    id_stress: float | None  # MOSFET drain current max (continuous)
+    vr_stress: float | None  # Diode reverse-voltage max
     if_avg_stress: float | None  # Diode average forward current
-    v_working: float | None      # Capacitor steady-state voltage
-    i_ripple: float | None       # Capacitor RMS ripple current
+    v_working: float | None  # Capacitor steady-state voltage
+    i_ripple: float | None  # Capacitor RMS ripple current
 
 
 def _require_positive(spec: Mapping[str, Any], path: tuple[str, ...], where: str) -> float:
@@ -78,25 +78,24 @@ def _first_op(spec: Mapping[str, Any], where: str) -> Mapping[str, Any]:
 def _op_at(spec: Mapping[str, Any], op_index: int, where: str) -> Mapping[str, Any]:
     ops = spec.get("operatingPoints")
     if not isinstance(ops, list) or not ops:
-        raise StressDerivationError(
-            f"{where}.operatingPoints: required non-empty list of objects"
-        )
+        raise StressDerivationError(f"{where}.operatingPoints: required non-empty list of objects")
     if not (0 <= op_index < len(ops)):
         raise StressDerivationError(
-            f"{where}.operatingPoints[{op_index}]: out of range "
-            f"({len(ops)} ops total)"
+            f"{where}.operatingPoints[{op_index}]: out of range ({len(ops)} ops total)"
         )
     op = ops[op_index]
     if not isinstance(op, Mapping):
         raise StressDerivationError(
-            f"{where}.operatingPoints[{op_index}]: expected object, got "
-            f"{type(op).__name__}"
+            f"{where}.operatingPoints[{op_index}]: expected object, got {type(op).__name__}"
         )
     return op
 
 
 def _vout_iout(
-    spec: Mapping[str, Any], where: str, *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    where: str,
+    *,
+    op_index: int = 0,
 ) -> tuple[float, float]:
     op = _op_at(spec, op_index, where)
     vouts = op.get("outputVoltages")
@@ -166,7 +165,7 @@ def buck_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStr
         vr_stress=vmax,
         if_avg_stress=iout * (1.0 - d_min),
         v_working=vout,
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -198,7 +197,6 @@ def boost_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentSt
             f"{where}: Vout ({vout}) must be > Vin_max ({vmax}); boost cannot step down"
         )
     d_max = 1.0 - vmin / vout  # worst at Vin_min
-    d_min = 1.0 - vmax / vout
     # Inductor current = Iin = Pout / (Vin * eta). Use eta=1 as the
     # upper bound on inductor current (more conservative for sizing).
     iin_pk = iout * vout / vmin
@@ -209,7 +207,7 @@ def boost_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentSt
         if_avg_stress=iout,
         v_working=vout,
         # Triangular-like at duty cycle: rms approximation
-        i_ripple=iout * (d_max ** 0.5) / ((1.0 - d_max) ** 0.5),
+        i_ripple=iout * (d_max**0.5) / ((1.0 - d_max) ** 0.5),
     )
 
 
@@ -300,14 +298,10 @@ def flyback_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> Component
     n = float(ratios[0])
     d_max = spec.get("maximumDutyCycle")
     if not isinstance(d_max, (int, float)) or not (0.0 < d_max < 1.0):
-        raise StressDerivationError(
-            f"{where}.maximumDutyCycle must be in (0, 1)"
-        )
+        raise StressDerivationError(f"{where}.maximumDutyCycle must be in (0, 1)")
     eff = spec.get("efficiency")
     if not isinstance(eff, (int, float)) or not (0.0 < eff <= 1.0):
-        raise StressDerivationError(
-            f"{where}.efficiency required in (0, 1] for accurate ipeak"
-        )
+        raise StressDerivationError(f"{where}.efficiency required in (0, 1] for accurate ipeak")
     Lm = spec.get("desiredMagnetizingInductance")
     if not isinstance(Lm, (int, float)) or Lm <= 0:
         raise StressDerivationError(
@@ -345,6 +339,7 @@ def flyback_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> Component
 # Helpers for isolated topologies
 # ---------------------------------------------------------------------------
 
+
 def _turns_ratio(spec: Mapping[str, Any], where: str) -> float:
     """Extract desiredTurnsRatios[0] (N_pri / N_sec)."""
     ratios = spec.get("desiredTurnsRatios")
@@ -359,9 +354,7 @@ def _duty_max(spec: Mapping[str, Any], where: str) -> float:
     """Extract maximumDutyCycle in (0, 1)."""
     d_max = spec.get("maximumDutyCycle")
     if not isinstance(d_max, (int, float)) or not (0.0 < d_max < 1.0):
-        raise StressDerivationError(
-            f"{where}.maximumDutyCycle must be in (0, 1)"
-        )
+        raise StressDerivationError(f"{where}.maximumDutyCycle must be in (0, 1)")
     return float(d_max)
 
 
@@ -393,6 +386,7 @@ def _switching_freq(spec: Mapping[str, Any], op_index: int, where: str) -> float
 # Similar to Cuk: Vds = Vin + Vout, Vr = Vin + Vout
 # Switch current = sum of L1 (input) and L2 (output) currents.
 
+
 def sepic_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStresses:
     where = "sepic spec"
     vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
@@ -415,6 +409,7 @@ def sepic_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentSt
 # ---------------------------------------------------------------------------
 # Zeta stresses (coupled-inductor buck-boost, similar to SEPIC/Cuk)
 # ---------------------------------------------------------------------------
+
 
 def zeta_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStresses:
     where = "zeta spec"
@@ -443,8 +438,11 @@ def zeta_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStr
 # Switch current = max(Iin, Iout) since it operates in buck or boost mode.
 # Synchronous rectification — no diode.
 
+
 def four_switch_buck_boost_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "four_switch_buck_boost spec"
     vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
@@ -457,10 +455,10 @@ def four_switch_buck_boost_stresses(
     return ComponentStresses(
         vds_stress=vds,
         id_stress=id_pk,
-        vr_stress=None,       # synchronous rectification, no diode
+        vr_stress=None,  # synchronous rectification, no diode
         if_avg_stress=None,
         v_working=max(vmax, vout),
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -468,15 +466,18 @@ def four_switch_buck_boost_stresses(
 # Single-switch forward (Vds = 2×Vin due to demagnetization reset)
 # ---------------------------------------------------------------------------
 
+
 def single_switch_forward_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "single_switch_forward spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
-    d_max = _duty_max(spec, where)
+    _duty_max(spec, where)  # validate duty-cycle spec; Vds here is 2·Vin_max, not D
     ripple = _ripple_pp(spec)
     # Switch sees 2×Vin during demagnetisation (1:1 reset winding)
     vds = 2.0 * vmax
@@ -491,7 +492,7 @@ def single_switch_forward_stresses(
         vr_stress=vr,
         if_avg_stress=if_avg,
         v_working=vout,
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -499,11 +500,14 @@ def single_switch_forward_stresses(
 # Two-switch forward (Vds = Vin, clamped by body diodes)
 # ---------------------------------------------------------------------------
 
+
 def two_switch_forward_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "two_switch_forward spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -517,7 +521,7 @@ def two_switch_forward_stresses(
         vr_stress=vr,
         if_avg_stress=iout,
         v_working=vout,
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -528,11 +532,14 @@ def two_switch_forward_stresses(
 # The clamp capacitor resets the transformer; Vds on the main switch
 # is Vin + V_clamp where V_clamp ≈ Vin*D/(1-D). Worst case ≈ Vin/(1-D).
 
+
 def active_clamp_forward_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "active_clamp_forward spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -548,7 +555,7 @@ def active_clamp_forward_stresses(
         vr_stress=vr,
         if_avg_stress=iout,
         v_working=vout,
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -556,11 +563,14 @@ def active_clamp_forward_stresses(
 # Push-pull (Vds = 2×Vin, centre-tapped primary)
 # ---------------------------------------------------------------------------
 
+
 def push_pull_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "push_pull spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -575,7 +585,7 @@ def push_pull_stresses(
         vr_stress=vr,
         if_avg_stress=iout,
         v_working=vout,
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -583,11 +593,14 @@ def push_pull_stresses(
 # Asymmetric half-bridge (AHB) — Vds = Vin per switch
 # ---------------------------------------------------------------------------
 
+
 def asymmetric_half_bridge_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "asymmetric_half_bridge spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -601,7 +614,7 @@ def asymmetric_half_bridge_stresses(
         vr_stress=vr,
         if_avg_stress=iout,
         v_working=vout,
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -609,11 +622,14 @@ def asymmetric_half_bridge_stresses(
 # Phase-shifted full bridge (PSFB) — Vds = Vin per switch
 # ---------------------------------------------------------------------------
 
+
 def phase_shifted_full_bridge_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "phase_shifted_full_bridge spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -628,7 +644,7 @@ def phase_shifted_full_bridge_stresses(
         vr_stress=vr,
         if_avg_stress=iout,
         v_working=vout,
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -636,11 +652,14 @@ def phase_shifted_full_bridge_stresses(
 # Phase-shifted half bridge (PSHB) — Vds = Vin per switch
 # ---------------------------------------------------------------------------
 
+
 def phase_shifted_half_bridge_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "phase_shifted_half_bridge spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -654,7 +673,7 @@ def phase_shifted_half_bridge_stresses(
         vr_stress=vr,
         if_avg_stress=iout,
         v_working=vout,
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -662,11 +681,14 @@ def phase_shifted_half_bridge_stresses(
 # Weinberg (push-pull primary) — Vds = 2×Vin
 # ---------------------------------------------------------------------------
 
+
 def weinberg_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "weinberg spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -680,7 +702,7 @@ def weinberg_stresses(
         vr_stress=vr,
         if_avg_stress=iout,
         v_working=vout,
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -693,11 +715,14 @@ def weinberg_stresses(
 # No rectifier diode stress if synchronous rectification; use diode
 # stress for legacy non-SR designs.
 
+
 def llc_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "llc spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -721,11 +746,14 @@ def llc_stresses(
 # CLLC resonant (bidirectional LLC) — same half-bridge stress model
 # ---------------------------------------------------------------------------
 
+
 def cllc_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "cllc spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -746,11 +774,14 @@ def cllc_stresses(
 # CLLLC resonant — same half-bridge stress model as LLC/CLLC
 # ---------------------------------------------------------------------------
 
+
 def clllc_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "clllc spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -778,11 +809,14 @@ def clllc_stresses(
 # additional magnetizing-current term to add to the switch stress — the
 # FHA-reflected load current dominates.)
 
+
 def series_resonant_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "series_resonant spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -804,11 +838,14 @@ def series_resonant_stresses(
 # Dual active bridge (DAB) — Vds = Vin (primary), full bridge both sides
 # ---------------------------------------------------------------------------
 
+
 def dual_active_bridge_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "dual_active_bridge spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     n = _turns_ratio(spec, where)
@@ -819,10 +856,10 @@ def dual_active_bridge_stresses(
     return ComponentStresses(
         vds_stress=vds,
         id_stress=ipri,
-        vr_stress=None,       # active bridge — synchronous rectification
+        vr_stress=None,  # active bridge — synchronous rectification
         if_avg_stress=None,
         v_working=vout,
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -830,8 +867,11 @@ def dual_active_bridge_stresses(
 # Isolated buck — half-bridge primary, Vds = Vin
 # ---------------------------------------------------------------------------
 
+
 def isolated_buck_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     """Stresses for the isolated buck (flybuck).
 
@@ -849,7 +889,7 @@ def isolated_buck_stresses(
         Iout_i; the worst-case over rails sizes vr_stress / if_avg_stress.
     """
     where = "isolated_buck spec"
-    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    _require_positive(spec, ("inputVoltage", "minimum"), where)  # validate completeness
     vmax = _require_positive(spec, ("inputVoltage", "maximum"), where)
     vout, iout_pri = _vout_iout(spec, where, op_index=op_index)
     ripple = _ripple_pp(spec)
@@ -885,7 +925,7 @@ def isolated_buck_stresses(
         vr_stress=vr_worst,
         if_avg_stress=if_worst,
         v_working=vout,
-        i_ripple=i_l_pri * ripple / (2.0 * 3.0 ** 0.5),
+        i_ripple=i_l_pri * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -897,8 +937,11 @@ def isolated_buck_stresses(
 # ipeak formula (that belongs to flyback's extract enrichment). Uses
 # energy-balance peak current instead.
 
+
 def isolated_buck_boost_stresses(
-    spec: Mapping[str, Any], *, op_index: int = 0,
+    spec: Mapping[str, Any],
+    *,
+    op_index: int = 0,
 ) -> ComponentStresses:
     where = "isolated_buck_boost spec"
     vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
@@ -951,7 +994,8 @@ _DERIVERS: dict[str, Any] = {
 
 
 def _worst_case_across_ops(
-    fn: Any, spec: Mapping[str, Any],
+    fn: Any,
+    spec: Mapping[str, Any],
 ) -> ComponentStresses:
     """Sweep every operatingPoints[*] and return the element-wise
     worst-case ``ComponentStresses`` across all ops.
@@ -1009,7 +1053,8 @@ def derive_stresses(topology: str, spec: Mapping[str, Any]) -> ComponentStresses
 
 
 def derive_stresses_per_op(
-    topology: str, spec: Mapping[str, Any],
+    topology: str,
+    spec: Mapping[str, Any],
 ) -> list[ComponentStresses] | None:
     """Return one ``ComponentStresses`` per operating point.
 

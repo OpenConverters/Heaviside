@@ -28,7 +28,6 @@ from heaviside.catalogue.selector import (
     MosfetSelection,
     MosfetTiebreaker,
     ResistorConstraints,
-    ResistorSelection,
     SelectionError,
     select_capacitor,
     select_controller,
@@ -54,12 +53,12 @@ from heaviside.pipeline.stress import ComponentStresses, derive_stresses
 #   check_fet_voltage_derating(..., min_ratio=1.5)
 #   check_inductor_isat_margin(..., min_ratio=1.2) -- not used here
 
-_MOSFET_VDS_DERATING: float = 1.50   # match check_fet_voltage_derating
-_MOSFET_ID_DERATING: float = 1.20    # match analyst convention (Maniktala Ch.7)
-_DIODE_VRRM_DERATING: float = 1.30   # match check_diode_voltage_derating
-_DIODE_IF_DERATING: float = 1.20     # match analyst convention
-_CAP_V_DERATING: float = 1.50        # match check_capacitor_voltage_derating
-_CAP_RIPPLE_DERATING: float = 1.20   # avoid running the cap at its ripple limit
+_MOSFET_VDS_DERATING: float = 1.50  # match check_fet_voltage_derating
+_MOSFET_ID_DERATING: float = 1.20  # match analyst convention (Maniktala Ch.7)
+_DIODE_VRRM_DERATING: float = 1.30  # match check_diode_voltage_derating
+_DIODE_IF_DERATING: float = 1.20  # match analyst convention
+_CAP_V_DERATING: float = 1.50  # match check_capacitor_voltage_derating
+_CAP_RIPPLE_DERATING: float = 1.20  # avoid running the cap at its ripple limit
 # Capacitance acceptance band on the analytical target. Lower bound
 # enforces minimum filtering; upper bound prevents 10x over-sizing
 # (which oversizes the BOM cost + footprint with no benefit).
@@ -95,7 +94,7 @@ def _mosfet_constraints_from_stress(
             "MOSFET constraints require both vds_stress and id_stress "
             "on the ComponentStresses; topology stress deriver is incomplete."
         )
-    rds_on_max = (_MOSFET_RDS_ON_LOSS_FRACTION * pout) / (s.id_stress ** 2)
+    rds_on_max = (_MOSFET_RDS_ON_LOSS_FRACTION * pout) / (s.id_stress**2)
     # Qg = (Loss budget for switching) / (Vgs * fsw)
     qg_max = (_MOSFET_QG_LOSS_FRACTION * pout) / (_DEFAULT_GATE_DRIVE_VOLTAGE * fsw)
     op_kwargs: dict[str, float] = {}
@@ -335,14 +334,15 @@ _DEFAULT_VOUT_RIPPLE_FRACTION: float = 0.01
 
 
 def _buck_target_capacitance(
-    *, ripple_current_pp: float, fsw: float, vout: float,
+    *,
+    ripple_current_pp: float,
+    fsw: float,
+    vout: float,
 ) -> float:
     """Target output capacitance for a buck, given the analytical
     inductor current ripple, switching frequency, and output voltage."""
     if fsw <= 0 or vout <= 0:
-        raise ValueError(
-            f"_buck_target_capacitance: fsw={fsw}, vout={vout} must be positive"
-        )
+        raise ValueError(f"_buck_target_capacitance: fsw={fsw}, vout={vout} must be positive")
     delta_v = _DEFAULT_VOUT_RIPPLE_FRACTION * vout
     return ripple_current_pp / (8.0 * fsw * delta_v)
 
@@ -391,8 +391,7 @@ def _add_input_capacitor(
     fsw = op.get("switchingFrequency")
     vout = vouts[0] if vouts else None
     iout = iouts[0] if iouts else None
-    if not all(isinstance(x, (int, float)) and x > 0
-               for x in (vin_nom, vin_max, vout, iout, fsw)):
+    if not all(isinstance(x, (int, float)) and x > 0 for x in (vin_nom, vin_max, vout, iout, fsw)):
         return False
 
     d = float(vout) / float(vin_nom)
@@ -403,8 +402,12 @@ def _add_input_capacitor(
     target_c = float(iout) * d * (1.0 - d) / (float(fsw) * delta_v)
 
     stresses = ComponentStresses(
-        vds_stress=None, id_stress=None, vr_stress=None, if_avg_stress=None,
-        v_working=float(vin_max), i_ripple=i_ripple,
+        vds_stress=None,
+        id_stress=None,
+        vr_stress=None,
+        if_avg_stress=None,
+        v_working=float(vin_max),
+        i_ripple=i_ripple,
     )
     cap_c = _capacitor_constraints_from_stress(stresses, target_capacitance=target_c)
     # Input bulk cap differs from the output cap: it absorbs the chopped
@@ -481,7 +484,10 @@ def assemble_bom_from_tas(
     mosfet_c: MosfetConstraints | None = None
     if stresses.vds_stress is not None and stresses.id_stress is not None:
         mosfet_c = _mosfet_constraints_from_stress(
-            stresses, pout=pout, fsw=float(fsw), duty=duty,
+            stresses,
+            pout=pout,
+            fsw=float(fsw),
+            duty=duty,
         )
 
     # Diode constraints + selection.
@@ -498,13 +504,15 @@ def assemble_bom_from_tas(
         # waveforms; for the discontinuous waveforms of boost/flyback
         # this is a conservative overestimate (which is what we want
         # when sizing the output cap).
-        ripple_pp = stresses.i_ripple * 2.0 * (3.0 ** 0.5)
+        ripple_pp = stresses.i_ripple * 2.0 * (3.0**0.5)
         target_c = _buck_target_capacitance(
             ripple_current_pp=ripple_pp,
-            fsw=float(fsw), vout=float(stresses.v_working),
+            fsw=float(fsw),
+            vout=float(stresses.v_working),
         )
         cap_c = _capacitor_constraints_from_stress(
-            stresses, target_capacitance=target_c,
+            stresses,
+            target_capacitance=target_c,
         )
 
     for stage in tas.get("topology", {}).get("stages", []):
@@ -516,25 +524,31 @@ def assemble_bom_from_tas(
                 # operating point is known — picks low-Qg parts at high fsw
                 # instead of the biggest low-Rds_on Si FET. Falls back to the
                 # caller's tiebreaker if the op-point wasn't populated.
-                tb = (MosfetTiebreaker.LOWEST_TOTAL_LOSS
-                      if mosfet_c.op_duty is not None else mosfet_tiebreaker)
+                tb = (
+                    MosfetTiebreaker.LOWEST_TOTAL_LOSS
+                    if mosfet_c.op_duty is not None
+                    else mosfet_tiebreaker
+                )
                 sel_m = select_mosfet(mosfet_c, tiebreaker=tb)
                 _stamp_mosfet(
-                    comp, sel_m,
+                    comp,
+                    sel_m,
                     stress_vds=stresses.vds_stress,
                     stress_id=stresses.id_stress,
                 )
             elif diode_c is not None and _is_diode_placeholder(comp):
                 sel_d = select_diode(diode_c, tiebreaker=diode_tiebreaker)
                 _stamp_diode(
-                    comp, sel_d,
+                    comp,
+                    sel_d,
                     stress_vr=stresses.vr_stress,
                     stress_if_avg=stresses.if_avg_stress,
                 )
             elif cap_c is not None and _is_capacitor_placeholder(comp):
                 sel_c = select_capacitor(cap_c, tiebreaker=capacitor_tiebreaker)
                 _stamp_capacitor(
-                    comp, sel_c,
+                    comp,
+                    sel_c,
                     stress_v=stresses.v_working,
                     stress_ripple=stresses.i_ripple,
                 )
@@ -575,7 +589,10 @@ def _controller_vref(tas: dict[str, Any]) -> float | None:
 
 
 def _add_feedback_divider(
-    tas: dict[str, Any], *, topology: str, spec: Mapping[str, Any],
+    tas: dict[str, Any],
+    *,
+    topology: str,
+    spec: Mapping[str, Any],
 ) -> bool:
     """Synthesize the output-voltage feedback divider (Rfb_top / Rfb_bot).
 
@@ -620,7 +637,8 @@ def _add_feedback_divider(
         circuit = stage.get("circuit")
         if isinstance(circuit, dict) and isinstance(circuit.get("components"), list):
             for ref, sel, target in (
-                ("Rfb_top", sel_top, r_top), ("Rfb_bot", sel_bot, r_bot),
+                ("Rfb_top", sel_top, r_top),
+                ("Rfb_bot", sel_bot, r_bot),
             ):
                 comp: dict[str, Any] = {
                     "name": ref,
@@ -647,14 +665,17 @@ def _add_feedback_divider(
 
 def _humanize_ohms(r: float) -> str:
     if r >= 1e6:
-        return f"{r/1e6:.2f}M"
+        return f"{r / 1e6:.2f}M"
     if r >= 1e3:
-        return f"{r/1e3:.2f}k"
+        return f"{r / 1e3:.2f}k"
     return f"{r:.1f}"
 
 
 def _select_controller_for_tas(
-    tas: dict[str, Any], *, topology: str, spec: Mapping[str, Any],
+    tas: dict[str, Any],
+    *,
+    topology: str,
+    spec: Mapping[str, Any],
 ) -> bool:
     """Stamp any controller placeholder with a real IC from TAS.
 
@@ -669,8 +690,12 @@ def _select_controller_for_tas(
     ops = spec.get("operatingPoints") or [{}]
     op = ops[0] if isinstance(ops[0], Mapping) else {}
     fsw = op.get("switchingFrequency")
-    if not (isinstance(vin_nom, (int, float)) and vin_nom > 0
-            and isinstance(fsw, (int, float)) and fsw > 0):
+    if not (
+        isinstance(vin_nom, (int, float))
+        and vin_nom > 0
+        and isinstance(fsw, (int, float))
+        and fsw > 0
+    ):
         return False
 
     constraints = ControllerConstraints(

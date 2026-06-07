@@ -21,7 +21,8 @@ code stays bounded.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from heaviside.decomposer.spice_parser import SpiceDeck, SpiceElement
 
@@ -48,13 +49,13 @@ def _tas_component(name: str, data_url: str) -> dict[str, str]:
 
 
 _DATA_URL = {
-    "mosfet":     "TAS/data/mosfets.ndjson?placeholder={name}",
-    "diode":      "TAS/data/diodes.ndjson?placeholder={name}",
-    "magnetic":   "TAS/data/magnetics.ndjson?placeholder={name}",
-    "capacitor":  "TAS/data/capacitors.ndjson?placeholder={name}",
-    "resistor":   "TAS/data/resistors.ndjson?placeholder={name}",
+    "mosfet": "TAS/data/mosfets.ndjson?placeholder={name}",
+    "diode": "TAS/data/diodes.ndjson?placeholder={name}",
+    "magnetic": "TAS/data/magnetics.ndjson?placeholder={name}",
+    "capacitor": "TAS/data/capacitors.ndjson?placeholder={name}",
+    "resistor": "TAS/data/resistors.ndjson?placeholder={name}",
     "controller": "TAS/data/controllers.ndjson?placeholder={name}",
-    "terminal":   "TAS/data/terminals.ndjson?placeholder={name}",
+    "terminal": "TAS/data/terminals.ndjson?placeholder={name}",
 }
 
 
@@ -86,42 +87,62 @@ def _component(category: str, name: str) -> dict[str, str]:
 # round will surface any topologies that now drift past their stencil.
 
 # Refdeses that MUST be dropped regardless of topology (testbench-only).
-_TESTBENCH_EXACT: frozenset[str] = frozenset({
-    "Rclamp",  # active-clamp bleeder (1MEG sim artefact; not real BOM)
-    # LLC bridge body diodes: MKF emits DHI/DLO as explicit DIDEAL diodes
-    # because the SW1 switch model has no built-in body diode. In a real
-    # bridge the body diode is intrinsic to the MOSFET and is NOT a
-    # separate BOM line. Drop them.
-    "DHI", "DLO",
-    # Phase-shifted full bridge: same story, one synthetic body diode
-    # per switch (DA pairs with SA, DB with SB, DC with SC, DD with SD).
-    "DA", "DB", "DC", "DD",
-    # Active-clamp forward body diodes — synthetic anti-parallel diodes
-    # on S1 and S_clamp to model the parasitic MOSFET body diode that
-    # ngspice's SW1 model lacks. Both are intrinsic to the real MOSFETs
-    # and not separate BOM components.
-    "D_S1_body", "D_Sclamp_body",
-})
+_TESTBENCH_EXACT: frozenset[str] = frozenset(
+    {
+        "Rclamp",  # active-clamp bleeder (1MEG sim artefact; not real BOM)
+        # LLC bridge body diodes: MKF emits DHI/DLO as explicit DIDEAL diodes
+        # because the SW1 switch model has no built-in body diode. In a real
+        # bridge the body diode is intrinsic to the MOSFET and is NOT a
+        # separate BOM line. Drop them.
+        "DHI",
+        "DLO",
+        # Phase-shifted full bridge: same story, one synthetic body diode
+        # per switch (DA pairs with SA, DB with SB, DC with SC, DD with SD).
+        "DA",
+        "DB",
+        "DC",
+        "DD",
+        # Active-clamp forward body diodes — synthetic anti-parallel diodes
+        # on S1 and S_clamp to model the parasitic MOSFET body diode that
+        # ngspice's SW1 model lacks. Both are intrinsic to the real MOSFETs
+        # and not separate BOM components.
+        "D_S1_body",
+        "D_Sclamp_body",
+    }
+)
 
 # Refdeses dropped if they match any of these case-sensitive prefixes.
 # Note: V*/B* are handled by kind, not prefix — this list is for R/C/L/W
 # parasitics that aren't covered by a single rule.
 _TESTBENCH_PREFIXES: tuple[str, ...] = (
-    "Rsn", "Csn",                # all snubber networks (Rsnub_, Csnub_,
-                                 # Rsn1_o1, Csn1_o1, Rsn2_o1, …)
-    "Rdcr_",                     # DCR parasitic resistors on inductors
-    "Rco_esr", "Rcs_esr", "Rcc_esr", "Rc1_esr", "R_cb_esr", "R_co_esr",  # cap ESR parasitics
-    "Rcout",                     # output cap ESR per-output (single_switch_forward: Rcout0, Rcout1, …)
-    "Rout",                      # output cap ESR per-output (Rout0_esr, Rout1_esr, …)
-    "Resr_",                     # generic ESR (LLC etc.)
-    "Rload", "R_load",           # load resistors (Rload, R_load_o1, …)
-    "Rpri_esr", "Rsec_esr",      # primary/secondary winding ESR parasitics
-    "Rsec",                      # secondary winding DCR
-    "Rlout", "R_lo_dcr",         # output choke DCR (two_switch_forward, AHB, …)
-    "Rdc_supply_dummy", "Rbus_HV_dummy", "Rdc_sec", "Rphase_dummy",
-    "Resr",                      # cap ESR with no underscore (Vienna 'Resr')
-    "Rpri_ret", "Rsec_ret",      # bridge return resistors
-    "Rct_",                      # PSFB center-tap return stubs (1µΩ to GND)
+    "Rsn",
+    "Csn",  # all snubber networks (Rsnub_, Csnub_,
+    # Rsn1_o1, Csn1_o1, Rsn2_o1, …)
+    "Rdcr_",  # DCR parasitic resistors on inductors
+    "Rco_esr",
+    "Rcs_esr",
+    "Rcc_esr",
+    "Rc1_esr",
+    "R_cb_esr",
+    "R_co_esr",  # cap ESR parasitics
+    "Rcout",  # output cap ESR per-output (single_switch_forward: Rcout0, Rcout1, …)
+    "Rout",  # output cap ESR per-output (Rout0_esr, Rout1_esr, …)
+    "Resr_",  # generic ESR (LLC etc.)
+    "Rload",
+    "R_load",  # load resistors (Rload, R_load_o1, …)
+    "Rpri_esr",
+    "Rsec_esr",  # primary/secondary winding ESR parasitics
+    "Rsec",  # secondary winding DCR
+    "Rlout",
+    "R_lo_dcr",  # output choke DCR (two_switch_forward, AHB, …)
+    "Rdc_supply_dummy",
+    "Rbus_HV_dummy",
+    "Rdc_sec",
+    "Rphase_dummy",
+    "Resr",  # cap ESR with no underscore (Vienna 'Resr')
+    "Rpri_ret",
+    "Rsec_ret",  # bridge return resistors
+    "Rct_",  # PSFB center-tap return stubs (1µΩ to GND)
 )
 
 
@@ -210,13 +231,9 @@ def _validate_real_set(
         try:
             el = deck.by_refdes(refdes)
         except KeyError as exc:
-            raise StencilError(
-                f"{topology}: expected {refdes} in deck — {exc}"
-            ) from exc
+            raise StencilError(f"{topology}: expected {refdes} in deck — {exc}") from exc
         if el.kind != expected_kind:
-            raise StencilError(
-                f"{topology}: {refdes} must be a {expected_kind}, got {el.kind!r}"
-            )
+            raise StencilError(f"{topology}: {refdes} must be a {expected_kind}, got {el.kind!r}")
 
     real_set = set(expected_kinds)
     for el in deck.elements:
@@ -234,9 +251,9 @@ def _validate_real_set(
 
 def _pwm_components() -> list[dict[str, str]]:
     return [
-        _component("mosfet",    "Q1"),     # ← S1
-        _component("diode",     "D1"),     # ← D1
-        _component("magnetic",  "L1"),     # ← L1
+        _component("mosfet", "Q1"),  # ← S1
+        _component("diode", "D1"),  # ← D1
+        _component("magnetic", "L1"),  # ← L1
         _component("capacitor", "C_out"),  # ← Cout
     ]
 
@@ -357,7 +374,8 @@ def _attach_external_terminals(topology: dict[str, Any]) -> dict[str, Any]:
     return topology
 
 
-def _control_stage() -> dict[str, Any]:    return {
+def _control_stage() -> dict[str, Any]:
+    return {
         "name": "controller",
         "role": "control",
         "circuit": {
@@ -376,7 +394,7 @@ def buck(deck: SpiceDeck) -> TasTopology:
     switching_cell = {
         "name": "power_stage",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout"}],
         "circuit": {
             "components": _pwm_components(),
@@ -408,7 +426,7 @@ def buck(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "L1",    "pin": "2"},
+                {"component": "L1", "pin": "2"},
                 {"component": "C_out", "pin": "1"},
             ],
         },
@@ -453,7 +471,7 @@ def boost(deck: SpiceDeck) -> TasTopology:
     switching_cell = {
         "name": "power_stage",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout"}],
         "circuit": {
             "components": _pwm_components(),
@@ -485,7 +503,7 @@ def boost(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "D1",    "pin": "K"},
+                {"component": "D1", "pin": "K"},
                 {"component": "C_out", "pin": "1"},
             ],
         },
@@ -542,24 +560,24 @@ def cuk(deck: SpiceDeck) -> TasTopology:
     switching_cell = {
         "name": "power_stage",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout"}],
         "circuit": {
             "components": [
-                _component("mosfet",    "Q1"),         # ← S1
-                _component("diode",     "D1"),         # ← D1
-                _component("magnetic",  "L1"),         # ← L1 (input)
-                _component("magnetic",  "L2"),         # ← L2 (output)
-                _component("capacitor", "C_flying"),   # ← C1
-                _component("capacitor", "C_out"),      # ← Cout
+                _component("mosfet", "Q1"),  # ← S1
+                _component("diode", "D1"),  # ← D1
+                _component("magnetic", "L1"),  # ← L1 (input)
+                _component("magnetic", "L2"),  # ← L2 (output)
+                _component("capacitor", "C_flying"),  # ← C1
+                _component("capacitor", "C_out"),  # ← Cout
             ],
             "connections": [
                 {
                     "name": "node_A",
                     "kind": "wire",
                     "endpoints": [
-                        {"component": "L1",       "pin": "2"},
-                        {"component": "Q1",       "pin": "D"},
+                        {"component": "L1", "pin": "2"},
+                        {"component": "Q1", "pin": "D"},
                         {"component": "C_flying", "pin": "1"},
                     ],
                 },
@@ -568,8 +586,8 @@ def cuk(deck: SpiceDeck) -> TasTopology:
                     "kind": "wire",
                     "endpoints": [
                         {"component": "C_flying", "pin": "2"},
-                        {"component": "D1",       "pin": "A"},
-                        {"component": "L2",       "pin": "1"},
+                        {"component": "D1", "pin": "A"},
+                        {"component": "L2", "pin": "1"},
                     ],
                 },
             ],
@@ -590,7 +608,7 @@ def cuk(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "L2",    "pin": "2"},
+                {"component": "L2", "pin": "2"},
                 {"component": "C_out", "pin": "1"},
             ],
         },
@@ -640,15 +658,15 @@ def sepic(deck: SpiceDeck) -> TasTopology:
     switching_cell = {
         "name": "power_stage",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout"}],
         "circuit": {
             "components": [
-                _component("mosfet",    "Q1"),
-                _component("diode",     "D1"),
-                _component("magnetic",  "L1"),
-                _component("magnetic",  "L2"),
-                _component("capacitor", "C_flying"),   # ← Cs
+                _component("mosfet", "Q1"),
+                _component("diode", "D1"),
+                _component("magnetic", "L1"),
+                _component("magnetic", "L2"),
+                _component("capacitor", "C_flying"),  # ← Cs
                 _component("capacitor", "C_out"),
             ],
             "connections": [
@@ -656,8 +674,8 @@ def sepic(deck: SpiceDeck) -> TasTopology:
                     "name": "node_A",
                     "kind": "wire",
                     "endpoints": [
-                        {"component": "L1",       "pin": "2"},
-                        {"component": "Q1",       "pin": "D"},
+                        {"component": "L1", "pin": "2"},
+                        {"component": "Q1", "pin": "D"},
                         {"component": "C_flying", "pin": "1"},
                     ],
                 },
@@ -666,8 +684,8 @@ def sepic(deck: SpiceDeck) -> TasTopology:
                     "kind": "wire",
                     "endpoints": [
                         {"component": "C_flying", "pin": "2"},
-                        {"component": "L2",       "pin": "2"},
-                        {"component": "D1",       "pin": "A"},
+                        {"component": "L2", "pin": "2"},
+                        {"component": "D1", "pin": "A"},
                     ],
                 },
             ],
@@ -688,7 +706,7 @@ def sepic(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "D1",    "pin": "K"},
+                {"component": "D1", "pin": "K"},
                 {"component": "C_out", "pin": "1"},
             ],
         },
@@ -737,15 +755,15 @@ def zeta(deck: SpiceDeck) -> TasTopology:
     switching_cell = {
         "name": "power_stage",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout"}],
         "circuit": {
             "components": [
-                _component("mosfet",    "Q1"),
-                _component("diode",     "D1"),
-                _component("magnetic",  "L1"),
-                _component("magnetic",  "L2"),
-                _component("capacitor", "C_flying"),   # ← Cc
+                _component("mosfet", "Q1"),
+                _component("diode", "D1"),
+                _component("magnetic", "L1"),
+                _component("magnetic", "L2"),
+                _component("capacitor", "C_flying"),  # ← Cc
                 _component("capacitor", "C_out"),
             ],
             "connections": [
@@ -753,8 +771,8 @@ def zeta(deck: SpiceDeck) -> TasTopology:
                     "name": "node_SW",
                     "kind": "wire",
                     "endpoints": [
-                        {"component": "Q1",       "pin": "S"},
-                        {"component": "L1",       "pin": "1"},
+                        {"component": "Q1", "pin": "S"},
+                        {"component": "L1", "pin": "1"},
                         {"component": "C_flying", "pin": "1"},
                     ],
                 },
@@ -763,8 +781,8 @@ def zeta(deck: SpiceDeck) -> TasTopology:
                     "kind": "wire",
                     "endpoints": [
                         {"component": "C_flying", "pin": "2"},
-                        {"component": "D1",       "pin": "K"},
-                        {"component": "L2",       "pin": "1"},
+                        {"component": "D1", "pin": "K"},
+                        {"component": "L2", "pin": "1"},
                     ],
                 },
             ],
@@ -785,7 +803,7 @@ def zeta(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "L2",    "pin": "2"},
+                {"component": "L2", "pin": "2"},
                 {"component": "C_out", "pin": "1"},
             ],
         },
@@ -824,8 +842,8 @@ _4SBB_REAL_KINDS = {
     "S_Q2": "switch",
     "S_Q3": "switch",
     "S_Q4": "switch",
-    "L1":   "inductor",
-    "Cin":  "capacitor",
+    "L1": "inductor",
+    "Cin": "capacitor",
     "Cout": "capacitor",
 }
 
@@ -857,15 +875,15 @@ def four_switch_buck_boost(deck: SpiceDeck) -> TasTopology:
     switching_cell = {
         "name": "power_stage",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout"}],
         "circuit": {
             "components": [
-                _component("mosfet",    "Q1"),    # ← S_Q1 (buck HS)
-                _component("mosfet",    "Q2"),    # ← S_Q2 (buck LS)
-                _component("mosfet",    "Q3"),    # ← S_Q3 (boost HS)
-                _component("mosfet",    "Q4"),    # ← S_Q4 (boost LS)
-                _component("magnetic",  "L1"),
+                _component("mosfet", "Q1"),  # ← S_Q1 (buck HS)
+                _component("mosfet", "Q2"),  # ← S_Q2 (buck LS)
+                _component("mosfet", "Q3"),  # ← S_Q3 (boost HS)
+                _component("mosfet", "Q4"),  # ← S_Q4 (boost LS)
+                _component("magnetic", "L1"),
                 _component("capacitor", "C_in"),  # ← Cin (NEW)
                 _component("capacitor", "C_out"),
             ],
@@ -900,7 +918,7 @@ def four_switch_buck_boost(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "input",
             "endpoints": [
-                {"component": "Q1",   "pin": "D"},
+                {"component": "Q1", "pin": "D"},
                 {"component": "C_in", "pin": "1"},
             ],
         },
@@ -909,14 +927,14 @@ def four_switch_buck_boost(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "Q3",    "pin": "S"},
+                {"component": "Q3", "pin": "S"},
                 {"component": "C_out", "pin": "1"},
             ],
         },
         _gnd_wire(
-            ("C_in",  "2"),
-            ("Q2",    "S"),
-            ("Q4",    "S"),
+            ("C_in", "2"),
+            ("Q2", "S"),
+            ("Q4", "S"),
             ("C_out", "2"),
         ),
         *_gate_wires("Q1", "Q2", "Q3", "Q4"),
@@ -984,10 +1002,8 @@ def _isolation_stage(
     return {
         "name": "isolation",
         "role": "isolation",
-        "inputPort":  {"type": "pulsatingDc", "wire": input_wire},
-        "outputPorts": [
-            {"type": "hfAc", "wire": w} for w in output_wires
-        ],
+        "inputPort": {"type": "pulsatingDc", "wire": input_wire},
+        "outputPorts": [{"type": "hfAc", "wire": w} for w in output_wires],
         "circuit": {
             "components": [_t1_component(windings)],
             "connections": [],
@@ -1071,7 +1087,7 @@ def _flyback_real_kinds(deck: SpiceDeck) -> dict[str, str]:
         kinds[f"Lsec{i}"] = "inductor"
         kinds[f"Dout{i}"] = "diode"
         kinds[f"Cout{i}"] = "capacitor"
-    kinds.update(_coupling_kinds(deck))   # K0…, K2_i_j → T1 couplings
+    kinds.update(_coupling_kinds(deck))  # K0…, K2_i_j → T1 couplings
     return kinds
 
 
@@ -1090,15 +1106,15 @@ def flyback(deck: SpiceDeck) -> TasTopology:
     switching_cell = {
         "name": "primary_switch",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus",     "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "pulsatingDc", "wire": "switch_node"}],
         "circuit": {
-            "components": [_component("mosfet", "Q1")],   # ← S1
+            "components": [_component("mosfet", "Q1")],  # ← S1
             "connections": [],
         },
     }
 
-    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
+    windings = ("pri", *tuple(f"sec{i}" for i in range(n_sec)))
     isolation = _isolation_stage(
         windings,
         input_wire="switch_node",
@@ -1109,12 +1125,12 @@ def flyback(deck: SpiceDeck) -> TasTopology:
         {
             "name": f"output_{i}",
             "role": "outputRectifier",
-            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_node"},
+            "inputPort": {"type": "hfAc", "wire": f"sec{i}_node"},
             "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
             "circuit": {
                 "components": [
-                    _component("diode",     f"D_out{i}"),   # ← Dout{i}
-                    _component("capacitor", f"C_out{i}"),   # ← Cout{i}
+                    _component("diode", f"D_out{i}"),  # ← Dout{i}
+                    _component("capacitor", f"C_out{i}"),  # ← Cout{i}
                 ],
                 "connections": [],
             },
@@ -1141,28 +1157,34 @@ def flyback(deck: SpiceDeck) -> TasTopology:
         },
     ]
     for i in range(n_sec):
-        inter_stage.append({
-            "name": f"sec{i}_node",
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",        "pin": f"sec{i}.2"},
-                {"component": f"D_out{i}", "pin": "A"},
-            ],
-        })
-        inter_stage.append({
-            "name": f"Vout{i}",
-            "kind": "externalPort",
-            "direction": "output",
-            "endpoints": [
-                {"component": f"D_out{i}", "pin": "K"},
-                {"component": f"C_out{i}", "pin": "1"},
-            ],
-        })
-    inter_stage.append(_gnd_wire(
-        ("T1", "pri.2"),
-        *[("T1", f"sec{i}.1") for i in range(n_sec)],
-        *[(f"C_out{i}", "2") for i in range(n_sec)],
-    ))
+        inter_stage.append(
+            {
+                "name": f"sec{i}_node",
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"sec{i}.2"},
+                    {"component": f"D_out{i}", "pin": "A"},
+                ],
+            }
+        )
+        inter_stage.append(
+            {
+                "name": f"Vout{i}",
+                "kind": "externalPort",
+                "direction": "output",
+                "endpoints": [
+                    {"component": f"D_out{i}", "pin": "K"},
+                    {"component": f"C_out{i}", "pin": "1"},
+                ],
+            }
+        )
+    inter_stage.append(
+        _gnd_wire(
+            ("T1", "pri.2"),
+            *[("T1", f"sec{i}.1") for i in range(n_sec)],
+            *[(f"C_out{i}", "2") for i in range(n_sec)],
+        )
+    )
     inter_stage.extend(_gate_wires("Q1"))
 
     return {
@@ -1213,18 +1235,18 @@ def _ssf_real_kinds(deck: SpiceDeck) -> dict[str, str]:
     """
     n = _secondary_count(deck)
     kinds: dict[str, str] = {
-        "S1":     "switch",
-        "Lpri":   "inductor",
+        "S1": "switch",
+        "Lpri": "inductor",
         "Ldemag": "inductor",
         "Ddemag": "diode",
     }
     for i in range(n):
         kinds[f"Lsec{i}"] = "inductor"
         kinds[f"Dfwd{i}"] = "diode"
-        kinds[f"Dfw{i}"]  = "diode"
+        kinds[f"Dfw{i}"] = "diode"
         kinds[f"Lout{i}"] = "inductor"
         kinds[f"Cout{i}"] = "capacitor"
-    kinds.update(_coupling_kinds(deck))   # Kpri_demag, Kpri_sec{i}, …
+    kinds.update(_coupling_kinds(deck))  # Kpri_demag, Kpri_sec{i}, …
     return kinds
 
 
@@ -1242,54 +1264,51 @@ def single_switch_forward(deck: SpiceDeck) -> TasTopology:
     _validate_real_set(deck, "single_switch_forward", _ssf_real_kinds(deck))
     n_sec = _secondary_count(deck)
     if n_sec < 1:
-        raise StencilError(
-            "single_switch_forward: deck has no secondary winding (Lsec0)"
-        )
+        raise StencilError("single_switch_forward: deck has no secondary winding (Lsec0)")
 
     switching_cell = {
         "name": "primary_switch",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus",     "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "pulsatingDc", "wire": "switch_node"}],
         "circuit": {
             "components": [
-                _component("mosfet", "Q1"),       # ← S1
-                _component("diode",  "D_demag"),  # ← Ddemag (reset path to Vin)
+                _component("mosfet", "Q1"),  # ← S1
+                _component("diode", "D_demag"),  # ← Ddemag (reset path to Vin)
             ],
             "connections": [],
         },
     }
 
     # T1: pri + demag (reset) + N secondaries, all mutually coupled.
-    windings = ("pri", "demag") + tuple(f"sec{i}" for i in range(n_sec))
+    windings = ("pri", "demag", *tuple(f"sec{i}" for i in range(n_sec)))
     isolation = _isolation_stage(
         windings,
         input_wire="switch_node",
-        output_wires=("demag_node",)
-        + tuple(f"sec{i}_node" for i in range(n_sec)),
+        output_wires=("demag_node", *tuple(f"sec{i}_node" for i in range(n_sec))),
     )
 
     output_rectifiers = [
         {
             "name": f"output_{i}",
             "role": "outputRectifier",
-            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_node"},
+            "inputPort": {"type": "hfAc", "wire": f"sec{i}_node"},
             "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
             "circuit": {
                 "components": [
-                    _component("diode",     f"D_fwd{i}"),   # ← Dfwd{i}
-                    _component("diode",     f"D_fw{i}"),    # ← Dfw{i}
-                    _component("magnetic",  f"L_out{i}"),   # ← Lout{i}
-                    _component("capacitor", f"C_out{i}"),   # ← Cout{i}
+                    _component("diode", f"D_fwd{i}"),  # ← Dfwd{i}
+                    _component("diode", f"D_fw{i}"),  # ← Dfw{i}
+                    _component("magnetic", f"L_out{i}"),  # ← Lout{i}
+                    _component("capacitor", f"C_out{i}"),  # ← Cout{i}
                 ],
                 "connections": [
                     {
                         "name": f"sec{i}_rect_node",
                         "kind": "wire",
                         "endpoints": [
-                            {"component": f"D_fwd{i}",  "pin": "K"},
-                            {"component": f"D_fw{i}",   "pin": "K"},
-                            {"component": f"L_out{i}",  "pin": "1"},
+                            {"component": f"D_fwd{i}", "pin": "K"},
+                            {"component": f"D_fw{i}", "pin": "K"},
+                            {"component": f"L_out{i}", "pin": "1"},
                         ],
                     },
                 ],
@@ -1308,7 +1327,7 @@ def single_switch_forward(deck: SpiceDeck) -> TasTopology:
             # Vin connects to both Q1 (input) and the demag diode cathode
             # (reset energy returns to Vin).
             "endpoints": [
-                {"component": "Q1",      "pin": "D"},
+                {"component": "Q1", "pin": "D"},
                 {"component": "D_demag", "pin": "K"},
             ],
         },
@@ -1324,37 +1343,41 @@ def single_switch_forward(deck: SpiceDeck) -> TasTopology:
             "name": "demag_node",
             "kind": "wire",
             "endpoints": [
-                {"component": "T1",      "pin": "demag.2"},
+                {"component": "T1", "pin": "demag.2"},
                 {"component": "D_demag", "pin": "A"},
             ],
         },
     ]
     for i in range(n_sec):
-        inter_stage.append({
-            "name": f"sec{i}_node",
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",        "pin": f"sec{i}.1"},
-                {"component": f"D_fwd{i}", "pin": "A"},
-            ],
-        })
-        inter_stage.append({
-            "name": f"Vout{i}",
-            "kind": "externalPort",
-            "direction": "output",
-            "endpoints": [
-                {"component": f"L_out{i}", "pin": "2"},
-                {"component": f"C_out{i}", "pin": "1"},
-            ],
-        })
+        inter_stage.append(
+            {
+                "name": f"sec{i}_node",
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"sec{i}.1"},
+                    {"component": f"D_fwd{i}", "pin": "A"},
+                ],
+            }
+        )
+        inter_stage.append(
+            {
+                "name": f"Vout{i}",
+                "kind": "externalPort",
+                "direction": "output",
+                "endpoints": [
+                    {"component": f"L_out{i}", "pin": "2"},
+                    {"component": f"C_out{i}", "pin": "1"},
+                ],
+            }
+        )
 
     gnd_endpoints: list[tuple[str, str]] = [
         ("T1", "pri.2"),
         ("T1", "demag.1"),
     ]
     for i in range(n_sec):
-        gnd_endpoints.append(("T1",        f"sec{i}.2"))
-        gnd_endpoints.append((f"D_fw{i}",  "A"))
+        gnd_endpoints.append(("T1", f"sec{i}.2"))
+        gnd_endpoints.append((f"D_fw{i}", "A"))
         gnd_endpoints.append((f"C_out{i}", "2"))
     inter_stage.append(_gnd_wire(*gnd_endpoints))
     inter_stage.extend(_gate_wires("Q1"))
@@ -1400,18 +1423,18 @@ def _acf_real_kinds(deck: SpiceDeck) -> dict[str, str]:
     """
     n = _secondary_count(deck)
     kinds: dict[str, str] = {
-        "S1":      "switch",
+        "S1": "switch",
         "S_clamp": "switch",
-        "Cclamp":  "capacitor",
-        "Lpri":    "inductor",
+        "Cclamp": "capacitor",
+        "Lpri": "inductor",
     }
     for i in range(n):
         kinds[f"Lsec{i}"] = "inductor"
         kinds[f"Dfwd{i}"] = "diode"
-        kinds[f"Dfw{i}"]  = "diode"
+        kinds[f"Dfw{i}"] = "diode"
         kinds[f"Lout{i}"] = "inductor"
         kinds[f"Cout{i}"] = "capacitor"
-    kinds.update(_coupling_kinds(deck))   # Kpri_sec{i}, Ksec{i}_sec{j} → T1
+    kinds.update(_coupling_kinds(deck))  # Kpri_sec{i}, Ksec{i}_sec{j} → T1
     return kinds
 
 
@@ -1428,20 +1451,18 @@ def active_clamp_forward(deck: SpiceDeck) -> TasTopology:
     _validate_real_set(deck, "active_clamp_forward", _acf_real_kinds(deck))
     n_sec = _secondary_count(deck)
     if n_sec < 1:
-        raise StencilError(
-            "active_clamp_forward: deck has no secondary winding (Lsec0)"
-        )
+        raise StencilError("active_clamp_forward: deck has no secondary winding (Lsec0)")
 
     switching_cell = {
         "name": "primary_switch",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus",     "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "pulsatingDc", "wire": "switch_node"}],
         "circuit": {
             "components": [
-                _component("mosfet",    "Q1"),        # ← S1
-                _component("mosfet",    "Q_clamp"),   # ← S_clamp
-                _component("capacitor", "C_clamp"),   # ← Cclamp
+                _component("mosfet", "Q1"),  # ← S1
+                _component("mosfet", "Q_clamp"),  # ← S_clamp
+                _component("capacitor", "C_clamp"),  # ← Cclamp
             ],
             "connections": [
                 {
@@ -1456,7 +1477,7 @@ def active_clamp_forward(deck: SpiceDeck) -> TasTopology:
         },
     }
 
-    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
+    windings = ("pri", *tuple(f"sec{i}" for i in range(n_sec)))
     isolation = _isolation_stage(
         windings,
         input_wire="switch_node",
@@ -1467,23 +1488,23 @@ def active_clamp_forward(deck: SpiceDeck) -> TasTopology:
         {
             "name": f"output_{i}",
             "role": "outputRectifier",
-            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_node"},
+            "inputPort": {"type": "hfAc", "wire": f"sec{i}_node"},
             "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
             "circuit": {
                 "components": [
-                    _component("diode",     f"D_fwd{i}"),   # ← Dfwd{i}
-                    _component("diode",     f"D_fw{i}"),    # ← Dfw{i}
-                    _component("magnetic",  f"L_out{i}"),   # ← Lout{i}
-                    _component("capacitor", f"C_out{i}"),   # ← Cout{i}
+                    _component("diode", f"D_fwd{i}"),  # ← Dfwd{i}
+                    _component("diode", f"D_fw{i}"),  # ← Dfw{i}
+                    _component("magnetic", f"L_out{i}"),  # ← Lout{i}
+                    _component("capacitor", f"C_out{i}"),  # ← Cout{i}
                 ],
                 "connections": [
                     {
                         "name": f"sec{i}_rect_node",
                         "kind": "wire",
                         "endpoints": [
-                            {"component": f"D_fwd{i}",  "pin": "K"},
-                            {"component": f"D_fw{i}",   "pin": "K"},
-                            {"component": f"L_out{i}",  "pin": "1"},
+                            {"component": f"D_fwd{i}", "pin": "K"},
+                            {"component": f"D_fw{i}", "pin": "K"},
+                            {"component": f"L_out{i}", "pin": "1"},
                         ],
                     },
                 ],
@@ -1506,38 +1527,42 @@ def active_clamp_forward(deck: SpiceDeck) -> TasTopology:
             "kind": "wire",
             # Active clamp shares the switch node with Q_clamp.S.
             "endpoints": [
-                {"component": "Q1",      "pin": "S"},
+                {"component": "Q1", "pin": "S"},
                 {"component": "Q_clamp", "pin": "S"},
-                {"component": "T1",      "pin": "pri.1"},
+                {"component": "T1", "pin": "pri.1"},
             ],
         },
     ]
     for i in range(n_sec):
-        inter_stage.append({
-            "name": f"sec{i}_node",
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",        "pin": f"sec{i}.1"},
-                {"component": f"D_fwd{i}", "pin": "A"},
-            ],
-        })
-        inter_stage.append({
-            "name": f"Vout{i}",
-            "kind": "externalPort",
-            "direction": "output",
-            "endpoints": [
-                {"component": f"L_out{i}", "pin": "2"},
-                {"component": f"C_out{i}", "pin": "1"},
-            ],
-        })
+        inter_stage.append(
+            {
+                "name": f"sec{i}_node",
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"sec{i}.1"},
+                    {"component": f"D_fwd{i}", "pin": "A"},
+                ],
+            }
+        )
+        inter_stage.append(
+            {
+                "name": f"Vout{i}",
+                "kind": "externalPort",
+                "direction": "output",
+                "endpoints": [
+                    {"component": f"L_out{i}", "pin": "2"},
+                    {"component": f"C_out{i}", "pin": "1"},
+                ],
+            }
+        )
 
     gnd_endpoints: list[tuple[str, str]] = [
-        ("T1",      "pri.2"),
+        ("T1", "pri.2"),
         ("C_clamp", "2"),
     ]
     for i in range(n_sec):
-        gnd_endpoints.append(("T1",        f"sec{i}.2"))
-        gnd_endpoints.append((f"D_fw{i}",  "A"))
+        gnd_endpoints.append(("T1", f"sec{i}.2"))
+        gnd_endpoints.append((f"D_fw{i}", "A"))
         gnd_endpoints.append((f"C_out{i}", "2"))
     inter_stage.append(_gnd_wire(*gnd_endpoints))
     inter_stage.extend(_gate_wires("Q1", "Q_clamp"))
@@ -1574,8 +1599,8 @@ def _isobuck_real_kinds(deck: SpiceDeck) -> dict[str, str]:
     """
     n = _secondary_count(deck)
     kinds: dict[str, str] = {
-        "S1":   "switch",
-        "S2":   "switch",
+        "S1": "switch",
+        "S2": "switch",
         "Lpri": "inductor",
         "Cpri": "capacitor",
     }
@@ -1583,7 +1608,7 @@ def _isobuck_real_kinds(deck: SpiceDeck) -> dict[str, str]:
         kinds[f"Lsec{i}"] = "inductor"
         kinds[f"Dsec{i}"] = "diode"
         kinds[f"Cout{i}"] = "capacitor"
-    kinds.update(_coupling_kinds(deck))   # Kpri_sec{i}, Ksec{i}_{j} → T1
+    kinds.update(_coupling_kinds(deck))  # Kpri_sec{i}, Ksec{i}_{j} → T1
     return kinds
 
 
@@ -1610,19 +1635,19 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
     switching_cell = {
         "name": "primary_switch",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus",     "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "pulsatingDc", "wire": "switch_node"}],
         "circuit": {
             "components": [
-                _component("mosfet", "Q1"),   # ← S1
-                _component("mosfet", "Q2"),   # ← S2 (synchronous rectifier)
+                _component("mosfet", "Q1"),  # ← S1
+                _component("mosfet", "Q2"),  # ← S2 (synchronous rectifier)
             ],
             "connections": [],
         },
     }
 
     # T1.pri.2 is NOT ground for flybuck — it sits on Vout_pri.
-    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
+    windings = ("pri", *tuple(f"sec{i}" for i in range(n_sec)))
     isolation = _isolation_stage(
         windings,
         input_wire="switch_node",
@@ -1632,10 +1657,10 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
     output_filter_pri = {
         "name": "output_pri",
         "role": "outputFilter",
-        "inputPort":  {"type": "hfAc",  "wire": "Vout_pri"},
+        "inputPort": {"type": "hfAc", "wire": "Vout_pri"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout_pri"}],
         "circuit": {
-            "components": [_component("capacitor", "C_pri")],   # ← Cpri
+            "components": [_component("capacitor", "C_pri")],  # ← Cpri
             "connections": [],
         },
     }
@@ -1644,12 +1669,12 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
         {
             "name": f"output_{i}",
             "role": "outputRectifier",
-            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_node"},
+            "inputPort": {"type": "hfAc", "wire": f"sec{i}_node"},
             "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
             "circuit": {
                 "components": [
-                    _component("diode",     f"D_out{i}"),   # ← Dsec{i}
-                    _component("capacitor", f"C_out{i}"),   # ← Cout{i}
+                    _component("diode", f"D_out{i}"),  # ← Dsec{i}
+                    _component("capacitor", f"C_out{i}"),  # ← Cout{i}
                 ],
                 "connections": [],
             },
@@ -1681,29 +1706,33 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "T1",    "pin": "pri.2"},
+                {"component": "T1", "pin": "pri.2"},
                 {"component": "C_pri", "pin": "1"},
             ],
         },
     ]
     for i in range(n_sec):
-        inter_stage.append({
-            "name": f"sec{i}_node",
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",        "pin": f"sec{i}.2"},
-                {"component": f"D_out{i}", "pin": "A"},
-            ],
-        })
-        inter_stage.append({
-            "name": f"Vout{i}",
-            "kind": "externalPort",
-            "direction": "output",
-            "endpoints": [
-                {"component": f"D_out{i}", "pin": "K"},
-                {"component": f"C_out{i}", "pin": "1"},
-            ],
-        })
+        inter_stage.append(
+            {
+                "name": f"sec{i}_node",
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"sec{i}.2"},
+                    {"component": f"D_out{i}", "pin": "A"},
+                ],
+            }
+        )
+        inter_stage.append(
+            {
+                "name": f"Vout{i}",
+                "kind": "externalPort",
+                "direction": "output",
+                "endpoints": [
+                    {"component": f"D_out{i}", "pin": "K"},
+                    {"component": f"C_out{i}", "pin": "1"},
+                ],
+            }
+        )
 
     # GND endpoint ORDER preserved so the single-secondary golden stays
     # byte-identical: Q2.S, then all transformer secondary returns
@@ -1716,8 +1745,7 @@ def isolated_buck(deck: SpiceDeck) -> TasTopology:
     inter_stage.extend(_gate_wires("Q1", "Q2"))
 
     return {
-        "stages": [switching_cell, isolation, output_filter_pri,
-                   *output_rectifiers, control],
+        "stages": [switching_cell, isolation, output_filter_pri, *output_rectifiers, control],
         "interStageCircuit": inter_stage,
     }
 
@@ -1748,7 +1776,7 @@ def _isobb_real_kinds(deck: SpiceDeck) -> dict[str, str]:
     one ``Lsec{i}``/``Dsec{i}``/``Cout{i}`` triple per secondary output."""
     n = _secondary_count(deck)
     kinds: dict[str, str] = {
-        "S1":   "switch",
+        "S1": "switch",
         "Lpri": "inductor",
         "Dpri": "diode",
         "Cpri": "capacitor",
@@ -1757,7 +1785,7 @@ def _isobb_real_kinds(deck: SpiceDeck) -> dict[str, str]:
         kinds[f"Lsec{i}"] = "inductor"
         kinds[f"Dsec{i}"] = "diode"
         kinds[f"Cout{i}"] = "capacitor"
-    kinds.update(_coupling_kinds(deck))   # Kpri_sec{i}, Ksec{i}_{j} → T1
+    kinds.update(_coupling_kinds(deck))  # Kpri_sec{i}, Ksec{i}_{j} → T1
     return kinds
 
 
@@ -1773,22 +1801,20 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
     _validate_real_set(deck, "isolated_buck_boost", _isobb_real_kinds(deck))
     n_sec = _secondary_count(deck)
     if n_sec < 1:
-        raise StencilError(
-            "isolated_buck_boost: deck has no secondary winding (Lsec0)"
-        )
+        raise StencilError("isolated_buck_boost: deck has no secondary winding (Lsec0)")
 
     switching_cell = {
         "name": "primary_switch",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus",     "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "pulsatingDc", "wire": "switch_node"}],
         "circuit": {
-            "components": [_component("mosfet", "Q1")],   # ← S1
+            "components": [_component("mosfet", "Q1")],  # ← S1
             "connections": [],
         },
     }
 
-    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
+    windings = ("pri", *tuple(f"sec{i}" for i in range(n_sec)))
     isolation = _isolation_stage(
         windings,
         input_wire="switch_node",
@@ -1800,12 +1826,12 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
     output_rectifier_pri = {
         "name": "output_pri",
         "role": "outputRectifier",
-        "inputPort":  {"type": "pulsatingDc", "wire": "switch_node"},
-        "outputPorts": [{"type": "dcOutput",  "wire": "Vout_pri"}],
+        "inputPort": {"type": "pulsatingDc", "wire": "switch_node"},
+        "outputPorts": [{"type": "dcOutput", "wire": "Vout_pri"}],
         "circuit": {
             "components": [
-                _component("diode",     "D_pri"),   # ← Dpri
-                _component("capacitor", "C_pri"),   # ← Cpri
+                _component("diode", "D_pri"),  # ← Dpri
+                _component("capacitor", "C_pri"),  # ← Cpri
             ],
             "connections": [],
         },
@@ -1815,11 +1841,11 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
         {
             "name": f"output_{i}",
             "role": "outputRectifier",
-            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_node"},
+            "inputPort": {"type": "hfAc", "wire": f"sec{i}_node"},
             "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
             "circuit": {
                 "components": [
-                    _component("diode",     f"D_out{i}"),  # ← Dsec{i}
+                    _component("diode", f"D_out{i}"),  # ← Dsec{i}
                     _component("capacitor", f"C_out{i}"),  # ← Cout{i}
                 ],
                 "connections": [],
@@ -1842,8 +1868,8 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
             "kind": "wire",
             # 3 endpoints — D_pri taps switch_node from its cathode.
             "endpoints": [
-                {"component": "Q1",    "pin": "S"},
-                {"component": "T1",    "pin": "pri.1"},
+                {"component": "Q1", "pin": "S"},
+                {"component": "T1", "pin": "pri.1"},
                 {"component": "D_pri", "pin": "K"},
             ],
         },
@@ -1858,23 +1884,27 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
         },
     ]
     for i in range(n_sec):
-        inter_stage.append({
-            "name": f"sec{i}_node",
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",        "pin": f"sec{i}.2"},
-                {"component": f"D_out{i}", "pin": "A"},
-            ],
-        })
-        inter_stage.append({
-            "name": f"Vout{i}",
-            "kind": "externalPort",
-            "direction": "output",
-            "endpoints": [
-                {"component": f"D_out{i}", "pin": "K"},
-                {"component": f"C_out{i}", "pin": "1"},
-            ],
-        })
+        inter_stage.append(
+            {
+                "name": f"sec{i}_node",
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"sec{i}.2"},
+                    {"component": f"D_out{i}", "pin": "A"},
+                ],
+            }
+        )
+        inter_stage.append(
+            {
+                "name": f"Vout{i}",
+                "kind": "externalPort",
+                "direction": "output",
+                "endpoints": [
+                    {"component": f"D_out{i}", "pin": "K"},
+                    {"component": f"C_out{i}", "pin": "1"},
+                ],
+            }
+        )
 
     # GND: all transformer return pins first (pri.2, sec{i}.1), then all
     # output-cap returns (C_pri.2, C_out{i}.2) — matches the golden ordering.
@@ -1886,8 +1916,7 @@ def isolated_buck_boost(deck: SpiceDeck) -> TasTopology:
     inter_stage.extend(_gate_wires("Q1"))
 
     return {
-        "stages": [switching_cell, isolation, output_rectifier_pri,
-                   *output_rectifiers, control],
+        "stages": [switching_cell, isolation, output_rectifier_pri, *output_rectifiers, control],
         "interStageCircuit": inter_stage,
     }
 
@@ -1935,19 +1964,19 @@ def _2sf_real_kinds(deck: SpiceDeck) -> dict[str, str]:
     """
     n = _secondary_count(deck)
     kinds: dict[str, str] = {
-        "S1":   "switch",
-        "S2":   "switch",
-        "D1":   "diode",
-        "D2":   "diode",
+        "S1": "switch",
+        "S2": "switch",
+        "D1": "diode",
+        "D2": "diode",
         "Lpri": "inductor",
     }
     for i in range(n):
         kinds[f"Lsec{i}"] = "inductor"
         kinds[f"Dfwd{i}"] = "diode"
-        kinds[f"Dfw{i}"]  = "diode"
+        kinds[f"Dfw{i}"] = "diode"
         kinds[f"Lout{i}"] = "inductor"
         kinds[f"Cout{i}"] = "capacitor"
-    kinds.update(_coupling_kinds(deck))   # Kpri_sec{i}, Ksec{i}_sec{j} → T1
+    kinds.update(_coupling_kinds(deck))  # Kpri_sec{i}, Ksec{i}_sec{j} → T1
     return kinds
 
 
@@ -1963,14 +1992,12 @@ def two_switch_forward(deck: SpiceDeck) -> TasTopology:
     _validate_real_set(deck, "two_switch_forward", _2sf_real_kinds(deck))
     n_sec = _secondary_count(deck)
     if n_sec < 1:
-        raise StencilError(
-            "two_switch_forward: deck has no secondary winding (Lsec0)"
-        )
+        raise StencilError("two_switch_forward: deck has no secondary winding (Lsec0)")
 
     switching_cell = {
         "name": "primary_switch",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         # Two switch-node outputs feed both ends of T1.pri.
         "outputPorts": [
             {"type": "pulsatingDc", "wire": "switch_node"},
@@ -1978,10 +2005,10 @@ def two_switch_forward(deck: SpiceDeck) -> TasTopology:
         ],
         "circuit": {
             "components": [
-                _component("mosfet", "Q1"),   # ← S1 (high-side)
-                _component("mosfet", "Q2"),   # ← S2 (low-side)
-                _component("diode",  "D1"),   # ← D1 (HS reset diode)
-                _component("diode",  "D2"),   # ← D2 (LS reset diode)
+                _component("mosfet", "Q1"),  # ← S1 (high-side)
+                _component("mosfet", "Q2"),  # ← S2 (low-side)
+                _component("diode", "D1"),  # ← D1 (HS reset diode)
+                _component("diode", "D2"),  # ← D2 (LS reset diode)
             ],
             "connections": [],
         },
@@ -1990,7 +2017,7 @@ def two_switch_forward(deck: SpiceDeck) -> TasTopology:
     # Custom isolation stage: primary winding is driven differentially
     # (both pri.1 and pri.2 are active nets, neither is GND), so the
     # helper's single-input_wire shape doesn't fit. Build inline.
-    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
+    windings = ("pri", *tuple(f"sec{i}" for i in range(n_sec)))
     isolation = {
         "name": "isolation",
         "role": "isolation",
@@ -2009,23 +2036,23 @@ def two_switch_forward(deck: SpiceDeck) -> TasTopology:
         {
             "name": f"output_{i}",
             "role": "outputRectifier",
-            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_node"},
+            "inputPort": {"type": "hfAc", "wire": f"sec{i}_node"},
             "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
             "circuit": {
                 "components": [
-                    _component("diode",     f"D_fwd{i}"),   # ← Dfwd{i}
-                    _component("diode",     f"D_fw{i}"),    # ← Dfw{i}
-                    _component("magnetic",  f"L_out{i}"),   # ← Lout{i}
-                    _component("capacitor", f"C_out{i}"),   # ← Cout{i}
+                    _component("diode", f"D_fwd{i}"),  # ← Dfwd{i}
+                    _component("diode", f"D_fw{i}"),  # ← Dfw{i}
+                    _component("magnetic", f"L_out{i}"),  # ← Lout{i}
+                    _component("capacitor", f"C_out{i}"),  # ← Cout{i}
                 ],
                 "connections": [
                     {
                         "name": f"sec{i}_rect_node",
                         "kind": "wire",
                         "endpoints": [
-                            {"component": f"D_fwd{i}",  "pin": "K"},
-                            {"component": f"D_fw{i}",   "pin": "K"},
-                            {"component": f"L_out{i}",  "pin": "1"},
+                            {"component": f"D_fwd{i}", "pin": "K"},
+                            {"component": f"D_fw{i}", "pin": "K"},
+                            {"component": f"L_out{i}", "pin": "1"},
                         ],
                     },
                 ],
@@ -2067,31 +2094,35 @@ def two_switch_forward(deck: SpiceDeck) -> TasTopology:
         },
     ]
     for i in range(n_sec):
-        inter_stage.append({
-            "name": f"sec{i}_node",
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",        "pin": f"sec{i}.1"},
-                {"component": f"D_fwd{i}", "pin": "A"},
-            ],
-        })
-        inter_stage.append({
-            "name": f"Vout{i}",
-            "kind": "externalPort",
-            "direction": "output",
-            "endpoints": [
-                {"component": f"L_out{i}", "pin": "2"},
-                {"component": f"C_out{i}", "pin": "1"},
-            ],
-        })
+        inter_stage.append(
+            {
+                "name": f"sec{i}_node",
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"sec{i}.1"},
+                    {"component": f"D_fwd{i}", "pin": "A"},
+                ],
+            }
+        )
+        inter_stage.append(
+            {
+                "name": f"Vout{i}",
+                "kind": "externalPort",
+                "direction": "output",
+                "endpoints": [
+                    {"component": f"L_out{i}", "pin": "2"},
+                    {"component": f"C_out{i}", "pin": "1"},
+                ],
+            }
+        )
 
     gnd_endpoints = [
         ("D1", "A"),
         ("Q2", "S"),
     ]
     for i in range(n_sec):
-        gnd_endpoints.append(("T1",        f"sec{i}.2"))
-        gnd_endpoints.append((f"D_fw{i}",  "A"))
+        gnd_endpoints.append(("T1", f"sec{i}.2"))
+        gnd_endpoints.append((f"D_fw{i}", "A"))
         gnd_endpoints.append((f"C_out{i}", "2"))
     inter_stage.append(_gnd_wire(*gnd_endpoints))
     inter_stage.extend(_gate_wires("Q1", "Q2"))
@@ -2186,19 +2217,19 @@ def _llc_real_kinds(deck: SpiceDeck) -> dict[str, str]:
         "Cbus_lo": "capacitor",
         "Rbal_hi": "resistor",
         "Rbal_lo": "resistor",
-        "SHI":     "switch",
-        "SLO":     "switch",
-        "Cr":      "capacitor",
-        "Lr":      "inductor",
-        "Lpri":    "inductor",      # → T1.pri
+        "SHI": "switch",
+        "SLO": "switch",
+        "Cr": "capacitor",
+        "Lr": "inductor",
+        "Lpri": "inductor",  # → T1.pri
     }
     for i in range(1, n + 1):
-        kinds[f"Lsec1_o{i}"] = "inductor"     # → T1.sec1 of rail i-1 (upper half)
-        kinds[f"Lsec2_o{i}"] = "inductor"     # → T1.sec2 of rail i-1 (lower half)
-        kinds[f"D1_o{i}"]    = "diode"
-        kinds[f"D2_o{i}"]    = "diode"
-        kinds[f"Cout_o{i}"]  = "capacitor"    # → C_out{i-1}
-    kinds.update(_coupling_kinds(deck))       # K1…, pairwise → T1 couplings
+        kinds[f"Lsec1_o{i}"] = "inductor"  # → T1.sec1 of rail i-1 (upper half)
+        kinds[f"Lsec2_o{i}"] = "inductor"  # → T1.sec2 of rail i-1 (lower half)
+        kinds[f"D1_o{i}"] = "diode"
+        kinds[f"D2_o{i}"] = "diode"
+        kinds[f"Cout_o{i}"] = "capacitor"  # → C_out{i-1}
+    kinds.update(_coupling_kinds(deck))  # K1…, pairwise → T1 couplings
     return kinds
 
 
@@ -2228,25 +2259,30 @@ def llc(deck: SpiceDeck) -> TasTopology:
 
 def _llc_build(n_sec: int) -> TasTopology:
     # Per-rail TAS names (0-based rail index ↔ 1-based deck _o{i}).
-    def _d1(i: int) -> str:   return "D1" if i == 0 else f"D1_{i}"
-    def _d2(i: int) -> str:   return "D2" if i == 0 else f"D2_{i}"
-    def _cout(i: int) -> str: return f"C_out{i}"
+    def _d1(i: int) -> str:
+        return "D1" if i == 0 else f"D1_{i}"
+
+    def _d2(i: int) -> str:
+        return "D2" if i == 0 else f"D2_{i}"
+
+    def _cout(i: int) -> str:
+        return f"C_out{i}"
 
     inverter = {
         "name": "inverter",
         "role": "inverter",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "hfAc", "wire": "pri_top"}],
         "circuit": {
             "components": [
-                _component("mosfet",    "Q_HI"),       # ← SHI
-                _component("mosfet",    "Q_LO"),       # ← SLO
-                _component("capacitor", "C_bus_hi"),   # ← Cbus_hi
-                _component("capacitor", "C_bus_lo"),   # ← Cbus_lo
-                _component("resistor",  "R_bal_hi"),   # ← Rbal_hi
-                _component("resistor",  "R_bal_lo"),   # ← Rbal_lo
-                _component("capacitor", "C_r"),        # ← Cr
-                _component("magnetic",  "L_r"),        # ← Lr
+                _component("mosfet", "Q_HI"),  # ← SHI
+                _component("mosfet", "Q_LO"),  # ← SLO
+                _component("capacitor", "C_bus_hi"),  # ← Cbus_hi
+                _component("capacitor", "C_bus_lo"),  # ← Cbus_lo
+                _component("resistor", "R_bal_hi"),  # ← Rbal_hi
+                _component("resistor", "R_bal_lo"),  # ← Rbal_lo
+                _component("capacitor", "C_r"),  # ← Cr
+                _component("magnetic", "L_r"),  # ← Lr
             ],
             "connections": [
                 {
@@ -2255,7 +2291,7 @@ def _llc_build(n_sec: int) -> TasTopology:
                     "endpoints": [
                         {"component": "Q_HI", "pin": "S"},
                         {"component": "Q_LO", "pin": "D"},
-                        {"component": "C_r",  "pin": "1"},
+                        {"component": "C_r", "pin": "1"},
                     ],
                 },
                 {
@@ -2274,20 +2310,29 @@ def _llc_build(n_sec: int) -> TasTopology:
     # single-output names (``sec1``/``sec2`` windings, ``sec_top``/``sec_bot``/
     # ``sec_ct`` wires) so the N==1 emission is byte-identical to before;
     # rails ≥1 get an ``_{i}`` suffix.
-    def _w_top(i: int) -> str:  return "sec1" if i == 0 else f"sec1_{i}"
-    def _w_bot(i: int) -> str:  return "sec2" if i == 0 else f"sec2_{i}"
-    def _n_top(i: int) -> str:  return "sec_top" if i == 0 else f"sec_top_{i}"
-    def _n_bot(i: int) -> str:  return "sec_bot" if i == 0 else f"sec_bot_{i}"
-    def _n_ct(i: int) -> str:   return "sec_ct" if i == 0 else f"sec_ct_{i}"
+    def _w_top(i: int) -> str:
+        return "sec1" if i == 0 else f"sec1_{i}"
+
+    def _w_bot(i: int) -> str:
+        return "sec2" if i == 0 else f"sec2_{i}"
+
+    def _n_top(i: int) -> str:
+        return "sec_top" if i == 0 else f"sec_top_{i}"
+
+    def _n_bot(i: int) -> str:
+        return "sec_bot" if i == 0 else f"sec_bot_{i}"
+
+    def _n_ct(i: int) -> str:
+        return "sec_ct" if i == 0 else f"sec_ct_{i}"
 
     windings: tuple[str, ...] = ("pri",)
     for i in range(n_sec):
-        windings = windings + (_w_top(i), _w_bot(i))
+        windings = (*windings, _w_top(i), _w_bot(i))
 
     isolation = {
         "name": "isolation",
         "role": "isolation",
-        "inputPort":  {"type": "hfAc", "wire": "pri_top"},
+        "inputPort": {"type": "hfAc", "wire": "pri_top"},
         "outputPorts": [
             port
             for i in range(n_sec)
@@ -2306,13 +2351,13 @@ def _llc_build(n_sec: int) -> TasTopology:
         {
             "name": f"output_{i}",
             "role": "outputRectifier",
-            "inputPort":  {"type": "hfAc", "wire": _n_top(i)},
+            "inputPort": {"type": "hfAc", "wire": _n_top(i)},
             "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
             "circuit": {
                 "components": [
-                    _component("diode",     _d1(i)),     # ← D1_o{i+1}
-                    _component("diode",     _d2(i)),     # ← D2_o{i+1}
-                    _component("capacitor", _cout(i)),   # ← Cout_o{i+1}
+                    _component("diode", _d1(i)),  # ← D1_o{i+1}
+                    _component("diode", _d2(i)),  # ← D2_o{i+1}
+                    _component("capacitor", _cout(i)),  # ← Cout_o{i+1}
                 ],
                 # D*.K / C_out{i}.1 all sit on the Vout{i} externalPort node
                 # (see interStageCircuit). No stage-internal wires needed.
@@ -2330,7 +2375,7 @@ def _llc_build(n_sec: int) -> TasTopology:
             "kind": "externalPort",
             "direction": "input",
             "endpoints": [
-                {"component": "Q_HI",     "pin": "D"},
+                {"component": "Q_HI", "pin": "D"},
                 {"component": "C_bus_hi", "pin": "1"},
                 {"component": "R_bal_hi", "pin": "1"},
             ],
@@ -2348,7 +2393,7 @@ def _llc_build(n_sec: int) -> TasTopology:
                 {"component": "C_bus_lo", "pin": "1"},
                 {"component": "R_bal_hi", "pin": "2"},
                 {"component": "R_bal_lo", "pin": "1"},
-                {"component": "T1",       "pin": "pri.2"},
+                {"component": "T1", "pin": "pri.2"},
             ],
         },
         {
@@ -2356,53 +2401,63 @@ def _llc_build(n_sec: int) -> TasTopology:
             "kind": "wire",
             "endpoints": [
                 {"component": "L_r", "pin": "2"},
-                {"component": "T1",  "pin": "pri.1"},
+                {"component": "T1", "pin": "pri.1"},
             ],
         },
     ]
     for i in range(n_sec):
-        inter_stage.append({
-            "name": _n_top(i),
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",    "pin": f"{_w_top(i)}.1"},
-                {"component": _d1(i),  "pin": "A"},
-            ],
-        })
-        inter_stage.append({
-            "name": _n_bot(i),
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",    "pin": f"{_w_bot(i)}.2"},
-                {"component": _d2(i),  "pin": "A"},
-            ],
-        })
-        inter_stage.append({
-            # Center tap of this rail's CT secondary = its Vout-negative
-            # rail: T1.sec1.2 + T1.sec2.1 + the output-cap return.
-            "name": _n_ct(i),
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",      "pin": f"{_w_top(i)}.2"},
-                {"component": "T1",      "pin": f"{_w_bot(i)}.1"},
-                {"component": _cout(i),  "pin": "2"},
-            ],
-        })
-        inter_stage.append({
-            "name": f"Vout{i}",
-            "kind": "externalPort",
-            "direction": "output",
-            "endpoints": [
-                {"component": _d1(i),    "pin": "K"},
-                {"component": _d2(i),    "pin": "K"},
-                {"component": _cout(i),  "pin": "1"},
-            ],
-        })
-    inter_stage.append(_gnd_wire(
-        ("C_bus_lo", "2"),
-        ("R_bal_lo", "2"),
-        ("Q_LO",     "S"),
-    ))
+        inter_stage.append(
+            {
+                "name": _n_top(i),
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"{_w_top(i)}.1"},
+                    {"component": _d1(i), "pin": "A"},
+                ],
+            }
+        )
+        inter_stage.append(
+            {
+                "name": _n_bot(i),
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"{_w_bot(i)}.2"},
+                    {"component": _d2(i), "pin": "A"},
+                ],
+            }
+        )
+        inter_stage.append(
+            {
+                # Center tap of this rail's CT secondary = its Vout-negative
+                # rail: T1.sec1.2 + T1.sec2.1 + the output-cap return.
+                "name": _n_ct(i),
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"{_w_top(i)}.2"},
+                    {"component": "T1", "pin": f"{_w_bot(i)}.1"},
+                    {"component": _cout(i), "pin": "2"},
+                ],
+            }
+        )
+        inter_stage.append(
+            {
+                "name": f"Vout{i}",
+                "kind": "externalPort",
+                "direction": "output",
+                "endpoints": [
+                    {"component": _d1(i), "pin": "K"},
+                    {"component": _d2(i), "pin": "K"},
+                    {"component": _cout(i), "pin": "1"},
+                ],
+            }
+        )
+    inter_stage.append(
+        _gnd_wire(
+            ("C_bus_lo", "2"),
+            ("R_bal_lo", "2"),
+            ("Q_LO", "S"),
+        )
+    )
     inter_stage.extend(_gate_wires("Q_HI", "Q_LO"))
 
     return {
@@ -2496,20 +2551,20 @@ def _src_real_kinds(deck: SpiceDeck) -> dict[str, str]:
         "Cbus_lo": "capacitor",
         "Rbal_hi": "resistor",
         "Rbal_lo": "resistor",
-        "SHI":     "switch",
-        "SLO":     "switch",
-        "Cr":      "capacitor",   # → C_r (resonant cap)
-        "Lr":      "inductor",    # → L_r (resonant/series inductor)
-        "Lpri":    "inductor",    # → T1.pri
+        "SHI": "switch",
+        "SLO": "switch",
+        "Cr": "capacitor",  # → C_r (resonant cap)
+        "Lr": "inductor",  # → L_r (resonant/series inductor)
+        "Lpri": "inductor",  # → T1.pri
     }
     for i in range(1, n + 1):
-        kinds[f"Lsec_o{i}"] = "inductor"     # → T1.sec{i-1}
-        kinds[f"Dh1_o{i}"]  = "diode"
-        kinds[f"Dh2_o{i}"]  = "diode"
-        kinds[f"Dl1_o{i}"]  = "diode"
-        kinds[f"Dl2_o{i}"]  = "diode"
-        kinds[f"Cout_o{i}"] = "capacitor"    # → C_out{i-1}
-    kinds.update(_coupling_kinds(deck))      # K1…, Ksec-sec → T1 couplings
+        kinds[f"Lsec_o{i}"] = "inductor"  # → T1.sec{i-1}
+        kinds[f"Dh1_o{i}"] = "diode"
+        kinds[f"Dh2_o{i}"] = "diode"
+        kinds[f"Dl1_o{i}"] = "diode"
+        kinds[f"Dl2_o{i}"] = "diode"
+        kinds[f"Cout_o{i}"] = "capacitor"  # → C_out{i-1}
+    kinds.update(_coupling_kinds(deck))  # K1…, Ksec-sec → T1 couplings
     return kinds
 
 
@@ -2529,32 +2584,39 @@ def series_resonant(deck: SpiceDeck) -> TasTopology:
     _validate_real_set(deck, "series_resonant", _src_real_kinds(deck))
     n_sec = _src_secondary_count(deck)
     if n_sec < 1:
-        raise StencilError(
-            "series_resonant: deck has no secondary winding (Lsec_o1)"
-        )
+        raise StencilError("series_resonant: deck has no secondary winding (Lsec_o1)")
 
     # Per-rail TAS component names (0-based rail index ↔ 1-based deck _o{i}).
-    def _dh1(i: int) -> str:  return f"D_h1_{i}"
-    def _dh2(i: int) -> str:  return f"D_h2_{i}"
-    def _dl1(i: int) -> str:  return f"D_l1_{i}"
-    def _dl2(i: int) -> str:  return f"D_l2_{i}"
-    def _cout(i: int) -> str: return f"C_out{i}"
+    def _dh1(i: int) -> str:
+        return f"D_h1_{i}"
+
+    def _dh2(i: int) -> str:
+        return f"D_h2_{i}"
+
+    def _dl1(i: int) -> str:
+        return f"D_l1_{i}"
+
+    def _dl2(i: int) -> str:
+        return f"D_l2_{i}"
+
+    def _cout(i: int) -> str:
+        return f"C_out{i}"
 
     inverter = {
         "name": "inverter",
         "role": "inverter",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "hfAc", "wire": "pri_top"}],
         "circuit": {
             "components": [
-                _component("mosfet",    "Q_HI"),       # ← SHI
-                _component("mosfet",    "Q_LO"),       # ← SLO
-                _component("capacitor", "C_bus_hi"),   # ← Cbus_hi
-                _component("capacitor", "C_bus_lo"),   # ← Cbus_lo
-                _component("resistor",  "R_bal_hi"),   # ← Rbal_hi
-                _component("resistor",  "R_bal_lo"),   # ← Rbal_lo
-                _component("capacitor", "C_r"),        # ← Cr
-                _component("magnetic",  "L_r"),        # ← Lr
+                _component("mosfet", "Q_HI"),  # ← SHI
+                _component("mosfet", "Q_LO"),  # ← SLO
+                _component("capacitor", "C_bus_hi"),  # ← Cbus_hi
+                _component("capacitor", "C_bus_lo"),  # ← Cbus_lo
+                _component("resistor", "R_bal_hi"),  # ← Rbal_hi
+                _component("resistor", "R_bal_lo"),  # ← Rbal_lo
+                _component("capacitor", "C_r"),  # ← Cr
+                _component("magnetic", "L_r"),  # ← Lr
             ],
             "connections": [
                 {
@@ -2566,7 +2628,7 @@ def series_resonant(deck: SpiceDeck) -> TasTopology:
                     "endpoints": [
                         {"component": "Q_HI", "pin": "S"},
                         {"component": "Q_LO", "pin": "D"},
-                        {"component": "C_r",  "pin": "1"},
+                        {"component": "C_r", "pin": "1"},
                     ],
                 },
                 {
@@ -2581,18 +2643,15 @@ def series_resonant(deck: SpiceDeck) -> TasTopology:
         },
     }
 
-    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
+    windings = ("pri", *tuple(f"sec{i}" for i in range(n_sec)))
     isolation = {
         "name": "isolation",
         "role": "isolation",
-        "inputPort":  {"type": "hfAc", "wire": "pri_top"},
+        "inputPort": {"type": "hfAc", "wire": "pri_top"},
         "outputPorts": [
-            {"type": "hfAc", "wire": f"sec{i}_pos", "name": f"sec{i}_pos"}
-            for i in range(n_sec)
-        ] + [
-            {"type": "hfAc", "wire": f"sec{i}_neg", "name": f"sec{i}_neg"}
-            for i in range(n_sec)
-        ],
+            {"type": "hfAc", "wire": f"sec{i}_pos", "name": f"sec{i}_pos"} for i in range(n_sec)
+        ]
+        + [{"type": "hfAc", "wire": f"sec{i}_neg", "name": f"sec{i}_neg"} for i in range(n_sec)],
         "circuit": {
             "components": [_t1_component(windings)],
             "connections": [],
@@ -2603,14 +2662,14 @@ def series_resonant(deck: SpiceDeck) -> TasTopology:
         {
             "name": f"output_{i}",
             "role": "outputRectifier",
-            "inputPort":  {"type": "hfAc",  "wire": f"sec{i}_pos"},
+            "inputPort": {"type": "hfAc", "wire": f"sec{i}_pos"},
             "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
             "circuit": {
                 "components": [
-                    _component("diode",     _dh1(i)),   # ← Dh1_o{i+1}
-                    _component("diode",     _dh2(i)),   # ← Dh2_o{i+1}
-                    _component("diode",     _dl1(i)),   # ← Dl1_o{i+1}
-                    _component("diode",     _dl2(i)),   # ← Dl2_o{i+1}
+                    _component("diode", _dh1(i)),  # ← Dh1_o{i+1}
+                    _component("diode", _dh2(i)),  # ← Dh2_o{i+1}
+                    _component("diode", _dl1(i)),  # ← Dl1_o{i+1}
+                    _component("diode", _dl2(i)),  # ← Dl2_o{i+1}
                     _component("capacitor", _cout(i)),  # ← Cout_o{i+1}
                 ],
                 "connections": [],
@@ -2627,7 +2686,7 @@ def series_resonant(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "input",
             "endpoints": [
-                {"component": "Q_HI",     "pin": "D"},
+                {"component": "Q_HI", "pin": "D"},
                 {"component": "C_bus_hi", "pin": "1"},
                 {"component": "R_bal_hi", "pin": "1"},
             ],
@@ -2642,7 +2701,7 @@ def series_resonant(deck: SpiceDeck) -> TasTopology:
                 {"component": "C_bus_lo", "pin": "1"},
                 {"component": "R_bal_hi", "pin": "2"},
                 {"component": "R_bal_lo", "pin": "1"},
-                {"component": "T1",       "pin": "pri.2"},
+                {"component": "T1", "pin": "pri.2"},
             ],
         },
         {
@@ -2651,7 +2710,7 @@ def series_resonant(deck: SpiceDeck) -> TasTopology:
             "kind": "wire",
             "endpoints": [
                 {"component": "L_r", "pin": "2"},
-                {"component": "T1",  "pin": "pri.1"},
+                {"component": "T1", "pin": "pri.1"},
             ],
         },
     ]
@@ -2659,43 +2718,49 @@ def series_resonant(deck: SpiceDeck) -> TasTopology:
         # sec{i}_pos = T1.sec{i}.1; full-bridge high diode anode + low diode
         # cathode (the Vsec_sense_o{i+1} ammeter is dropped, collapsing
         # sec_pos_sec_o{i+1} → sec_pos_o{i+1}).
-        inter_stage.append({
-            "name": f"sec{i}_pos",
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",     "pin": f"sec{i}.1"},
-                {"component": _dh1(i),  "pin": "A"},
-                {"component": _dl1(i),  "pin": "K"},
-            ],
-        })
+        inter_stage.append(
+            {
+                "name": f"sec{i}_pos",
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"sec{i}.1"},
+                    {"component": _dh1(i), "pin": "A"},
+                    {"component": _dl1(i), "pin": "K"},
+                ],
+            }
+        )
         # sec{i}_neg = T1.sec{i}.2; other full-bridge leg (the Vsec_ret_o{i+1}
         # ammeter is dropped, collapsing sec_neg_sec_o{i+1} → sec_neg_o{i+1}).
-        inter_stage.append({
-            "name": f"sec{i}_neg",
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",     "pin": f"sec{i}.2"},
-                {"component": _dh2(i),  "pin": "A"},
-                {"component": _dl2(i),  "pin": "K"},
-            ],
-        })
+        inter_stage.append(
+            {
+                "name": f"sec{i}_neg",
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"sec{i}.2"},
+                    {"component": _dh2(i), "pin": "A"},
+                    {"component": _dl2(i), "pin": "K"},
+                ],
+            }
+        )
         # Vout{i}+ = high-side diode cathodes + Cout.1 (the Resr_o{i+1} ESR
         # between vout_pos and vout_cap is dropped, collapsing the nodes).
-        inter_stage.append({
-            "name": f"Vout{i}",
-            "kind": "externalPort",
-            "direction": "output",
-            "endpoints": [
-                {"component": _dh1(i),  "pin": "K"},
-                {"component": _dh2(i),  "pin": "K"},
-                {"component": _cout(i), "pin": "1"},
-            ],
-        })
+        inter_stage.append(
+            {
+                "name": f"Vout{i}",
+                "kind": "externalPort",
+                "direction": "output",
+                "endpoints": [
+                    {"component": _dh1(i), "pin": "K"},
+                    {"component": _dh2(i), "pin": "K"},
+                    {"component": _cout(i), "pin": "1"},
+                ],
+            }
+        )
     # GND: low-side switch source, bus-divider bottom, and every rail's
     # low-side diode anodes (vout_neg_o{i} = GND via the Vgnd_o{i} stub) +
     # output-cap returns.
     gnd_endpoints: list[tuple[str, str]] = [
-        ("Q_LO",     "S"),
+        ("Q_LO", "S"),
         ("C_bus_lo", "2"),
         ("R_bal_lo", "2"),
     ]
@@ -2764,22 +2829,22 @@ def series_resonant(deck: SpiceDeck) -> TasTopology:
 
 
 _PUSH_PULL_REAL_KINDS = {
-    "S1":       "switch",
-    "S2":       "switch",
-    "Lpri_top": "inductor",      # → T1.pri_top
-    "Lpri_bot": "inductor",      # → T1.pri_bot
-    "Lsec_top": "inductor",      # → T1.sec_top
-    "Lsec_bot": "inductor",      # → T1.sec_bot
-    "K1":       "coupling",      # → T1 coupling (6 pairwise Ks)
-    "K2":       "coupling",
-    "K3":       "coupling",
-    "K4":       "coupling",
-    "K5":       "coupling",
-    "K6":       "coupling",
+    "S1": "switch",
+    "S2": "switch",
+    "Lpri_top": "inductor",  # → T1.pri_top
+    "Lpri_bot": "inductor",  # → T1.pri_bot
+    "Lsec_top": "inductor",  # → T1.sec_top
+    "Lsec_bot": "inductor",  # → T1.sec_bot
+    "K1": "coupling",  # → T1 coupling (6 pairwise Ks)
+    "K2": "coupling",
+    "K3": "coupling",
+    "K4": "coupling",
+    "K5": "coupling",
+    "K6": "coupling",
     "Dsec_top": "diode",
     "Dsec_bot": "diode",
-    "Lout":     "inductor",
-    "Cout":     "capacitor",
+    "Lout": "inductor",
+    "Cout": "capacitor",
 }
 
 
@@ -2792,15 +2857,15 @@ def push_pull(deck: SpiceDeck) -> TasTopology:
         "role": "switchingCell",
         # Vin port is metadata only — Q1/Q2 drains do NOT touch Vin;
         # Vin enters via T1 center tap (see isolation stage).
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [
             {"type": "pulsatingDc", "wire": "sw_top_node"},
             {"type": "pulsatingDc", "wire": "sw_bot_node"},
         ],
         "circuit": {
             "components": [
-                _component("mosfet", "Q1"),   # ← S1 (drives upper primary)
-                _component("mosfet", "Q2"),   # ← S2 (drives lower primary)
+                _component("mosfet", "Q1"),  # ← S1 (drives upper primary)
+                _component("mosfet", "Q2"),  # ← S2 (drives lower primary)
             ],
             "connections": [],
         },
@@ -2831,22 +2896,22 @@ def push_pull(deck: SpiceDeck) -> TasTopology:
         "name": "output_0",
         "role": "outputRectifier",
         # Two winding inputs feed the diode-OR at sec_rect.
-        "inputPort":  {"type": "hfAc",  "wire": "sec_top_node"},
+        "inputPort": {"type": "hfAc", "wire": "sec_top_node"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
-                _component("diode",     "D1"),       # ← Dsec_top
-                _component("diode",     "D2"),       # ← Dsec_bot
-                _component("magnetic",  "L_out0"),   # ← Lout
-                _component("capacitor", "C_out0"),   # ← Cout
+                _component("diode", "D1"),  # ← Dsec_top
+                _component("diode", "D2"),  # ← Dsec_bot
+                _component("magnetic", "L_out0"),  # ← Lout
+                _component("capacitor", "C_out0"),  # ← Cout
             ],
             "connections": [
                 {
                     "name": "sec_rect",
                     "kind": "wire",
                     "endpoints": [
-                        {"component": "D1",     "pin": "K"},
-                        {"component": "D2",     "pin": "K"},
+                        {"component": "D1", "pin": "K"},
+                        {"component": "D2", "pin": "K"},
                         {"component": "L_out0", "pin": "1"},
                     ],
                 },
@@ -2911,10 +2976,10 @@ def push_pull(deck: SpiceDeck) -> TasTopology:
             ],
         },
         _gnd_wire(
-            ("Q1",     "S"),
-            ("Q2",     "S"),
-            ("T1",     "sec_top.2"),  # secondary center tap = GND
-            ("T1",     "sec_bot.1"),  # secondary center tap = GND
+            ("Q1", "S"),
+            ("Q2", "S"),
+            ("T1", "sec_top.2"),  # secondary center tap = GND
+            ("T1", "sec_bot.1"),  # secondary center tap = GND
             ("C_out0", "2"),
         ),
         *_gate_wires("Q1", "Q2"),
@@ -2999,35 +3064,38 @@ def _psfb_real_kinds(deck: SpiceDeck) -> dict[str, str]:
     """
     n = _psfb_secondary_count(deck)
     kinds: dict[str, str] = {
-        "SA": "switch", "SB": "switch", "SC": "switch", "SD": "switch",
-        "L_series": "inductor",   # → L_r (seriesInductor)
-        "L_pri":    "inductor",   # → T1.pri
+        "SA": "switch",
+        "SB": "switch",
+        "SC": "switch",
+        "SD": "switch",
+        "L_series": "inductor",  # → L_r (seriesInductor)
+        "L_pri": "inductor",  # → T1.pri
     }
     for i in range(1, n + 1):
-        kinds[f"L_sec_o{i}"] = "inductor"    # → T1.sec{i-1}
-        kinds[f"D_r1_o{i}"]  = "diode"
-        kinds[f"D_r2_o{i}"]  = "diode"
-        kinds[f"L_out_o{i}"] = "inductor"    # → L_out{i-1}
-        kinds[f"C_out_o{i}"] = "capacitor"   # → C_out{i-1}
-    kinds.update(_coupling_kinds(deck))      # K1…, Ksec-sec → T1 couplings
+        kinds[f"L_sec_o{i}"] = "inductor"  # → T1.sec{i-1}
+        kinds[f"D_r1_o{i}"] = "diode"
+        kinds[f"D_r2_o{i}"] = "diode"
+        kinds[f"L_out_o{i}"] = "inductor"  # → L_out{i-1}
+        kinds[f"C_out_o{i}"] = "capacitor"  # → C_out{i-1}
+    kinds.update(_coupling_kinds(deck))  # K1…, Ksec-sec → T1 couplings
     return kinds
 
 
 # Retained for the single-output regression / unit tests that import the
 # constant directly. The validator now uses the deck-driven _psfb_real_kinds.
 _PSFB_REAL_KINDS = {
-    "SA":        "switch",
-    "SB":        "switch",
-    "SC":        "switch",
-    "SD":        "switch",
-    "L_series":  "inductor",     # → L_r (seriesInductor)
-    "L_pri":     "inductor",     # → T1.pri
-    "L_sec_o1":  "inductor",     # → T1.sec0
-    "K1":        "coupling",
-    "D_r1_o1":   "diode",
-    "D_r2_o1":   "diode",
-    "L_out_o1":  "inductor",     # → L_out0
-    "C_out_o1":  "capacitor",    # → C_out0
+    "SA": "switch",
+    "SB": "switch",
+    "SC": "switch",
+    "SD": "switch",
+    "L_series": "inductor",  # → L_r (seriesInductor)
+    "L_pri": "inductor",  # → T1.pri
+    "L_sec_o1": "inductor",  # → T1.sec0
+    "K1": "coupling",
+    "D_r1_o1": "diode",
+    "D_r2_o1": "diode",
+    "L_out_o1": "inductor",  # → L_out0
+    "C_out_o1": "capacitor",  # → C_out0
 }
 
 
@@ -3049,35 +3117,43 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
     _validate_real_set(deck, "phase_shifted_full_bridge", _psfb_real_kinds(deck))
     n_sec = _psfb_secondary_count(deck)
     if n_sec < 1:
-        raise StencilError(
-            "phase_shifted_full_bridge: deck has no secondary winding "
-            "(L_sec_o1)"
-        )
+        raise StencilError("phase_shifted_full_bridge: deck has no secondary winding (L_sec_o1)")
 
     # Per-rail TAS names. Rail 0 keeps the original single-output names
     # so existing goldens / unit tests stay valid; rails ≥ 1 add _o{i}.
-    def _d1(i: int) -> str:    return "D1" if i == 0 else f"D1_o{i}"
-    def _d2(i: int) -> str:    return "D2" if i == 0 else f"D2_o{i}"
-    def _seca(i: int) -> str:  return "sec_a" if i == 0 else f"sec_a_o{i}"
-    def _secb(i: int) -> str:  return "sec_b" if i == 0 else f"sec_b_o{i}"
-    def _lout(i: int) -> str:  return f"L_out{i}"
-    def _cout(i: int) -> str:  return f"C_out{i}"
+    def _d1(i: int) -> str:
+        return "D1" if i == 0 else f"D1_o{i}"
+
+    def _d2(i: int) -> str:
+        return "D2" if i == 0 else f"D2_o{i}"
+
+    def _seca(i: int) -> str:
+        return "sec_a" if i == 0 else f"sec_a_o{i}"
+
+    def _secb(i: int) -> str:
+        return "sec_b" if i == 0 else f"sec_b_o{i}"
+
+    def _lout(i: int) -> str:
+        return f"L_out{i}"
+
+    def _cout(i: int) -> str:
+        return f"C_out{i}"
 
     inverter = {
         "name": "inverter",
         "role": "inverter",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [
             {"type": "hfAc", "wire": "mid_A", "name": "leg_a"},
             {"type": "hfAc", "wire": "mid_C", "name": "leg_c"},
         ],
         "circuit": {
             "components": [
-                _component("mosfet",   "Q_A"),   # ← SA (leg A high-side)
-                _component("mosfet",   "Q_B"),   # ← SB (leg A low-side)
-                _component("mosfet",   "Q_C"),   # ← SC (leg C high-side)
-                _component("mosfet",   "Q_D"),   # ← SD (leg C low-side)
-                _component("magnetic", "L_r"),   # ← L_series (resonant/leakage)
+                _component("mosfet", "Q_A"),  # ← SA (leg A high-side)
+                _component("mosfet", "Q_B"),  # ← SB (leg A low-side)
+                _component("mosfet", "Q_C"),  # ← SC (leg C high-side)
+                _component("mosfet", "Q_D"),  # ← SD (leg C low-side)
+                _component("magnetic", "L_r"),  # ← L_series (resonant/leakage)
             ],
             "connections": [
                 {
@@ -3093,15 +3169,13 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
         },
     }
 
-    windings = ("pri",) + tuple(f"sec{i}" for i in range(n_sec))
+    windings = ("pri", *tuple(f"sec{i}" for i in range(n_sec)))
     isolation_ports = []
     for i in range(n_sec):
         # Center-tapped secondary: both winding ends (sec_a / sec_b) are
         # isolation outputs feeding the two-diode CT rectifier.
-        isolation_ports.append(
-            {"type": "hfAc", "wire": _seca(i), "name": _seca(i)})
-        isolation_ports.append(
-            {"type": "hfAc", "wire": _secb(i), "name": _secb(i)})
+        isolation_ports.append({"type": "hfAc", "wire": _seca(i), "name": _seca(i)})
+        isolation_ports.append({"type": "hfAc", "wire": _secb(i), "name": _secb(i)})
     isolation = {
         "name": "isolation",
         "role": "isolation",
@@ -3117,22 +3191,22 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
         {
             "name": f"output_{i}",
             "role": "outputRectifier",
-            "inputPort":  {"type": "hfAc",  "wire": _seca(i)},
+            "inputPort": {"type": "hfAc", "wire": _seca(i)},
             "outputPorts": [{"type": "dcOutput", "wire": f"Vout{i}"}],
             "circuit": {
                 "components": [
-                    _component("diode",     _d1(i)),     # ← D_r1_o{i+1}
-                    _component("diode",     _d2(i)),     # ← D_r2_o{i+1}
-                    _component("magnetic",  _lout(i)),   # ← L_out_o{i+1}
-                    _component("capacitor", _cout(i)),   # ← C_out_o{i+1}
+                    _component("diode", _d1(i)),  # ← D_r1_o{i+1}
+                    _component("diode", _d2(i)),  # ← D_r2_o{i+1}
+                    _component("magnetic", _lout(i)),  # ← L_out_o{i+1}
+                    _component("capacitor", _cout(i)),  # ← C_out_o{i+1}
                 ],
                 "connections": [
                     {
                         "name": "out_rect" if i == 0 else f"out_rect_o{i}",
                         "kind": "wire",
                         "endpoints": [
-                            {"component": _d1(i),   "pin": "K"},
-                            {"component": _d2(i),   "pin": "K"},
+                            {"component": _d1(i), "pin": "K"},
+                            {"component": _d2(i), "pin": "K"},
                             {"component": _lout(i), "pin": "1"},
                         ],
                     },
@@ -3160,7 +3234,7 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
             "kind": "wire",
             "endpoints": [
                 {"component": "L_r", "pin": "2"},
-                {"component": "T1",  "pin": "pri.1"},
+                {"component": "T1", "pin": "pri.1"},
             ],
         },
         {
@@ -3170,44 +3244,52 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
             "endpoints": [
                 {"component": "Q_C", "pin": "S"},
                 {"component": "Q_D", "pin": "D"},
-                {"component": "T1",  "pin": "pri.2"},
+                {"component": "T1", "pin": "pri.2"},
             ],
         },
     ]
     for i in range(n_sec):
-        inter_stage.append({
-            "name": _seca(i),
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",     "pin": f"sec{i}.1"},
-                {"component": _d1(i),   "pin": "A"},
-            ],
-        })
-        inter_stage.append({
-            # MKF center-tap stub Rct_o{i+1} ties sec_b to GND via 1µΩ;
-            # the stencil drops the stub and places D2.A on sec_b which
-            # then naturally reaches the output rectifier.
-            "name": _secb(i),
-            "kind": "wire",
-            "endpoints": [
-                {"component": "T1",     "pin": f"sec{i}.2"},
-                {"component": _d2(i),   "pin": "A"},
-            ],
-        })
-        inter_stage.append({
-            "name": f"Vout{i}",
-            "kind": "externalPort",
-            "direction": "output",
-            "endpoints": [
-                {"component": _lout(i), "pin": "2"},
-                {"component": _cout(i), "pin": "1"},
-            ],
-        })
-    inter_stage.append(_gnd_wire(
-        ("Q_B", "S"),
-        ("Q_D", "S"),
-        *[(_cout(i), "2") for i in range(n_sec)],
-    ))
+        inter_stage.append(
+            {
+                "name": _seca(i),
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"sec{i}.1"},
+                    {"component": _d1(i), "pin": "A"},
+                ],
+            }
+        )
+        inter_stage.append(
+            {
+                # MKF center-tap stub Rct_o{i+1} ties sec_b to GND via 1µΩ;
+                # the stencil drops the stub and places D2.A on sec_b which
+                # then naturally reaches the output rectifier.
+                "name": _secb(i),
+                "kind": "wire",
+                "endpoints": [
+                    {"component": "T1", "pin": f"sec{i}.2"},
+                    {"component": _d2(i), "pin": "A"},
+                ],
+            }
+        )
+        inter_stage.append(
+            {
+                "name": f"Vout{i}",
+                "kind": "externalPort",
+                "direction": "output",
+                "endpoints": [
+                    {"component": _lout(i), "pin": "2"},
+                    {"component": _cout(i), "pin": "1"},
+                ],
+            }
+        )
+    inter_stage.append(
+        _gnd_wire(
+            ("Q_B", "S"),
+            ("Q_D", "S"),
+            *[(_cout(i), "2") for i in range(n_sec)],
+        )
+    )
     inter_stage.extend(_gate_wires("Q_A", "Q_B", "Q_C", "Q_D"))
 
     return {
@@ -3262,9 +3344,9 @@ def phase_shifted_full_bridge(deck: SpiceDeck) -> TasTopology:
 
 
 _AHB_REAL_KINDS = {
-    "S1":     "switch",
-    "S2":     "switch",
-    "C_b":    "capacitor",     # DC blocking cap (Imbertson-Mohan)
+    "S1": "switch",
+    "S2": "switch",
+    "C_b": "capacitor",  # DC blocking cap (Imbertson-Mohan)
     # NOTE: L_lk (primary leakage / ZVS inductor) is intentionally absent
     # from the real-set. MKF emits it (with a real 1µH value) but does
     # NOT dispatch a designer for it — there's no extra-component slot,
@@ -3272,15 +3354,15 @@ _AHB_REAL_KINDS = {
     # binding strategy lands (e.g. ``seriesInductor`` extras-role or a
     # T1 leakage-as-winding spec), the stencil drops L_lk and treats it
     # as transformer leakage absorbed into T1. Tracked in BACKLOG.
-    "L_pri":  "inductor",      # → T1.pri
-    "L_sec":  "inductor",      # → T1.sec0
-    "K1":     "coupling",      # → T1 coupling
-    "D_r1":   "diode",         # full-bridge rectifier
-    "D_r2":   "diode",
-    "D_r3":   "diode",
-    "D_r4":   "diode",
-    "L_o":    "inductor",      # → L_out0
-    "C_o":    "capacitor",     # → C_out0
+    "L_pri": "inductor",  # → T1.pri
+    "L_sec": "inductor",  # → T1.sec0
+    "K1": "coupling",  # → T1 coupling
+    "D_r1": "diode",  # full-bridge rectifier
+    "D_r2": "diode",
+    "D_r3": "diode",
+    "D_r4": "diode",
+    "L_o": "inductor",  # → L_out0
+    "C_o": "capacitor",  # → C_out0
 }
 
 
@@ -3307,16 +3389,16 @@ def asymmetric_half_bridge(deck: SpiceDeck) -> TasTopology:
     inverter = {
         "name": "inverter",
         "role": "inverter",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [
             {"type": "hfAc", "wire": "pri_top", "name": "pri_top"},
-            {"type": "hfAc", "wire": "sw",      "name": "sw"},
+            {"type": "hfAc", "wire": "sw", "name": "sw"},
         ],
         "circuit": {
             "components": [
-                _component("mosfet",    "Q1"),    # ← S1 (high-side)
-                _component("mosfet",    "Q2"),    # ← S2 (low-side)
-                _component("capacitor", "C_b"),   # ← C_b (DC blocking)
+                _component("mosfet", "Q1"),  # ← S1 (high-side)
+                _component("mosfet", "Q2"),  # ← S2 (low-side)
+                _component("capacitor", "C_b"),  # ← C_b (DC blocking)
             ],
             "connections": [],
         },
@@ -3339,24 +3421,24 @@ def asymmetric_half_bridge(deck: SpiceDeck) -> TasTopology:
     output_rectifier_0 = {
         "name": "output_0",
         "role": "outputRectifier",
-        "inputPort":  {"type": "hfAc",  "wire": "sec_a"},
+        "inputPort": {"type": "hfAc", "wire": "sec_a"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
-                _component("diode",     "D1"),       # ← D_r1
-                _component("diode",     "D2"),       # ← D_r2
-                _component("diode",     "D3"),       # ← D_r3
-                _component("diode",     "D4"),       # ← D_r4
-                _component("magnetic",  "L_out0"),   # ← L_o
-                _component("capacitor", "C_out0"),   # ← C_o
+                _component("diode", "D1"),  # ← D_r1
+                _component("diode", "D2"),  # ← D_r2
+                _component("diode", "D3"),  # ← D_r3
+                _component("diode", "D4"),  # ← D_r4
+                _component("magnetic", "L_out0"),  # ← L_o
+                _component("capacitor", "C_out0"),  # ← C_o
             ],
             "connections": [
                 {
                     "name": "out_rect",
                     "kind": "wire",
                     "endpoints": [
-                        {"component": "D1",     "pin": "K"},
-                        {"component": "D2",     "pin": "K"},
+                        {"component": "D1", "pin": "K"},
+                        {"component": "D2", "pin": "K"},
                         {"component": "L_out0", "pin": "1"},
                     ],
                 },
@@ -3372,7 +3454,7 @@ def asymmetric_half_bridge(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "input",
             "endpoints": [
-                {"component": "Q1",  "pin": "D"},
+                {"component": "Q1", "pin": "D"},
                 {"component": "C_b", "pin": "1"},
             ],
         },
@@ -3383,7 +3465,7 @@ def asymmetric_half_bridge(deck: SpiceDeck) -> TasTopology:
             "kind": "wire",
             "endpoints": [
                 {"component": "C_b", "pin": "2"},
-                {"component": "T1",  "pin": "pri.1"},
+                {"component": "T1", "pin": "pri.1"},
             ],
         },
         {
@@ -3424,9 +3506,9 @@ def asymmetric_half_bridge(deck: SpiceDeck) -> TasTopology:
             ],
         },
         _gnd_wire(
-            ("Q2",     "S"),
-            ("D3",     "A"),
-            ("D4",     "A"),
+            ("Q2", "S"),
+            ("D3", "A"),
+            ("D4", "A"),
             ("C_out0", "2"),
         ),
         *_gate_wires("Q1", "Q2"),
@@ -3504,27 +3586,27 @@ def asymmetric_half_bridge(deck: SpiceDeck) -> TasTopology:
 
 
 _WEINBERG_REAL_KINDS = {
-    "S1":       "switch",
-    "S2":       "switch",
+    "S1": "switch",
+    "S2": "switch",
     # Input coupled inductor L1 (2 windings + 1 coupling)
-    "L1a":      "inductor",      # → L1.a
-    "L1b":      "inductor",      # → L1.b
-    "K_in":     "coupling",      # → L1 inter-winding coupling
+    "L1a": "inductor",  # → L1.a
+    "L1b": "inductor",  # → L1.b
+    "K_in": "coupling",  # → L1 inter-winding coupling
     # Main transformer T1 (4 windings + 6 pairwise couplings)
-    "Lpri_a":   "inductor",      # → T1.pri_a
-    "Lpri_b":   "inductor",      # → T1.pri_b
-    "Lsec_a":   "inductor",      # → T1.sec_a
-    "Lsec_b":   "inductor",      # → T1.sec_b
-    "K_pa_pb":  "coupling",
-    "K_pa_sa":  "coupling",
-    "K_pa_sb":  "coupling",
-    "K_pb_sa":  "coupling",
-    "K_pb_sb":  "coupling",
-    "K_sa_sb":  "coupling",
+    "Lpri_a": "inductor",  # → T1.pri_a
+    "Lpri_b": "inductor",  # → T1.pri_b
+    "Lsec_a": "inductor",  # → T1.sec_a
+    "Lsec_b": "inductor",  # → T1.sec_b
+    "K_pa_pb": "coupling",
+    "K_pa_sa": "coupling",
+    "K_pa_sb": "coupling",
+    "K_pb_sa": "coupling",
+    "K_pb_sb": "coupling",
+    "K_sa_sb": "coupling",
     # Rectifier + output filter (no output choke — see header)
-    "D_pos":    "diode",         # → D1
-    "D_neg":    "diode",         # → D2
-    "Cout":     "capacitor",     # → C_out0
+    "D_pos": "diode",  # → D1
+    "D_neg": "diode",  # → D2
+    "Cout": "capacitor",  # → C_out0
 }
 
 
@@ -3549,7 +3631,7 @@ def weinberg(deck: SpiceDeck) -> TasTopology:
     input_filter = {
         "name": "input_coupled_inductor",
         "role": "lineFilter",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [
             {"type": "hfAc", "wire": "priCT_a", "name": "priCT_a"},
             {"type": "hfAc", "wire": "priCT_b", "name": "priCT_b"},
@@ -3571,15 +3653,15 @@ def weinberg(deck: SpiceDeck) -> TasTopology:
         # Q1/Q2 drains do NOT touch Vin directly; the input current
         # arrives through L1 and the T1 primary CT taps. Vin port is
         # metadata only — see push_pull stencil for the same pattern.
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [
             {"type": "pulsatingDc", "wire": "drainQ1"},
             {"type": "pulsatingDc", "wire": "drainQ2"},
         ],
         "circuit": {
             "components": [
-                _component("mosfet", "Q1"),   # ← S1
-                _component("mosfet", "Q2"),   # ← S2
+                _component("mosfet", "Q1"),  # ← S1
+                _component("mosfet", "Q2"),  # ← S2
             ],
             "connections": [],
         },
@@ -3607,21 +3689,21 @@ def weinberg(deck: SpiceDeck) -> TasTopology:
     output_rectifier = {
         "name": "output_0",
         "role": "outputRectifier",
-        "inputPort":  {"type": "hfAc",  "wire": "diodePos"},
+        "inputPort": {"type": "hfAc", "wire": "diodePos"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
-                _component("diode",     "D1"),       # ← D_pos
-                _component("diode",     "D2"),       # ← D_neg
-                _component("capacitor", "C_out0"),   # ← Cout
+                _component("diode", "D1"),  # ← D_pos
+                _component("diode", "D2"),  # ← D_neg
+                _component("capacitor", "C_out0"),  # ← Cout
             ],
             "connections": [
                 {
                     "name": "out_node",
                     "kind": "wire",
                     "endpoints": [
-                        {"component": "D1",     "pin": "K"},
-                        {"component": "D2",     "pin": "K"},
+                        {"component": "D1", "pin": "K"},
+                        {"component": "D2", "pin": "K"},
                         {"component": "C_out0", "pin": "1"},
                     ],
                 },
@@ -3703,10 +3785,10 @@ def weinberg(deck: SpiceDeck) -> TasTopology:
             ],
         },
         _gnd_wire(
-            ("Q1",     "S"),
-            ("Q2",     "S"),
-            ("T1",     "sec_a.1"),  # secondary CT = GND
-            ("T1",     "sec_b.2"),  # secondary CT = GND
+            ("Q1", "S"),
+            ("Q2", "S"),
+            ("T1", "sec_a.1"),  # secondary CT = GND
+            ("T1", "sec_b.2"),  # secondary CT = GND
             ("C_out0", "2"),
         ),
         *_gate_wires("Q1", "Q2"),
@@ -3783,23 +3865,23 @@ def weinberg(deck: SpiceDeck) -> TasTopology:
 
 _DAB_REAL_KINDS = {
     # Primary bridge
-    "S1":         "switch",
-    "S2":         "switch",
-    "S3":         "switch",
-    "S4":         "switch",
+    "S1": "switch",
+    "S2": "switch",
+    "S3": "switch",
+    "S4": "switch",
     # Series resonant/leakage inductor
-    "L_series":   "inductor",      # → L_r (seriesInductor)
+    "L_series": "inductor",  # → L_r (seriesInductor)
     # Transformer T1
-    "L_pri":      "inductor",      # → T1.pri
-    "L_sec_o1":   "inductor",      # → T1.sec0
-    "K1":         "coupling",      # → T1 coupling
+    "L_pri": "inductor",  # → T1.pri
+    "L_sec_o1": "inductor",  # → T1.sec0
+    "K1": "coupling",  # → T1 coupling
     # Secondary bridge (synchronous rectifier)
-    "S5_o1":      "switch",
-    "S6_o1":      "switch",
-    "S7_o1":      "switch",
-    "S8_o1":      "switch",
+    "S5_o1": "switch",
+    "S6_o1": "switch",
+    "S7_o1": "switch",
+    "S8_o1": "switch",
     # Output cap
-    "Cout_o1":    "capacitor",     # → C_out0
+    "Cout_o1": "capacitor",  # → C_out0
 }
 
 
@@ -3839,26 +3921,34 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
         # Note: D1..D4 collide with real freewheeling diodes in
         # buck/flyback so they must live here, not in
         # _TESTBENCH_EXACT (same reasoning as AHB).
-        extra_testbench=frozenset({
-            "D1", "D2", "D3", "D4",
-            "D5_o1", "D6_o1", "D7_o1", "D8_o1",
-        }),
+        extra_testbench=frozenset(
+            {
+                "D1",
+                "D2",
+                "D3",
+                "D4",
+                "D5_o1",
+                "D6_o1",
+                "D7_o1",
+                "D8_o1",
+            }
+        ),
     )
 
     primary_bridge = {
         "name": "primary_bridge",
         "role": "inverter",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [
             {"type": "hfAc", "wire": "bridge_a1", "name": "bridge_a1"},
             {"type": "hfAc", "wire": "bridge_b1", "name": "bridge_b1"},
         ],
         "circuit": {
             "components": [
-                _component("mosfet", "Q1"),   # ← S1 (Leg A high)
-                _component("mosfet", "Q2"),   # ← S2 (Leg A low)
-                _component("mosfet", "Q3"),   # ← S3 (Leg B high)
-                _component("mosfet", "Q4"),   # ← S4 (Leg B low)
+                _component("mosfet", "Q1"),  # ← S1 (Leg A high)
+                _component("mosfet", "Q2"),  # ← S2 (Leg A low)
+                _component("mosfet", "Q3"),  # ← S3 (Leg B high)
+                _component("mosfet", "Q4"),  # ← S4 (Leg B low)
             ],
             "connections": [],
         },
@@ -3874,7 +3964,7 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
         ],
         "circuit": {
             "components": [
-                _component("magnetic", "L_r"),       # ← L_series (resonant/leakage)
+                _component("magnetic", "L_r"),  # ← L_series (resonant/leakage)
                 _t1_component(("pri", "sec0")),
             ],
             "connections": [
@@ -3886,7 +3976,7 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
                     "kind": "wire",
                     "endpoints": [
                         {"component": "L_r", "pin": "2"},
-                        {"component": "T1",  "pin": "pri.1"},
+                        {"component": "T1", "pin": "pri.1"},
                     ],
                 },
             ],
@@ -3899,14 +3989,14 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
         # Two winding inputs feed the secondary full bridge; Vout0 is
         # the bidirectional DC bus (sourced when DAB is in rectifier
         # mode, sunk when in inverter mode).
-        "inputPort":  {"type": "hfAc",  "wire": "sec_a_o1"},
+        "inputPort": {"type": "hfAc", "wire": "sec_a_o1"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
-                _component("mosfet", "Q5"),   # ← S5_o1 (Sec Leg A high)
-                _component("mosfet", "Q6"),   # ← S6_o1 (Sec Leg A low)
-                _component("mosfet", "Q7"),   # ← S7_o1 (Sec Leg B high)
-                _component("mosfet", "Q8"),   # ← S8_o1 (Sec Leg B low)
+                _component("mosfet", "Q5"),  # ← S5_o1 (Sec Leg A high)
+                _component("mosfet", "Q6"),  # ← S6_o1 (Sec Leg A low)
+                _component("mosfet", "Q7"),  # ← S7_o1 (Sec Leg B high)
+                _component("mosfet", "Q8"),  # ← S8_o1 (Sec Leg B low)
             ],
             "connections": [],
         },
@@ -3915,11 +4005,11 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
     output_filter = {
         "name": "output_filter",
         "role": "outputFilter",
-        "inputPort":  {"type": "dcOutput", "wire": "Vout0"},
+        "inputPort": {"type": "dcOutput", "wire": "Vout0"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
-                _component("capacitor", "C_out0"),   # ← Cout_o1
+                _component("capacitor", "C_out0"),  # ← Cout_o1
             ],
             "connections": [],
         },
@@ -3942,8 +4032,8 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
             "name": "bridge_a1",
             "kind": "wire",
             "endpoints": [
-                {"component": "Q1",  "pin": "S"},
-                {"component": "Q2",  "pin": "D"},
+                {"component": "Q1", "pin": "S"},
+                {"component": "Q2", "pin": "D"},
                 {"component": "L_r", "pin": "1"},
             ],
         },
@@ -3980,8 +4070,8 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
             "name": "Vout0",
             "kind": "wire",
             "endpoints": [
-                {"component": "Q5",     "pin": "D"},
-                {"component": "Q7",     "pin": "D"},
+                {"component": "Q5", "pin": "D"},
+                {"component": "Q7", "pin": "D"},
                 {"component": "C_out0", "pin": "1"},
             ],
         },
@@ -3994,10 +4084,10 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
             ],
         },
         _gnd_wire(
-            ("Q2",     "S"),
-            ("Q4",     "S"),
-            ("Q6",     "S"),
-            ("Q8",     "S"),
+            ("Q2", "S"),
+            ("Q4", "S"),
+            ("Q6", "S"),
+            ("Q8", "S"),
             ("C_out0", "2"),
         ),
         *_gate_wires("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8"),
@@ -4076,28 +4166,28 @@ def dual_active_bridge(deck: SpiceDeck) -> TasTopology:
 
 _CLLLC_REAL_KINDS = {
     # HV (primary) bridge
-    "SHV1":      "switch",
-    "SHV2":      "switch",
-    "SHV3":      "switch",
-    "SHV4":      "switch",
+    "SHV1": "switch",
+    "SHV2": "switch",
+    "SHV3": "switch",
+    "SHV4": "switch",
     # LV (secondary, synchronous rectifier) bridge
-    "SLV1":      "switch",
-    "SLV2":      "switch",
-    "SLV3":      "switch",
-    "SLV4":      "switch",
+    "SLV1": "switch",
+    "SLV2": "switch",
+    "SLV3": "switch",
+    "SLV4": "switch",
     # Bus bulk caps (input + output)
-    "Cbus_HV":   "capacitor",      # → C_bus_HV
-    "Cbus_LV":   "capacitor",      # → C_bus_LV (output bulk)
+    "Cbus_HV": "capacitor",  # → C_bus_HV
+    "Cbus_LV": "capacitor",  # → C_bus_LV (output bulk)
     # HV-side resonant tank
-    "Cr1":       "capacitor",      # → C_r1 (Cr1_HV_resonantCapacitor)
-    "Lr1":       "inductor",       # → L_r1 (Lr1_HV_seriesInductor)
+    "Cr1": "capacitor",  # → C_r1 (Cr1_HV_resonantCapacitor)
+    "Lr1": "inductor",  # → L_r1 (Lr1_HV_seriesInductor)
     # LV-side resonant tank
-    "Cr2":       "capacitor",      # → C_r2 (Cr2_LV_resonantCapacitor)
-    "Lr2":       "inductor",       # → L_r2 (Lr2_LV_seriesInductor)
+    "Cr2": "capacitor",  # → C_r2 (Cr2_LV_resonantCapacitor)
+    "Lr2": "inductor",  # → L_r2 (Lr2_LV_seriesInductor)
     # Main transformer
-    "Lpri":      "inductor",       # → T1.pri
-    "Lsec":      "inductor",       # → T1.sec0
-    "K_pri_sec": "coupling",       # → T1 coupling
+    "Lpri": "inductor",  # → T1.pri
+    "Lsec": "inductor",  # → T1.sec0
+    "K_pri_sec": "coupling",  # → T1 coupling
 }
 
 
@@ -4139,10 +4229,18 @@ def clllc(deck: SpiceDeck) -> TasTopology:
         # These collide with the real freewheeling diode D1..D4 used by
         # single-switch families (buck/flyback), so they must live in
         # extra_testbench rather than _TESTBENCH_EXACT.
-        extra_testbench=frozenset({
-            "DHV1", "DHV2", "DHV3", "DHV4",
-            "DLV1", "DLV2", "DLV3", "DLV4",
-        }),
+        extra_testbench=frozenset(
+            {
+                "DHV1",
+                "DHV2",
+                "DHV3",
+                "DHV4",
+                "DLV1",
+                "DLV2",
+                "DLV3",
+                "DLV4",
+            }
+        ),
     )
 
     primary_bridge = {
@@ -4155,11 +4253,11 @@ def clllc(deck: SpiceDeck) -> TasTopology:
         ],
         "circuit": {
             "components": [
-                _component("mosfet",    "Q1"),         # ← SHV1 (Leg A high)
-                _component("mosfet",    "Q2"),         # ← SHV2 (Leg A low)
-                _component("mosfet",    "Q3"),         # ← SHV3 (Leg B high)
-                _component("mosfet",    "Q4"),         # ← SHV4 (Leg B low)
-                _component("capacitor", "C_bus_HV"),   # ← Cbus_HV (input bulk)
+                _component("mosfet", "Q1"),  # ← SHV1 (Leg A high)
+                _component("mosfet", "Q2"),  # ← SHV2 (Leg A low)
+                _component("mosfet", "Q3"),  # ← SHV3 (Leg B high)
+                _component("mosfet", "Q4"),  # ← SHV4 (Leg B low)
+                _component("capacitor", "C_bus_HV"),  # ← Cbus_HV (input bulk)
             ],
             "connections": [],
         },
@@ -4180,11 +4278,11 @@ def clllc(deck: SpiceDeck) -> TasTopology:
         ],
         "circuit": {
             "components": [
-                _component("capacitor", "C_r1"),   # ← Cr1 (resonant cap, HV side)
-                _component("magnetic",  "L_r1"),   # ← Lr1 (resonant inductor, HV)
-                _t1_component(("pri", "sec0")),    # ← Lpri/Lsec + K_pri_sec
-                _component("magnetic",  "L_r2"),   # ← Lr2 (resonant inductor, LV)
-                _component("capacitor", "C_r2"),   # ← Cr2 (resonant cap, LV side)
+                _component("capacitor", "C_r1"),  # ← Cr1 (resonant cap, HV side)
+                _component("magnetic", "L_r1"),  # ← Lr1 (resonant inductor, HV)
+                _t1_component(("pri", "sec0")),  # ← Lpri/Lsec + K_pri_sec
+                _component("magnetic", "L_r2"),  # ← Lr2 (resonant inductor, LV)
+                _component("capacitor", "C_r2"),  # ← Cr2 (resonant cap, LV side)
             ],
             "connections": [
                 {
@@ -4203,7 +4301,7 @@ def clllc(deck: SpiceDeck) -> TasTopology:
                     "kind": "wire",
                     "endpoints": [
                         {"component": "L_r1", "pin": "2"},
-                        {"component": "T1",   "pin": "pri.1"},
+                        {"component": "T1", "pin": "pri.1"},
                     ],
                 },
                 {
@@ -4221,7 +4319,7 @@ def clllc(deck: SpiceDeck) -> TasTopology:
                     "kind": "wire",
                     "endpoints": [
                         {"component": "L_r2", "pin": "2"},
-                        {"component": "T1",   "pin": "sec0.1"},
+                        {"component": "T1", "pin": "sec0.1"},
                     ],
                 },
             ],
@@ -4233,14 +4331,14 @@ def clllc(deck: SpiceDeck) -> TasTopology:
         "role": "outputRectifier",
         # Two winding inputs feed the LV full bridge; Vout0 is the
         # bidirectional DC bus (sourced in forward mode, sunk in reverse).
-        "inputPort":  {"type": "hfAc",  "wire": "bridge_a_lv"},
+        "inputPort": {"type": "hfAc", "wire": "bridge_a_lv"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
-                _component("mosfet", "Q5"),   # ← SLV1 (LV Leg A high)
-                _component("mosfet", "Q6"),   # ← SLV2 (LV Leg A low)
-                _component("mosfet", "Q7"),   # ← SLV3 (LV Leg B high)
-                _component("mosfet", "Q8"),   # ← SLV4 (LV Leg B low)
+                _component("mosfet", "Q5"),  # ← SLV1 (LV Leg A high)
+                _component("mosfet", "Q6"),  # ← SLV2 (LV Leg A low)
+                _component("mosfet", "Q7"),  # ← SLV3 (LV Leg B high)
+                _component("mosfet", "Q8"),  # ← SLV4 (LV Leg B low)
             ],
             "connections": [],
         },
@@ -4249,11 +4347,11 @@ def clllc(deck: SpiceDeck) -> TasTopology:
     output_filter = {
         "name": "output_filter",
         "role": "outputFilter",
-        "inputPort":  {"type": "dcOutput", "wire": "Vout0"},
+        "inputPort": {"type": "dcOutput", "wire": "Vout0"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
-                _component("capacitor", "C_bus_LV"),   # ← Cbus_LV (output bulk)
+                _component("capacitor", "C_bus_LV"),  # ← Cbus_LV (output bulk)
             ],
             "connections": [],
         },
@@ -4267,8 +4365,8 @@ def clllc(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "input",
             "endpoints": [
-                {"component": "Q1",       "pin": "D"},
-                {"component": "Q3",       "pin": "D"},
+                {"component": "Q1", "pin": "D"},
+                {"component": "Q3", "pin": "D"},
                 {"component": "C_bus_HV", "pin": "1"},
             ],
         },
@@ -4277,8 +4375,8 @@ def clllc(deck: SpiceDeck) -> TasTopology:
             "name": "bridge_a_hv",
             "kind": "wire",
             "endpoints": [
-                {"component": "Q1",   "pin": "S"},
-                {"component": "Q2",   "pin": "D"},
+                {"component": "Q1", "pin": "S"},
+                {"component": "Q2", "pin": "D"},
                 {"component": "C_r1", "pin": "1"},
             ],
         },
@@ -4299,8 +4397,8 @@ def clllc(deck: SpiceDeck) -> TasTopology:
             "name": "bridge_a_lv",
             "kind": "wire",
             "endpoints": [
-                {"component": "Q5",   "pin": "S"},
-                {"component": "Q6",   "pin": "D"},
+                {"component": "Q5", "pin": "S"},
+                {"component": "Q6", "pin": "D"},
                 {"component": "C_r2", "pin": "1"},
             ],
         },
@@ -4320,8 +4418,8 @@ def clllc(deck: SpiceDeck) -> TasTopology:
             "name": "Vout0",
             "kind": "wire",
             "endpoints": [
-                {"component": "Q5",       "pin": "D"},
-                {"component": "Q7",       "pin": "D"},
+                {"component": "Q5", "pin": "D"},
+                {"component": "Q7", "pin": "D"},
                 {"component": "C_bus_LV", "pin": "1"},
             ],
         },
@@ -4334,10 +4432,10 @@ def clllc(deck: SpiceDeck) -> TasTopology:
             ],
         },
         _gnd_wire(
-            ("Q2",       "S"),
-            ("Q4",       "S"),
-            ("Q6",       "S"),
-            ("Q8",       "S"),
+            ("Q2", "S"),
+            ("Q4", "S"),
+            ("Q6", "S"),
+            ("Q8", "S"),
             ("C_bus_HV", "2"),
             ("C_bus_LV", "2"),
         ),
@@ -4423,26 +4521,26 @@ def clllc(deck: SpiceDeck) -> TasTopology:
 
 _CLLC_REAL_KINDS = {
     # Primary full bridge
-    "S1":       "switch",
-    "S2":       "switch",
-    "S3":       "switch",
-    "S4":       "switch",
+    "S1": "switch",
+    "S2": "switch",
+    "S3": "switch",
+    "S4": "switch",
     # Secondary synchronous rectifier
-    "Sa":       "switch",
-    "Sb":       "switch",
-    "Sc":       "switch",
-    "Sd":       "switch",
+    "Sa": "switch",
+    "Sb": "switch",
+    "Sc": "switch",
+    "Sd": "switch",
     # Resonant caps (the only resonant-tank elements exposed as bindable
     # extras by PyMKF; the inductors L_res1/L_res2 are absorbed into T1's
     # compound leakage model and live in extra_testbench).
-    "C_res1":   "capacitor",
-    "C_res2":   "capacitor",
+    "C_res1": "capacitor",
+    "C_res2": "capacitor",
     # Main transformer
-    "Lpri":     "inductor",
-    "Lsec":     "inductor",
+    "Lpri": "inductor",
+    "Lsec": "inductor",
     "Kpri_sec": "coupling",
     # Output bulk capacitor
-    "Cout":     "capacitor",
+    "Cout": "capacitor",
 }
 
 
@@ -4481,10 +4579,16 @@ def cllc(deck: SpiceDeck) -> TasTopology:
         # as integrated leakage of T1 (not exposed as bindable extras-
         # magnetic). Heaviside collapses them into T1's compound model
         # rather than carrying separate-but-unbound BOM entries.
-        extra_testbench=frozenset({
-            "DS1", "DS2", "DS3", "DS4",
-            "L_res1", "L_res2",
-        }),
+        extra_testbench=frozenset(
+            {
+                "DS1",
+                "DS2",
+                "DS3",
+                "DS4",
+                "L_res1",
+                "L_res2",
+            }
+        ),
     )
 
     primary_bridge = {
@@ -4497,10 +4601,10 @@ def cllc(deck: SpiceDeck) -> TasTopology:
         ],
         "circuit": {
             "components": [
-                _component("mosfet", "Q1"),   # ← S1 (Leg A high)
-                _component("mosfet", "Q2"),   # ← S2 (Leg A low)
-                _component("mosfet", "Q3"),   # ← S3 (Leg B high)
-                _component("mosfet", "Q4"),   # ← S4 (Leg B low)
+                _component("mosfet", "Q1"),  # ← S1 (Leg A high)
+                _component("mosfet", "Q2"),  # ← S2 (Leg A low)
+                _component("mosfet", "Q3"),  # ← S3 (Leg B high)
+                _component("mosfet", "Q4"),  # ← S4 (Leg B low)
             ],
             "connections": [],
         },
@@ -4516,10 +4620,10 @@ def cllc(deck: SpiceDeck) -> TasTopology:
         ],
         "circuit": {
             "components": [
-                _component("capacitor", "C_r1"),   # ← C_res1
-                _t1_component(("pri", "sec0")),    # ← Lpri/Lsec + Kpri_sec
-                                                    #   (absorbs L_res1/L_res2 leakage)
-                _component("capacitor", "C_r2"),   # ← C_res2
+                _component("capacitor", "C_r1"),  # ← C_res1
+                _t1_component(("pri", "sec0")),  # ← Lpri/Lsec + Kpri_sec
+                #   (absorbs L_res1/L_res2 leakage)
+                _component("capacitor", "C_r2"),  # ← C_res2
             ],
             "connections": [
                 # HV tank: C_r1.2 ↔ T1.pri.1 (L_res1 collapsed into T1 leakage).
@@ -4528,7 +4632,7 @@ def cllc(deck: SpiceDeck) -> TasTopology:
                     "kind": "wire",
                     "endpoints": [
                         {"component": "C_r1", "pin": "2"},
-                        {"component": "T1",   "pin": "pri.1"},
+                        {"component": "T1", "pin": "pri.1"},
                     ],
                 },
                 # LV tank: T1.sec0.1 ↔ C_r2.1 (L_res2 collapsed into T1 leakage).
@@ -4537,7 +4641,7 @@ def cllc(deck: SpiceDeck) -> TasTopology:
                     "kind": "wire",
                     "endpoints": [
                         {"component": "C_r2", "pin": "1"},
-                        {"component": "T1",   "pin": "sec0.1"},
+                        {"component": "T1", "pin": "sec0.1"},
                     ],
                 },
             ],
@@ -4547,14 +4651,14 @@ def cllc(deck: SpiceDeck) -> TasTopology:
     secondary_bridge = {
         "name": "secondary_bridge",
         "role": "outputRectifier",
-        "inputPort":  {"type": "hfAc", "wire": "bridge_a_lv"},
+        "inputPort": {"type": "hfAc", "wire": "bridge_a_lv"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
-                _component("mosfet", "Q5"),   # ← Sa  (LV Leg A "high"; D=bridge, S=Vout0)
-                _component("mosfet", "Q6"),   # ← Sb  (LV Leg A "low";  D=GND,    S=bridge)
-                _component("mosfet", "Q7"),   # ← Sc  (LV Leg B "high"; D=bridge, S=Vout0)
-                _component("mosfet", "Q8"),   # ← Sd  (LV Leg B "low";  D=GND,    S=bridge)
+                _component("mosfet", "Q5"),  # ← Sa  (LV Leg A "high"; D=bridge, S=Vout0)
+                _component("mosfet", "Q6"),  # ← Sb  (LV Leg A "low";  D=GND,    S=bridge)
+                _component("mosfet", "Q7"),  # ← Sc  (LV Leg B "high"; D=bridge, S=Vout0)
+                _component("mosfet", "Q8"),  # ← Sd  (LV Leg B "low";  D=GND,    S=bridge)
             ],
             "connections": [],
         },
@@ -4563,11 +4667,11 @@ def cllc(deck: SpiceDeck) -> TasTopology:
     output_filter = {
         "name": "output_filter",
         "role": "outputFilter",
-        "inputPort":  {"type": "dcOutput", "wire": "Vout0"},
+        "inputPort": {"type": "dcOutput", "wire": "Vout0"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout0"}],
         "circuit": {
             "components": [
-                _component("capacitor", "C_bus_LV"),   # ← Cout (no extras binding)
+                _component("capacitor", "C_bus_LV"),  # ← Cout (no extras binding)
             ],
             "connections": [],
         },
@@ -4590,8 +4694,8 @@ def cllc(deck: SpiceDeck) -> TasTopology:
             "name": "bridge_a_hv",
             "kind": "wire",
             "endpoints": [
-                {"component": "Q1",   "pin": "S"},
-                {"component": "Q2",   "pin": "D"},
+                {"component": "Q1", "pin": "S"},
+                {"component": "Q2", "pin": "D"},
                 {"component": "C_r1", "pin": "1"},
             ],
         },
@@ -4610,8 +4714,8 @@ def cllc(deck: SpiceDeck) -> TasTopology:
             "name": "bridge_a_lv",
             "kind": "wire",
             "endpoints": [
-                {"component": "Q5",   "pin": "D"},
-                {"component": "Q6",   "pin": "S"},
+                {"component": "Q5", "pin": "D"},
+                {"component": "Q6", "pin": "S"},
                 {"component": "C_r2", "pin": "2"},
             ],
         },
@@ -4630,8 +4734,8 @@ def cllc(deck: SpiceDeck) -> TasTopology:
             "name": "Vout0",
             "kind": "wire",
             "endpoints": [
-                {"component": "Q5",       "pin": "S"},
-                {"component": "Q7",       "pin": "S"},
+                {"component": "Q5", "pin": "S"},
+                {"component": "Q7", "pin": "S"},
                 {"component": "C_bus_LV", "pin": "1"},
             ],
         },
@@ -4644,10 +4748,10 @@ def cllc(deck: SpiceDeck) -> TasTopology:
             ],
         },
         _gnd_wire(
-            ("Q2",       "S"),
-            ("Q4",       "S"),
-            ("Q6",       "D"),
-            ("Q8",       "D"),
+            ("Q2", "S"),
+            ("Q4", "S"),
+            ("Q6", "D"),
+            ("Q8", "D"),
             ("C_bus_LV", "2"),
         ),
         *_gate_wires("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8"),
@@ -4698,9 +4802,9 @@ def cllc(deck: SpiceDeck) -> TasTopology:
 
 _VIENNA_REAL_KINDS = {
     "Lboost": "inductor",
-    "Ssw":    "switch",
+    "Ssw": "switch",
     "Dboost": "diode",
-    "Cout":   "capacitor",
+    "Cout": "capacitor",
 }
 
 
@@ -4725,14 +4829,14 @@ def vienna(deck: SpiceDeck) -> TasTopology:
     switching_cell = {
         "name": "phase_boost_cell",
         "role": "switchingCell",
-        "inputPort":  {"type": "dcBus", "wire": "Vin"},
+        "inputPort": {"type": "dcBus", "wire": "Vin"},
         "outputPorts": [{"type": "dcOutput", "wire": "Vout"}],
         "circuit": {
             "components": [
-                _component("magnetic",  "L1"),         # ← Lboost
-                _component("mosfet",    "Q1"),         # ← Ssw
-                _component("diode",     "D1"),         # ← Dboost
-                _component("capacitor", "C_bus_DC"),   # ← Cout
+                _component("magnetic", "L1"),  # ← Lboost
+                _component("mosfet", "Q1"),  # ← Ssw
+                _component("diode", "D1"),  # ← Dboost
+                _component("capacitor", "C_bus_DC"),  # ← Cout
             ],
             "connections": [
                 # sw_node: L1.2 = Q1.D = D1.A (boost cell midpoint)
@@ -4763,7 +4867,7 @@ def vienna(deck: SpiceDeck) -> TasTopology:
             "kind": "externalPort",
             "direction": "output",
             "endpoints": [
-                {"component": "D1",       "pin": "K"},
+                {"component": "D1", "pin": "K"},
                 {"component": "C_bus_DC", "pin": "1"},
             ],
         },

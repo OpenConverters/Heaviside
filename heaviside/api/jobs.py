@@ -29,7 +29,7 @@ from typing import Any
 class Job:
     id: str
     kind: str
-    status: str = "queued"          # queued | running | done | error | cancelled
+    status: str = "queued"  # queued | running | done | error | cancelled
     result: Any = None
     error: str | None = None
     progress: str = ""
@@ -43,7 +43,7 @@ class JobRegistry:
     def __init__(self) -> None:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
-        self._queue: "Queue[tuple[str, Callable[[], Any]]]" = Queue()
+        self._queue: Queue[tuple[str, Callable[[], Any]]] = Queue()
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
@@ -52,9 +52,7 @@ class JobRegistry:
         callable it can call to publish a human-readable progress string."""
         job_id = uuid.uuid4().hex[:12]
         with self._lock:
-            self._jobs[job_id] = Job(
-                id=job_id, kind=kind, created_monotonic=time.monotonic()
-            )
+            self._jobs[job_id] = Job(id=job_id, kind=kind, created_monotonic=time.monotonic())
         self._queue.put((job_id, fn))
         return job_id
 
@@ -113,16 +111,17 @@ class JobRegistry:
                 continue
             self._set(job_id, status="running")
             try:
-                update = lambda msg: self._set(job_id, progress=str(msg))
+
+                def update(msg, job_id=job_id):
+                    return self._set(job_id, progress=str(msg))
+
                 # fn may be zero-arg or take the progress updater.
-                if len(inspect.signature(fn).parameters) >= 1:
-                    result = fn(update)
-                else:
-                    result = fn()
+                result = fn(update) if len(inspect.signature(fn).parameters) >= 1 else fn()
                 self._set(job_id, status="done", result=result)
-            except Exception as exc:  # noqa: BLE001 — surface to the client
+            except Exception as exc:
                 self._set(
-                    job_id, status="error",
+                    job_id,
+                    status="error",
                     error=f"{type(exc).__name__}: {exc}",
                     result={"traceback": traceback.format_exc()[-2000:]},
                 )

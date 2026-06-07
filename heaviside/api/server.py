@@ -14,7 +14,6 @@ Launch:
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -97,18 +96,13 @@ def health() -> dict[str, str]:
 def list_topologies() -> list[dict[str, Any]]:
     from heaviside.topologies.registry import CONVERTERS
 
-    return [
-        {"name": e.name, "family": e.family, "kind": e.kind}
-        for e in CONVERTERS
-    ]
+    return [{"name": e.name, "family": e.family, "kind": e.kind} for e in CONVERTERS]
 
 
 @app.post("/design", response_model=DesignResponse)
 def design(req: DesignRequest) -> dict[str, Any]:
     from heaviside.pipeline.full_design import (
         full_design,
-        stage1_topology_screen,
-        stage2_pick_magnetics,
     )
 
     try:
@@ -133,22 +127,22 @@ def design(req: DesignRequest) -> dict[str, Any]:
                     if isinstance(prov, dict):
                         bom_entries.append(prov)
 
-        outcome_list.append({
-            "topology": o.pick.topology.name,
-            "verdict": o.verdict_dict["verdict"] if o.verdict_dict else None,
-            "gatekeeper_approved": o.gatekeeper.approved if o.gatekeeper else None,
-            "scoring": o.pick.main_magnetic.scoring,
-            "bom": bom_entries,
-            "report": o.report,
-            "diagnostics": list(o.diagnostics),
-        })
+        outcome_list.append(
+            {
+                "topology": o.pick.topology.name,
+                "verdict": o.verdict_dict["verdict"] if o.verdict_dict else None,
+                "gatekeeper_approved": o.gatekeeper.approved if o.gatekeeper else None,
+                "scoring": o.pick.main_magnetic.scoring,
+                "bom": bom_entries,
+                "report": o.report,
+                "diagnostics": list(o.diagnostics),
+            }
+        )
 
     return {
         "stage1_topologies": list(stage1.reconciliation.chosen),
         "stage2_picks": len(stage2.picks),
-        "stage2_failures": [
-            {"topology": t, "error": e} for t, e in stage2.failures
-        ],
+        "stage2_failures": [{"topology": t, "error": e} for t, e in stage2.failures],
         "outcomes": outcome_list,
     }
 
@@ -159,7 +153,8 @@ def design_magnetic(req: MagneticRequest) -> dict[str, Any]:
 
     try:
         candidates = design_magnetics_fast(
-            req.topology, req.spec,
+            req.topology,
+            req.spec,
             max_results=req.max_results,
             core_mode=req.core_mode,
         )
@@ -200,9 +195,14 @@ def design_report(req: DesignRequest) -> Any:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     best = next(
-        (o for o in outcomes
-         if o.verdict_dict and o.verdict_dict["verdict"] == "pass"
-         and o.gatekeeper and o.gatekeeper.approved),
+        (
+            o
+            for o in outcomes
+            if o.verdict_dict
+            and o.verdict_dict["verdict"] == "pass"
+            and o.gatekeeper
+            and o.gatekeeper.approved
+        ),
         outcomes[0] if outcomes else None,
     )
     if best is None:
@@ -218,7 +218,9 @@ def design_bom(req: BomRequest) -> dict[str, Any]:
 
     try:
         result = assemble_bom_from_tas(
-            req.tas, topology=req.topology, spec=req.spec,
+            req.tas,
+            topology=req.topology,
+            spec=req.spec,
         )
     except (SelectionError, StressDerivationError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -245,21 +247,24 @@ class CRERequest(BaseModel):
 @app.post("/cre")
 def cre_endpoint(req: CRERequest) -> dict[str, Any]:
     """Run the CRE pipeline on a reference design."""
-    from heaviside.pipeline.cre_pipeline import run_cre_pipeline
     import tempfile
     from pathlib import Path
 
+    from heaviside.pipeline.cre_pipeline import run_cre_pipeline
+
     pdf_path = None
     if req.pdf_text:
-        tmp = tempfile.NamedTemporaryFile(suffix=".txt", delete=False, mode="w")
-        tmp.write(req.pdf_text)
-        tmp.close()
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False, mode="w") as tmp:
+            tmp.write(req.pdf_text)
         pdf_path = Path(tmp.name)
 
     try:
         outcome = run_cre_pipeline(req.reference, pdf_path=pdf_path)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        if pdf_path is not None:
+            pdf_path.unlink(missing_ok=True)
 
     return {
         "reference": outcome.reference,
@@ -289,7 +294,8 @@ def crossref_endpoint(req: CrossRefRequest) -> dict[str, Any]:
 
     try:
         outcome = run_crossref_pipeline(
-            req.source_bom, req.target_manufacturer,
+            req.source_bom,
+            req.target_manufacturer,
             circuit_context=req.circuit_context,
         )
     except Exception as exc:
@@ -370,62 +376,67 @@ def _design_job(
     vouts = op.get("outputVoltages") or []
     iouts = op.get("outputCurrents") or []
     n_out = min(len(vouts), len(iouts))
-    total_pout = sum(float(v) * float(i) for v, i in zip(vouts, iouts))
+    total_pout = sum(float(v) * float(i) for v, i in zip(vouts, iouts, strict=False))
     if "desiredInductance" not in spec:
         vin = (spec.get("inputVoltage") or {}).get("nominal")
         fsw = op.get("switchingFrequency")
         ripple = spec.get("currentRippleRatio", 0.3)
         if vin and vouts and iouts and fsw:
-            l = compute_desired_inductance(vin, vouts[0], iouts[0], fsw,
-                                           ripple_ratio=ripple)
+            l = compute_desired_inductance(vin, vouts[0], iouts[0], fsw, ripple_ratio=ripple)
             if l is not None:
                 spec["desiredInductance"] = l
 
     progress_cb = None
     if update is not None:
-        progress_cb = lambda msg, pct: update(f"{pct}% — {msg}")
+
+        def progress_cb(msg, pct):
+            return update(f"{pct}% — {msg}")
 
     _, stage2, outcomes = full_design(
-        spec, n_candidates_per_topology=n, parallel=True,
-        restrict_topologies=topologies or None, progress_cb=progress_cb,
+        spec,
+        n_candidates_per_topology=n,
+        parallel=True,
+        restrict_topologies=topologies or None,
+        progress_cb=progress_cb,
     )
     if not outcomes:
         # Surface WHY nothing survived (per "no silent shortcuts"): the
         # per-topology magnetic-design failures are the real signal.
-        fails = "".join(
-            f"<li><code>{t}</code>: {e}</li>" for t, e in stage2.failures[:12]
-        )
-        detail = (f"<ul>{fails}</ul>" if fails
-                  else "<p>No topology was selected for this spec.</p>")
+        fails = "".join(f"<li><code>{t}</code>: {e}</li>" for t, e in stage2.failures[:12])
+        detail = f"<ul>{fails}</ul>" if fails else "<p>No topology was selected for this spec.</p>"
         return {
             "html": f"<p><b>No design survived the pipeline.</b></p>{detail}",
-            "topology": None, "verdict": None,
+            "topology": None,
+            "verdict": None,
         }
     best = next(
-        (o for o in outcomes
-         if o.verdict_dict and o.verdict_dict.get("verdict") == "pass"),
+        (o for o in outcomes if o.verdict_dict and o.verdict_dict.get("verdict") == "pass"),
         outcomes[0],
     )
     html = render_html(best)
     if n_out > 1:
         # Be explicit (never silent): the design honours all rails for topology
         # selection + netlist, but stress/realism/BOM are primary-rail today.
-        rails = ", ".join(f"{float(v):g} V @ {float(i):g} A" for v, i in zip(vouts, iouts))
+        rails = ", ".join(
+            f"{float(v):g} V @ {float(i):g} A" for v, i in zip(vouts, iouts, strict=False)
+        )
         html = (
             f'<div style="background:rgba(180,120,30,.12);border:1px solid '
             f'rgba(180,120,30,.4);border-radius:10px;padding:.7rem 1rem;margin-bottom:1rem">'
-            f'<b>Multi-output converter</b> — {n_out} rails ({rails}), '
-            f'{total_pout:g} W total. Topology screening, magnetics and the netlist '
-            f'use all rails; per-secondary stress, realism and component selection are '
-            f'currently summarised on the primary rail (OUT0).</div>'
+            f"<b>Multi-output converter</b> — {n_out} rails ({rails}), "
+            f"{total_pout:g} W total. Topology screening, magnetics and the netlist "
+            f"use all rails; per-secondary stress, realism and component selection are "
+            f"currently summarised on the primary rail (OUT0).</div>"
         ) + html
     return {
         "topology": best.pick.topology.name,
         "verdict": best.verdict_dict.get("verdict") if best.verdict_dict else None,
         "html": html,
         "alternatives": [
-            {"topology": o.pick.topology.name,
-             "verdict": o.verdict_dict.get("verdict") if o.verdict_dict else None}
+            {
+                "topology": o.pick.topology.name,
+                "verdict": o.verdict_dict.get("verdict") if o.verdict_dict else None,
+            }
             for o in outcomes
         ],
     }
@@ -434,11 +445,10 @@ def _design_job(
 @app.post("/jobs/design")
 def submit_design(req: DesignRequest) -> dict[str, str]:
     from heaviside.api.jobs import registry
+
     job_id = registry.submit(
         "design",
-        lambda update: _design_job(
-            req.spec, req.candidates_per_topology, req.topologies, update
-        ),
+        lambda update: _design_job(req.spec, req.candidates_per_topology, req.topologies, update),
     )
     return {"job_id": job_id}
 
@@ -449,10 +459,10 @@ def submit_crossref(req: CrossRefRequest) -> dict[str, str]:
     from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
 
     def run(update: Any) -> dict[str, Any]:
-        update(f"Cross-referencing {len(req.source_bom)} parts "
-               f"→ {req.target_manufacturer}")
+        update(f"Cross-referencing {len(req.source_bom)} parts → {req.target_manufacturer}")
         outcome = run_crossref_pipeline(
-            req.source_bom, req.target_manufacturer,
+            req.source_bom,
+            req.target_manufacturer,
             circuit_context=req.circuit_context,
         )
         return _crossref_outcome_dict(outcome)
@@ -472,16 +482,21 @@ async def submit_crossref_from_pdf(
     orig_name = file.filename or "reference.pdf"
 
     def run(update: Any) -> dict[str, Any]:
-        import tempfile, os
+        import os
+        import tempfile
         from pathlib import Path
+
         from heaviside.pipeline.crossref_pipeline import run_crossref_with_cre
+
         update(f"Reverse-engineering {orig_name} → {target_manufacturer}")
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             f.write(raw)
             tmp = f.name
         try:
             outcome = run_crossref_with_cre(
-                Path(tmp).stem, target_manufacturer, pdf_path=Path(tmp),
+                Path(tmp).stem,
+                target_manufacturer,
+                pdf_path=Path(tmp),
             )
         finally:
             os.unlink(tmp)
@@ -511,9 +526,9 @@ async def submit_crossref_from_bom(
 
     def run(update: Any) -> dict[str, Any]:
         from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
+
         update(
-            f"Cross-referencing {len(source_bom)} parts from {orig_name} "
-            f"→ {target_manufacturer}"
+            f"Cross-referencing {len(source_bom)} parts from {orig_name} → {target_manufacturer}"
         )
         outcome = run_crossref_pipeline(source_bom, target_manufacturer)
         return _crossref_outcome_dict(outcome)
@@ -529,6 +544,7 @@ class CrossRefUrlRequest(BaseModel):
 def _html_to_text(html: str) -> str:
     """Strip an HTML app-note page down to readable text (best-effort)."""
     import re
+
     html = re.sub(r"(?is)<(script|style|head|nav|footer)[^>]*>.*?</\1>", " ", html)
     html = re.sub(r"(?s)<[^>]+>", " ", html)
     html = re.sub(r"&nbsp;", " ", html)
@@ -543,8 +559,12 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
     from heaviside.api.jobs import registry
 
     def run(update: Any) -> dict[str, Any]:
-        import httpx, tempfile, os
+        import os
+        import tempfile
         from pathlib import Path
+
+        import httpx
+
         from heaviside.pipeline.crossref_pipeline import run_crossref_with_cre
 
         url = req.url.strip()
@@ -553,7 +573,9 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
         name = (url.rsplit("/", 1)[-1].split("?")[0] or "design")[:50]
         update(f"Downloading {name}…")
         resp = httpx.get(
-            url, follow_redirects=True, timeout=90.0,
+            url,
+            follow_redirects=True,
+            timeout=90.0,
             headers={"User-Agent": "Mozilla/5.0 (Heaviside crossref)"},
         )
         resp.raise_for_status()
@@ -567,7 +589,9 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
                 tmp = f.name
             try:
                 outcome = run_crossref_with_cre(
-                    Path(tmp).stem, req.target_manufacturer, pdf_path=Path(tmp),
+                    Path(tmp).stem,
+                    req.target_manufacturer,
+                    pdf_path=Path(tmp),
                 )
             finally:
                 os.unlink(tmp)
@@ -579,7 +603,9 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
                     f"{len(text)} chars of text — not a usable design document"
                 )
             outcome = run_crossref_with_cre(
-                name, req.target_manufacturer, pdf_text=text,
+                name,
+                req.target_manufacturer,
+                pdf_text=text,
             )
         return _crossref_outcome_dict(outcome)
 
@@ -594,8 +620,10 @@ def _job_summary(job: Any) -> dict[str, Any]:
         if "verdict" in r:  # design job
             summary = f"{r.get('topology') or '?'} — {r.get('verdict') or '?'}"
         elif "coverage_pct" in r and r.get("coverage_pct") is not None:
-            summary = (f"{r['coverage_substituted']}/{r['coverage_total']} "
-                       f"({r['coverage_pct']}%) → {r.get('target_manufacturer')}")
+            summary = (
+                f"{r['coverage_substituted']}/{r['coverage_total']} "
+                f"({r['coverage_pct']}%) → {r.get('target_manufacturer')}"
+            )
     elif job.status == "error":
         summary = job.error
     elif job.status in ("running", "queued"):
@@ -612,12 +640,14 @@ def _job_summary(job: Any) -> dict[str, Any]:
 @app.get("/jobs")
 def list_jobs() -> dict[str, Any]:
     from heaviside.api.jobs import registry
+
     return {"jobs": [_job_summary(j) for j in registry.list_all()]}
 
 
 @app.get("/jobs/{job_id}")
 def get_job(job_id: str) -> dict[str, Any]:
     from heaviside.api.jobs import registry
+
     job = registry.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="unknown job_id")
@@ -634,20 +664,18 @@ def get_job(job_id: str) -> dict[str, Any]:
 @app.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str) -> dict[str, Any]:
     from heaviside.api.jobs import registry
+
     if not registry.cancel(job_id):
-        raise HTTPException(
-            status_code=409, detail="job not found or already finished"
-        )
+        raise HTTPException(status_code=409, detail="job not found or already finished")
     return {"job_id": job_id, "status": "cancel_requested"}
 
 
 @app.delete("/jobs/{job_id}")
 def delete_job(job_id: str) -> dict[str, Any]:
     from heaviside.api.jobs import registry
+
     if not registry.delete(job_id):
-        raise HTTPException(
-            status_code=409, detail="job not found or still in-flight"
-        )
+        raise HTTPException(status_code=409, detail="job not found or still in-flight")
     return {"job_id": job_id, "deleted": True}
 
 
@@ -673,13 +701,17 @@ def _manufacturer_counts() -> dict[str, Any]:
         return _MANUFACTURER_CACHE
 
     from collections import Counter
+
     from heaviside.catalogue._reader import iter_envelopes
     from heaviside.catalogue.selector import _tas_data_dir
 
     roots = {
-        "mosfets.ndjson": "semiconductor", "diodes.ndjson": "semiconductor",
-        "igbts.ndjson": "semiconductor", "capacitors.ndjson": "capacitor",
-        "resistors.ndjson": "resistor", "magnetics.ndjson": "magnetic",
+        "mosfets.ndjson": "semiconductor",
+        "diodes.ndjson": "semiconductor",
+        "igbts.ndjson": "semiconductor",
+        "capacitors.ndjson": "capacitor",
+        "resistors.ndjson": "resistor",
+        "magnetics.ndjson": "magnetic",
     }
     counts: Counter[str] = Counter()
     total = 0
@@ -715,7 +747,8 @@ def manufacturers(min_pct: float = 1.0) -> dict[str, Any]:
     threshold = total * min_pct / 100.0
     leaders = [
         {"name": n, "count": c, "pct": round(100 * c / total, 1)}
-        for n, c in data["counts"].most_common() if c >= threshold
+        for n, c in data["counts"].most_common()
+        if c >= threshold
     ]
     return {"total": total, "min_pct": min_pct, "manufacturers": leaders}
 
@@ -726,8 +759,16 @@ def _fmt_eng(value: float | None, unit: str) -> str | None:
         return None
     if value == 0:
         return f"0 {unit}"
-    prefixes = [(1e9, "G"), (1e6, "M"), (1e3, "k"), (1.0, ""), (1e-3, "m"),
-                (1e-6, "µ"), (1e-9, "n"), (1e-12, "p")]
+    prefixes = [
+        (1e9, "G"),
+        (1e6, "M"),
+        (1e3, "k"),
+        (1.0, ""),
+        (1e-3, "m"),
+        (1e-6, "µ"),
+        (1e-9, "n"),
+        (1e-12, "p"),
+    ]
     av = abs(value)
     for scale, pre in prefixes:
         if av >= scale:
@@ -738,40 +779,68 @@ def _fmt_eng(value: float | None, unit: str) -> str | None:
 def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]:
     from heaviside.catalogue._reader import iter_envelopes
     from heaviside.catalogue.selector import (
-        Capacitor, Diode, Mosfet, Resistor, _tas_data_dir,
+        Capacitor,
+        Diode,
+        Mosfet,
+        Resistor,
+        _tas_data_dir,
     )
 
     def _mosfet(env: dict[str, Any]) -> dict[str, Any] | None:
         m = Mosfet.from_envelope(env)
         if m is None:
             return None
-        return {"mpn": m.mpn, "manufacturer": m.manufacturer, "tech": m.technology,
-                "p1": _fmt_eng(m.vds_rated, "V"), "p2": _fmt_eng(m.rds_on, "Ω"),
-                "p3": _fmt_eng(m.id_continuous, "A"), "status": m.status}
+        return {
+            "mpn": m.mpn,
+            "manufacturer": m.manufacturer,
+            "tech": m.technology,
+            "p1": _fmt_eng(m.vds_rated, "V"),
+            "p2": _fmt_eng(m.rds_on, "Ω"),
+            "p3": _fmt_eng(m.id_continuous, "A"),
+            "status": m.status,
+        }
 
     def _diode(env: dict[str, Any]) -> dict[str, Any] | None:
         d = Diode.from_envelope(env)
         if d is None:
             return None
-        return {"mpn": d.mpn, "manufacturer": d.manufacturer, "tech": d.technology,
-                "p1": _fmt_eng(d.vrrm_rated, "V"), "p2": _fmt_eng(d.if_avg_rated, "A"),
-                "p3": _fmt_eng(d.vf_typ, "V"), "status": d.status}
+        return {
+            "mpn": d.mpn,
+            "manufacturer": d.manufacturer,
+            "tech": d.technology,
+            "p1": _fmt_eng(d.vrrm_rated, "V"),
+            "p2": _fmt_eng(d.if_avg_rated, "A"),
+            "p3": _fmt_eng(d.vf_typ, "V"),
+            "status": d.status,
+        }
 
     def _cap(env: dict[str, Any]) -> dict[str, Any] | None:
         c = Capacitor.from_envelope(env)
         if c is None:
             return None
-        return {"mpn": c.mpn, "manufacturer": c.manufacturer, "tech": c.technology,
-                "p1": _fmt_eng(c.capacitance, "F"), "p2": _fmt_eng(c.v_rated, "V"),
-                "p3": _fmt_eng(c.esr, "Ω"), "status": c.status}
+        return {
+            "mpn": c.mpn,
+            "manufacturer": c.manufacturer,
+            "tech": c.technology,
+            "p1": _fmt_eng(c.capacitance, "F"),
+            "p2": _fmt_eng(c.v_rated, "V"),
+            "p3": _fmt_eng(c.esr, "Ω"),
+            "status": c.status,
+        }
 
     def _res(env: dict[str, Any]) -> dict[str, Any] | None:
         r = Resistor.from_envelope(env)
         if r is None:
             return None
-        return {"mpn": r.mpn, "manufacturer": r.manufacturer, "tech": "",
-                "p1": _fmt_eng(r.resistance, "Ω"), "p2": f"{r.tolerance * 100:.3g}%",
-                "p3": _fmt_eng(r.power_rating, "W"), "status": r.status}
+        return {
+            "mpn": r.mpn,
+            "manufacturer": r.manufacturer,
+            "tech": "",
+            "p1": _fmt_eng(r.resistance, "Ω"),
+            "p2": f"{r.tolerance * 100:.3g}%",
+            "p3": _fmt_eng(r.power_rating, "W"),
+            "status": r.status,
+        }
 
     def _mag(env: dict[str, Any]) -> dict[str, Any] | None:
         try:
@@ -788,11 +857,15 @@ def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]
                 v = v.get("nominal", v.get("maximum", v.get("minimum")))
             return v if isinstance(v, (int, float)) else None
 
-        return {"mpn": ref, "manufacturer": name, "tech": m.get("family", ""),
-                "p1": _fmt_eng(_scalar(el.get("inductance")), "H"),
-                "p2": _fmt_eng(_scalar(el.get("saturationCurrentPeak")), "A"),
-                "p3": _fmt_eng(_scalar(el.get("dcResistance")), "Ω"),
-                "status": m.get("status", "")}
+        return {
+            "mpn": ref,
+            "manufacturer": name,
+            "tech": m.get("family", ""),
+            "p1": _fmt_eng(_scalar(el.get("inductance")), "H"),
+            "p2": _fmt_eng(_scalar(el.get("saturationCurrentPeak")), "A"),
+            "p3": _fmt_eng(_scalar(el.get("dcResistance")), "Ω"),
+            "status": m.get("status", ""),
+        }
 
     catalog: dict[str, tuple[str, Any]] = {
         "mosfets": ("mosfets.ndjson", _mosfet),
@@ -804,8 +877,7 @@ def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]
     if category not in catalog:
         raise HTTPException(
             status_code=404,
-            detail=f"unknown category '{category}'; choose one of "
-                   f"{sorted(catalog)}",
+            detail=f"unknown category '{category}'; choose one of {sorted(catalog)}",
         )
     filename, project = catalog[category]
     path = _tas_data_dir() / filename
@@ -814,12 +886,15 @@ def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]
     for _lineno, env in iter_envelopes(path):
         try:
             row = project(env)
-        except Exception:  # noqa: BLE001 — skip an unreadable row, never abort the sweep
+        except Exception:
             continue
         if row is None:
             continue
-        if q and q not in (row["mpn"] or "").lower() \
-                and q not in (row["manufacturer"] or "").lower():
+        if (
+            q
+            and q not in (row["mpn"] or "").lower()
+            and q not in (row["manufacturer"] or "").lower()
+        ):
             continue
         rows.append(row)
         if len(rows) >= limit:
@@ -841,8 +916,12 @@ def catalog(category: str, q: str = "", limit: int = 50) -> dict[str, Any]:
         "magnetics": ["L", "Isat", "DCR"],
     }
     rows = _catalog_rows(category, q, limit)
-    return {"category": category, "count": len(rows),
-            "param_labels": labels.get(category, ["", "", ""]), "rows": rows}
+    return {
+        "category": category,
+        "count": len(rows),
+        "param_labels": labels.get(category, ["", "", ""]),
+        "rows": rows,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -857,6 +936,7 @@ _STATIC_DIR = _Path(__file__).parent / "static"
 @app.get("/")
 def index() -> Any:
     from fastapi.responses import FileResponse, HTMLResponse
+
     idx = _STATIC_DIR / "index.html"
     if idx.is_file():
         return FileResponse(str(idx))
@@ -866,11 +946,13 @@ def index() -> Any:
 @app.get("/favicon.ico")
 def favicon() -> Any:
     from fastapi.responses import Response
+
     return Response(status_code=204)
 
 
 def _mount_static() -> None:
     from fastapi.staticfiles import StaticFiles
+
     if _STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 

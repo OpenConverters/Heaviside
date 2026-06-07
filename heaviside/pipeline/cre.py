@@ -19,8 +19,12 @@ from typing import Any
 
 
 def compute_desired_inductance(
-    vin_nom: float, vout: float, iout: float, fsw: float,
-    *, ripple_ratio: float = 0.3,
+    vin_nom: float,
+    vout: float,
+    iout: float,
+    fsw: float,
+    *,
+    ripple_ratio: float = 0.3,
 ) -> float | None:
     """Ripple-based main-inductor sizing for the MKF magnetic designer.
 

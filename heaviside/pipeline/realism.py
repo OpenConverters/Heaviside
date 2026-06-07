@@ -37,9 +37,9 @@ from __future__ import annotations
 
 import enum
 import math
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -260,9 +260,7 @@ def check_output_voltage_regulation(
     )
 
 
-def check_efficiency_sanity(
-    eta: float, low: float = 0.70, high: float = 0.995
-) -> CheckResult:
+def check_efficiency_sanity(eta: float, low: float = 0.70, high: float = 0.995) -> CheckResult:
     """``low < eta < high`` (default 0.70 < η < 0.995).
 
     Outside this window indicates either an unbelievably bad design or a
@@ -292,17 +290,14 @@ _HALF_DUTY_TOPOLOGIES = frozenset({"forward", "single_switch_forward"})
 def check_duty_cycle_bounds(duty: float, topology: str) -> CheckResult:
     """Duty cycle within topology-specific limits.
 
-      * single-switch forward: ``0.05 < D < 0.50``
-      * everything else:       ``0.05 < D < 0.95``
+    * single-switch forward: ``0.05 < D < 0.50``
+    * everything else:       ``0.05 < D < 0.95``
     """
     d = _require_finite("duty", duty)
     if not isinstance(topology, str) or not topology.strip():
         raise RealismError(f"topology must be a non-empty string, got {topology!r}")
     key = topology.lower().replace("-", "_").replace(" ", "_")
-    if key in _HALF_DUTY_TOPOLOGIES:
-        hi = 0.50
-    else:
-        hi = 0.95
+    hi = 0.5 if key in _HALF_DUTY_TOPOLOGIES else 0.95
     lo = 0.05
     passed = lo < d < hi
     return CheckResult(
@@ -325,9 +320,7 @@ def check_no_negative_losses(losses: Mapping[str, Any]) -> CheckResult:
     rounding in upstream loss budgets.
     """
     if not isinstance(losses, Mapping):
-        raise RealismError(
-            f"losses: expected mapping, got {type(losses).__name__}"
-        )
+        raise RealismError(f"losses: expected mapping, got {type(losses).__name__}")
     violators: dict[str, float] = {}
     for k, v in losses.items():
         if v is None or isinstance(v, bool):
@@ -335,9 +328,7 @@ def check_no_negative_losses(losses: Mapping[str, Any]) -> CheckResult:
         if isinstance(v, (int, float)):
             fv = float(v)
             if math.isnan(fv) or math.isinf(fv):
-                raise RealismError(
-                    f"loss term {k!r} is non-finite: {v!r}"
-                )
+                raise RealismError(f"loss term {k!r} is non-finite: {v!r}")
             if fv < -1e-3:
                 violators[str(k)] = fv
     n = len(violators)
@@ -487,10 +478,7 @@ def _topology_has_controller_stage(tas: Mapping[str, Any]) -> bool:
     stages = topology.get("stages")
     if not isinstance(stages, list):
         return False
-    return any(
-        isinstance(s, Mapping) and s.get("role") == "control"
-        for s in stages
-    )
+    return any(isinstance(s, Mapping) and s.get("role") == "control" for s in stages)
 
 
 # Fields the orchestrator looks for on TAS components / spec to drive checks.
@@ -599,18 +587,26 @@ def evaluate_tas(
         if eta_invalid_reason is not None:
             checks.append(_unavailable("efficiency_sanity", eta_invalid_reason))
         else:
-            checks.append(_unavailable(
-                "efficiency_sanity",
-                "no tas.simulation_results.*.efficiency{_analyst,} — "
-                "simulation/analyst agent has not run",
-            ))
+            checks.append(
+                _unavailable(
+                    "efficiency_sanity",
+                    "no tas.simulation_results.*.efficiency{_analyst,} — "
+                    "simulation/analyst agent has not run",
+                )
+            )
     else:
         result = check_efficiency_sanity(eta)
-        checks.append(CheckResult(
-            name=result.name, status=result.status, value=result.value,
-            limit=result.limit, margin=result.margin, detail=result.detail,
-            extra={**dict(result.extra), "source": eta_source},
-        ))
+        checks.append(
+            CheckResult(
+                name=result.name,
+                status=result.status,
+                value=result.value,
+                limit=result.limit,
+                margin=result.margin,
+                detail=result.detail,
+                extra={**dict(result.extra), "source": eta_source},
+            )
+        )
 
     # --- power_balance --------------------------------------------------
     pin = pout = losses_total = None
@@ -623,10 +619,12 @@ def evaluate_tas(
                 if pin is not None and pout is not None and losses_total is not None:
                     break
     if pin is None or pout is None or losses_total is None:
-        checks.append(_unavailable(
-            "power_balance",
-            "no tas.simulation_results.*.{pin,pout,total_losses} — loss budget not computed",
-        ))
+        checks.append(
+            _unavailable(
+                "power_balance",
+                "no tas.simulation_results.*.{pin,pout,total_losses} — loss budget not computed",
+            )
+        )
     else:
         checks.append(check_power_balance(float(pin), float(pout), float(losses_total)))
 
@@ -649,11 +647,13 @@ def evaluate_tas(
                     vout_actual = float(cand)
                     break
     if vout_target is None or vout_actual is None:
-        checks.append(_unavailable(
-            "output_voltage_regulation",
-            "missing spec.operatingPoints[0].outputVoltages[0] or "
-            "tas.simulation_results.*.vout (simulation agent has not run)",
-        ))
+        checks.append(
+            _unavailable(
+                "output_voltage_regulation",
+                "missing spec.operatingPoints[0].outputVoltages[0] or "
+                "tas.simulation_results.*.vout (simulation agent has not run)",
+            )
+        )
     else:
         # If the design includes a controller stage AND the sim is
         # marked as open-loop (or no closed-loop flag is set, the
@@ -670,13 +670,15 @@ def evaluate_tas(
                     is_closed_loop_sim = True
                     break
         if has_controller and not is_closed_loop_sim:
-            checks.append(_not_applicable(
-                "output_voltage_regulation",
-                "design includes a controller stage (U1) but the sim "
-                "deck is open-loop — measured vout reflects open-loop "
-                "drift, not the design's regulated output. Re-evaluate "
-                "after a closed-loop simulator lands.",
-            ))
+            checks.append(
+                _not_applicable(
+                    "output_voltage_regulation",
+                    "design includes a controller stage (U1) but the sim "
+                    "deck is open-loop — measured vout reflects open-loop "
+                    "drift, not the design's regulated output. Re-evaluate "
+                    "after a closed-loop simulator lands.",
+                )
+            )
         else:
             checks.append(check_output_voltage_regulation(vout_actual, vout_target))
 
@@ -689,18 +691,26 @@ def evaluate_tas(
             for line_name, losses in loss_budget.items():
                 if isinstance(losses, Mapping):
                     res = check_no_negative_losses(losses)
-                    checks.append(CheckResult(
-                        name=res.name, status=res.status, value=res.value,
-                        limit=res.limit, margin=res.margin, detail=res.detail,
-                        extra={**dict(res.extra), "line": line_name},
-                    ))
+                    checks.append(
+                        CheckResult(
+                            name=res.name,
+                            status=res.status,
+                            value=res.value,
+                            limit=res.limit,
+                            margin=res.margin,
+                            detail=res.detail,
+                            extra={**dict(res.extra), "line": line_name},
+                        )
+                    )
         else:
             checks.append(check_no_negative_losses(loss_budget))
     else:
-        checks.append(_unavailable(
-            "no_negative_losses",
-            "no tas.loss_budget — loss budget not computed",
-        ))
+        checks.append(
+            _unavailable(
+                "no_negative_losses",
+                "no tas.loss_budget — loss budget not computed",
+            )
+        )
 
     # --- duty_cycle_bounds ----------------------------------------------
     duty = tas.get("duty")
@@ -709,10 +719,12 @@ def evaluate_tas(
     if isinstance(duty, (int, float)):
         checks.append(check_duty_cycle_bounds(float(duty), topology))
     else:
-        checks.append(_unavailable(
-            "duty_cycle_bounds",
-            "no tas.duty or spec.duty — decomposer does not compute duty cycle",
-        ))
+        checks.append(
+            _unavailable(
+                "duty_cycle_bounds",
+                "no tas.duty or spec.duty — decomposer does not compute duty cycle",
+            )
+        )
 
     # --- per-component checks: voltage derating, isat, thermal -----------
     have_fet = have_diode = have_cap = have_magnetic = False
@@ -723,52 +735,82 @@ def evaluate_tas(
 
         if cat == "mosfet":
             have_fet = True
-            if (rated := comp.get(_FET_RATING_FIELD)) is not None and (
-                stress := comp.get("vds_stress")
-            ) is not None and not fet_done:
-                checks.append(CheckResult(
-                    **{**check_fet_voltage_derating(float(rated), float(stress)).__dict__,
-                       "extra": {"component": name, "stage": stage_name}},
-                ))
+            if (
+                (rated := comp.get(_FET_RATING_FIELD)) is not None
+                and (stress := comp.get("vds_stress")) is not None
+                and not fet_done
+            ):
+                checks.append(
+                    CheckResult(
+                        **{
+                            **check_fet_voltage_derating(float(rated), float(stress)).__dict__,
+                            "extra": {"component": name, "stage": stage_name},
+                        },
+                    )
+                )
                 fet_done = True
         elif cat == "diode":
             have_diode = True
-            if (rated := comp.get(_DIODE_RATING_FIELD)) is not None and (
-                rev := comp.get("v_reverse")
-            ) is not None and not diode_done:
-                checks.append(CheckResult(
-                    **{**check_diode_voltage_derating(float(rated), float(rev)).__dict__,
-                       "extra": {"component": name, "stage": stage_name}},
-                ))
+            if (
+                (rated := comp.get(_DIODE_RATING_FIELD)) is not None
+                and (rev := comp.get("v_reverse")) is not None
+                and not diode_done
+            ):
+                checks.append(
+                    CheckResult(
+                        **{
+                            **check_diode_voltage_derating(float(rated), float(rev)).__dict__,
+                            "extra": {"component": name, "stage": stage_name},
+                        },
+                    )
+                )
                 diode_done = True
         elif cat == "capacitor":
             have_cap = True
-            if (rated := comp.get(_CAP_RATING_FIELD)) is not None and (
-                work := comp.get("v_working")
-            ) is not None and not cap_done:
-                checks.append(CheckResult(
-                    **{**check_capacitor_voltage_derating(float(rated), float(work)).__dict__,
-                       "extra": {"component": name, "stage": stage_name}},
-                ))
+            if (
+                (rated := comp.get(_CAP_RATING_FIELD)) is not None
+                and (work := comp.get("v_working")) is not None
+                and not cap_done
+            ):
+                checks.append(
+                    CheckResult(
+                        **{
+                            **check_capacitor_voltage_derating(float(rated), float(work)).__dict__,
+                            "extra": {"component": name, "stage": stage_name},
+                        },
+                    )
+                )
                 cap_done = True
         elif cat == "magnetic":
             have_magnetic = True
-            if (isat := comp.get(_ISAT_FIELD)) is not None and (
-                ipk := comp.get("ipeak_worst")
-            ) is not None and not isat_done:
-                checks.append(CheckResult(
-                    **{**check_inductor_isat_margin(float(isat), float(ipk)).__dict__,
-                       "extra": {"component": name, "stage": stage_name}},
-                ))
+            if (
+                (isat := comp.get(_ISAT_FIELD)) is not None
+                and (ipk := comp.get("ipeak_worst")) is not None
+                and not isat_done
+            ):
+                checks.append(
+                    CheckResult(
+                        **{
+                            **check_inductor_isat_margin(float(isat), float(ipk)).__dict__,
+                            "extra": {"component": name, "stage": stage_name},
+                        },
+                    )
+                )
                 isat_done = True
 
-        if (tj := comp.get(_TJ_FIELD)) is not None and (
-            tj_max := comp.get(_TJ_MAX_FIELD)
-        ) is not None and not thermal_done:
-            checks.append(CheckResult(
-                **{**check_thermal_limit(float(tj), float(tj_max)).__dict__,
-                   "extra": {"component": name, "stage": stage_name}},
-            ))
+        if (
+            (tj := comp.get(_TJ_FIELD)) is not None
+            and (tj_max := comp.get(_TJ_MAX_FIELD)) is not None
+            and not thermal_done
+        ):
+            checks.append(
+                CheckResult(
+                    **{
+                        **check_thermal_limit(float(tj), float(tj_max)).__dict__,
+                        "extra": {"component": name, "stage": stage_name},
+                    },
+                )
+            )
             thermal_done = True
 
     if not fet_done:
@@ -834,12 +876,12 @@ def _verdict_from(checks: tuple[CheckResult, ...]) -> RealismReport:
 
 
 __all__ = (
+    "ALL_CHECKS",
     "CheckResult",
     "CheckStatus",
     "RealismError",
     "RealismReport",
     "RealismVerdict",
-    "ALL_CHECKS",
     "check_capacitor_voltage_derating",
     "check_diode_voltage_derating",
     "check_duty_cycle_bounds",

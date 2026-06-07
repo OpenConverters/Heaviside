@@ -14,7 +14,7 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
-
+from tests.unit._real_mas import isat_of, real_magnetic
 
 _TOPOLOGIES = ["cuk", "sepic", "zeta"]
 
@@ -25,31 +25,27 @@ _TOPOLOGIES = ["cuk", "sepic", "zeta"]
 
 
 def _mas(numberTurns: int = 22) -> dict:
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 8.0327e-5,
-                    "effectiveLength": 0.0909,
-                    "effectiveVolume": 7.3e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.4,
-                         "temperature": 100.0},
-                        {"magneticField": 392.0, "magneticFluxDensity": 0.473,
-                         "temperature": 25.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "Primary", "numberTurns": numberTurns,
-             "numberParallels": 1, "isolationSide": "primary"},
-        ]},
-    }
+    """A complete, PyOM-evaluable gapped inductor for cuk / SEPIC / zeta.
+
+    Both L1 and L2 are discrete (uncoupled) gapped inductors with a
+    single ``Primary`` winding. Built by :func:`real_magnetic` so the
+    extractor's ``calculate_saturation_current`` call returns genuine,
+    gap-aware MKF physics (the analytical ``B_sat·N·A_e/L`` fallback was
+    deleted — magnetics math must come from MKF, see ~/.claude/CLAUDE.md).
+
+    The extractor harvests ``numberTurns`` from this MAS for the Isat
+    provenance, while the inductance value comes from the spec
+    (``desiredInductance`` / ``desiredOutputInductance``), so the turn
+    count must match the per-inductor expectations (22 for L1, 30 for L2).
+    """
+    return real_magnetic(
+        shape="ETD 29/16/10",
+        material="3C95",
+        gap_mm=1.0,
+        windings=[
+            {"name": "Primary", "turns": numberTurns, "side": "primary"},
+        ],
+    )
 
 
 def _spec() -> dict:
@@ -59,33 +55,41 @@ def _spec() -> dict:
         "desiredOutputInductance": 100e-6,
         "currentRippleRatio": 0.4,
         "efficiency": 0.92,
-        "operatingPoints": [{
-            "outputVoltages": [12.0],
-            "outputCurrents": [3.0],
-            "switchingFrequency": 200_000.0,
-            "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [12.0],
+                "outputCurrents": [3.0],
+                "switchingFrequency": 200_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
     }
 
 
 def _tas() -> dict:
     """Six-component cuk-shaped TAS (also valid for SEPIC / zeta — the
     extractor only cares about the L1, L2 declaration order)."""
-    return {"topology": {
-        "stages": [{
-            "name": "power_stage",
-            "role": "switchingCell",
-            "circuit": {"components": [
-                {"name": "Q1", "data": "placeholder"},
-                {"name": "D1", "data": "placeholder"},
-                {"name": "L1", "category": "magnetic", "mas": _mas(numberTurns=22)},
-                {"name": "L2", "category": "magnetic", "mas": _mas(numberTurns=30)},
-                {"name": "C_flying", "data": "placeholder"},
-                {"name": "C_out", "data": "placeholder"},
-            ]},
-        }],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "power_stage",
+                    "role": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "data": "placeholder"},
+                            {"name": "D1", "data": "placeholder"},
+                            {"name": "L1", "category": "magnetic", "mas": _mas(numberTurns=22)},
+                            {"name": "L2", "category": "magnetic", "mas": _mas(numberTurns=30)},
+                            {"name": "C_flying", "data": "placeholder"},
+                            {"name": "C_out", "data": "placeholder"},
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 def _get_inductors(tas: dict) -> tuple[dict, dict]:
@@ -100,7 +104,6 @@ def _get_inductors(tas: dict) -> tuple[dict, dict]:
 
 @pytest.mark.parametrize("topology", _TOPOLOGIES)
 class TestCukSepicZetaMath:
-
     def test_duty_uses_vin_min(self, topology):
         out = enrich_tas_for_realism(_tas(), topology=topology, spec=_spec())
         # D_max = Vout/(Vin_min+Vout) = 12/30 = 0.4
@@ -117,9 +120,7 @@ class TestCukSepicZetaMath:
         L1_worst = 0.8 * 47e-6
         d_at_vmax = 12.0 / 48.0
         expected = 36.0 * d_at_vmax / (L1_worst * 200_000.0)
-        assert l1["ipeak_provenance"]["ripple_worst_A_pp"] == pytest.approx(
-            expected, rel=1e-6
-        )
+        assert l1["ipeak_provenance"]["ripple_worst_A_pp"] == pytest.approx(expected, rel=1e-6)
 
     def test_L1_avg_current_uses_efficiency_and_vin_min(self, topology):
         """I_L1_avg = Pout / (η · Vin_min)."""
@@ -141,10 +142,19 @@ class TestCukSepicZetaMath:
     def test_both_inductors_have_independent_isat(self, topology):
         out = enrich_tas_for_realism(_tas(), topology=topology, spec=_spec())
         l1, l2 = _get_inductors(out)
-        # L1: 22 turns / 47 µH
-        assert l1["isat"] == pytest.approx(0.4 * 22 * 8.0327e-5 / 47e-6, rel=1e-4)
-        # L2: 30 turns / 100 µH
-        assert l2["isat"] == pytest.approx(0.4 * 30 * 8.0327e-5 / 100e-6, rel=1e-4)
+        # Ground truth = MKF: each stamped Isat must equal PyOM's
+        # saturation current for that inductor's own MAS at the op-point
+        # ambient (25 °C), NOT an analytical formula. Each inductor has its
+        # own core/winding (uncoupled), so each gets its own PyOM Isat.
+        # L1: 22 turns; L2: 30 turns (turn count harvested from the MAS).
+        assert l1["isat"] == pytest.approx(
+            isat_of(_mas(numberTurns=22), temperature_c=25.0), rel=1e-3
+        )
+        assert l2["isat"] == pytest.approx(
+            isat_of(_mas(numberTurns=30), temperature_c=25.0), rel=1e-3
+        )
+        assert "PyOM" in l1["isat_provenance"]["method"]
+        assert "PyOM" in l2["isat_provenance"]["method"]
         # And the provenance must trace each input.
         assert l1["isat_provenance"]["n_turns"] == 22
         assert l2["isat_provenance"]["n_turns"] == 30
@@ -187,7 +197,6 @@ class TestL2InductanceSource:
 
 @pytest.mark.parametrize("topology", _TOPOLOGIES)
 class TestCukSepicZetaFailureModes:
-
     def test_missing_efficiency_throws(self, topology):
         spec = _spec()
         del spec["efficiency"]
@@ -210,7 +219,8 @@ class TestCukSepicZetaFailureModes:
         tas = _tas()
         # Strip L2
         tas["topology"]["stages"][0]["circuit"]["components"] = [
-            c for c in tas["topology"]["stages"][0]["circuit"]["components"]
+            c
+            for c in tas["topology"]["stages"][0]["circuit"]["components"]
             if c.get("name") != "L2"
         ]
         with pytest.raises(EnrichmentError, match="expected 2 magnetic"):

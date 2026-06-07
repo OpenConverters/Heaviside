@@ -15,25 +15,23 @@ import pytest
 
 from heaviside.pipeline.full_design import (
     FullDesignError,
-    Stage1Result,
     _parse_topology_selector_response,
-    full_design,
     stage1_topology_screen,
 )
 from heaviside.pipeline.topology_screen import (
-    TopologyReconciliation,
     reconcile_topology_choices,
 )
 
-
 _BUCK_SPEC: dict[str, Any] = {
     "inputVoltage": {"minimum": 36, "maximum": 60, "nominal": 48},
-    "operatingPoints": [{
-        "outputVoltages": [12.0],
-        "outputCurrents": [5.0],
-        "switchingFrequency": 200_000.0,
-        "ambientTemperature": 25.0,
-    }],
+    "operatingPoints": [
+        {
+            "outputVoltages": [12.0],
+            "outputCurrents": [5.0],
+            "switchingFrequency": 200_000.0,
+            "ambientTemperature": 25.0,
+        }
+    ],
 }
 
 
@@ -43,11 +41,11 @@ _BUCK_SPEC: dict[str, Any] = {
 
 
 def test_parser_extracts_fenced_json_block() -> None:
-    text = '''Some preamble.
+    text = """Some preamble.
 ```json
 {"viable": ["buck", "flyback"], "reasoning": "step-down 60W"}
 ```
-Trailing text the parser should ignore.'''
+Trailing text the parser should ignore."""
     viable, reason = _parse_topology_selector_response(text)
     assert viable == ["buck", "flyback"]
     assert reason == "step-down 60W"
@@ -86,6 +84,7 @@ def test_parser_throws_on_invalid_json() -> None:
 def test_stage1_runs_both_paths_and_unions_them() -> None:
     """Agent suggests a subset that's narrower than static — chosen
     set should be the union (agent's preference first)."""
+
     def fake_selector(spec):
         return (["flyback", "single_switch_forward"], "isolation preferred")
 
@@ -103,10 +102,13 @@ def test_stage1_runs_both_paths_and_unions_them() -> None:
 def test_stage1_warns_on_high_disagreement() -> None:
     """Agent returns topologies the static screen rejects → static_only
     grows → Jaccard distance climbs → warning fires."""
+
     def fake_selector(spec):
         # Pick only topologies the static screen ALSO rejects for buck.
-        return (["common_mode_choke", "current_transformer"],
-                "judgment call (this is wrong on purpose for the test)")
+        return (
+            ["common_mode_choke", "current_transformer"],
+            "judgment call (this is wrong on purpose for the test)",
+        )
 
     s1 = stage1_topology_screen(_BUCK_SPEC, selector_fn=fake_selector)
     assert s1.reconciliation.warning is not None
@@ -119,8 +121,10 @@ def test_stage1_raises_when_no_topology_survives() -> None:
     def fake_selector(spec):
         return ([], "no opinion")
 
-    bad = {"inputVoltage": {"minimum": 10, "maximum": 14, "nominal": 12},
-           "operatingPoints": [{"outputVoltages": [11.5], "outputCurrents": [1.0]}]}
+    bad = {
+        "inputVoltage": {"minimum": 10, "maximum": 14, "nominal": 12},
+        "operatingPoints": [{"outputVoltages": [11.5], "outputCurrents": [1.0]}],
+    }
     # Make static return nothing too: vin=10..14 with vout=11.5 fails both
     # step_down (vout >= vin_min=10) and step_up (vout <= vin_max=14), and
     # the agent also returns nothing. step_either topologies still survive
@@ -140,7 +144,8 @@ def test_stage1_raises_when_no_topology_survives() -> None:
 
 def test_reconcile_perfect_agreement_no_warning() -> None:
     rec = reconcile_topology_choices(
-        ["buck", "flyback"], ["buck", "flyback"],
+        ["buck", "flyback"],
+        ["buck", "flyback"],
     )
     assert rec.jaccard_disagreement == 0.0
     assert rec.warning is None
@@ -156,7 +161,8 @@ def test_reconcile_empty_inputs_no_warning() -> None:
 
 def test_reconcile_agent_only_topologies_listed_separately() -> None:
     rec = reconcile_topology_choices(
-        ["buck"], ["buck", "flyback"],
+        ["buck"],
+        ["buck", "flyback"],
     )
     assert rec.agent_only == ("flyback",)
     assert "flyback" in rec.chosen

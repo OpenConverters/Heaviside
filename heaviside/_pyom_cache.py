@@ -44,13 +44,13 @@ throw"):
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
-
 
 __all__ = [
     "PyomCacheError",
@@ -126,7 +126,7 @@ def pyom_fingerprint() -> str:
         return _FINGERPRINT_CACHE
 
     try:
-        import PyOpenMagnetics  # noqa: F401 — used for __path__ side effect
+        import PyOpenMagnetics
     except ImportError as exc:
         raise PyomCacheError(
             "pyom_fingerprint: PyOpenMagnetics is not importable — cannot "
@@ -176,8 +176,7 @@ def _canonicalise(value: Any, path: str = "<root>") -> Any:
         for k, v in value.items():
             if not isinstance(k, str):
                 raise PyomCacheError(
-                    f"_canonicalise: non-string mapping key at {path}: "
-                    f"{type(k).__name__}={k!r}"
+                    f"_canonicalise: non-string mapping key at {path}: {type(k).__name__}={k!r}"
                 )
             out[k] = _canonicalise(v, f"{path}.{k}")
         return dict(sorted(out.items()))
@@ -196,8 +195,7 @@ def _cache_key(fn_name: str, args: Sequence[Any]) -> str:
         "args": _canonicalise(list(args), f"{fn_name}.args"),
         "pyom_sha": pyom_fingerprint(),
     }
-    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=False)
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
@@ -279,6 +277,7 @@ def cached_call(
     # still wins, and any "lost" canonical results are identical by
     # construction.
     import tempfile
+
     fd, tmp_str = tempfile.mkstemp(
         prefix=path.stem + ".",
         suffix=".tmp",
@@ -286,15 +285,12 @@ def cached_call(
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(canonical, fh, sort_keys=True,
-                      separators=(",", ":"), ensure_ascii=False)
+            json.dump(canonical, fh, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         os.replace(tmp_str, path)
     except Exception:
         # Clean up the tmp file if the replace failed; suppress
         # secondary errors so the original exception propagates.
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_str)
-        except OSError:
-            pass
         raise
     return canonical

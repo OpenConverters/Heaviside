@@ -21,7 +21,6 @@ import pytest
 from heaviside.librarian.datasheet.base import DatasheetDownloadError
 from heaviside.librarian.datasheet.cache import PdfCache, _url_digest
 
-
 _SAMPLE_PDF_BYTES = b"%PDF-1.4\n%fake-pdf-for-tests\n%%EOF\n"
 
 
@@ -70,6 +69,7 @@ def test_is_cached_false_for_empty_file(cache_dir: Path) -> None:
 def _ok_transport() -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=_SAMPLE_PDF_BYTES)
+
     return httpx.MockTransport(handler)
 
 
@@ -173,10 +173,12 @@ def test_fetch_empty_body_raises(cache_dir: Path) -> None:
 
 def test_fetch_follows_redirects(cache_dir: Path) -> None:
     """Manufacturer CDNs (TI, Wolfspeed) commonly 302 to a CDN host."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/redirect":
             return httpx.Response(
-                302, headers={"Location": "https://cdn.example.com/final.pdf"},
+                302,
+                headers={"Location": "https://cdn.example.com/final.pdf"},
             )
         return httpx.Response(200, content=_SAMPLE_PDF_BYTES)
 

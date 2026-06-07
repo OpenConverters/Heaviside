@@ -48,7 +48,7 @@ def load_prompt(name: str) -> str:
     if text.startswith("---"):
         try:
             end = text.index("---", 3)
-            text = text[end + 3:].strip()
+            text = text[end + 3 :].strip()
         except ValueError:
             pass
     return text
@@ -67,14 +67,9 @@ def call_llm(
     Raises ``LLMCallError`` if no API key is configured or the
     request fails.
     """
-    api_key = (
-        os.environ.get("MOONSHOT_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-    )
+    api_key = os.environ.get("MOONSHOT_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise LLMCallError(
-            "no MOONSHOT_API_KEY or OPENAI_API_KEY in environment"
-        )
+        raise LLMCallError("no MOONSHOT_API_KEY or OPENAI_API_KEY in environment")
 
     base_url = os.environ.get(
         "HEAVISIDE_LLM_BASE_URL",
@@ -118,10 +113,7 @@ def call_llm(
         raise LLMCallError(f"HTTP error: {exc}") from exc
 
     if response.status_code != 200:
-        raise LLMCallError(
-            f"LLM API returned {response.status_code}: "
-            f"{response.text[:300]}"
-        )
+        raise LLMCallError(f"LLM API returned {response.status_code}: {response.text[:300]}")
 
     data = response.json()
 
@@ -139,9 +131,7 @@ def call_llm(
         if not content:
             content = msg.get("reasoning_content") or ""
     except (KeyError, IndexError) as exc:
-        raise LLMCallError(
-            f"unexpected response shape: {json.dumps(data)[:300]}"
-        ) from exc
+        raise LLMCallError(f"unexpected response shape: {json.dumps(data)[:300]}") from exc
     if not content:
         raise LLMCallError(
             f"LLM returned empty content (finish_reason="
@@ -161,8 +151,11 @@ def call_agent(
     """Load a named agent prompt and call the LLM with it."""
     system_prompt = load_prompt(agent_name)
     return call_llm(
-        system_prompt, user_message,
-        temperature=temperature, max_tokens=max_tokens, json_mode=json_mode,
+        system_prompt,
+        user_message,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        json_mode=json_mode,
     )
 
 
@@ -189,15 +182,21 @@ def call_agent_json(
         try:
             t = temperature + (attempt * 0.1)
             raw = call_agent(
-                agent_name, user_message,
-                temperature=min(t, 1.0), max_tokens=max_tokens, json_mode=json_mode,
+                agent_name,
+                user_message,
+                temperature=min(t, 1.0),
+                max_tokens=max_tokens,
+                json_mode=json_mode,
             )
             return extract_json_block(raw)
         except LLMCallError as exc:
             last_error = exc
             logger.warning(
                 "call_agent_json(%s) attempt %d/%d failed: %s",
-                agent_name, attempt + 1, 1 + max_retries, exc,
+                agent_name,
+                attempt + 1,
+                1 + max_retries,
+                exc,
             )
     raise last_error  # type: ignore[misc]
 
@@ -246,22 +245,21 @@ def normalize_reviewer_verdict(data: dict[str, Any], reviewer_name: str) -> dict
     elif "INCOMPLETE" in vu:
         v = "INCOMPLETE"
     elif (
-        "NOT ACCEPTABLE" in vu or "NOT_ACCEPTABLE" in vu
-        or "NOT APPROVED" in vu or "NOT_APPROVED" in vu
-        or vu.startswith("REJECT") or vu in ("FAIL", "BLOCK", "BLOCKED", "NO")
+        "NOT ACCEPTABLE" in vu
+        or "NOT_ACCEPTABLE" in vu
+        or "NOT APPROVED" in vu
+        or "NOT_APPROVED" in vu
+        or vu.startswith("REJECT")
+        or vu in ("FAIL", "BLOCK", "BLOCKED", "NO")
     ):
         v = "REJECTED"
-    elif (
-        "PROCEED" in vu or vu.startswith("APPROV")
-        or vu in ("PASS", "ACCEPT", "ACCEPTED", "OK")
-    ):
+    elif "PROCEED" in vu or vu.startswith("APPROV") or vu in ("PASS", "ACCEPT", "ACCEPTED", "OK"):
         v = "APPROVED"
     else:
         v = vu  # unknown wording → fails the enum check below (fail-loud)
     if v not in _VALID_REVIEWER_VERDICTS:
         raise LLMCallError(
-            f"{reviewer_name} verdict {raw!r} maps to nothing in "
-            f"{sorted(_VALID_REVIEWER_VERDICTS)}"
+            f"{reviewer_name} verdict {raw!r} maps to nothing in {sorted(_VALID_REVIEWER_VERDICTS)}"
         )
     data["verdict"] = v
     objections = data.get("objections")
@@ -269,8 +267,7 @@ def normalize_reviewer_verdict(data: dict[str, Any], reviewer_name: str) -> dict
         data["objections"] = objections = []
     if not isinstance(objections, list):
         raise LLMCallError(
-            f"{reviewer_name} 'objections' is {type(objections).__name__}, "
-            f"expected a JSON array"
+            f"{reviewer_name} 'objections' is {type(objections).__name__}, expected a JSON array"
         )
     return data
 
@@ -313,6 +310,7 @@ def extract_json_block(text: str) -> dict[str, Any]:
     valid JSON block is found.
     """
     import re
+
     match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if not match:
         match = re.search(r"(\{.*\})", text, re.DOTALL)
@@ -327,9 +325,7 @@ def extract_json_block(text: str) -> dict[str, Any]:
                 return json.loads(repaired)
             except json.JSONDecodeError:
                 pass
-        raise LLMCallError(
-            f"no JSON block in LLM response: {text[:200]!r}"
-        )
+        raise LLMCallError(f"no JSON block in LLM response: {text[:200]!r}")
     try:
         return json.loads(match.group(1))
     except json.JSONDecodeError:

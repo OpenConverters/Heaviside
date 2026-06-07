@@ -10,15 +10,20 @@ Usage:
     python scripts/populate_controller_vref.py LTC7891 LTC3892 [...]
     python scripts/populate_controller_vref.py            # default set
 """
+
 from __future__ import annotations
 
-import json, os, sys, tempfile
+import json
+import os
+import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("MOONSHOT_API_KEY", "sk-viKudfa58QW8GjUm8aYxkfv5hmz0i5Y3HRdMKKpphPUupleQ")
 
 import logging
+
 logging.basicConfig(level=logging.WARNING)
 
 TAS_PATH = Path(__file__).resolve().parents[1] / "TAS" / "data" / "controllers.ndjson"
@@ -27,16 +32,21 @@ DEFAULT_MPNS = ["LTC7891", "LTC3892", "LM5146", "ISL8117", "LM5148-Q1"]
 
 def _download_datasheet_text(mpn: str, url: str) -> str:
     import httpx
+
     from heaviside.pipeline.pdf_extract import extract_pdf_text
 
     urls = [url] if url else []
     # DuckDuckGo fallback (ADI/some vendors 403 direct fetches)
     try:
-        import urllib.parse as up, re
+        import re
+        import urllib.parse as up
+
         ddg = httpx.get(
             "https://html.duckduckgo.com/html/",
             params={"q": f"{mpn} datasheet pdf"},
-            headers={"User-Agent": "Mozilla/5.0"}, timeout=15, follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+            follow_redirects=True,
         )
         if ddg.status_code == 200:
             for u in re.findall(r"uddg=([^&\"]+)", ddg.text):
@@ -48,8 +58,9 @@ def _download_datasheet_text(mpn: str, url: str) -> str:
 
     for u in urls:
         try:
-            r = httpx.get(u, timeout=30.0, follow_redirects=True,
-                          headers={"User-Agent": "Mozilla/5.0"})
+            r = httpx.get(
+                u, timeout=30.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}
+            )
             ct = r.headers.get("content-type", "")
             if r.status_code == 200 and ("pdf" in ct or len(r.content) > 50_000):
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -68,7 +79,8 @@ def _download_datasheet_text(mpn: str, url: str) -> str:
 
 
 def _extract_vref(mpn: str, text: str) -> float | None:
-    from heaviside.agents.llm_call import call_agent_json, LLMCallError
+    from heaviside.agents.llm_call import LLMCallError, call_agent_json
+
     # Send a bounded slice (Vref lives in the Electrical Characteristics table)
     snippet = text[:40000]
     try:
@@ -77,9 +89,10 @@ def _extract_vref(mpn: str, text: str) -> float | None:
             "Extract ONLY the feedback regulated/reference voltage (Vfb or "
             "Vref, the voltage the error amp regulates the FB pin to) from "
             f"this {mpn} controller datasheet. Reply JSON: "
-            '{\"feedbackReferenceVoltage\": <volts as float>} or '
-            '{\"feedbackReferenceVoltage\": null} if not found.\n\n' + snippet,
-            max_tokens=2048, max_retries=2,
+            '{"feedbackReferenceVoltage": <volts as float>} or '
+            '{"feedbackReferenceVoltage": null} if not found.\n\n' + snippet,
+            max_tokens=2048,
+            max_retries=2,
         )
         v = data.get("feedbackReferenceVoltage")
         if isinstance(v, (int, float)) and 0 < v < 5:

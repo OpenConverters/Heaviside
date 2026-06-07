@@ -25,7 +25,7 @@ CONTROLLER_RDSON = [
         "topology": "synchronous_buck",
         "electrical": {
             "rdsOnHighSide": 0.0018,  # 1.8 mΩ @ INTVcc=3.6V
-            "rdsOnLowSide": 0.0007,   # 0.7 mΩ @ INTVcc=3.6V
+            "rdsOnLowSide": 0.0007,  # 0.7 mΩ @ INTVcc=3.6V
             "vinMax": 5.5,
             "ioutMax": 25.0,
         },
@@ -36,8 +36,8 @@ CONTROLLER_RDSON = [
         "manufacturer": "Analog Devices",
         "topology": "synchronous_buck",
         "electrical": {
-            "rdsOnHighSide": 0.048,   # 48 mΩ typ
-            "rdsOnLowSide": 0.018,    # 18 mΩ typ
+            "rdsOnHighSide": 0.048,  # 48 mΩ typ
+            "rdsOnLowSide": 0.018,  # 18 mΩ typ
             "vinMax": 40.0,
             "ioutMax": 3.3,
         },
@@ -48,8 +48,8 @@ CONTROLLER_RDSON = [
         "manufacturer": "Analog Devices",
         "topology": "synchronous_buck",
         "electrical": {
-            "rdsOnHighSide": 0.055,   # 55 mΩ typ
-            "rdsOnLowSide": 0.022,    # 22 mΩ typ
+            "rdsOnHighSide": 0.055,  # 55 mΩ typ
+            "rdsOnLowSide": 0.022,  # 22 mΩ typ
             "vinMax": 65.0,
             "ioutMax": 3.5,
         },
@@ -72,8 +72,8 @@ CONTROLLER_RDSON = [
         "manufacturer": "Analog Devices",
         "topology": "synchronous_buck",
         "electrical": {
-            "rdsOnHighSide": 0.350,   # 350 mΩ typ
-            "rdsOnLowSide": 0.155,    # 155 mΩ typ
+            "rdsOnHighSide": 0.350,  # 350 mΩ typ
+            "rdsOnLowSide": 0.155,  # 155 mΩ typ
             "vinMax": 42.0,
             "ioutMax": 1.0,
         },
@@ -84,8 +84,8 @@ CONTROLLER_RDSON = [
         "manufacturer": "Analog Devices",
         "topology": "synchronous_buck",
         "electrical": {
-            "rdsOnHighSide": 0.170,   # 170 mΩ typ
-            "rdsOnLowSide": 0.075,    # 75 mΩ typ
+            "rdsOnHighSide": 0.170,  # 170 mΩ typ
+            "rdsOnLowSide": 0.075,  # 75 mΩ typ
             "vinMax": 42.0,
             "ioutMax": 2.5,
         },
@@ -96,8 +96,8 @@ CONTROLLER_RDSON = [
         "manufacturer": "Monolithic Power Systems",
         "topology": "boost",
         "electrical": {
-            "rdsOnHighSide": 0.068,   # 68 mΩ
-            "rdsOnLowSide": 0.048,    # 48 mΩ
+            "rdsOnHighSide": 0.068,  # 68 mΩ
+            "rdsOnLowSide": 0.048,  # 48 mΩ
             "vinMax": 36.0,
             "ioutMax": 3.0,
         },
@@ -108,8 +108,8 @@ CONTROLLER_RDSON = [
         "manufacturer": "STMicroelectronics",
         "topology": "synchronous_buck",
         "electrical": {
-            "rdsOnHighSide": 0.080,   # 80 mΩ typ
-            "rdsOnLowSide": 0.040,    # 40 mΩ typ
+            "rdsOnHighSide": 0.080,  # 80 mΩ typ
+            "rdsOnLowSide": 0.040,  # 40 mΩ typ
             "vinMax": 36.0,
             "ioutMax": 6.0,
         },

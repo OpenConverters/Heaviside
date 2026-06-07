@@ -24,7 +24,7 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
-
+from tests.unit._real_mas import isat_of, real_magnetic
 
 # ---------------------------------------------------------------------------
 # Fixtures (ACF stencil: T1 has pri+sec0 only — no demag winding, since
@@ -34,79 +34,55 @@ from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 
 def _lout_mas(N: int = 18, *, L: float = 4.7e-6) -> dict:
     """Full MAS root for the output choke L_out0, matching the shape the
-    real bridge-attach phase produces: the wound/gapped magnetic device
-    under ``core``/``coil`` PLUS an ``outputs`` envelope carrying the
-    inductance MKF actually achieved.  The extractor harvests the
-    achieved ``L`` from ``outputs[*].inductance.magnetizingInductance
-    .magnetizingInductance.nominal`` (and would also accept
-    ``inputs.designRequirements.magnetizingInductance.nominal``); both
-    are provided here so the fixture survives either harvest path.
+    real bridge-attach phase produces: a **complete, PyOM-evaluable**
+    wound/gapped magnetic under ``core``/``coil`` (built by
+    :func:`real_magnetic` so ``calculate_saturation_current`` returns real
+    MKF physics) PLUS an ``outputs`` envelope carrying the inductance MKF
+    actually achieved.  The extractor harvests the achieved ``L`` from
+    ``outputs[*].inductance.magnetizingInductance.magnetizingInductance
+    .nominal`` (and would also accept
+    ``inputs.designRequirements.magnetizingInductance.nominal``); both are
+    provided here so the fixture survives either harvest path.  A gapped
+    ETD 49/25/16 keeps the choke Isat high enough to clear the realism gate.
     """
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 8.0327e-5,
-                    "effectiveLength": 0.0909,
-                    "effectiveVolume": 7.3e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.4,
-                         "temperature": 100.0},
-                        {"magneticField": 392.0, "magneticFluxDensity": 0.473,
-                         "temperature": 25.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "Primary", "numberTurns": N, "numberParallels": 1,
-             "isolationSide": "primary"},
-        ]},
-        "inputs": {
-            "designRequirements": {
-                "magnetizingInductance": {"nominal": L},
-            },
-        },
-        "outputs": [
-            {"inductance": {"magnetizingInductance": {
-                "magnetizingInductance": {"nominal": L},
-            }}},
+    mas = real_magnetic(
+        shape="ETD 49/25/16",
+        material="3C95",
+        gap_mm=1.0,
+        windings=[
+            {"name": "Primary", "turns": N, "side": "primary"},
         ],
+    )
+    mas["inputs"] = {
+        "designRequirements": {"magnetizingInductance": {"nominal": L}},
     }
+    mas["outputs"] = [
+        {
+            "inductance": {
+                "magnetizingInductance": {
+                    "magnetizingInductance": {"nominal": L},
+                }
+            }
+        },
+    ]
+    return mas
 
 
 def _t1_mas(*, N_pri: int = 20, N_sec: int = 10) -> dict:
     """ACF T1: 2 windings (pri, sec0).  Clamp cap handles reset, so no
-    demag winding is required."""
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 1.5e-4,
-                    "effectiveLength": 0.05,
-                    "effectiveVolume": 7.5e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.32,
-                         "temperature": 100.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "pri",  "numberTurns": N_pri, "numberParallels": 1,
-             "isolationSide": "primary"},
-            {"name": "sec0", "numberTurns": N_sec, "numberParallels": 1,
-             "isolationSide": "secondary"},
-        ]},
-    }
+    demag winding is required.  T1 is deliberately NOT Isat-stamped; the
+    extractor harvests only its winding turns, so a complete real
+    transformer with the named windings is all that's needed.
+    """
+    return real_magnetic(
+        shape="ETD 34/17/11",
+        material="3C95",
+        gap_mm=0.0,
+        windings=[
+            {"name": "pri", "turns": N_pri, "side": "primary"},
+            {"name": "sec0", "turns": N_sec, "side": "secondary"},
+        ],
+    )
 
 
 def _acf_tas(*, t1_kwargs: dict | None = None) -> dict:
@@ -116,38 +92,45 @@ def _acf_tas(*, t1_kwargs: dict | None = None) -> dict:
     outputRectifier (D_fwd, D_fw, L_out0, C_out0).
     """
     t1_kwargs = dict(t1_kwargs or {})
-    return {"topology": {
-        "stages": [
-            {
-                "name": "primary_switch",
-                "role": "switchingCell",
-                "circuit": {"components": [
-                    {"name": "Q1",      "data": "placeholder"},
-                    {"name": "Q_clamp", "data": "placeholder"},
-                    {"name": "C_clamp", "data": "placeholder"},
-                ]},
-            },
-            {
-                "name": "isolation",
-                "role": "isolation",
-                "circuit": {"components": [
-                    {"name": "T1", "category": "magnetic",
-                     "mas": _t1_mas(**t1_kwargs)},
-                ]},
-            },
-            {
-                "name": "output_0",
-                "role": "outputRectifier",
-                "circuit": {"components": [
-                    {"name": "D_fwd",  "data": "placeholder"},
-                    {"name": "D_fw",   "data": "placeholder"},
-                    {"name": "L_out0", "category": "magnetic", "mas": _lout_mas()},
-                    {"name": "C_out0", "data": "placeholder"},
-                ]},
-            },
-        ],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "primary_switch",
+                    "role": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "data": "placeholder"},
+                            {"name": "Q_clamp", "data": "placeholder"},
+                            {"name": "C_clamp", "data": "placeholder"},
+                        ]
+                    },
+                },
+                {
+                    "name": "isolation",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "category": "magnetic", "mas": _t1_mas(**t1_kwargs)},
+                        ]
+                    },
+                },
+                {
+                    "name": "output_0",
+                    "role": "outputRectifier",
+                    "circuit": {
+                        "components": [
+                            {"name": "D_fwd", "data": "placeholder"},
+                            {"name": "D_fw", "data": "placeholder"},
+                            {"name": "L_out0", "category": "magnetic", "mas": _lout_mas()},
+                            {"name": "C_out0", "data": "placeholder"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 def _acf_spec_high_duty() -> dict:
@@ -163,12 +146,14 @@ def _acf_spec_high_duty() -> dict:
         "inputVoltage": {"minimum": 27.0, "maximum": 75.0, "nominal": 48.0},
         "desiredInductance": 4.7e-6,
         "efficiency": 0.92,
-        "operatingPoints": [{
-            "outputVoltages": [5.0],
-            "outputCurrents": [10.0],
-            "switchingFrequency": 250_000.0,
-            "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [5.0],
+                "outputCurrents": [10.0],
+                "switchingFrequency": 250_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
     }
 
 
@@ -187,7 +172,6 @@ def _get_lout(tas: dict) -> dict:
 
 
 class TestACFMath:
-
     def test_duty_uses_turns_ratio_and_vin_min(self):
         out = enrich_tas_for_realism(
             _acf_tas(t1_kwargs={"N_pri": 4, "N_sec": 1}),
@@ -229,10 +213,22 @@ class TestACFMath:
             spec=_acf_spec_high_duty(),
         )
         l = _get_lout(out)
-        expected = 0.4 * 18 * 8.0327e-5 / 4.7e-6
-        assert l["isat"] == pytest.approx(expected, rel=1e-4)
-        assert l["isat_provenance"]["effective_area_m2"] == 8.0327e-5
-        assert l["isat_provenance"]["b_sat_T"] == pytest.approx(0.4)
+        # Ground truth = MKF: stamped Isat must equal PyOM's saturation
+        # current for the L_out magnetic at the op-point ambient (25 °C),
+        # NOT an analytical formula.
+        expected = isat_of(_lout_mas(), temperature_c=25.0)
+        assert l["isat"] == pytest.approx(expected, rel=1e-3)
+        # Confirm extractor used the L_out MAS by reading the real shape's
+        # effective area and material B_sat back out of the magnetic.
+        lout = _lout_mas()
+        ae_expected = lout["core"]["processedDescription"]["effectiveParameters"]["effectiveArea"]
+        bsat_expected = min(
+            p["magneticFluxDensity"]
+            for p in lout["core"]["functionalDescription"]["material"]["saturation"]
+        )
+        assert l["isat_provenance"]["effective_area_m2"] == pytest.approx(ae_expected)
+        assert l["isat_provenance"]["b_sat_T"] == pytest.approx(bsat_expected, rel=1e-3)
+        assert 0.2 < l["isat_provenance"]["b_sat_T"] < 0.6  # plausible ferrite
         # Provenance must mark this as the ACF variant (so a future
         # refactor can't silently re-use the SSF/2SF wrapper).
         assert "active_clamp_forward" in l["isat_provenance"]["method"]
@@ -287,6 +283,7 @@ class TestNoHalfDutyEnforcement:
         """Regression anchor: if anyone weakens the half-duty guard
         for SSF/2SF, this test fails."""
         from tests.unit.test_extract_forward import _ssf_tas
+
         with pytest.raises(EnrichmentError, match="reset"):
             enrich_tas_for_realism(
                 _ssf_tas(t1_kwargs={"N_pri": 4, "N_sec": 1}),
@@ -324,8 +321,7 @@ class TestStructuralFailures:
             s for s in tas["topology"]["stages"] if s.get("role") != "outputRectifier"
         ]
         with pytest.raises(EnrichmentError, match="outputRectifier"):
-            enrich_tas_for_realism(tas, topology="active_clamp_forward",
-                                   spec=_acf_spec_high_duty())
+            enrich_tas_for_realism(tas, topology="active_clamp_forward", spec=_acf_spec_high_duty())
 
     def test_missing_isolation_stage_throws(self):
         tas = _acf_tas()
@@ -333,28 +329,27 @@ class TestStructuralFailures:
             s for s in tas["topology"]["stages"] if s.get("role") != "isolation"
         ]
         with pytest.raises(EnrichmentError, match="isolation"):
-            enrich_tas_for_realism(tas, topology="active_clamp_forward",
-                                   spec=_acf_spec_high_duty())
+            enrich_tas_for_realism(tas, topology="active_clamp_forward", spec=_acf_spec_high_duty())
 
     def test_missing_pri_winding_throws(self):
         tas = _acf_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][0]["name"] = "primary"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][0][
+                    "name"
+                ] = "primary"
         with pytest.raises(EnrichmentError, match="'pri'"):
-            enrich_tas_for_realism(tas, topology="active_clamp_forward",
-                                   spec=_acf_spec_high_duty())
+            enrich_tas_for_realism(tas, topology="active_clamp_forward", spec=_acf_spec_high_duty())
 
     def test_missing_sec0_winding_throws(self):
         tas = _acf_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][-1]["name"] = "secondary"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][-1][
+                    "name"
+                ] = "secondary"
         with pytest.raises(EnrichmentError, match="'sec0'"):
-            enrich_tas_for_realism(tas, topology="active_clamp_forward",
-                                   spec=_acf_spec_high_duty())
+            enrich_tas_for_realism(tas, topology="active_clamp_forward", spec=_acf_spec_high_duty())
 
     def test_missing_achieved_inductance_throws(self):
         """The forward family harvests the achieved choke inductance from
@@ -368,6 +363,5 @@ class TestStructuralFailures:
                     if c.get("name") == "L_out0":
                         c["mas"].pop("outputs", None)
                         c["mas"].pop("inputs", None)
-        with pytest.raises(EnrichmentError, match="full MAS root|inductance"):
-            enrich_tas_for_realism(tas, topology="active_clamp_forward",
-                                   spec=_acf_spec_high_duty())
+        with pytest.raises(EnrichmentError, match=r"full MAS root|inductance"):
+            enrich_tas_for_realism(tas, topology="active_clamp_forward", spec=_acf_spec_high_duty())

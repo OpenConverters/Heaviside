@@ -17,12 +17,14 @@ from heaviside.pipeline.analyst import (
 _BUCK_SPEC = {
     "inputVoltage": {"nominal": 48.0, "minimum": 36.0, "maximum": 60.0},
     "currentRippleRatio": 0.4,
-    "operatingPoints": [{
-        "outputVoltages": [12.0],
-        "outputCurrents": [5.0],
-        "switchingFrequency": 200_000.0,
-        "ambientTemperature": 25.0,
-    }],
+    "operatingPoints": [
+        {
+            "outputVoltages": [12.0],
+            "outputCurrents": [5.0],
+            "switchingFrequency": 200_000.0,
+            "ambientTemperature": 25.0,
+        }
+    ],
 }
 
 
@@ -31,45 +33,49 @@ def _buck_tas_with_picked_components() -> dict[str, Any]:
     Q1/D1/L1/C_out with the gate-readable flat fields."""
     return {
         "topology": {
-            "stages": [{
-                "name": "power_stage",
-                "circuit": {
-                    "components": [
-                        {
-                            "name": "Q1",
-                            "rds_on": 0.005,
-                            "qg_total": 30e-9,
-                            "rth_ja": 40.0,
-                            "tj_max": 150.0,
-                        },
-                        {
-                            "name": "D1",
-                            "vf_typ": 0.45,
-                            "qrr": 0.0,
-                            "rth_ja": 50.0,
-                            "tj_max": 175.0,
-                        },
-                        {
-                            "name": "L1",
-                            "data": {
-                                "outputs": [{
-                                    "coreLosses": {"coreLosses": 0.300},
-                                    "windingLosses": {
-                                        "windingLosses": [
-                                            {"totalLosses": 0.150},
-                                        ],
-                                    },
-                                }],
+            "stages": [
+                {
+                    "name": "power_stage",
+                    "circuit": {
+                        "components": [
+                            {
+                                "name": "Q1",
+                                "rds_on": 0.005,
+                                "qg_total": 30e-9,
+                                "rth_ja": 40.0,
+                                "tj_max": 150.0,
                             },
-                        },
-                        {
-                            "name": "C_out",
-                            "esr": 0.020,
-                            "ripple_current_stress": 0.577,
-                        },
-                    ],
-                },
-            }],
+                            {
+                                "name": "D1",
+                                "vf_typ": 0.45,
+                                "qrr": 0.0,
+                                "rth_ja": 50.0,
+                                "tj_max": 175.0,
+                            },
+                            {
+                                "name": "L1",
+                                "data": {
+                                    "outputs": [
+                                        {
+                                            "coreLosses": {"coreLosses": 0.300},
+                                            "windingLosses": {
+                                                "windingLosses": [
+                                                    {"totalLosses": 0.150},
+                                                ],
+                                            },
+                                        }
+                                    ],
+                                },
+                            },
+                            {
+                                "name": "C_out",
+                                "esr": 0.020,
+                                "ripple_current_stress": 0.577,
+                            },
+                        ],
+                    },
+                }
+            ],
         },
     }
 
@@ -81,7 +87,7 @@ def _buck_tas_with_picked_components() -> dict[str, Any]:
 
 def test_q1_conduction_loss_matches_hand_calc() -> None:
     """P_Q1_cond = D * Iout^2 * Rds_on  with D = Vout/Vin_nom = 0.25:
-       = 0.25 * 25 * 0.005 = 0.03125 W"""
+    = 0.25 * 25 * 0.005 = 0.03125 W"""
     tas = _buck_tas_with_picked_components()
     budget = compute_buck_loss_budget(tas, _BUCK_SPEC)
     assert budget["Q1_conduction"] == pytest.approx(0.03125, rel=1e-6)
@@ -89,7 +95,7 @@ def test_q1_conduction_loss_matches_hand_calc() -> None:
 
 def test_q1_switching_loss_matches_hand_calc() -> None:
     """P_Q1_sw = Vin * Iout * Qg * fsw / Ig
-       = 48 * 5 * 30e-9 * 200000 / 1.0 = 1.44 W"""
+    = 48 * 5 * 30e-9 * 200000 / 1.0 = 1.44 W"""
     tas = _buck_tas_with_picked_components()
     budget = compute_buck_loss_budget(tas, _BUCK_SPEC)
     assert budget["Q1_switching"] == pytest.approx(1.44, rel=1e-6)
@@ -122,7 +128,7 @@ def test_capacitor_esr_loss_uses_rms_ripple() -> None:
     """P_C_esr = I_ripple_rms^2 * ESR = 0.577^2 * 0.020 ~= 6.66 mW"""
     tas = _buck_tas_with_picked_components()
     budget = compute_buck_loss_budget(tas, _BUCK_SPEC)
-    assert budget["C_out_esr"] == pytest.approx(0.577 ** 2 * 0.020, rel=1e-3)
+    assert budget["C_out_esr"] == pytest.approx(0.577**2 * 0.020, rel=1e-3)
 
 
 def test_loss_budget_reports_none_for_missing_inputs() -> None:
@@ -150,7 +156,7 @@ def test_loss_budget_throws_on_missing_spec_fields() -> None:
 
 def test_tj_is_ambient_plus_loss_times_rth() -> None:
     """Q1 has loss = 0.03125 + 1.44 = 1.47125 W, Rth_ja = 40.
-       Tj = 25 + 1.47125 * 40 = 83.85 °C."""
+    Tj = 25 + 1.47125 * 40 = 83.85 °C."""
     tas = _buck_tas_with_picked_components()
     run_buck_analyst(tas, _BUCK_SPEC)
     q1 = tas["topology"]["stages"][0]["circuit"]["components"][0]

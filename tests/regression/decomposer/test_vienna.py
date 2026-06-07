@@ -68,9 +68,7 @@ def test_vienna_decompose_matches_golden() -> None:
     _maybe_update(TAS_GOLDEN, tas_json)
 
     if not TAS_GOLDEN.exists():
-        pytest.fail(
-            "Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create."
-        )
+        pytest.fail("Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create.")
 
     assert tas_json == TAS_GOLDEN.read_text()
 
@@ -101,16 +99,28 @@ def test_vienna_tas_shape() -> None:
     roles = [s["role"] for s in tas["topology"]["stages"]]
     assert roles == ["switchingCell", "control"], roles
 
-    names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
+    names = {
+        c["name"]
+        for c in tas["topology"]["stages"][0]["circuit"]["components"]
+        if not c["name"].startswith("P_")
+    }
     assert names == {"L1", "Q1", "D1", "C_bus_DC"}, names
 
     drives = {d["component"] for d in tas["topology"]["stages"][1]["drives"]}
     assert drives == {"Q1"}, drives
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
+    vin_eps = {
+        (e["component"], e["pin"])
+        for e in ports["Vin"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert vin_eps == {("L1", "1")}, vin_eps
-    vout_eps = {(e["component"], e["pin"]) for e in ports["Vout"]["endpoints"] if not e["component"].startswith("P_")}
+    vout_eps = {
+        (e["component"], e["pin"])
+        for e in ports["Vout"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert vout_eps == {("D1", "K"), ("C_bus_DC", "1")}, vout_eps
 
 

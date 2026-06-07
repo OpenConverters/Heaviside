@@ -52,7 +52,7 @@ SPEC: dict[str, object] = {
     ],
 }
 MAGNETIZING_INDUCTANCE = 1e-3
-TURNS_RATIOS = [8.0, 1.0]   # CLLLC takes [n_pri_sec, n_pri_pri] for the symmetric tank
+TURNS_RATIOS = [8.0, 1.0]  # CLLLC takes [n_pri_sec, n_pri_pri] for the symmetric tank
 
 
 def _maybe_update(path: Path, content: str) -> None:
@@ -74,9 +74,7 @@ def test_clllc_decompose_matches_golden() -> None:
     _maybe_update(TAS_GOLDEN, tas_json)
 
     if not TAS_GOLDEN.exists():
-        pytest.fail(
-            "Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create."
-        )
+        pytest.fail("Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create.")
 
     assert tas_json == TAS_GOLDEN.read_text()
 
@@ -115,16 +113,32 @@ def test_clllc_tas_shape() -> None:
         "control",
     ], roles
 
-    pri_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
+    pri_names = {
+        c["name"]
+        for c in tas["topology"]["stages"][0]["circuit"]["components"]
+        if not c["name"].startswith("P_")
+    }
     assert pri_names == {"Q1", "Q2", "Q3", "Q4", "C_bus_HV"}, pri_names
 
-    iso_names = {c["name"] for c in tas["topology"]["stages"][1]["circuit"]["components"] if not c["name"].startswith("P_")}
+    iso_names = {
+        c["name"]
+        for c in tas["topology"]["stages"][1]["circuit"]["components"]
+        if not c["name"].startswith("P_")
+    }
     assert iso_names == {"C_r1", "L_r1", "T1", "L_r2", "C_r2"}, iso_names
 
-    sec_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"] if not c["name"].startswith("P_")}
+    sec_names = {
+        c["name"]
+        for c in tas["topology"]["stages"][2]["circuit"]["components"]
+        if not c["name"].startswith("P_")
+    }
     assert sec_names == {"Q5", "Q6", "Q7", "Q8"}, sec_names
 
-    of_names = {c["name"] for c in tas["topology"]["stages"][3]["circuit"]["components"] if not c["name"].startswith("P_")}
+    of_names = {
+        c["name"]
+        for c in tas["topology"]["stages"][3]["circuit"]["components"]
+        if not c["name"].startswith("P_")
+    }
     assert of_names == {"C_bus_LV"}, of_names
 
     drives = {d["component"] for d in tas["topology"]["stages"][4]["drives"]}
@@ -132,7 +146,11 @@ def test_clllc_tas_shape() -> None:
 
     # Vin reaches Q1.D, Q3.D, and C_bus_HV.1 (and nothing else).
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
+    vin_eps = {
+        (e["component"], e["pin"])
+        for e in ports["Vin"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert vin_eps == {("Q1", "D"), ("Q3", "D"), ("C_bus_HV", "1")}, vin_eps
 
 

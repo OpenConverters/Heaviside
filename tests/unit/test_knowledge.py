@@ -10,7 +10,6 @@ import pytest
 
 from heaviside.knowledge import KNOWLEDGE_ROOT, available_topics, read_knowledge
 
-
 REQUIRED_SCHEMA_FILES = (
     "peas-schema",
     "sas-schema",
@@ -26,9 +25,7 @@ def test_schema_knowledge_files_present_and_non_empty(name: str) -> None:
     text = read_knowledge(name)
     assert text.strip(), f"{name}.md exists but is empty"
     # Markdown front character — every Proteus knowledge file opens with #.
-    assert text.lstrip().startswith("#"), (
-        f"{name}.md does not look like Markdown (no leading #)"
-    )
+    assert text.lstrip().startswith("#"), f"{name}.md does not look like Markdown (no leading #)"
 
 
 def test_available_topics_lists_components_dir() -> None:
@@ -68,6 +65,7 @@ def test_ambiguous_name_raises_lookuperror(tmp_path, monkeypatch) -> None:
     (root / "b" / "dup.md").write_text("# B\n")
 
     import heaviside.knowledge as kn
+
     monkeypatch.setattr(kn, "KNOWLEDGE_ROOT", root)
 
     with pytest.raises(LookupError, match="ambiguous"):

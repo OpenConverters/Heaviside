@@ -13,11 +13,8 @@ Layered:
 
 from __future__ import annotations
 
-import math
-
 import pytest
 
-from heaviside.pipeline import realism
 from heaviside.pipeline.realism import (
     ALL_CHECKS,
     CheckStatus,
@@ -35,7 +32,6 @@ from heaviside.pipeline.realism import (
     check_thermal_limit,
     evaluate_tas,
 )
-
 
 # ---------------------------------------------------------------------------
 # 1. Primitive checks
@@ -57,13 +53,16 @@ class TestPowerBalance:
         assert r.status is CheckStatus.FAIL
         assert r.value > 0.05
 
-    @pytest.mark.parametrize("pin,pout,losses", [
-        (0.0, 95.0, 5.0),       # pin <= 0
-        (100.0, 0.0, 5.0),      # pout <= 0
-        (-1.0, 95.0, 5.0),      # negative pin
-        (100.0, 95.0, float("nan")),
-        (100.0, 95.0, float("inf")),
-    ])
+    @pytest.mark.parametrize(
+        "pin,pout,losses",
+        [
+            (0.0, 95.0, 5.0),  # pin <= 0
+            (100.0, 0.0, 5.0),  # pout <= 0
+            (-1.0, 95.0, 5.0),  # negative pin
+            (100.0, 95.0, float("nan")),
+            (100.0, 95.0, float("inf")),
+        ],
+    )
     def test_invalid_inputs_throw(self, pin, pout, losses):
         with pytest.raises(RealismError):
             check_power_balance(pin, pout, losses)
@@ -93,20 +92,26 @@ class TestVoltageDerating:
         assert check_capacitor_voltage_derating(15.0, 10.0).status is CheckStatus.PASS
         assert check_capacitor_voltage_derating(14.0, 10.0).status is CheckStatus.FAIL
 
-    @pytest.mark.parametrize("fn", [
-        check_fet_voltage_derating,
-        check_diode_voltage_derating,
-        check_capacitor_voltage_derating,
-    ])
+    @pytest.mark.parametrize(
+        "fn",
+        [
+            check_fet_voltage_derating,
+            check_diode_voltage_derating,
+            check_capacitor_voltage_derating,
+        ],
+    )
     def test_zero_stress_throws(self, fn):
         with pytest.raises(RealismError):
             fn(100.0, 0.0)
 
-    @pytest.mark.parametrize("fn", [
-        check_fet_voltage_derating,
-        check_diode_voltage_derating,
-        check_capacitor_voltage_derating,
-    ])
+    @pytest.mark.parametrize(
+        "fn",
+        [
+            check_fet_voltage_derating,
+            check_diode_voltage_derating,
+            check_capacitor_voltage_derating,
+        ],
+    )
     def test_negative_rated_throws(self, fn):
         with pytest.raises(RealismError):
             fn(-1.0, 10.0)
@@ -232,19 +237,25 @@ def _empty_tas() -> dict:
 
 
 def _buck_shaped_tas() -> dict:
-    return {"topology": {
-        "stages": [{
-            "name": "power_stage",
-            "role": "switchingCell",
-            "circuit": {"components": [
-                {"name": "Q1", "data": "placeholder"},
-                {"name": "D1", "data": "placeholder"},
-                {"name": "L1", "category": "magnetic", "mas": {}},
-                {"name": "C_out", "data": "placeholder"},
-            ]},
-        }],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "power_stage",
+                    "role": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "data": "placeholder"},
+                            {"name": "D1", "data": "placeholder"},
+                            {"name": "L1", "category": "magnetic", "mas": {}},
+                            {"name": "C_out", "data": "placeholder"},
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 class TestOrchestratorContract:
@@ -271,9 +282,12 @@ class TestOrchestratorContract:
         # Component-keyed checks → NOT_APPLICABLE because the TAS has no
         # components at all.  Sim / loss-budget checks → UNAVAILABLE.
         na = {c.name for c in r.checks if c.status is CheckStatus.NOT_APPLICABLE}
-        assert {"fet_voltage_derating", "diode_voltage_derating",
-                "capacitor_voltage_derating",
-                "inductor_isat_margin"}.issubset(na)
+        assert {
+            "fet_voltage_derating",
+            "diode_voltage_derating",
+            "capacitor_voltage_derating",
+            "inductor_isat_margin",
+        }.issubset(na)
 
 
 class TestOrchestratorVerdict:
@@ -289,21 +303,22 @@ class TestOrchestratorVerdict:
         tas["duty"] = 0.25
         r = evaluate_tas(tas, topology="buck")
         assert r.verdict is RealismVerdict.PASS
-        assert any(c.name == "duty_cycle_bounds" and c.status is CheckStatus.PASS
-                   for c in r.checks)
+        assert any(c.name == "duty_cycle_bounds" and c.status is CheckStatus.PASS for c in r.checks)
 
     def test_any_fail_is_fail(self):
         tas = _buck_shaped_tas()
-        tas["duty"] = 0.99   # buck max is 0.95 → FAIL
+        tas["duty"] = 0.99  # buck max is 0.95 → FAIL
         r = evaluate_tas(tas, topology="buck")
         assert r.verdict is RealismVerdict.FAIL
 
     def test_fet_rating_drives_pass(self):
         tas = _buck_shaped_tas()
-        tas["topology"]["stages"][0]["circuit"]["components"][0].update({
-            "vds_rated": 150.0,
-            "vds_stress": 60.0,
-        })
+        tas["topology"]["stages"][0]["circuit"]["components"][0].update(
+            {
+                "vds_rated": 150.0,
+                "vds_stress": 60.0,
+            }
+        )
         r = evaluate_tas(tas, topology="buck")
         fet = [c for c in r.checks if c.name == "fet_voltage_derating"]
         assert len(fet) == 1
@@ -363,8 +378,9 @@ class TestReportSerialisation:
         assert isinstance(d["summary"], dict)
         assert isinstance(d["checks"], list)
         assert all(isinstance(c["name"], str) for c in d["checks"])
-        assert all(c["status"] in {"pass", "fail", "not_applicable", "unavailable"}
-                   for c in d["checks"])
+        assert all(
+            c["status"] in {"pass", "fail", "not_applicable", "unavailable"} for c in d["checks"]
+        )
 
     def test_to_dict_emits_tuple_limit_as_list(self):
         # efficiency_sanity uses a (low, high) tuple limit.

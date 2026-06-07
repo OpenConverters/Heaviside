@@ -22,23 +22,25 @@ from typing import Any
 
 import pytest
 
-_PROTEUS_DIR = Path(
-    "/home/alf/OpenConverters/Proteus/tests/reference_designs/crossref_wurth"
-)
+_PROTEUS_DIR = Path("/home/alf/OpenConverters/Proteus/tests/reference_designs/crossref_wurth")
 
-_DESIGNS = sorted([
-    d for d in _PROTEUS_DIR.iterdir()
-    if d.is_dir() and (d / "bom_full.json").exists()
-])
+_DESIGNS = sorted(
+    [d for d in _PROTEUS_DIR.iterdir() if d.is_dir() and (d / "bom_full.json").exists()]
+)
 
 
 def _load_bom(design_dir: Path) -> list[dict[str, Any]]:
     """Load and normalize a Proteus BOM to Heaviside field names."""
     raw = json.loads((design_dir / "bom_full.json").read_text())
     cat_map = {
-        "capacitor": "capacitor", "inductor": "magnetic",
-        "mosfet": "mosfet", "diode": "diode", "resistor": "resistor",
-        "ic": "ic", "connector": "connector", "ferrite_bead": "magnetic",
+        "capacitor": "capacitor",
+        "inductor": "magnetic",
+        "mosfet": "mosfet",
+        "diode": "diode",
+        "resistor": "resistor",
+        "ic": "ic",
+        "connector": "connector",
+        "ferrite_bead": "magnetic",
     }
     return [
         {
@@ -134,7 +136,8 @@ class TestPreclassify:
 
         target_norm = _normalize_manufacturer("Wurth")
         expected_wurth = {
-            c["ref_des"] for c in bom
+            c["ref_des"]
+            for c in bom
             if target_norm in _normalize_manufacturer(c.get("manufacturer", ""))
         }
         # Preclassified includes Würth-manufacturer AND not-fitted components
@@ -184,20 +187,22 @@ class TestGuardrailsOnProteusBOM:
         # Build a synthetic crossref result (all "recommended")
         crossref = []
         for c in wurth_bom:
-            crossref.append({
-                "ref_des": c.get("ref_des", "?"),
-                "component_type": c.get("type", ""),
-                "original_pn": c.get("part", ""),
-                "original_value": c.get("value", ""),
-                "original_voltage": str(c.get("rated_voltage", "")),
-                "original_package": c.get("package", ""),
-                "substitute_pn": "PLACEHOLDER_PN",
-                "substitute_value": c.get("value", ""),
-                "substitute_voltage": str(c.get("rated_voltage", "")),
-                "substitute_package": c.get("package", ""),
-                "status": "recommended",
-                "notes": "",
-            })
+            crossref.append(
+                {
+                    "ref_des": c.get("ref_des", "?"),
+                    "component_type": c.get("type", ""),
+                    "original_pn": c.get("part", ""),
+                    "original_value": c.get("value", ""),
+                    "original_voltage": str(c.get("rated_voltage", "")),
+                    "original_package": c.get("package", ""),
+                    "substitute_pn": "PLACEHOLDER_PN",
+                    "substitute_value": c.get("value", ""),
+                    "substitute_voltage": str(c.get("rated_voltage", "")),
+                    "substitute_package": c.get("package", ""),
+                    "status": "recommended",
+                    "notes": "",
+                }
+            )
 
         corrected, fires = apply_guardrails(
             {"crossref": crossref},

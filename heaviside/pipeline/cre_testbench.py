@@ -14,14 +14,18 @@ import logging
 import re
 import shutil
 from dataclasses import dataclass
-from typing import Any
+from datetime import UTC
+from typing import TYPE_CHECKING, Any
 
 from heaviside.pipeline.cre import (
-    CREState,
     ComponentRoleMap,
+    CREState,
     ReferenceClaims,
     SimComparison,
 )
+
+if TYPE_CHECKING:
+    from heaviside.pipeline.crossref import SimDerivedStress
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +91,7 @@ _TOPOLOGY_ALIASES: dict[str, str] = {
 def _normalize_topology(raw: str) -> str | None:
     """Map an LLM-extracted topology name to a Heaviside canonical name."""
     from heaviside.topologies import TOPOLOGIES
+
     canonical = {t.name for t in TOPOLOGIES}
 
     # Direct match
@@ -115,10 +120,14 @@ def _normalize_topology(raw: str) -> str | None:
 
 
 _STENCIL_COMPONENT_TYPES = {
-    "S1": "mosfet", "S2": "mosfet",
-    "D1": "diode", "D2": "diode",
-    "L1": "inductor", "L2": "inductor",
-    "Cout": "capacitor", "Cin": "capacitor",
+    "S1": "mosfet",
+    "S2": "mosfet",
+    "D1": "diode",
+    "D2": "diode",
+    "L1": "inductor",
+    "L2": "inductor",
+    "Cout": "capacitor",
+    "Cin": "capacitor",
 }
 
 
@@ -155,9 +164,17 @@ def build_role_map(
 # ---------------------------------------------------------------------------
 
 _SI_PREFIXES = {
-    "T": 1e12, "G": 1e9, "M": 1e6, "k": 1e3, "K": 1e3,
-    "m": 1e-3, "u": 1e-6, "µ": 1e-6, "μ": 1e-6,
-    "n": 1e-9, "p": 1e-12,
+    "T": 1e12,
+    "G": 1e9,
+    "M": 1e6,
+    "k": 1e3,
+    "K": 1e3,
+    "m": 1e-3,
+    "u": 1e-6,
+    "µ": 1e-6,
+    "μ": 1e-6,
+    "n": 1e-9,
+    "p": 1e-12,
 }
 
 _VALUE_RE = re.compile(
@@ -225,19 +242,18 @@ def _convert_to_sync_buck(deck: str, ron: float = 0.05) -> str:
         return deck
 
     # Extract S1 connections
-    s1_match = re.search(r"^S1\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+SW1",
-                         deck, re.MULTILINE)
+    s1_match = re.search(r"^S1\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+SW1", deck, re.MULTILINE)
     if not s1_match:
         return deck
-    hs_drain = s1_match.group(1)   # vin_dc
+    hs_drain = s1_match.group(1)  # vin_dc
     hs_source = s1_match.group(2)  # sw
 
     # Extract D1 connections
     d1_match = re.search(r"^D1\s+(\S+)\s+(\S+)\s+DIDEAL", deck, re.MULTILINE)
     if not d1_match:
         return deck
-    anode = d1_match.group(1)   # 0
-    cathode = d1_match.group(2) # sw
+    anode = d1_match.group(1)  # 0
+    cathode = d1_match.group(2)  # sw
 
     roff = 1e9
 
@@ -267,8 +283,9 @@ def _convert_to_sync_buck(deck: str, ron: float = 0.05) -> str:
     deck = re.sub(r"^\.model\s+DIDEAL\s+D\(.*?\)\n", "", deck, flags=re.MULTILINE)
     deck = re.sub(r"^D1\s+.*?\n", switch_block, deck, flags=re.MULTILINE)
 
-    logger.info("testbench: converted to sync buck with behavioral switches "
-                "(RON=%.2fmΩ)", ron * 1000)
+    logger.info(
+        "testbench: converted to sync buck with behavioral switches (RON=%.2fmΩ)", ron * 1000
+    )
     return deck
 
 
@@ -297,7 +314,6 @@ def _inject_waveform_meas(deck: str, vout_target: float) -> str:
     tper = float(pulse_match.group(1))
     if tper <= 0:
         return deck
-    fsw = 1.0 / tper
 
     # Extend sim to 500 cycles for full settling, measure last 20
     n_settle = 500
@@ -310,7 +326,8 @@ def _inject_waveform_meas(deck: str, vout_target: float) -> str:
     deck = re.sub(
         r"^\.tran\s+.*$",
         f".tran {tstep:.6e} {t_stop:.6e} {t_start:.6e} UIC",
-        deck, flags=re.MULTILINE | re.IGNORECASE,
+        deck,
+        flags=re.MULTILINE | re.IGNORECASE,
     )
     # Add .ic for output voltage
     if ".ic" not in deck.lower():
@@ -339,7 +356,9 @@ def _inject_waveform_meas(deck: str, vout_target: float) -> str:
 def _parse_waveform_meas(stdout: str) -> dict[str, float]:
     """Parse waveform .meas results from ngspice output."""
     results: dict[str, float] = {}
-    pattern = re.compile(r"^\s*(vout_max|vout_min|vsw_max|vsw_min|il_max|il_min)\s*=\s*([-+]?[\d.]+(?:[eE][-+]?\d+)?)")
+    pattern = re.compile(
+        r"^\s*(vout_max|vout_min|vsw_max|vsw_min|il_max|il_min)\s*=\s*([-+]?[\d.]+(?:[eE][-+]?\d+)?)"
+    )
     for line in stdout.splitlines():
         m = pattern.match(line)
         if m:
@@ -350,6 +369,7 @@ def _parse_waveform_meas(stdout: str) -> dict[str, float]:
 @dataclass
 class WaveformCharacteristics:
     """Waveform measurements from simulation."""
+
     vout_ripple_mv: float = 0.0
     vsw_vpp: float = 0.0
     il_ripple_a: float = 0.0
@@ -359,6 +379,7 @@ class WaveformCharacteristics:
 @dataclass
 class WaveformAnalytical:
     """Analytically expected waveform values from specs + BOM."""
+
     il_ripple_a: float = 0.0
     vout_ripple_mv: float = 0.0
     vsw_vpp: float = 0.0
@@ -419,27 +440,37 @@ def _check_waveforms(
             continue
         ratio = sim_val / ana_val
         passed = _WAVEFORM_RATIO_BOUND <= ratio <= 1 / _WAVEFORM_RATIO_BOUND
-        issues.append({
-            "param": name,
-            "sim": round(sim_val, 3),
-            "analytical": round(ana_val, 3),
-            "ratio": round(ratio, 2),
-            "unit": unit,
-            "passed": passed,
-        })
+        issues.append(
+            {
+                "param": name,
+                "sim": round(sim_val, 3),
+                "analytical": round(ana_val, 3),
+                "ratio": round(ratio, 2),
+                "unit": unit,
+                "passed": passed,
+            }
+        )
         if not passed:
             logger.warning(
                 "testbench waveform %s: sim=%.3f%s analytical=%.3f%s "
                 "ratio=%.2f — outside [%.1f×, %.1f×]",
-                name, sim_val, unit, ana_val, unit, ratio,
-                _WAVEFORM_RATIO_BOUND, 1 / _WAVEFORM_RATIO_BOUND,
+                name,
+                sim_val,
+                unit,
+                ana_val,
+                unit,
+                ratio,
+                _WAVEFORM_RATIO_BOUND,
+                1 / _WAVEFORM_RATIO_BOUND,
             )
     return issues
 
 
 def _extract_waveforms(netlist: str, vout_target: float) -> WaveformCharacteristics | None:
     """Run simulation with waveform measurements and extract characteristics."""
-    import subprocess, tempfile, os
+    import os
+    import subprocess
+    import tempfile
 
     deck = _inject_waveform_meas(netlist, vout_target)
 
@@ -453,7 +484,9 @@ def _extract_waveforms(netlist: str, vout_target: float) -> WaveformCharacterist
     try:
         result = subprocess.run(
             [ngspice, "-b", cir_path],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode != 0:
             return None
@@ -491,7 +524,7 @@ def _estimate_ron(iout: float, fsw: float = 0) -> float:
     """
     if iout <= 0:
         return 0.05
-    ron_base = 0.2 / (iout ** 1.3)
+    ron_base = 0.2 / (iout**1.3)
     # SW model switching loss compensation: at high current × high freq,
     # the SW model's VH transition dissipates extra power. Subtract an
     # equivalent RON to keep total loss realistic.
@@ -545,15 +578,22 @@ def _get_controller_rdson(ref_bom: list[dict[str, Any]]) -> float | None:
             except json.JSONDecodeError:
                 continue
             name = (rec.get("name", "") or rec.get("partNumber", "")).upper().strip()
-            if (name == mpn_upper or name == mpn_base
-                    or mpn_base.startswith(name) or name.startswith(mpn_base)):
+            if (
+                name in (mpn_upper, mpn_base)
+                or mpn_base.startswith(name)
+                or name.startswith(mpn_base)
+            ):
                 elec = rec.get("electrical", {})
                 hs = elec.get("rdsOnHighSide")
                 ls = elec.get("rdsOnLowSide")
                 if hs and isinstance(hs, (int, float)):
                     avg = (hs + (ls or hs)) / 2
-                    logger.info("testbench: found controller %s Rds_on in TAS: "
-                                "HS=%.1fmΩ LS=%.1fmΩ", ic_mpn, hs*1000, (ls or hs)*1000)
+                    logger.info(
+                        "testbench: found controller %s Rds_on in TAS: HS=%.1fmΩ LS=%.1fmΩ",
+                        ic_mpn,
+                        hs * 1000,
+                        (ls or hs) * 1000,
+                    )
                     return avg
     return None
 
@@ -592,15 +632,13 @@ def _get_inductor_dcr(ref_bom: list[dict[str, Any]]) -> float | None:
                 rec = json.loads(raw_line)
             except json.JSONDecodeError:
                 continue
-            ref = (
-                rec.get("magnetic", {})
-                .get("manufacturerInfo", {})
-                .get("reference", "")
-            )
+            ref = rec.get("magnetic", {}).get("manufacturerInfo", {}).get("reference", "")
             ref_upper = ref.upper().strip()
-            if (ref_upper == mpn_upper
-                    or ref_upper.startswith(mpn_upper)
-                    or mpn_upper.startswith(ref_upper)):
+            if (
+                ref_upper == mpn_upper
+                or ref_upper.startswith(mpn_upper)
+                or mpn_upper.startswith(ref_upper)
+            ):
                 dcr_block = (
                     rec.get("magnetic", {})
                     .get("manufacturerInfo", {})
@@ -612,11 +650,13 @@ def _get_inductor_dcr(ref_bom: list[dict[str, Any]]) -> float | None:
                 if isinstance(dcr_max, (int, float)) and dcr_max > 0:
                     logger.info(
                         "testbench: found inductor %s DCR=%.1fmΩ in TAS",
-                        inductor_mpn, dcr_max * 1000,
+                        inductor_mpn,
+                        dcr_max * 1000,
                     )
                     return float(dcr_max)
     logger.warning(
-        "testbench: inductor %s not found in TAS magnetics", inductor_mpn,
+        "testbench: inductor %s not found in TAS magnetics",
+        inductor_mpn,
     )
     return None
 
@@ -627,8 +667,9 @@ def _inject_inductor_dcr(deck: str, dcr: float) -> str:
     # L1 connects l_in to vout. Add Rdcr between l_in and a new node.
     deck = re.sub(
         r"^(L1\s+)l_in(\s+vout\s+)",
-        rf"\1l_dcr\2",
-        deck, flags=re.MULTILINE,
+        r"\1l_dcr\2",
+        deck,
+        flags=re.MULTILINE,
     )
     # Add the DCR resistor
     dcr_line = f"Rdcr l_in l_dcr {dcr:.6e}\n"
@@ -709,24 +750,32 @@ def _build_comparison(
 
     mismatches: list[dict[str, Any]] = []
     if claimed_eff and eff_delta > _EFFICIENCY_TOLERANCE_PP:
-        mismatches.append({
-            "param": "efficiency",
-            "sim": sim_eff, "claimed": claimed_eff,
-            "delta_pp": eff_delta,
-        })
+        mismatches.append(
+            {
+                "param": "efficiency",
+                "sim": sim_eff,
+                "claimed": claimed_eff,
+                "delta_pp": eff_delta,
+            }
+        )
     if claimed_vout and vout_err > _VOUT_TOLERANCE_PCT:
-        mismatches.append({
-            "param": "vout",
-            "sim": sim_vout, "claimed": claimed_vout,
-            "error_pct": vout_err,
-        })
+        mismatches.append(
+            {
+                "param": "vout",
+                "sim": sim_vout,
+                "claimed": claimed_vout,
+                "error_pct": vout_err,
+            }
+        )
 
     # No claims at all = no meaningful comparison
     if not claimed_eff and not claimed_vout:
-        mismatches.append({
-            "param": "no_claims",
-            "note": "no efficiency or Vout claims extracted — cannot validate",
-        })
+        mismatches.append(
+            {
+                "param": "no_claims",
+                "note": "no efficiency or Vout claims extracted — cannot validate",
+            }
+        )
 
     return SimComparison(
         sim_efficiency=sim_eff,
@@ -744,22 +793,27 @@ def _build_comparison(
 # Diagnosis
 # ---------------------------------------------------------------------------
 
+
 def _diagnose_mismatch(comparison: SimComparison, state: CREState) -> str:
     """Generate a diagnosis for simulation mismatches."""
-    from heaviside.agents.llm_call import call_agent, LLMCallError
+    from heaviside.agents.llm_call import LLMCallError, call_agent
 
     if not comparison.mismatches:
         return "No mismatches — simulation matches reference claims."
 
     import json
-    diag_input = json.dumps({
-        "mismatches": comparison.mismatches,
-        "topology": state.ref_spec.topology if state.ref_spec else "?",
-        "sim_efficiency": comparison.sim_efficiency,
-        "claimed_efficiency": comparison.claimed_efficiency,
-        "sim_vout": comparison.sim_vout,
-        "claimed_vout": comparison.claimed_vout,
-    }, indent=2)
+
+    diag_input = json.dumps(
+        {
+            "mismatches": comparison.mismatches,
+            "topology": state.ref_spec.topology if state.ref_spec else "?",
+            "sim_efficiency": comparison.sim_efficiency,
+            "claimed_efficiency": comparison.claimed_efficiency,
+            "sim_vout": comparison.sim_vout,
+            "claimed_vout": comparison.claimed_vout,
+        },
+        indent=2,
+    )
 
     try:
         diagnosis = call_agent(
@@ -810,11 +864,13 @@ def _build_load_points(
     points = [p for p in points if p["iout"] >= iout_max * 0.50]
 
     if not points and iout_max > 0:
-        points.append({
-            "label": "full_load",
-            "iout": iout_max,
-            "efficiency": claims.efficiency.get("full_load", 0),
-        })
+        points.append(
+            {
+                "label": "full_load",
+                "iout": iout_max,
+                "efficiency": claims.efficiency.get("full_load", 0),
+            }
+        )
 
     return sorted(points, key=lambda p: p["iout"])
 
@@ -852,26 +908,20 @@ def _build_converter_json(state: CREState) -> tuple[dict[str, Any], str] | None:
     if vin_max <= 0:
         converter_json["inputVoltage"]["maximum"] = vin_nom * 1.2
     if vin_min <= 0:
-        converter_json["inputVoltage"]["minimum"] = (
-            converter_json["inputVoltage"]["nominal"] * 0.8
-        )
+        converter_json["inputVoltage"]["minimum"] = converter_json["inputVoltage"]["nominal"] * 0.8
 
     if "buck" in topology:
         vin_for_sim = converter_json["inputVoltage"]["minimum"]
         if vin_for_sim < vout * 1.2:
-            converter_json["inputVoltage"]["minimum"] = (
-                converter_json["inputVoltage"]["nominal"]
-            )
+            converter_json["inputVoltage"]["minimum"] = converter_json["inputVoltage"]["nominal"]
             state.diagnostics.append(
-                f"testbench: Vin_min={vin_min:.1f}V < Vout×1.2={vout*1.2:.1f}V — "
+                f"testbench: Vin_min={vin_min:.1f}V < Vout×1.2={vout * 1.2:.1f}V — "
                 f"simulating at Vin_nom instead (MKF does not model 100% duty)."
             )
 
     norm = _normalize_topology(topology)
     if not norm:
-        state.diagnostics.append(
-            f"testbench: cannot map topology '{spec.topology}' to a stencil"
-        )
+        state.diagnostics.append(f"testbench: cannot map topology '{spec.topology}' to a stencil")
         return None
     return converter_json, norm
 
@@ -889,9 +939,12 @@ def _simulate_netlist(
     """
     try:
         from heaviside.sim.runner import simulate_closed_loop
+
         sim_result = simulate_closed_loop(
-            netlist, vout_target=vout_target,
-            tolerance=0.03, max_iterations=16,
+            netlist,
+            vout_target=vout_target,
+            tolerance=0.03,
+            max_iterations=16,
         )
     except Exception as exc:
         logger.warning("testbench [%s]: simulation failed: %s", label, exc)
@@ -905,7 +958,8 @@ def _simulate_netlist(
         comparison.sim_efficiency * 100 if comparison.sim_efficiency else 0,
         comparison.claimed_efficiency * 100 if comparison.claimed_efficiency else 0,
         comparison.efficiency_delta_pp,
-        comparison.sim_vout, comparison.claimed_vout,
+        comparison.sim_vout,
+        comparison.claimed_vout,
         comparison.vout_error_pct,
         "PASS" if comparison.passed else "MISMATCH",
     )
@@ -939,7 +993,9 @@ def run_testbench(state: CREState) -> CREState:
     state.role_map = role_map
     logger.info(
         "testbench: mapped %d/%d BOM components to stencil roles (confidence %.0f%%)",
-        len(role_map.roles), len(state.ref_bom), role_map.confidence * 100,
+        len(role_map.roles),
+        len(state.ref_bom),
+        role_map.confidence * 100,
     )
 
     # Extract inductor value for magnetizing_inductance
@@ -959,8 +1015,12 @@ def run_testbench(state: CREState) -> CREState:
     # ------------------------------------------------------------------
     try:
         from heaviside.decomposer.api import decompose_from_spec
+
         netlist_ideal, tas = decompose_from_spec(
-            topology, converter_json, turns_ratios, mag_inductance,
+            topology,
+            converter_json,
+            turns_ratios,
+            mag_inductance,
         )
     except Exception as exc:
         state.diagnostics.append(f"testbench: decompose failed: {exc}")
@@ -972,24 +1032,21 @@ def run_testbench(state: CREState) -> CREState:
     # Detect from: topology name, BOM roles, or PDF text.
     raw_topo = spec.topology.lower()
     has_sync_role = any(
-        comp.get("role", "") in ("synchronousRectifier", "lowSideSwitch")
-        for comp in state.ref_bom
+        comp.get("role", "") in ("synchronousRectifier", "lowSideSwitch") for comp in state.ref_bom
     )
     pdf_says_sync = "synchronous" in (state.pdf_text or "").lower()
-    is_sync = (
-        "synchronous" in raw_topo
-        or "sync" in raw_topo
-        or has_sync_role
-        or pdf_says_sync
-    )
+    is_sync = "synchronous" in raw_topo or "sync" in raw_topo or has_sync_role or pdf_says_sync
     # Rds_on priority: TAS controllers (verified) > PDF extraction (may be wrong variant)
     ron_from_tas = _get_controller_rdson(state.ref_bom)
     if ron_from_tas:
         ron = ron_from_tas
     elif spec.rdson_hs and spec.rdson_ls:
         ron = (spec.rdson_hs + spec.rdson_ls) / 2 / 1000  # mΩ → Ω
-        logger.info("testbench: Rds_on from PDF extraction: HS=%.1fmΩ LS=%.1fmΩ",
-                     spec.rdson_hs, spec.rdson_ls)
+        logger.info(
+            "testbench: Rds_on from PDF extraction: HS=%.1fmΩ LS=%.1fmΩ",
+            spec.rdson_hs,
+            spec.rdson_ls,
+        )
     elif spec.rdson_hs:
         ron = spec.rdson_hs / 1000
         logger.info("testbench: Rds_on from PDF extraction: %.1fmΩ", spec.rdson_hs)
@@ -1004,15 +1061,23 @@ def run_testbench(state: CREState) -> CREState:
     raw_topo_full = spec.topology.lower()
     pdf_lower = (state.pdf_text or "").lower()
     n_phases = 1
-    if any(k in raw_topo_full for k in ("dual", "2-phase", "two-phase")):
-        n_phases = 2
-    elif any(k in raw_topo_full for k in ("polyphase", "poly", "multi")):
+    if any(k in raw_topo_full for k in ("dual", "2-phase", "two-phase")) or any(
+        k in raw_topo_full for k in ("polyphase", "poly", "multi")
+    ):
         n_phases = 2
     # Also check PDF text (LLM may not include phase info in topology)
-    if n_phases == 1 and any(k in pdf_lower for k in (
-        "dual-phase", "dual phase", "2-phase", "two-phase",
-        "polyphase", "2xlt", "2×lt",
-    )):
+    if n_phases == 1 and any(
+        k in pdf_lower
+        for k in (
+            "dual-phase",
+            "dual phase",
+            "2-phase",
+            "two-phase",
+            "polyphase",
+            "2xlt",
+            "2×lt",
+        )
+    ):
         n_phases = 2
     if n_phases == 1 and ("4-phase" in pdf_lower or "four-phase" in pdf_lower):
         n_phases = 4
@@ -1022,8 +1087,12 @@ def run_testbench(state: CREState) -> CREState:
         iout_per_phase = spec.iout / n_phases
         rload_per_phase = spec.vout / iout_per_phase if iout_per_phase > 0 else spec.vout
         netlist_ideal = _rewrite_rload(netlist_ideal, rload_per_phase)
-        logger.info("testbench: %d-phase converter — simulating one phase at %.1fA "
-                     "(total %.1fA)", n_phases, iout_per_phase, spec.iout)
+        logger.info(
+            "testbench: %d-phase converter — simulating one phase at %.1fA (total %.1fA)",
+            n_phases,
+            iout_per_phase,
+            spec.iout,
+        )
 
     if is_sync and "buck" in topology:
         netlist_ideal = _convert_to_sync_buck(netlist_ideal, ron=ron)
@@ -1048,13 +1117,20 @@ def run_testbench(state: CREState) -> CREState:
     #   - Switching overlap: 0.5 × Vin × Iout × (tr+tf) × fsw (not in sim)
     #   - PCB trace resistance (not in sim)
 
-    logger.info("testbench: RON=%.2fmΩ DCR=%s Iout=%.1fA fsw=%.0fkHz",
-                ron * 1000,
-                f"{inductor_dcr*1000:.1f}mΩ" if inductor_dcr else "N/A",
-                spec.iout, spec.fsw / 1000)
+    logger.info(
+        "testbench: RON=%.2fmΩ DCR=%s Iout=%.1fA fsw=%.0fkHz",
+        ron * 1000,
+        f"{inductor_dcr * 1000:.1f}mΩ" if inductor_dcr else "N/A",
+        spec.iout,
+        spec.fsw / 1000,
+    )
 
     phase1 = _simulate_netlist(
-        netlist_ideal, spec.vout, state.ref_claims, spec, "ideal",
+        netlist_ideal,
+        spec.vout,
+        state.ref_claims,
+        spec,
+        "ideal",
     )
     if phase1 is None:
         state.diagnostics.append("testbench: ideal simulation failed")
@@ -1064,9 +1140,12 @@ def run_testbench(state: CREState) -> CREState:
     state.comparisons.append(comp_ideal)
     state.sim_result = {
         "phase": "ideal",
-        "vin": sim_ideal.vin, "iin": sim_ideal.iin,
-        "vout": sim_ideal.vout, "iout": sim_ideal.iout,
-        "pin": sim_ideal.pin, "pout": sim_ideal.pout,
+        "vin": sim_ideal.vin,
+        "iin": sim_ideal.iin,
+        "vout": sim_ideal.vout,
+        "iout": sim_ideal.iout,
+        "pin": sim_ideal.pin,
+        "pout": sim_ideal.pout,
         "efficiency": sim_ideal.efficiency,
         "total_losses": sim_ideal.total_losses,
     }
@@ -1107,13 +1186,16 @@ def run_testbench(state: CREState) -> CREState:
                 cat = comp.get("category", comp.get("component_type", ""))
                 if cat in ("capacitor", "inductor", "magnetic"):
                     netlist_bom = _rewrite_component_value(
-                        netlist_bom, stencil_ref, value,
+                        netlist_bom,
+                        stencil_ref,
+                        value,
                     )
                     patched += 1
 
         # Inject parasitics from TAS
         try:
             from heaviside.sim import inject_parasitics
+
             netlist_bom = inject_parasitics(netlist_bom, tas)
         except Exception as exc:
             state.diagnostics.append(f"testbench: parasitic injection failed: {exc}")
@@ -1150,7 +1232,8 @@ def run_testbench(state: CREState) -> CREState:
         state.comparisons.append(comp_lp)
         state.sim_result = {
             "phase": f"bom@{label}",
-            "vin": sim_lp.vin, "iout": sim_lp.iout,
+            "vin": sim_lp.vin,
+            "iout": sim_lp.iout,
             "vout": sim_lp.vout,
             "efficiency": sim_lp.efficiency,
             "total_losses": sim_lp.total_losses,
@@ -1163,10 +1246,14 @@ def run_testbench(state: CREState) -> CREState:
     elif not load_points:
         # No claimed load points — fall back to single full-load sim
         phase2 = _simulate_netlist(
-            netlist_bom, spec.vout, state.ref_claims, spec, "bom",
+            netlist_bom,
+            spec.vout,
+            state.ref_claims,
+            spec,
+            "bom",
         )
         if phase2:
-            sim_bom, comp_bom = phase2
+            _sim_bom, comp_bom = phase2
             state.comparisons.append(comp_bom)
             state.passed = comp_bom.passed
     else:
@@ -1199,13 +1286,18 @@ def run_testbench(state: CREState) -> CREState:
     wf = _extract_waveforms(netlist_bom, spec.vout)
     if wf:
         logger.info(
-            "testbench waveforms: Vout_ripple=%.1fmV Vsw_pp=%.1fV "
-            "IL_ripple=%.2fA IL_avg=%.2fA",
-            wf.vout_ripple_mv, wf.vsw_vpp, wf.il_ripple_a, wf.il_avg_a,
+            "testbench waveforms: Vout_ripple=%.1fmV Vsw_pp=%.1fV IL_ripple=%.2fA IL_avg=%.2fA",
+            wf.vout_ripple_mv,
+            wf.vsw_vpp,
+            wf.il_ripple_a,
+            wf.il_avg_a,
         )
 
         analytical = _compute_analytical_waveforms(
-            spec, actual_l, actual_cout, topology,
+            spec,
+            actual_l,
+            actual_cout,
+            topology,
         )
         wf_checks = _check_waveforms(wf, analytical)
 
@@ -1250,27 +1342,29 @@ def _learn_from_testbench(state: CREState) -> None:
         return
 
     import hashlib
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     fingerprint = hashlib.sha256(state.reference.encode()).hexdigest()[:12]
 
     lessons: list[Lesson] = []
     for lesson_data in state.lessons:
         for mm in lesson_data.get("mismatches", []):
-            lessons.append(Lesson(
-                id=hashlib.sha256(
-                    f"cre-tb:{state.reference}:{mm.get('param','')}:{lesson_data['attempt']}".encode()
-                ).hexdigest()[:16],
-                timestamp=now,
-                topology=state.ref_spec.topology if state.ref_spec else "?",
-                category="simulation_failure",
-                severity="high",
-                detail=f"Testbench mismatch on {mm.get('param','?')}: "
-                       f"sim={mm.get('sim')}, claimed={mm.get('claimed')}",
-                spec_fingerprint=fingerprint,
-                suggestion=lesson_data.get("diagnosis", "")[:200],
-            ))
+            lessons.append(
+                Lesson(
+                    id=hashlib.sha256(
+                        f"cre-tb:{state.reference}:{mm.get('param', '')}:{lesson_data['attempt']}".encode()
+                    ).hexdigest()[:16],
+                    timestamp=now,
+                    topology=state.ref_spec.topology if state.ref_spec else "?",
+                    category="simulation_failure",
+                    severity="high",
+                    detail=f"Testbench mismatch on {mm.get('param', '?')}: "
+                    f"sim={mm.get('sim')}, claimed={mm.get('claimed')}",
+                    spec_fingerprint=fingerprint,
+                    suggestion=lesson_data.get("diagnosis", "")[:200],
+                )
+            )
 
     if lessons:
         written = store_lessons(lessons)
@@ -1279,15 +1373,16 @@ def _learn_from_testbench(state: CREState) -> None:
 
 def extract_component_stress(
     state: CREState,
-) -> dict[str, "SimDerivedStress"]:
+) -> dict[str, SimDerivedStress]:
     """Extract per-component V/I stress from CRE simulation results.
 
     Maps simulation waveforms to each BOM component via the role map.
     Returns a dict keyed by ref_des. Components without a role mapping
     or without simulation data get no entry (not estimated).
     """
-    from heaviside.pipeline.crossref import SimDerivedStress
     import math
+
+    from heaviside.pipeline.crossref import SimDerivedStress
 
     result: dict[str, SimDerivedStress] = {}
 
@@ -1300,15 +1395,15 @@ def extract_component_stress(
     wf = sr["waveforms"]
     checks = wf.get("checks", [])
     if any(not c.get("passed", True) for c in checks):
-        logger.warning("extract_component_stress: waveform cross-check "
-                       "failed — skipping stress extraction")
+        logger.warning(
+            "extract_component_stress: waveform cross-check failed — skipping stress extraction"
+        )
         return result
 
     spec = state.ref_spec
     vin = spec.vin_nom or spec.vin_max or 12.0
     vout = spec.vout
     iout = spec.iout
-    fsw = spec.fsw
 
     il_avg = wf.get("il_avg_a", 0)
     il_ripple = wf.get("il_ripple_a", 0)
@@ -1316,7 +1411,7 @@ def extract_component_stress(
     vsw_vpp = wf.get("vsw_vpp", 0)
 
     il_peak = il_avg + il_ripple / 2
-    il_rms = math.sqrt(il_avg ** 2 + (il_ripple / math.sqrt(12)) ** 2)
+    il_rms = math.sqrt(il_avg**2 + (il_ripple / math.sqrt(12)) ** 2)
 
     # Duty cycle from topology
     topo = spec.topology.lower()
@@ -1409,8 +1504,11 @@ def extract_component_stress(
             i_rms=stress_vals.get("i_rms"),
         )
 
-    logger.info("extract_component_stress: %d/%d components have stress data",
-                 len(result), len(state.ref_bom))
+    logger.info(
+        "extract_component_stress: %d/%d components have stress data",
+        len(result),
+        len(state.ref_bom),
+    )
     return result
 
 

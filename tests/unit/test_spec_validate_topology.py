@@ -12,14 +12,17 @@ from heaviside.spec.validate_topology import (
     validate_spec_for_topology,
 )
 
-
 _BUCK_OK = {
     "inputVoltage": {"nominal": 48.0, "minimum": 36.0, "maximum": 60.0},
     "currentRippleRatio": 0.4,
     "desiredInductance": 22e-6,
     "operatingPoints": [
-        {"switchingFrequency": 200000.0, "outputVoltages": [12.0],
-         "outputCurrents": [5.0], "ambientTemperature": 25.0}
+        {
+            "switchingFrequency": 200000.0,
+            "outputVoltages": [12.0],
+            "outputCurrents": [5.0],
+            "ambientTemperature": 25.0,
+        }
     ],
 }
 

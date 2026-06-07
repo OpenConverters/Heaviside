@@ -58,9 +58,7 @@ def test_isobuck_decompose_matches_golden() -> None:
     _maybe_update(TAS_GOLDEN, tas_json)
 
     if not SPICE_GOLDEN.exists() or not TAS_GOLDEN.exists():
-        pytest.fail(
-            "Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create."
-        )
+        pytest.fail("Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create.")
 
     assert netlist == SPICE_GOLDEN.read_text()
     assert tas_json == TAS_GOLDEN.read_text()
@@ -74,25 +72,34 @@ def test_isobuck_tas_round_trip_shape() -> None:
         magnetizing_inductance=MAGNETIZING_INDUCTANCE,
     )
     roles = [s["role"] for s in tas["topology"]["stages"]]
-    assert roles == [
-        "switchingCell", "isolation", "outputFilter",
-        "outputRectifier", "control"
-    ], roles
+    assert roles == ["switchingCell", "isolation", "outputFilter", "outputRectifier", "control"], (
+        roles
+    )
 
-    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
+    sw_names = {
+        c["name"]
+        for c in tas["topology"]["stages"][0]["circuit"]["components"]
+        if not c["name"].startswith("P_")
+    }
     assert sw_names == {"Q1", "Q2"}, sw_names
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    assert set(ports) == {"Vin", "switch_node", "Vout_pri",
-                          "sec0_node", "Vout0",
-                          "GND"}, set(ports)
+    assert set(ports) == {"Vin", "switch_node", "Vout_pri", "sec0_node", "Vout0", "GND"}, set(ports)
 
     # Switch node has Q1.S + Q2.D + T1.pri.1
-    sw_eps = {(e["component"], e["pin"]) for e in ports["switch_node"]["endpoints"] if not e["component"].startswith("P_")}
+    sw_eps = {
+        (e["component"], e["pin"])
+        for e in ports["switch_node"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert sw_eps == {("Q1", "S"), ("Q2", "D"), ("T1", "pri.1")}, sw_eps
 
     # Vout_pri shares T1.pri.2 with C_pri.1 (primary buck output).
-    vp_eps = {(e["component"], e["pin"]) for e in ports["Vout_pri"]["endpoints"] if not e["component"].startswith("P_")}
+    vp_eps = {
+        (e["component"], e["pin"])
+        for e in ports["Vout_pri"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert vp_eps == {("T1", "pri.2"), ("C_pri", "1")}, vp_eps
 
     # Controller regulates around Vout_pri (NOT Vout0) — flybuck signature.

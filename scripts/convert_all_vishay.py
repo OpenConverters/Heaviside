@@ -33,7 +33,7 @@ TECH_MAP_RESISTOR = {
 
 def extract_json_from_html(html_path: Path) -> list[dict]:
     """Extract Next.js page props JSON from HTML file."""
-    with open(html_path, "r", encoding="utf-8") as f:
+    with open(html_path, encoding="utf-8") as f:
         html = f.read()
     scripts = re.findall(r"<script[^\u003e]*\u003e(.*?)\u003c/script\u003e", html, re.DOTALL)
     if not scripts:
@@ -87,7 +87,7 @@ def parse_voltage(volt_str: str, volt_val: float) -> float | None:
 def parse_case_size(size_str: str) -> tuple[float | None, float | None, float | None]:
     if not size_str or size_str.lower() == "n/a":
         return None, None, None
-    
+
     smd_map = {
         "01005": (0.4e-3, 0.2e-3, None),
         "0201": (0.6e-3, 0.3e-3, None),
@@ -105,15 +105,15 @@ def parse_case_size(size_str: str) -> tuple[float | None, float | None, float | 
         "5930": (15.0e-3, 7.6e-3, None),
         "1020": (2.5e-3, 5.0e-3, None),
     }
-    
+
     size_clean = size_str.strip()
     if size_clean in smd_map:
         return smd_map[size_clean]
-    
+
     match = re.match(r"(\d+(?:\.\d+)?)[xX](\d+(?:\.\d+)?)", size_clean)
     if match:
         return float(match.group(1)) * 1e-3, float(match.group(2)) * 1e-3, None
-    
+
     return None, None, None
 
 
@@ -121,36 +121,37 @@ def make_resistor_document(product: dict) -> dict[str, Any] | None:
     order_code = product.get("P1001", "")
     if not order_code or order_code.lower() == "n/a":
         return None
-    
+
     series = product.get("P1001", "")
     tech_raw = product.get("technology", "")
     tech = TECH_MAP_RESISTOR.get(tech_raw, "thickFilm")
-    
+
     res_min = product.get("res_min_value", 0)
     res_max = product.get("res_max_value", 0)
     if res_min <= 0 and res_max <= 0:
         return None
-    
+
     resistance = parse_resistance(res_min, res_max)
     tolerance = parse_tolerance(product.get("tolerance_displ", ""))
     power = product.get("wt_power_rating_value", 0)
     if power <= 0:
         return None
-    
+
     voltage = parse_voltage(
-        product.get("wt_max_voltage_displ", ""),
-        product.get("wt_max_voltage_value", 0)
+        product.get("wt_max_voltage_displ", ""), product.get("wt_max_voltage_value", 0)
     )
-    
+
     tcr = parse_tcr(product.get("TCR_DISPL", ""))
     temp = parse_temperature(product.get("temp", ""))
-    
+
     size_str = product.get("size_device_style", "")
     length, width, height = parse_case_size(size_str)
-    
+
     mounting = product.get("mounting_tech", "")
-    assembly = "smt" if "Surface-mount" in mounting else "tht" if "Through-hole" in mounting else "smt"
-    
+    assembly = (
+        "smt" if "Surface-mount" in mounting else "tht" if "Through-hole" in mounting else "smt"
+    )
+
     doc = {
         "resistor": {
             "manufacturerInfo": {
@@ -176,17 +177,19 @@ def make_resistor_document(product: dict) -> dict[str, Any] | None:
             }
         }
     }
-    
+
     if voltage:
         doc["resistor"]["manufacturerInfo"]["datasheetInfo"]["electrical"]["maxVoltage"] = voltage
     if tcr:
-        doc["resistor"]["manufacturerInfo"]["datasheetInfo"]["electrical"]["temperatureCoefficient"] = tcr
-    
+        doc["resistor"]["manufacturerInfo"]["datasheetInfo"]["electrical"][
+            "temperatureCoefficient"
+        ] = tcr
+
     if temp:
         doc["resistor"]["manufacturerInfo"]["datasheetInfo"]["thermal"] = {
             "operatingTemperature": temp
         }
-    
+
     mechanical = {"shapeType": "SMD Chip" if assembly == "smt" else "THT"}
     if length:
         mechanical["length"] = {"nominal": length}
@@ -195,14 +198,14 @@ def make_resistor_document(product: dict) -> dict[str, Any] | None:
     if height:
         mechanical["height"] = {"nominal": height}
     mechanical["assemblyType"] = assembly
-    
+
     doc["resistor"]["manufacturerInfo"]["datasheetInfo"]["mechanical"] = mechanical
     doc["resistor"]["manufacturerInfo"]["datasheetInfo"]["business"] = {
         "packaging": "Tape & Reel" if assembly == "smt" else "Bulk",
         "moq": 1,
         "distribution": "Mouser/DigiKey",
     }
-    
+
     return doc
 
 
@@ -212,11 +215,11 @@ def extract_capacitance(value) -> float | None:
         return None
     if isinstance(value, (int, float)):
         return float(value)
-    
+
     # Convert to string and replace HTML entities
     value_str = str(value)
     value_str = value_str.replace("&#181;", "µ").replace("&#956;", "µ")
-    
+
     # Handle strings with HTML comments like "<!-- 33000--> 33 µF"
     match = re.search(r"(\d+(?:\.\d+)?)\s*[µuµ]F", value_str, re.IGNORECASE)
     if match:
@@ -242,47 +245,49 @@ def extract_voltage(value) -> float | None:
         return None
 
 
-def make_capacitor_document(product: dict, tech_override: str = None) -> dict[str, Any] | None:
+def make_capacitor_document(
+    product: dict, tech_override: str | None = None
+) -> dict[str, Any] | None:
     """Universal capacitor converter handling multiple Vishay formats."""
     # Try multiple order code fields
-    order_code = (product.get("order_code", "") or 
-                  product.get("P1001", "") or 
-                  product.get("P1009", ""))
+    order_code = (
+        product.get("order_code", "") or product.get("P1001", "") or product.get("P1009", "")
+    )
     if not order_code or order_code.lower() == "n/a":
         return None
-    
+
     series = product.get("P1001", "") or product.get("P1009", "")
-    
+
     # Try multiple capacitance fields
     capacitance_f = None
-    if "cap" in product and product["cap"]:
+    if product.get("cap"):
         capacitance_f = extract_capacitance(product["cap"])
-    elif "cap_pf" in product and product["cap_pf"]:
+    elif product.get("cap_pf"):
         capacitance_f = float(product["cap_pf"]) * 1e-12
-    elif "T9505" in product and product["T9505"]:
+    elif product.get("T9505"):
         capacitance_f = extract_capacitance(product["T9505"])
-    elif "P3842" in product and product["P3842"]:
+    elif product.get("P3842"):
         capacitance_f = extract_capacitance(product["P3842"])
-    
+
     if not capacitance_f:
         return None
-    
+
     # Try multiple voltage fields
     voltage = None
-    if "Voltage" in product and product["Voltage"]:
+    if product.get("Voltage"):
         voltage = extract_voltage(product["Voltage"])
-    elif "voltage_v" in product and product["voltage_v"]:
+    elif product.get("voltage_v"):
         voltage = extract_voltage(product["voltage_v"])
-    elif "rvol" in product and product["rvol"]:
+    elif product.get("rvol"):
         voltage = extract_voltage(product["rvol"])
-    elif "T1112" in product and product["T1112"]:
+    elif product.get("T1112"):
         voltage = extract_voltage(product["T1112"])
-    elif "P3527" in product and product["P3527"]:
+    elif product.get("P3527"):
         voltage = extract_voltage(product["P3527"])
-    
+
     if not voltage:
         return None
-    
+
     # Technology
     tech = tech_override
     if not tech:
@@ -299,18 +304,20 @@ def make_capacitor_document(product: dict, tech_override: str = None) -> dict[st
             tech = "MLCC Class II"
         else:
             tech = "Alum. Electrolytic"
-    
+
     # Case size
-    case = (product.get("case_size", "") or 
-            product.get("size_device_style", "") or
-            product.get("P5897", "") or
-            product.get("P3702", ""))
+    case = (
+        product.get("case_size", "")
+        or product.get("size_device_style", "")
+        or product.get("P5897", "")
+        or product.get("P3702", "")
+    )
     case = case.replace("&#216;", "Ø").replace("&#176;", "°")
-    
+
     # Temperature
     temp_str = product.get("temp_max", "") or product.get("temp", "")
     temp = parse_temperature(temp_str)
-    
+
     doc = {
         "capacitor": {
             "manufacturerInfo": {
@@ -351,7 +358,7 @@ def make_capacitor_document(product: dict, tech_override: str = None) -> dict[st
             }
         }
     }
-    
+
     return doc
 
 
@@ -366,24 +373,24 @@ def process_file(filename: str, output_file: str, converter_func, **kwargs) -> i
     if not html_path.exists():
         print(f"  SKIPPED: {filename} not found")
         return 0
-    
+
     products = extract_json_from_html(html_path)
     if not products:
         print(f"  SKIPPED: {filename} has no products")
         return 0
-    
+
     results = []
     for product in products:
         doc = converter_func(product, **kwargs)
         if doc:
             results.append(doc)
-    
+
     if results:
         output_path = OUTPUT_DIR / output_file
         write_ndjson(results, output_path)
         print(f"  PROCESSED: {len(results)} items from {filename}")
         return len(results)
-    
+
     print(f"  WARNING: 0 valid items from {filename}")
     return 0
 
@@ -392,29 +399,57 @@ def main():
     print("=" * 70)
     print("Vishay Catalog to TAS Converter - Processing All Files")
     print("=" * 70)
-    
+
     total_caps = 0
     total_resistors = 0
     total_magnetics = 0
     total_mosfets = 0
-    
+
     # Process Capacitors
     print("\n--- CAPACITORS ---")
-    total_caps += process_file("Capacitors - Aluminum Electrolytic.html", "capacitors.ndjson", 
-                                make_capacitor_document, tech_override="Alum. Electrolytic")
-    total_caps += process_file("Capacitors - Energy Storage.html", "capacitors.ndjson", 
-                                make_capacitor_document, tech_override="Film Capacitor")
-    total_caps += process_file("Capacitors - Film.html", "capacitors.ndjson", 
-                                make_capacitor_document, tech_override="Film Capacitor")
-    total_caps += process_file("Capacitors - Polymer.html", "capacitors.ndjson", 
-                                make_capacitor_document, tech_override="Alum. Polymer")
-    total_caps += process_file("Capacitors - Tantalum.html", "capacitors.ndjson", 
-                                make_capacitor_document, tech_override="Tantalum")
-    total_caps += process_file("Capacitors - Thin Film.html", "capacitors.ndjson", 
-                                make_capacitor_document, tech_override="Film Capacitor")
-    total_caps += process_file("Ceramic - RF Power.html", "capacitors.ndjson", 
-                                make_capacitor_document, tech_override="MLCC Class II")
-    
+    total_caps += process_file(
+        "Capacitors - Aluminum Electrolytic.html",
+        "capacitors.ndjson",
+        make_capacitor_document,
+        tech_override="Alum. Electrolytic",
+    )
+    total_caps += process_file(
+        "Capacitors - Energy Storage.html",
+        "capacitors.ndjson",
+        make_capacitor_document,
+        tech_override="Film Capacitor",
+    )
+    total_caps += process_file(
+        "Capacitors - Film.html",
+        "capacitors.ndjson",
+        make_capacitor_document,
+        tech_override="Film Capacitor",
+    )
+    total_caps += process_file(
+        "Capacitors - Polymer.html",
+        "capacitors.ndjson",
+        make_capacitor_document,
+        tech_override="Alum. Polymer",
+    )
+    total_caps += process_file(
+        "Capacitors - Tantalum.html",
+        "capacitors.ndjson",
+        make_capacitor_document,
+        tech_override="Tantalum",
+    )
+    total_caps += process_file(
+        "Capacitors - Thin Film.html",
+        "capacitors.ndjson",
+        make_capacitor_document,
+        tech_override="Film Capacitor",
+    )
+    total_caps += process_file(
+        "Ceramic - RF Power.html",
+        "capacitors.ndjson",
+        make_capacitor_document,
+        tech_override="MLCC Class II",
+    )
+
     # Process Resistors
     print("\n--- RESISTORS ---")
     html_path = Path("/tmp/vishay_resistors.html")
@@ -429,18 +464,19 @@ def main():
             write_ndjson(results, OUTPUT_DIR / "resistors.ndjson")
             print(f"  PROCESSED: {len(results)} resistors from downloaded file")
             total_resistors += len(results)
-    
-    total_resistors += process_file("Resistors, Fixed - Automotive.html", "resistors.ndjson", 
-                                     make_resistor_document)
-    
+
+    total_resistors += process_file(
+        "Resistors, Fixed - Automotive.html", "resistors.ndjson", make_resistor_document
+    )
+
     # Process Magnetics (Inductors/Transformers)
     print("\n--- MAGNETICS ---")
     print("  SKIPPED: Inductors/Transformers (MAS schema needed)")
-    
+
     # Process MOSFETs
     print("\n--- MOSFETs ---")
     print("  SKIPPED: MOSFETs (SAS schema needed)")
-    
+
     # Summary
     print("\n" + "=" * 70)
     print("CONVERSION COMPLETE")

@@ -186,6 +186,7 @@ def test_get_product_returns_none_when_parts_empty() -> None:
 
 def test_get_product_handles_missing_search_results() -> None:
     """A 200 with neither Errors nor SearchResults is "no match", not an error."""
+
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={})
 
@@ -209,7 +210,8 @@ def test_get_product_propagates_distributor_error() -> None:
 def test_search_results_wrong_type_raises_malformed() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            200, json={"Errors": [], "SearchResults": "not-an-object"},
+            200,
+            json={"Errors": [], "SearchResults": "not-an-object"},
         )
 
     with pytest.raises(MalformedResponseError, match="SearchResults"):
@@ -219,7 +221,8 @@ def test_search_results_wrong_type_raises_malformed() -> None:
 def test_parts_wrong_type_raises_malformed() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            200, json={"Errors": [], "SearchResults": {"Parts": "not-a-list"}},
+            200,
+            json={"Errors": [], "SearchResults": {"Parts": "not-a-list"}},
         )
 
     with pytest.raises(MalformedResponseError, match="Parts"):

@@ -31,36 +31,40 @@ def parse_tolerance(tol_str: str | None) -> dict[str, float] | None:
     """Parse tolerance string like '±20%', '+20%/-10%' into min/max/nominal factor."""
     if not tol_str or tol_str == "-":
         return None
-    
+
     # Handle ±X%
     m = re.match(r"±(\d+)%", tol_str)
     if m:
         pct = float(m.group(1)) / 100.0
         return {"nominal": 0, "minimum": -pct, "maximum": pct}
-    
+
     # Handle +X%/-Y%
     m = re.match(r"\+(\d+)%/-(\d+)%", tol_str)
     if m:
-        return {"nominal": 0, "minimum": -float(m.group(2))/100.0, "maximum": float(m.group(1))/100.0}
-    
+        return {
+            "nominal": 0,
+            "minimum": -float(m.group(2)) / 100.0,
+            "maximum": float(m.group(1)) / 100.0,
+        }
+
     return None
 
 
 def parse_size_code(size_str: str) -> tuple[float | None, float | None, float | None]:
     """Parse size code like '3225M/1210' or '2016/0806' into (L, W, H in mm).
-    
+
     Returns (length_mm, width_mm, height_mm) where height is None.
     """
     if not size_str or size_str == "-":
         return None, None, None
-    
+
     # Extract the metric code (first part before /)
     parts = size_str.split("/")
     metric_code = parts[0].strip()
-    
+
     # Remove any suffix letters
-    metric_code = re.sub(r'[A-Z]$', '', metric_code, flags=re.IGNORECASE)
-    
+    metric_code = re.sub(r"[A-Z]$", "", metric_code, flags=re.IGNORECASE)
+
     if len(metric_code) == 4:
         # Standard 4-digit metric: L W in 0.1mm
         try:
@@ -74,7 +78,7 @@ def parse_size_code(size_str: str) -> tuple[float | None, float | None, float | 
         m = re.match(r"(\d+(?:\.\d+)?)[xX](\d+(?:\.\d+)?)", metric_code)
         if m:
             return float(m.group(1)), float(m.group(2)), None
-    
+
     return None, None, None
 
 
@@ -168,18 +172,18 @@ def parse_temperature(temp_str: str) -> dict[str, float] | None:
     """Parse temperature string like '85' or '-55 to 125' into min/max."""
     if not temp_str or temp_str == "-":
         return None
-    
+
     # Single value (usually max)
     try:
         return {"maximum": float(temp_str)}
     except ValueError:
         pass
-    
+
     # Range
     m = re.match(r"(-?\d+)\s*to\s*(-?\d+)", temp_str, re.IGNORECASE)
     if m:
         return {"minimum": float(m.group(1)), "maximum": float(m.group(2))}
-    
+
     return None
 
 
@@ -225,14 +229,14 @@ def make_capacitor_document(
     rated_current: float | None = None,
 ) -> dict[str, Any]:
     """Build a CAS capacitor document."""
-    
+
     # Capacitance with tolerance
     tolerance = parse_tolerance(tolerance_str)
     capacitance: dict[str, Any] = {"nominal": capacitance_f}
     if tolerance:
         capacitance["minimum"] = capacitance_f * (1 + tolerance.get("minimum", 0))
         capacitance["maximum"] = capacitance_f * (1 + tolerance.get("maximum", 0))
-    
+
     # Electrical
     electrical: dict[str, Any] = {
         "capacitance": capacitance,
@@ -240,14 +244,14 @@ def make_capacitor_document(
         "esr": esr if esr is not None else None,
         "rippleCurrent": rated_current if rated_current is not None else None,
     }
-    
+
     # Thermal
     thermal: dict[str, Any] = {"temperature": {}}
     if temp_max is not None:
         thermal["temperature"]["maximum"] = temp_max
     if temp_characteristic:
         thermal["tcc"] = {"nominal": 0}  # Placeholder
-    
+
     # Mechanical
     dimensions: dict[str, Any] = {}
     if size_l_mm is not None:
@@ -256,7 +260,7 @@ def make_capacitor_document(
         dimensions["width"] = {"nominal": size_w_mm * 1e-3}
     if size_h_mm is not None:
         dimensions["height"] = {"nominal": size_h_mm * 1e-3}
-    
+
     shape: dict[str, Any] = {}
     if technology and "Lead" in technology:
         shape["assembly"] = "THT"
@@ -264,16 +268,16 @@ def make_capacitor_document(
         shape["assembly"] = "SMT"
     else:
         shape["assembly"] = "SMT"  # Default for MLCCs
-    
+
     if case:
         shape["shapeType"] = case
-    
+
     mechanical: dict[str, Any] = {}
     if dimensions:
         mechanical["dimensions"] = dimensions
     if shape:
         mechanical["shape"] = shape
-    
+
     # Build datasheetInfo
     datasheet_info: dict[str, Any] = {
         "part": {
@@ -287,7 +291,7 @@ def make_capacitor_document(
     }
     if mechanical:
         datasheet_info["mechanical"] = mechanical
-    
+
     # Business info
     business = {
         "packaging": "Tape & Reel",
@@ -295,7 +299,7 @@ def make_capacitor_document(
         "distribution": "Mouser/DigiKey",
     }
     datasheet_info["business"] = business
-    
+
     # Model params (simplified)
     if esr is not None:
         datasheet_info["modelParams"] = {
@@ -303,7 +307,7 @@ def make_capacitor_document(
             "cs": capacitance_f,
             "ls": 1e-9,  # Typical parasitic inductance
         }
-    
+
     # Manufacturer info
     manufacturer_info = make_manufacturer_info(
         part_number=part_number,
@@ -314,7 +318,7 @@ def make_capacitor_document(
         description=application,
     )
     manufacturer_info["datasheetInfo"] = datasheet_info
-    
+
     return {"capacitor": {"manufacturerInfo": manufacturer_info}}
 
 
@@ -339,7 +343,7 @@ def make_magnetic_document(
     common_mode_l_henry: float | None = None,
 ) -> dict[str, Any]:
     """Build a MAS magnetic document."""
-    
+
     # Datasheet info
     part_info: dict[str, Any] = {
         "partNumber": part_number,
@@ -348,7 +352,7 @@ def make_magnetic_document(
         part_info["family"] = series
     if description:
         part_info["description"] = description
-    
+
     electrical: dict[str, Any] = {}
     if inductance_h is not None:
         electrical["inductance"] = {"nominal": inductance_h}
@@ -360,10 +364,10 @@ def make_magnetic_document(
         electrical["saturationCurrentPeak"] = saturation_current_a
     if srf_hz is not None:
         electrical["selfResonantFrequency"] = srf_hz
-    
+
     if is_common_mode and common_mode_z_ohm is not None:
         electrical["maximumImpedance"] = common_mode_z_ohm
-    
+
     thermal: dict[str, Any] = {}
     temp_info: dict[str, Any] = {}
     if temp_min is not None:
@@ -372,7 +376,7 @@ def make_magnetic_document(
         temp_info["maximum"] = temp_max
     if temp_info:
         thermal["operatingTemperature"] = temp_info
-    
+
     mechanical: dict[str, Any] = {}
     if size_l_mm is not None:
         mechanical["length"] = {"nominal": size_l_mm * 1e-3}
@@ -380,7 +384,7 @@ def make_magnetic_document(
         mechanical["width"] = {"nominal": size_w_mm * 1e-3}
     if size_h_mm is not None:
         mechanical["height"] = {"nominal": size_h_mm * 1e-3}
-    
+
     # Datasheet info block
     datasheet_info: dict[str, Any] = {"part": part_info}
     if electrical:
@@ -389,7 +393,7 @@ def make_magnetic_document(
         datasheet_info["thermal"] = thermal
     if mechanical:
         datasheet_info["mechanical"] = mechanical
-    
+
     # Manufacturer info
     manufacturer_info = make_manufacturer_info(
         part_number=part_number,
@@ -401,7 +405,7 @@ def make_magnetic_document(
     )
     if datasheet_info:
         manufacturer_info["datasheetInfo"] = datasheet_info
-    
+
     # Core and coil (minimal required for MAS)
     core = {
         "functionalDescription": {
@@ -411,7 +415,7 @@ def make_magnetic_document(
             "gapping": [],
         }
     }
-    
+
     coil = {
         "bobbin": "Dummy",
         "functionalDescription": [
@@ -426,9 +430,9 @@ def make_magnetic_document(
                     {"type": "pin", "pinName": "2", "direction": "output"},
                 ],
             }
-        ]
+        ],
     }
-    
+
     return {
         "magnetic": {
             "manufacturerInfo": manufacturer_info,
@@ -445,28 +449,28 @@ def process_mlccs() -> list[dict[str, Any]]:
     if not csv_path.exists():
         print(f"WARNING: {csv_path} not found")
         return results
-    
-    with open(csv_path, "r", encoding="utf-8-sig") as f:
+
+    with open(csv_path, encoding="utf-8-sig") as f:
         # Skip first 5 lines (metadata header) - MLCCs have one less blank line
         for _ in range(5):
             next(f, None)
-        
+
         reader = csv.DictReader(f)
         for row in reader:
             if not row.get("part_number"):
                 continue
-            
+
             part = row["part_number"].strip()
             cap_f = parse_capacitance_pf(row.get("capacitance_sort[pF]"))
             voltage = parse_voltage(row.get("rvol"))
             tolerance = row.get("tolerance", "")
             temp_max = parse_temperature(row.get("opetemp-max", ""))
             tcc = row.get("tcc", "")
-            
+
             size_l, size_w, _ = parse_size_code(row.get("LWSize_mm_inch", ""))
             thickness = parse_dimension_mm(row.get("size_thickness_max", ""))
             size_h = thickness["nominal"] * 1e3 if thickness else None
-            
+
             if cap_f and voltage:
                 doc = make_capacitor_document(
                     part_number=part,
@@ -484,7 +488,7 @@ def process_mlccs() -> list[dict[str, Any]]:
                     datasheet_url=f"https://www.murata.com/products/productdetail?partno={part}",
                 )
                 results.append(doc)
-    
+
     print(f"Processed {len(results)} MLCCs")
     return results
 
@@ -495,20 +499,20 @@ def process_lead_type_ceramic() -> list[dict[str, Any]]:
     csv_path = INPUT_DIR / "MurataProdList-Lead Type Ceramic Capacitors.csv"
     if not csv_path.exists():
         return results
-    
-    with open(csv_path, "r", encoding="utf-8-sig") as f:
+
+    with open(csv_path, encoding="utf-8-sig") as f:
         for _ in range(6):
             next(f, None)
-        
+
         reader = csv.DictReader(f)
         for row in reader:
             if not row.get("part_number"):
                 continue
-            
+
             part = row["part_number"].strip()
             cap_f = parse_capacitance_pf(row.get("capacitance_sort[pF]"))
             voltage = parse_voltage(row.get("rvol"))
-            
+
             if cap_f and voltage:
                 doc = make_capacitor_document(
                     part_number=part,
@@ -521,7 +525,7 @@ def process_lead_type_ceramic() -> list[dict[str, Any]]:
                     datasheet_url=f"https://www.murata.com/products/productdetail?partno={part}",
                 )
                 results.append(doc)
-    
+
     print(f"Processed {len(results)} lead type ceramics")
     return results
 
@@ -532,25 +536,25 @@ def process_polymer_capacitors() -> list[dict[str, Any]]:
     csv_path = INPUT_DIR / "MurataProdList-Polymer Capacitors.csv"
     if not csv_path.exists():
         return results
-    
-    with open(csv_path, "r", encoding="utf-8-sig") as f:
+
+    with open(csv_path, encoding="utf-8-sig") as f:
         for _ in range(6):
             next(f, None)
-        
+
         reader = csv.DictReader(f)
         for row in reader:
             if not row.get("part_number"):
                 continue
-            
+
             part = row["part_number"].strip()
             cap_f = parse_capacitance_uf(row.get("capacitance_uf[uF]"))
             voltage = parse_voltage(row.get("rvol"))
             esr = parse_resistance(row.get("esr"))
-            
+
             size_l, size_w, _ = parse_size_code(row.get("LWSize_mm_inch", ""))
             thickness = parse_dimension_mm(row.get("size_thickness", ""))
             size_h = thickness["nominal"] * 1e3 if thickness else None
-            
+
             if cap_f and voltage:
                 doc = make_capacitor_document(
                     part_number=part,
@@ -567,7 +571,7 @@ def process_polymer_capacitors() -> list[dict[str, Any]]:
                     datasheet_url=f"https://www.murata.com/products/productdetail?partno={part}",
                 )
                 results.append(doc)
-    
+
     print(f"Processed {len(results)} polymer capacitors")
     return results
 
@@ -578,24 +582,24 @@ def process_resin_molding() -> list[dict[str, Any]]:
     csv_path = INPUT_DIR / "MurataProdList-Resin Molding SMD Type Ceramic Capacitors.csv"
     if not csv_path.exists():
         return results
-    
-    with open(csv_path, "r", encoding="utf-8-sig") as f:
+
+    with open(csv_path, encoding="utf-8-sig") as f:
         for _ in range(6):
             next(f, None)
-        
+
         reader = csv.DictReader(f)
         for row in reader:
             if not row.get("part_number"):
                 continue
-            
+
             part = row["part_number"].strip()
             cap_f = parse_capacitance_pf(row.get("capacitance_sort[pF]"))
             voltage = parse_voltage(row.get("rvol"))
-            
+
             size_l, size_w, _ = parse_size_code(row.get("LxW", ""))
             thickness = parse_dimension_mm(row.get("size_thickness_max", ""))
             size_h = thickness["nominal"] * 1e3 if thickness else None
-            
+
             if cap_f and voltage:
                 doc = make_capacitor_document(
                     part_number=part,
@@ -611,7 +615,7 @@ def process_resin_molding() -> list[dict[str, Any]]:
                     datasheet_url=f"https://www.murata.com/products/productdetail?partno={part}",
                 )
                 results.append(doc)
-    
+
     print(f"Processed {len(results)} resin molding capacitors")
     return results
 
@@ -622,25 +626,25 @@ def process_3_terminal_capacitors() -> list[dict[str, Any]]:
     csv_path = INPUT_DIR / "MurataProdList-3-terminal Capacitors.csv"
     if not csv_path.exists():
         return results
-    
-    with open(csv_path, "r", encoding="utf-8-sig") as f:
+
+    with open(csv_path, encoding="utf-8-sig") as f:
         for _ in range(6):
             next(f, None)
-        
+
         reader = csv.DictReader(f)
         for row in reader:
             if not row.get("part_number"):
                 continue
-            
+
             part = row["part_number"].strip()
             cap_f = parse_capacitance_pf(row.get("capacitance_sort[pF]"))
             voltage = parse_voltage(row.get("rvol"))
             rated_current = parse_current_ma(row.get("RatedCurrent", ""))
-            
+
             size_l, size_w, _ = parse_size_code(row.get("LWSize", ""))
             thickness = parse_dimension_mm(row.get("size_thickness_max", ""))
             size_h = thickness["nominal"] * 1e3 if thickness else None
-            
+
             if cap_f and voltage:
                 doc = make_capacitor_document(
                     part_number=part,
@@ -657,7 +661,7 @@ def process_3_terminal_capacitors() -> list[dict[str, Any]]:
                     datasheet_url=f"https://www.murata.com/products/productdetail?partno={part}",
                 )
                 results.append(doc)
-    
+
     print(f"Processed {len(results)} 3-terminal capacitors")
     return results
 
@@ -668,26 +672,26 @@ def process_power_inductors() -> list[dict[str, Any]]:
     csv_path = INPUT_DIR / "MurataProdList-Power Inductors.csv"
     if not csv_path.exists():
         return results
-    
-    with open(csv_path, "r", encoding="utf-8-sig") as f:
+
+    with open(csv_path, encoding="utf-8-sig") as f:
         for _ in range(6):
             next(f, None)
-        
+
         reader = csv.DictReader(f)
         for row in reader:
             if not row.get("part_number"):
                 continue
-            
+
             part = row["part_number"].strip()
             inductance = parse_inductance_uh(row.get("inductance_uH"))
             dcr = parse_resistance(row.get("dcr"))
             rated_current = parse_current_ma(row.get("rated_current_temp", ""))
             saturation_current = parse_current_ma(row.get("rated_current_sat", ""))
-            
+
             size_l, size_w, _ = parse_size_code(row.get("size_code", ""))
             thickness = parse_dimension_mm(row.get("size_thickness_max", ""))
             size_h = thickness["nominal"] * 1e3 if thickness else None
-            
+
             if inductance:
                 doc = make_magnetic_document(
                     part_number=part,
@@ -706,7 +710,7 @@ def process_power_inductors() -> list[dict[str, Any]]:
                     description=row.get("Application", ""),
                 )
                 results.append(doc)
-    
+
     print(f"Processed {len(results)} power inductors")
     return results
 
@@ -717,22 +721,22 @@ def process_rf_inductors() -> list[dict[str, Any]]:
     csv_path = INPUT_DIR / "MurataProdList-RF Inductors.csv"
     if not csv_path.exists():
         return results
-    
-    with open(csv_path, "r", encoding="utf-8-sig") as f:
+
+    with open(csv_path, encoding="utf-8-sig") as f:
         for _ in range(6):
             next(f, None)
-        
+
         reader = csv.DictReader(f)
         for row in reader:
             if not row.get("part_number"):
                 continue
-            
+
             part = row["part_number"].strip()
             inductance = parse_inductance_nh(row.get("Inductance_nH"))
             rated_current = parse_current_ma(row.get("RatedCurrent_mA", ""))
-            
+
             size_l, size_w, _ = parse_size_code(row.get("size_code", ""))
-            
+
             if inductance:
                 doc = make_magnetic_document(
                     part_number=part,
@@ -748,7 +752,7 @@ def process_rf_inductors() -> list[dict[str, Any]]:
                     description=row.get("Application", ""),
                 )
                 results.append(doc)
-    
+
     print(f"Processed {len(results)} RF inductors")
     return results
 
@@ -759,26 +763,26 @@ def process_common_mode_chokes() -> list[dict[str, Any]]:
     csv_path = INPUT_DIR / "MurataProdList-Common Mode Choke Coils.csv"
     if not csv_path.exists():
         return results
-    
-    with open(csv_path, "r", encoding="utf-8-sig") as f:
+
+    with open(csv_path, encoding="utf-8-sig") as f:
         for _ in range(6):
             next(f, None)
-        
+
         reader = csv.DictReader(f)
         for row in reader:
             if not row.get("part_number"):
                 continue
-            
+
             part = row["part_number"].strip()
             common_z = parse_resistance(row.get("Common_Z10M_ohm", ""))
             common_l = parse_inductance_uh(row.get("Common_L_uH", ""))
             rated_current = parse_current_ma(row.get("Idc_mA", ""))
             dcr = parse_resistance(row.get("DCR", ""))
-            
+
             size_l, size_w, _ = parse_size_code(row.get("L_W", ""))
             thickness = parse_dimension_mm(row.get("Tmax", ""))
             size_h = thickness["nominal"] * 1e3 if thickness else None
-            
+
             doc = make_magnetic_document(
                 part_number=part,
                 series=part[:7] if len(part) >= 7 else part,
@@ -798,7 +802,7 @@ def process_common_mode_chokes() -> list[dict[str, Any]]:
                 common_mode_l_henry=common_l,
             )
             results.append(doc)
-    
+
     print(f"Processed {len(results)} common mode chokes")
     return results
 
@@ -809,26 +813,25 @@ def process_ferrite_beads() -> list[dict[str, Any]]:
     csv_path = INPUT_DIR / "MurataProdList-Chip Ferrite Bead.csv"
     if not csv_path.exists():
         return results
-    
-    with open(csv_path, "r", encoding="utf-8-sig") as f:
+
+    with open(csv_path, encoding="utf-8-sig") as f:
         for _ in range(6):
             next(f, None)
-        
+
         reader = csv.DictReader(f)
         for row in reader:
             if not row.get("part_number"):
                 continue
-            
+
             part = row["part_number"].strip()
             z100 = parse_resistance(row.get("Z100", ""))
-            z1m = parse_resistance(row.get("Z1M", ""))
             rdc = parse_resistance(row.get("RdcMax", ""))
             rated_current = parse_current_ma(row.get("RatedCurrent_mA", ""))
-            
+
             size_l, size_w, _ = parse_size_code(row.get("size_code", ""))
             thickness = parse_dimension_mm(row.get("size_thickness_max", ""))
             size_h = thickness["nominal"] * 1e3 if thickness else None
-            
+
             # Ferrite beads are stored as magnetics (they're inductors at high frequencies)
             # But they have impedance rather than inductance
             doc = make_magnetic_document(
@@ -847,15 +850,20 @@ def process_ferrite_beads() -> list[dict[str, Any]]:
                 description=row.get("Application", ""),
             )
             # Add impedance info to the magnetic document
-            if "magnetic" in doc and "manufacturerInfo" in doc["magnetic"]:
-                if "datasheetInfo" in doc["magnetic"]["manufacturerInfo"]:
-                    electrical = doc["magnetic"]["manufacturerInfo"]["datasheetInfo"].get("electrical", {})
-                    if z100:
-                        electrical["maximumImpedance"] = z100
-                    doc["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"] = electrical
-            
+            if (
+                "magnetic" in doc
+                and "manufacturerInfo" in doc["magnetic"]
+                and "datasheetInfo" in doc["magnetic"]["manufacturerInfo"]
+            ):
+                electrical = doc["magnetic"]["manufacturerInfo"]["datasheetInfo"].get(
+                    "electrical", {}
+                )
+                if z100:
+                    electrical["maximumImpedance"] = z100
+                doc["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"] = electrical
+
             results.append(doc)
-    
+
     print(f"Processed {len(results)} ferrite beads")
     return results
 
@@ -871,40 +879,40 @@ def main():
     print("=" * 60)
     print("Murata CSV to TAS Converter")
     print("=" * 60)
-    
+
     # Clear existing files
     caps_path = OUTPUT_DIR / "capacitors_murata.ndjson"
     mags_path = OUTPUT_DIR / "magnetics_murata.ndjson"
-    
+
     # Remove if exists to start fresh
     caps_path.unlink(missing_ok=True)
     mags_path.unlink(missing_ok=True)
-    
+
     all_caps = []
     all_mags = []
-    
+
     # Process capacitors
     all_caps.extend(process_mlccs())
     all_caps.extend(process_lead_type_ceramic())
     all_caps.extend(process_polymer_capacitors())
     all_caps.extend(process_resin_molding())
     all_caps.extend(process_3_terminal_capacitors())
-    
+
     # Process magnetics
     all_mags.extend(process_power_inductors())
     all_mags.extend(process_rf_inductors())
     all_mags.extend(process_common_mode_chokes())
     all_mags.extend(process_ferrite_beads())
-    
+
     # Write to files
     if all_caps:
         write_ndjson(all_caps, caps_path)
         print(f"\nWrote {len(all_caps)} capacitors to {caps_path}")
-    
+
     if all_mags:
         write_ndjson(all_mags, mags_path)
         print(f"Wrote {len(all_mags)} magnetics to {mags_path}")
-    
+
     print("\n" + "=" * 60)
     print("Conversion complete!")
     print(f"  Total capacitors: {len(all_caps)}")

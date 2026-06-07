@@ -24,7 +24,7 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
-
+from tests.unit._real_mas import isat_of, real_magnetic
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -33,49 +33,38 @@ from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 
 def _lout_mas(N: int = 18, *, L: float = 4.7e-6) -> dict:
     """Full MAS root for the output choke L_out0, matching the shape the
-    real bridge-attach phase produces: the wound/gapped magnetic device
-    under ``core``/``coil`` PLUS an ``outputs`` envelope carrying the
-    inductance MKF actually achieved.  The extractor harvests the
-    achieved ``L`` from ``outputs[*].inductance.magnetizingInductance
-    .magnetizingInductance.nominal`` (and would also accept
-    ``inputs.designRequirements.magnetizingInductance.nominal``); both
-    are provided here so the fixture survives either harvest path.
+    real bridge-attach phase produces: a **complete, PyOM-evaluable**
+    wound/gapped magnetic under ``core``/``coil`` (built by
+    :func:`real_magnetic` so ``calculate_saturation_current`` returns real
+    MKF physics) PLUS an ``outputs`` envelope carrying the inductance MKF
+    actually achieved.  The extractor harvests the achieved ``L`` from
+    ``outputs[*].inductance.magnetizingInductance.magnetizingInductance
+    .nominal`` (and would also accept
+    ``inputs.designRequirements.magnetizingInductance.nominal``); both are
+    provided here so the fixture survives either harvest path.  A gapped
+    ETD 49/25/16 keeps the choke Isat high enough to clear the realism gate.
     """
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 8.0327e-5,
-                    "effectiveLength": 0.0909,
-                    "effectiveVolume": 7.3e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.4,
-                         "temperature": 100.0},
-                        {"magneticField": 392.0, "magneticFluxDensity": 0.473,
-                         "temperature": 25.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "Primary", "numberTurns": N, "numberParallels": 1,
-             "isolationSide": "primary"},
-        ]},
-        "inputs": {
-            "designRequirements": {
-                "magnetizingInductance": {"nominal": L},
-            },
-        },
-        "outputs": [
-            {"inductance": {"magnetizingInductance": {
-                "magnetizingInductance": {"nominal": L},
-            }}},
+    mas = real_magnetic(
+        shape="ETD 49/25/16",
+        material="3C95",
+        gap_mm=1.0,
+        windings=[
+            {"name": "Primary", "turns": N, "side": "primary"},
         ],
+    )
+    mas["inputs"] = {
+        "designRequirements": {"magnetizingInductance": {"nominal": L}},
     }
+    mas["outputs"] = [
+        {
+            "inductance": {
+                "magnetizingInductance": {
+                    "magnetizingInductance": {"nominal": L},
+                }
+            }
+        },
+    ]
+    return mas
 
 
 def _t1_mas(*, N_pri: int = 40, N_sec: int = 10, include_demag: bool = True) -> dict:
@@ -84,41 +73,21 @@ def _t1_mas(*, N_pri: int = 40, N_sec: int = 10, include_demag: bool = True) -> 
     ``include_demag=True`` mirrors single-switch forward (3 windings:
     pri, demag, sec0); ``False`` mirrors two-switch forward (2
     windings: pri, sec0).  The extractor must succeed for both shapes
-    because it looks windings up by name, not index.
+    because it looks windings up by name, not index.  T1 is deliberately
+    NOT Isat-stamped (the reset mechanism clamps the core every cycle);
+    the extractor harvests only its winding turns, so a complete real
+    transformer with the named windings is all that's needed.
     """
-    windings = [
-        {"name": "pri", "numberTurns": N_pri, "numberParallels": 1,
-         "isolationSide": "primary"},
-    ]
+    windings = [{"name": "pri", "turns": N_pri, "side": "primary"}]
     if include_demag:
-        windings.append(
-            {"name": "demag", "numberTurns": N_pri, "numberParallels": 1,
-             "isolationSide": "primary"},
-        )
-    windings.append(
-        {"name": "sec0", "numberTurns": N_sec, "numberParallels": 1,
-         "isolationSide": "secondary"},
+        windings.append({"name": "demag", "turns": N_pri, "side": "primary"})
+    windings.append({"name": "sec0", "turns": N_sec, "side": "secondary"})
+    return real_magnetic(
+        shape="ETD 34/17/11",
+        material="3C95",
+        gap_mm=0.0,
+        windings=windings,
     )
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 1.5e-4,
-                    "effectiveLength": 0.05,
-                    "effectiveVolume": 7.5e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.32,
-                         "temperature": 100.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": windings},
-    }
 
 
 def _ssf_tas(*, t1_kwargs: dict | None = None) -> dict:
@@ -126,37 +95,44 @@ def _ssf_tas(*, t1_kwargs: dict | None = None) -> dict:
     isolation + outputRectifier)."""
     t1_kwargs = dict(t1_kwargs or {})
     t1_kwargs.setdefault("include_demag", True)
-    return {"topology": {
-        "stages": [
-            {
-                "name": "primary_switch",
-                "role": "switchingCell",
-                "circuit": {"components": [
-                    {"name": "Q1", "data": "placeholder"},
-                    {"name": "D_demag", "data": "placeholder"},
-                ]},
-            },
-            {
-                "name": "isolation",
-                "role": "isolation",
-                "circuit": {"components": [
-                    {"name": "T1", "category": "magnetic",
-                     "mas": _t1_mas(**t1_kwargs)},
-                ]},
-            },
-            {
-                "name": "output_0",
-                "role": "outputRectifier",
-                "circuit": {"components": [
-                    {"name": "D_fwd",  "data": "placeholder"},
-                    {"name": "D_fw",   "data": "placeholder"},
-                    {"name": "L_out0", "category": "magnetic", "mas": _lout_mas()},
-                    {"name": "C_out0", "data": "placeholder"},
-                ]},
-            },
-        ],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "primary_switch",
+                    "role": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "data": "placeholder"},
+                            {"name": "D_demag", "data": "placeholder"},
+                        ]
+                    },
+                },
+                {
+                    "name": "isolation",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "category": "magnetic", "mas": _t1_mas(**t1_kwargs)},
+                        ]
+                    },
+                },
+                {
+                    "name": "output_0",
+                    "role": "outputRectifier",
+                    "circuit": {
+                        "components": [
+                            {"name": "D_fwd", "data": "placeholder"},
+                            {"name": "D_fw", "data": "placeholder"},
+                            {"name": "L_out0", "category": "magnetic", "mas": _lout_mas()},
+                            {"name": "C_out0", "data": "placeholder"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 def _2sf_tas(*, t1_kwargs: dict | None = None) -> dict:
@@ -191,12 +167,14 @@ def _forward_spec() -> dict:
         "inputVoltage": {"minimum": 54.0, "maximum": 75.0, "nominal": 60.0},
         "desiredInductance": 4.7e-6,
         "efficiency": 0.92,
-        "operatingPoints": [{
-            "outputVoltages": [5.0],
-            "outputCurrents": [10.0],
-            "switchingFrequency": 250_000.0,
-            "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [5.0],
+                "outputCurrents": [10.0],
+                "switchingFrequency": 250_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
     }
 
 
@@ -215,12 +193,14 @@ def _get_lout(tas: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("topology,tas_factory", [
-    ("single_switch_forward", _ssf_tas),
-    ("two_switch_forward",    _2sf_tas),
-])
+@pytest.mark.parametrize(
+    "topology,tas_factory",
+    [
+        ("single_switch_forward", _ssf_tas),
+        ("two_switch_forward", _2sf_tas),
+    ],
+)
 class TestForwardMath:
-
     def test_duty_uses_turns_ratio_and_vin_min(self, topology, tas_factory):
         out = enrich_tas_for_realism(tas_factory(), topology=topology, spec=_forward_spec())
         # n = 40/10 = 4. D_max = Vout·n / Vin_min = 5·4 / 54 = 0.3704
@@ -246,13 +226,24 @@ class TestForwardMath:
     def test_isat_uses_lout_mas_not_t1(self, topology, tas_factory):
         out = enrich_tas_for_realism(tas_factory(), topology=topology, spec=_forward_spec())
         l = _get_lout(out)
-        # L_out MAS: B_sat=0.4 T, N=18, A_e=8.0327e-5, L=4.7e-6
-        expected = 0.4 * 18 * 8.0327e-5 / 4.7e-6
-        assert l["isat"] == pytest.approx(expected, rel=1e-4)
-        # Confirm extractor used the L_out MAS, NOT T1's (which has
-        # different A_e and lower B_sat).
-        assert l["isat_provenance"]["effective_area_m2"] == 8.0327e-5
-        assert l["isat_provenance"]["b_sat_T"] == pytest.approx(0.4)
+        # Ground truth = MKF: stamped Isat must equal PyOM's saturation
+        # current for the L_out magnetic at the op-point ambient (25 °C),
+        # NOT an analytical formula.  Computing it here on the same L_out
+        # MAS the extractor harvested also proves L_out (not T1) was used.
+        expected = isat_of(_lout_mas(), temperature_c=25.0)
+        assert l["isat"] == pytest.approx(expected, rel=1e-3)
+        # Confirm extractor used the L_out MAS, NOT T1's (different A_e),
+        # by reading the real shape's effective area and material B_sat back
+        # out of the L_out magnetic itself.
+        lout = _lout_mas()
+        ae_expected = lout["core"]["processedDescription"]["effectiveParameters"]["effectiveArea"]
+        bsat_expected = min(
+            p["magneticFluxDensity"]
+            for p in lout["core"]["functionalDescription"]["material"]["saturation"]
+        )
+        assert l["isat_provenance"]["effective_area_m2"] == pytest.approx(ae_expected)
+        assert l["isat_provenance"]["b_sat_T"] == pytest.approx(bsat_expected, rel=1e-3)
+        assert 0.2 < l["isat_provenance"]["b_sat_T"] < 0.6  # plausible ferrite
 
     def test_t1_is_not_isat_stamped(self, topology, tas_factory):
         """The demag mechanism resets T1 each cycle, so we deliberately
@@ -303,8 +294,9 @@ class TestWindingLookup:
     def test_ssf_with_demag_winding_works(self):
         """3-winding T1 (pri, demag, sec0) must extract pri / sec0
         correctly via name lookup even though sec0 is at index 2."""
-        out = enrich_tas_for_realism(_ssf_tas(), topology="single_switch_forward",
-                                     spec=_forward_spec())
+        out = enrich_tas_for_realism(
+            _ssf_tas(), topology="single_switch_forward", spec=_forward_spec()
+        )
         l = _get_lout(out)
         assert l["ipeak_provenance"]["n_primary"] == 40
         assert l["ipeak_provenance"]["n_secondary"] == 10
@@ -312,8 +304,9 @@ class TestWindingLookup:
     def test_2sf_without_demag_winding_works(self):
         """2-winding T1 (pri, sec0) must extract identically — same
         names, different index."""
-        out = enrich_tas_for_realism(_2sf_tas(), topology="two_switch_forward",
-                                     spec=_forward_spec())
+        out = enrich_tas_for_realism(
+            _2sf_tas(), topology="two_switch_forward", spec=_forward_spec()
+        )
         l = _get_lout(out)
         assert l["ipeak_provenance"]["n_primary"] == 40
         assert l["ipeak_provenance"]["n_secondary"] == 10
@@ -322,22 +315,20 @@ class TestWindingLookup:
         tas = _ssf_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][0]["name"] = "primary"  # not "pri"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][0][
+                    "name"
+                ] = "primary"  # not "pri"
         with pytest.raises(EnrichmentError, match="'pri'"):
-            enrich_tas_for_realism(tas, topology="single_switch_forward",
-                                   spec=_forward_spec())
+            enrich_tas_for_realism(tas, topology="single_switch_forward", spec=_forward_spec())
 
     def test_missing_sec0_winding_throws(self):
         tas = _ssf_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                fd = stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"]
+                fd = stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"]
                 fd[-1]["name"] = "secondary"  # not "sec0"
         with pytest.raises(EnrichmentError, match="'sec0'"):
-            enrich_tas_for_realism(tas, topology="single_switch_forward",
-                                   spec=_forward_spec())
+            enrich_tas_for_realism(tas, topology="single_switch_forward", spec=_forward_spec())
 
 
 # ---------------------------------------------------------------------------
@@ -352,8 +343,7 @@ class TestStructuralFailures:
             s for s in tas["topology"]["stages"] if s.get("role") != "outputRectifier"
         ]
         with pytest.raises(EnrichmentError, match="outputRectifier"):
-            enrich_tas_for_realism(tas, topology="single_switch_forward",
-                                   spec=_forward_spec())
+            enrich_tas_for_realism(tas, topology="single_switch_forward", spec=_forward_spec())
 
     def test_missing_isolation_stage_throws(self):
         tas = _ssf_tas()
@@ -361,8 +351,7 @@ class TestStructuralFailures:
             s for s in tas["topology"]["stages"] if s.get("role") != "isolation"
         ]
         with pytest.raises(EnrichmentError, match="isolation"):
-            enrich_tas_for_realism(tas, topology="single_switch_forward",
-                                   spec=_forward_spec())
+            enrich_tas_for_realism(tas, topology="single_switch_forward", spec=_forward_spec())
 
     def test_missing_achieved_inductance_throws(self):
         """The forward family harvests the achieved choke inductance from
@@ -375,9 +364,8 @@ class TestStructuralFailures:
                 for c in stage["circuit"]["components"]:
                     if c.get("name") == "L_out0":
                         c["mas"].pop("outputs", None)
-                        c["mas"].get("inputs", {}).get(
-                            "designRequirements", {}
-                        ).pop("magnetizingInductance", None)
-        with pytest.raises(EnrichmentError, match="full MAS root|inductance"):
-            enrich_tas_for_realism(tas, topology="single_switch_forward",
-                                   spec=_forward_spec())
+                        c["mas"].get("inputs", {}).get("designRequirements", {}).pop(
+                            "magnetizingInductance", None
+                        )
+        with pytest.raises(EnrichmentError, match=r"full MAS root|inductance"):
+            enrich_tas_for_realism(tas, topology="single_switch_forward", spec=_forward_spec())

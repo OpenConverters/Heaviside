@@ -225,11 +225,12 @@ def _base_spec() -> dict[str, Any]:
 
 def _import_pyom() -> Any:
     from PyOpenMagnetics import PyOpenMagnetics as _ext  # type: ignore[import-not-found]
+
     return _ext
 
 
 _MISSING_KEY_MARKERS = (
-    "key '",      # nlohmann::json out_of_range.403
+    "key '",  # nlohmann::json out_of_range.403
     "missing field",
 )
 
@@ -406,9 +407,7 @@ def _render_report(results: list[ProbeOutcome]) -> str:
         "|----------|--------|---------|--------|--------------|--------|",
     ]
     for r in results:
-        extras_str = (
-            ", ".join(f"{e['kind']}:{e['name']}" for e in r.extras) if r.extras else "—"
-        )
+        extras_str = ", ".join(f"{e['kind']}:{e['name']}" for e in r.extras) if r.extras else "—"
         if r.status != "OK" and r.last_error:
             extras_str = f"_{r.last_error[:80]}_"
         lines.append(

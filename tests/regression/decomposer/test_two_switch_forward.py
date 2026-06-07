@@ -63,9 +63,7 @@ def test_2sforward_decompose_matches_golden() -> None:
     _maybe_update(TAS_GOLDEN, tas_json)
 
     if not SPICE_GOLDEN.exists() or not TAS_GOLDEN.exists():
-        pytest.fail(
-            "Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create."
-        )
+        pytest.fail("Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create.")
 
     assert netlist == SPICE_GOLDEN.read_text()
     assert tas_json == TAS_GOLDEN.read_text()
@@ -86,15 +84,28 @@ def test_2sforward_tas_round_trip_shape() -> None:
         "control",
     ], roles
 
-    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
+    sw_names = {
+        c["name"]
+        for c in tas["topology"]["stages"][0]["circuit"]["components"]
+        if not c["name"].startswith("P_")
+    }
     assert sw_names == {"Q1", "Q2", "D1", "D2"}, sw_names
 
     t1 = tas["topology"]["stages"][1]["circuit"]["components"][0]
     assert t1["name"] == "T1"
-    t1_pins = {ep["pin"] for w in tas["topology"]["interStageCircuit"] for ep in w.get("endpoints", []) if ep["component"] == "T1"}
+    t1_pins = {
+        ep["pin"]
+        for w in tas["topology"]["interStageCircuit"]
+        for ep in w.get("endpoints", [])
+        if ep["component"] == "T1"
+    }
     assert t1_pins == {"pri.1", "pri.2", "sec0.1", "sec0.2"}, t1_pins
 
-    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"] if not c["name"].startswith("P_")}
+    rect_names = {
+        c["name"]
+        for c in tas["topology"]["stages"][2]["circuit"]["components"]
+        if not c["name"].startswith("P_")
+    }
     assert rect_names == {"D_fwd0", "D_fw0", "L_out0", "C_out0"}, rect_names
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
@@ -108,15 +119,27 @@ def test_2sforward_tas_round_trip_shape() -> None:
     }, set(ports)
 
     # Vin must reach Q1.D (source) AND D2.K (reset return).
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
+    vin_eps = {
+        (e["component"], e["pin"])
+        for e in ports["Vin"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert vin_eps == {("Q1", "D"), ("D2", "K")}, vin_eps
 
     # pri_gnd_node must bridge Q2.D, D2.A, and T1.pri.2.
-    pgn_eps = {(e["component"], e["pin"]) for e in ports["pri_gnd_node"]["endpoints"] if not e["component"].startswith("P_")}
+    pgn_eps = {
+        (e["component"], e["pin"])
+        for e in ports["pri_gnd_node"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert pgn_eps == {("Q2", "D"), ("D2", "A"), ("T1", "pri.2")}, pgn_eps
 
     # switch_node must bridge Q1.S, D1.K, and T1.pri.1.
-    swn_eps = {(e["component"], e["pin"]) for e in ports["switch_node"]["endpoints"] if not e["component"].startswith("P_")}
+    swn_eps = {
+        (e["component"], e["pin"])
+        for e in ports["switch_node"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert swn_eps == {("Q1", "S"), ("D1", "K"), ("T1", "pri.1")}, swn_eps
 
     # Controller drives both Q1 and Q2.

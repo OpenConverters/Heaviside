@@ -51,7 +51,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "ruff>=0.7",
+  "ruff==0.15.15",  # pinned: ruff format output + lint rules are version-sensitive
   "mypy>=1.13",
   "pytest>=8.3",
   "pytest-xdist>=3.6",
@@ -94,7 +94,36 @@ select = [
   "SIM",              # simplify
   "TID",              # tidy-imports
 ]
-ignore = ["E501"]  # line length handled by formatter
+ignore = [
+  "E501",  # line length handled by formatter
+  # Intentional physics notation: this is a power-electronics codebase that
+  # deliberately uses Unicode math symbols (µH, ·, °C, ≤, ², ×, ⇒, √, ½) in
+  # docstrings/comments/strings. The ambiguous-unicode rules exist to catch
+  # homoglyph typos, not to ban deliberate scientific notation.
+  "RUF001",  # ambiguous-unicode-character-string
+  "RUF002",  # ambiguous-unicode-character-docstring
+  "RUF003",  # ambiguous-unicode-character-comment
+  # Single-letter `l` is the established terse local for the harvested
+  # component/inductor dict throughout the extractor + realism math.
+  "E741",  # ambiguous-variable-name
+]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI declares request params via call-defaults (Depends/Query/File/
+# Form/Body) — B008 is a false positive for that idiom. RUF013 likewise
+# flags FastAPI's implicit-Optional defaults.
+"heaviside/api/*" = ["B008", "RUF013"]
+# Typer declares CLI params the same way (typer.Option/typer.Argument as
+# the parameter default) — B008 is a false positive for the Typer idiom too.
+"heaviside/cli.py" = ["B008"]
+# Standalone scripts set up sys.path / env before importing project modules,
+# so imports legitimately follow statements (E402).
+"scripts/*" = ["E402"]
+# `with pytest.raises(Err): with resource():` is a standard, readable pytest
+# idiom (the raises wraps a context manager whose __enter__ is what should
+# raise); collapsing it into one `with` line is often less clear, so don't
+# force SIM117 in tests.
+"tests/*" = ["SIM117"]
 
 # ---------------------------------------------------------------------------
 # Mypy (strict)

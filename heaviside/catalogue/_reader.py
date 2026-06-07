@@ -47,12 +47,14 @@ def iter_envelopes(path: Path) -> Iterator[tuple[int, dict[str, Any]]]:
                 env = json.loads(stripped)
             except json.JSONDecodeError as exc:
                 raise CatalogueReadError(
-                    path, lineno,
+                    path,
+                    lineno,
                     f"JSON decode error: {exc.msg} at col {exc.colno}",
                 ) from exc
             if not isinstance(env, dict):
                 raise CatalogueReadError(
-                    path, lineno,
+                    path,
+                    lineno,
                     f"top-level value is {type(env).__name__}, expected object",
                 )
             yield lineno, env

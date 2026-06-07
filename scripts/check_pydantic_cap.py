@@ -5,6 +5,18 @@ Per Heaviside design rule: schemas (MAS/PEAS/SAS/CAS/RAS) are the type system.
 Pydantic is reserved for the very few user-facing boundaries (DesignSpec,
 config, etc.). If you find yourself wanting to add a 9th BaseModel, fix the
 schemas instead.
+
+The cap counts **internal** ``heaviside/`` code only. Two directories are
+excluded because pydantic there is the *intended* boundary, not an internal
+data shape that should be a TypedDict:
+
+  * ``types/``  — the generated TypedDict layer (no BaseModels expected).
+  * ``api/``    — the FastAPI HTTP boundary. FastAPI *requires* pydantic
+    models to declare request/response bodies; those DTOs are exactly the
+    "user-facing boundary" pydantic is reserved for. They are not internal
+    structures and must not be turned into TypedDicts. (Excluding them is the
+    re-derivation noted in the 2026-06-07 handoff finding H3 — the cap had
+    never been re-derived after the API layer was added.)
 """
 
 from __future__ import annotations
@@ -15,7 +27,8 @@ from pathlib import Path
 
 CAP = 8
 ROOT = Path(__file__).resolve().parents[1] / "heaviside"
-EXCLUDE_DIRS = {"types"}  # generated TypedDicts only
+# See the module docstring for the rationale behind each exclusion.
+EXCLUDE_DIRS = {"types", "api"}
 
 
 def _is_base_model(base: ast.expr) -> bool:

@@ -14,24 +14,26 @@ _BUCK_OK = {
     "inputVoltage": {"nominal": 48.0, "minimum": 36.0, "maximum": 60.0},
     "currentRippleRatio": 0.4,
     "desiredInductance": 22e-6,
-    "operatingPoints": [{
-        "outputVoltages": [12.0],
-        "outputCurrents": [5.0],
-        "switchingFrequency": 200_000.0,
-        "ambientTemperature": 25.0,
-    }],
+    "operatingPoints": [
+        {
+            "outputVoltages": [12.0],
+            "outputCurrents": [5.0],
+            "switchingFrequency": 200_000.0,
+            "ambientTemperature": 25.0,
+        }
+    ],
 }
 
 
 def test_buck_stresses_match_hand_calc() -> None:
     """Buck 48->12@5A with ripple ratio 0.4:
-      Vds_off = Vin_max = 60 V
-      Id_peak = Iout * (1 + ripple/2) = 5 * 1.2 = 6 A
-      Vr     = Vin_max = 60 V
-      D_min  = Vout/Vin_max = 12/60 = 0.2
-      If_avg = Iout * (1 - D_min) = 5 * 0.8 = 4 A
-      V_working = Vout = 12 V
-      I_ripple_rms = Iout * ripple / (2*sqrt(3)) = 5 * 0.4 / 3.464 ~= 0.577 A
+    Vds_off = Vin_max = 60 V
+    Id_peak = Iout * (1 + ripple/2) = 5 * 1.2 = 6 A
+    Vr     = Vin_max = 60 V
+    D_min  = Vout/Vin_max = 12/60 = 0.2
+    If_avg = Iout * (1 - D_min) = 5 * 0.8 = 4 A
+    V_working = Vout = 12 V
+    I_ripple_rms = Iout * ripple / (2*sqrt(3)) = 5 * 0.4 / 3.464 ~= 0.577 A
     """
     s = buck_stresses(_BUCK_OK)
     assert s.vds_stress == 60.0
@@ -43,21 +45,30 @@ def test_buck_stresses_match_hand_calc() -> None:
 
 
 def test_buck_stresses_throws_on_step_up_spec() -> None:
-    bad = {**_BUCK_OK, "operatingPoints": [{
-        **_BUCK_OK["operatingPoints"][0],
-        "outputVoltages": [80.0],  # Vout > Vin_min, cannot step up
-    }]}
+    bad = {
+        **_BUCK_OK,
+        "operatingPoints": [
+            {
+                **_BUCK_OK["operatingPoints"][0],
+                "outputVoltages": [80.0],  # Vout > Vin_min, cannot step up
+            }
+        ],
+    }
     with pytest.raises(StressDerivationError, match="step up"):
         buck_stresses(bad)
 
 
-@pytest.mark.parametrize("bad,where", [
-    ({}, "inputVoltage"),
-    ({**_BUCK_OK, "inputVoltage": {"nominal": 48}}, "maximum"),
-    ({**_BUCK_OK, "operatingPoints": []}, "operatingPoints"),
-])
+@pytest.mark.parametrize(
+    "bad,where",
+    [
+        ({}, "inputVoltage"),
+        ({**_BUCK_OK, "inputVoltage": {"nominal": 48}}, "maximum"),
+        ({**_BUCK_OK, "operatingPoints": []}, "operatingPoints"),
+    ],
+)
 def test_buck_stresses_throws_on_missing_spec_fields(
-    bad: dict, where: str,
+    bad: dict,
+    where: str,
 ) -> None:
     with pytest.raises(StressDerivationError, match=where):
         buck_stresses(bad)
@@ -82,12 +93,14 @@ def test_derive_stresses_returns_none_for_unported_topology() -> None:
 _BOOST_OK = {
     "inputVoltage": {"nominal": 12.0, "minimum": 9.0, "maximum": 15.0},
     "currentRippleRatio": 0.4,
-    "operatingPoints": [{
-        "outputVoltages": [24.0],
-        "outputCurrents": [2.0],
-        "switchingFrequency": 150_000.0,
-        "ambientTemperature": 25.0,
-    }],
+    "operatingPoints": [
+        {
+            "outputVoltages": [24.0],
+            "outputCurrents": [2.0],
+            "switchingFrequency": 150_000.0,
+            "ambientTemperature": 25.0,
+        }
+    ],
 }
 
 
@@ -95,6 +108,7 @@ def test_boost_stresses_match_hand_calc() -> None:
     """Boost 9->24V@2A, ripple 0.4: Q1 sees Vout=24V. Iin = Iout*Vout/Vin_min
     = 2 * 24 / 9 = 5.33 A. Id_pk = Iin * 1.2 = 6.4 A."""
     from heaviside.pipeline.stress import boost_stresses
+
     s = boost_stresses(_BOOST_OK)
     assert s.vds_stress == 24.0
     assert s.id_stress == pytest.approx(5.333 * 1.2, abs=0.01)
@@ -105,9 +119,16 @@ def test_boost_stresses_match_hand_calc() -> None:
 
 def test_boost_throws_on_step_down_spec() -> None:
     from heaviside.pipeline.stress import boost_stresses
-    bad = {**_BOOST_OK, "operatingPoints": [{
-        **_BOOST_OK["operatingPoints"][0], "outputVoltages": [5.0],
-    }]}
+
+    bad = {
+        **_BOOST_OK,
+        "operatingPoints": [
+            {
+                **_BOOST_OK["operatingPoints"][0],
+                "outputVoltages": [5.0],
+            }
+        ],
+    }
     with pytest.raises(StressDerivationError, match="step down"):
         boost_stresses(bad)
 
@@ -120,13 +141,18 @@ def test_boost_throws_on_step_down_spec() -> None:
 def test_cuk_stresses_voltage_is_sum_of_rails() -> None:
     """Cuk Vds = Vin_min + |Vout|: for 18->12V Cuk that's 18+12=30V."""
     from heaviside.pipeline.stress import cuk_stresses
+
     spec = {
         "inputVoltage": {"nominal": 24.0, "minimum": 18.0, "maximum": 30.0},
         "currentRippleRatio": 0.4,
-        "operatingPoints": [{
-            "outputVoltages": [12.0], "outputCurrents": [2.0],
-            "switchingFrequency": 150_000.0, "ambientTemperature": 25.0,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [12.0],
+                "outputCurrents": [2.0],
+                "switchingFrequency": 150_000.0,
+                "ambientTemperature": 25.0,
+            }
+        ],
     }
     s = cuk_stresses(spec)
     assert s.vds_stress == 18.0 + 12.0
@@ -145,22 +171,28 @@ _FLYBACK_OK = {
     "maximumDutyCycle": 0.5,
     "efficiency": 0.85,
     "desiredMagnetizingInductance": 200e-6,
-    "operatingPoints": [{
-        "outputVoltages": [12.0], "outputCurrents": [2.0],
-        "switchingFrequency": 100_000.0, "ambientTemperature": 25.0,
-    }],
+    "operatingPoints": [
+        {
+            "outputVoltages": [12.0],
+            "outputCurrents": [2.0],
+            "switchingFrequency": 100_000.0,
+            "ambientTemperature": 25.0,
+        }
+    ],
 }
 
 
 def test_flyback_vds_includes_reflected_secondary() -> None:
     """Vds = Vin_max + n * Vout: 60 + 5*12 = 120 V."""
     from heaviside.pipeline.stress import flyback_stresses
+
     s = flyback_stresses(_FLYBACK_OK)
     assert s.vds_stress == 60.0 + 5.0 * 12.0
 
 
 def test_flyback_throws_on_missing_turns_ratio() -> None:
     from heaviside.pipeline.stress import flyback_stresses
+
     bad = {k: v for k, v in _FLYBACK_OK.items() if k != "desiredTurnsRatios"}
     with pytest.raises(StressDerivationError, match="desiredTurnsRatios"):
         flyback_stresses(bad)
@@ -168,6 +200,7 @@ def test_flyback_throws_on_missing_turns_ratio() -> None:
 
 def test_flyback_throws_on_bad_duty() -> None:
     from heaviside.pipeline.stress import flyback_stresses
+
     bad = {**_FLYBACK_OK, "maximumDutyCycle": 1.5}
     with pytest.raises(StressDerivationError, match="maximumDutyCycle"):
         flyback_stresses(bad)
@@ -208,6 +241,7 @@ def test_derive_stresses_returns_worst_case_across_ops() -> None:
 
 def test_derive_stresses_per_op_returns_one_per_op() -> None:
     from heaviside.pipeline.stress import derive_stresses_per_op
+
     spec = {
         **_BUCK_OK,
         "operatingPoints": [

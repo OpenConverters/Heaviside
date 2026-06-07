@@ -46,21 +46,19 @@ from heaviside.librarian.repair import (
     PRIORITY_WARNING,
     RECIPE_SCHEMA_VERSION,
     RepairRecipe,
-    RepairTask,
     filter_by_category,
     filter_by_first_source,
     is_exhausted,
-    record_attempt,
-    record_failure,
     recipe_from_audit_all,
     recipe_from_category_audit,
     recipe_from_json,
     recipe_to_json,
+    record_attempt,
+    record_failure,
     sources_for_field,
     tasks_from_component_audit,
 )
 from heaviside.librarian.safe_access import LibrarianError
-
 
 # ---------------------------------------------------------------------------
 # Source preference
@@ -92,8 +90,13 @@ def test_known_sources_are_consistent() -> None:
 def test_datasheet_preferred_subset_of_known_fields() -> None:
     # Sanity: a few hand-picked entries are the ones documented in
     # the module docstring.
-    for f in ("reverseRecoveryCharge", "bodyDiodeForwardVoltage",
-              "esr", "rippleCurrent", "junctionTemperatureMax"):
+    for f in (
+        "reverseRecoveryCharge",
+        "bodyDiodeForwardVoltage",
+        "esr",
+        "rippleCurrent",
+        "junctionTemperatureMax",
+    ):
         assert f in DATASHEET_PREFERRED_FIELDS
 
 
@@ -103,8 +106,11 @@ def test_datasheet_preferred_subset_of_known_fields() -> None:
 
 
 def _mosfet_audit(
-    *, critical: list[FieldGap] = None, required: list[FieldGap] = None,
-    mpn: str = "TESTFET", line: int | None = 42,
+    *,
+    critical: list[FieldGap] | None = None,
+    required: list[FieldGap] | None = None,
+    mpn: str = "TESTFET",
+    line: int | None = 42,
 ) -> ComponentAudit:
     return ComponentAudit(
         mpn=mpn,
@@ -183,19 +189,29 @@ def test_tasks_from_component_audit_refuses_present_gap() -> None:
 
 def _category_audit_with(
     *failure_specs: tuple[str, list[FieldGap], list[FieldGap]],
-    warnings_only_specs: list[tuple[str, list[FieldGap]]] = None,
+    warnings_only_specs: list[tuple[str, list[FieldGap]]] | None = None,
 ) -> CategoryAudit:
     """Build a CategoryAudit from compact (mpn, criticals, requireds) tuples."""
     report = CategoryAudit(category="mosfets")
     for mpn, crit, req in failure_specs:
-        report.failures.append(_mosfet_audit(
-            critical=crit, required=req, mpn=mpn, line=None,
-        ))
+        report.failures.append(
+            _mosfet_audit(
+                critical=crit,
+                required=req,
+                mpn=mpn,
+                line=None,
+            )
+        )
         report.total += 1
     for mpn, req in warnings_only_specs or []:
-        report.warnings_only.append(_mosfet_audit(
-            critical=[], required=req, mpn=mpn, line=None,
-        ))
+        report.warnings_only.append(
+            _mosfet_audit(
+                critical=[],
+                required=req,
+                mpn=mpn,
+                line=None,
+            )
+        )
         report.total += 1
         report.passed += 1
     return report
@@ -256,10 +272,13 @@ def test_recipe_from_audit_all_spans_categories() -> None:
     }
     # Hand-build a diodes audit since _category_audit_with hardcodes mosfets.
     diode_report = CategoryAudit(category="diodes")
-    diode_report.failures.append(ComponentAudit(
-        mpn="D1", category="diodes",
-        critical_failures=[FieldGap("reverseRecoveryCharge", FieldStatus.MISSING_KEY)],
-    ))
+    diode_report.failures.append(
+        ComponentAudit(
+            mpn="D1",
+            category="diodes",
+            critical_failures=[FieldGap("reverseRecoveryCharge", FieldStatus.MISSING_KEY)],
+        )
+    )
     diode_report.total = 1
     audits["diodes"] = diode_report
 
@@ -276,11 +295,15 @@ def test_recipe_from_audit_all_spans_categories() -> None:
 
 def test_recipe_json_round_trip() -> None:
     audit = _category_audit_with(
-        ("FET-1", [FieldGap("drainSourceVoltage", FieldStatus.MISSING_KEY)],
-         [FieldGap("bodyDiodeForwardVoltage", FieldStatus.NULL)]),
+        (
+            "FET-1",
+            [FieldGap("drainSourceVoltage", FieldStatus.MISSING_KEY)],
+            [FieldGap("bodyDiodeForwardVoltage", FieldStatus.NULL)],
+        ),
     )
     original = recipe_from_category_audit(
-        audit, generated_at="2026-05-21T12:00:00+00:00",
+        audit,
+        generated_at="2026-05-21T12:00:00+00:00",
     )
     text = recipe_to_json(original)
     restored = recipe_from_json(text)
@@ -350,14 +373,18 @@ def test_recipe_from_json_rejects_non_string_source() -> None:
         "schema_version": RECIPE_SCHEMA_VERSION,
         "generated_at": "x",
         "summary": {"mosfets": 1},
-        "tasks": [{
-            "category": "mosfets", "mpn": "X", "field": "onResistance",
-            "missing_field": "electrical.onResistance",
-            "status": FieldStatus.MISSING_KEY,
-            "sources": ["digikey", 42],  # bad
-            "priority": 0,
-            "line": None,
-        }],
+        "tasks": [
+            {
+                "category": "mosfets",
+                "mpn": "X",
+                "field": "onResistance",
+                "missing_field": "electrical.onResistance",
+                "status": FieldStatus.MISSING_KEY,
+                "sources": ["digikey", 42],  # bad
+                "priority": 0,
+                "line": None,
+            }
+        ],
     }
     with pytest.raises(LibrarianError, match="sources"):
         recipe_from_json(json.dumps(payload))
@@ -375,10 +402,13 @@ def _two_cat_recipe() -> RepairRecipe:
         ),
     }
     diode_report = CategoryAudit(category="diodes")
-    diode_report.failures.append(ComponentAudit(
-        mpn="D-A", category="diodes",
-        critical_failures=[FieldGap("reverseRecoveryCharge", FieldStatus.MISSING_KEY)],
-    ))
+    diode_report.failures.append(
+        ComponentAudit(
+            mpn="D-A",
+            category="diodes",
+            critical_failures=[FieldGap("reverseRecoveryCharge", FieldStatus.MISSING_KEY)],
+        )
+    )
     diode_report.total = 1
     audits["diodes"] = diode_report
     return recipe_from_audit_all(audits)
@@ -428,8 +458,11 @@ def _single_task_recipe() -> RepairRecipe:
 def test_record_attempt_success_removes_task() -> None:
     recipe = _single_task_recipe()
     after = record_attempt(
-        recipe, mpn="FET-X", field_name="onResistance",
-        source="digikey", succeeded=True,
+        recipe,
+        mpn="FET-X",
+        field_name="onResistance",
+        source="digikey",
+        succeeded=True,
     )
     assert after.tasks == ()
     assert after.summary == {}
@@ -438,8 +471,11 @@ def test_record_attempt_success_removes_task() -> None:
 def test_record_attempt_failure_demotes_source() -> None:
     recipe = _single_task_recipe()
     after = record_attempt(
-        recipe, mpn="FET-X", field_name="onResistance",
-        source="digikey", succeeded=False,
+        recipe,
+        mpn="FET-X",
+        field_name="onResistance",
+        source="digikey",
+        succeeded=False,
     )
     assert len(after.tasks) == 1
     task = after.tasks[0]
@@ -453,8 +489,11 @@ def test_record_attempt_exhausts_after_all_sources_fail() -> None:
     recipe = _single_task_recipe()
     for src in DEFAULT_SOURCE_ORDER:
         recipe = record_attempt(
-            recipe, mpn="FET-X", field_name="onResistance",
-            source=src, succeeded=False,
+            recipe,
+            mpn="FET-X",
+            field_name="onResistance",
+            source=src,
+            succeeded=False,
         )
     assert len(recipe.tasks) == 1
     assert is_exhausted(recipe.tasks[0])
@@ -465,8 +504,11 @@ def test_record_attempt_rejects_unknown_task() -> None:
     recipe = _single_task_recipe()
     with pytest.raises(LibrarianError, match="no task"):
         record_attempt(
-            recipe, mpn="NOPE", field_name="onResistance",
-            source="digikey", succeeded=True,
+            recipe,
+            mpn="NOPE",
+            field_name="onResistance",
+            source="digikey",
+            succeeded=True,
         )
 
 
@@ -474,8 +516,11 @@ def test_record_attempt_rejects_unknown_source() -> None:
     recipe = _single_task_recipe()
     with pytest.raises(LibrarianError, match="unknown source"):
         record_attempt(
-            recipe, mpn="FET-X", field_name="onResistance",
-            source="octopart", succeeded=False,
+            recipe,
+            mpn="FET-X",
+            field_name="onResistance",
+            source="octopart",
+            succeeded=False,
         )
 
 
@@ -487,8 +532,11 @@ def test_record_attempt_rejects_demotion_of_non_candidate_source() -> None:
     recipe = replace(recipe, tasks=(only_ds,))
     with pytest.raises(LibrarianError, match="not in the task"):
         record_attempt(
-            recipe, mpn="FET-X", field_name="onResistance",
-            source="digikey", succeeded=False,
+            recipe,
+            mpn="FET-X",
+            field_name="onResistance",
+            source="digikey",
+            succeeded=False,
         )
 
 
@@ -501,8 +549,11 @@ def test_record_attempt_success_does_not_check_candidate_membership() -> None:
     only_ds = replace(recipe.tasks[0], sources=("datasheet",))
     recipe = replace(recipe, tasks=(only_ds,))
     after = record_attempt(
-        recipe, mpn="FET-X", field_name="onResistance",
-        source="digikey", succeeded=True,
+        recipe,
+        mpn="FET-X",
+        field_name="onResistance",
+        source="digikey",
+        succeeded=True,
     )
     assert after.tasks == ()
 
@@ -510,7 +561,8 @@ def test_record_attempt_success_does_not_check_candidate_membership() -> None:
 def test_record_failure_translates_incomplete_source_error() -> None:
     recipe = _single_task_recipe()
     exc = IncompleteSourceError(
-        source="digikey", mpn="FET-X",
+        source="digikey",
+        mpn="FET-X",
         missing_field="electrical.onResistance",
     )
     after = record_failure(recipe, exc)
@@ -522,7 +574,9 @@ def test_record_failure_rejects_unprefixed_field() -> None:
     # Hand-construct an error whose missing_field doesn't carry the
     # ``electrical.`` prefix (e.g. a future ``part.*`` failure).
     exc = IncompleteSourceError(
-        source="digikey", mpn="FET-X", missing_field="part.partNumber",
+        source="digikey",
+        mpn="FET-X",
+        missing_field="part.partNumber",
     )
     with pytest.raises(LibrarianError, match="does not start with"):
         record_failure(recipe, exc)
@@ -537,8 +591,11 @@ def test_record_attempt_returns_new_recipe_does_not_mutate() -> None:
     recipe = _single_task_recipe()
     original_tasks = recipe.tasks
     record_attempt(
-        recipe, mpn="FET-X", field_name="onResistance",
-        source="digikey", succeeded=False,
+        recipe,
+        mpn="FET-X",
+        field_name="onResistance",
+        source="digikey",
+        succeeded=False,
     )
     assert recipe.tasks is original_tasks
     assert recipe.tasks[0].sources == DEFAULT_SOURCE_ORDER

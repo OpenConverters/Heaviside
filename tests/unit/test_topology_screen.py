@@ -11,22 +11,26 @@ import pytest
 
 from heaviside.pipeline.topology_screen import (
     TopologyScreenError,
-    feasible_topology_names,
     feasible_topologies,
+    feasible_topology_names,
 )
 
 
-def _spec(*, vmin: float, vmax: float, vouts: list[float],
-          iouts: list[float] | None = None) -> dict:
+def _spec(
+    *, vmin: float, vmax: float, vouts: list[float], iouts: list[float] | None = None
+) -> dict:
     if iouts is None:
         iouts = [1.0] * len(vouts)
     return {
-        "inputVoltage": {"minimum": vmin, "maximum": vmax,
-                         "nominal": (vmin + vmax) / 2},
-        "operatingPoints": [{"outputVoltages": vouts,
-                             "outputCurrents": iouts,
-                             "switchingFrequency": 200_000.0,
-                             "ambientTemperature": 25.0}],
+        "inputVoltage": {"minimum": vmin, "maximum": vmax, "nominal": (vmin + vmax) / 2},
+        "operatingPoints": [
+            {
+                "outputVoltages": vouts,
+                "outputCurrents": iouts,
+                "switchingFrequency": 200_000.0,
+                "ambientTemperature": 25.0,
+            }
+        ],
     }
 
 
@@ -53,9 +57,9 @@ def test_step_either_admits_both_directional_topologies() -> None:
     """When Vout falls inside the Vin range (e.g. 10V output with 8–14V input),
     only step-either topologies survive — buck/boost get filtered."""
     names = feasible_topology_names(_spec(vmin=8, vmax=14, vouts=[10.0]))
-    assert "buck" not in names   # vout=10 ≥ vin_min=8 — buck rejected
+    assert "buck" not in names  # vout=10 ≥ vin_min=8 — buck rejected
     assert "boost" not in names  # vout=10 ≤ vin_max=14 — boost rejected
-    assert "flyback" in names    # step_either OK
+    assert "flyback" in names  # step_either OK
     assert "cuk" in names
 
 
@@ -70,8 +74,7 @@ def test_multi_output_excludes_all_non_isolated() -> None:
     names = feasible_topology_names(
         _spec(vmin=36, vmax=60, vouts=[12.0, 5.0], iouts=[2.0, 0.5]),
     )
-    for non_iso in ["buck", "boost", "cuk", "sepic", "zeta",
-                    "four_switch_buck_boost"]:
+    for non_iso in ["buck", "boost", "cuk", "sepic", "zeta", "four_switch_buck_boost"]:
         assert non_iso not in names, f"{non_iso} survived multi-output filter"
     # Isolated multi-output topologies admitted.
     assert "flyback" in names
@@ -101,8 +104,14 @@ def test_ac_spec_admits_only_ac_topologies() -> None:
     spec = {
         "lineToLineVoltage": {"minimum": 380, "maximum": 440, "nominal": 400},
         "outputDcVoltage": 800.0,
-        "operatingPoints": [{"outputVoltages": [800.0], "outputCurrents": [5.0],
-                             "switchingFrequency": 100_000.0, "ambientTemperature": 25.0}],
+        "operatingPoints": [
+            {
+                "outputVoltages": [800.0],
+                "outputCurrents": [5.0],
+                "switchingFrequency": 100_000.0,
+                "ambientTemperature": 25.0,
+            }
+        ],
     }
     names = feasible_topology_names(spec)
     # vienna is in registry; the screen admits it because lineToLineVoltage
@@ -156,6 +165,6 @@ def test_returns_topology_entries_with_canonical_names() -> None:
     """feasible_topologies returns full TopologyEntry objects so callers
     can read entry.family / pyom_names without a second registry lookup."""
     entries = feasible_topologies(_spec(vmin=36, vmax=60, vouts=[12.0]))
-    assert all(e.name == n for e, n in zip(entries, [e.name for e in entries]))
+    assert all(e.name == n for e, n in zip(entries, [e.name for e in entries], strict=False))
     buck = next(e for e in entries if e.name == "buck")
     assert buck.family == "non_isolated"

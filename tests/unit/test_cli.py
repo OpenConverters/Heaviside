@@ -81,18 +81,23 @@ def test_design_no_attach_missing_lm_exits_2(tmp_path: Path) -> None:
     ``--lm`` flag has nowhere to get L from — must fail loudly."""
     spec = tmp_path / "spec.json"
     spec.write_text(
-        json.dumps({
-            "inputVoltage": {"minimum": 36, "maximum": 60, "nominal": 48},
-            "operatingPoints": [{
-                "outputVoltages": [12.0],
-                "outputCurrents": [5.0],
-                "switchingFrequency": 200000,
-                "ambientTemperature": 25,
-            }],
-        })
+        json.dumps(
+            {
+                "inputVoltage": {"minimum": 36, "maximum": 60, "nominal": 48},
+                "operatingPoints": [
+                    {
+                        "outputVoltages": [12.0],
+                        "outputCurrents": [5.0],
+                        "switchingFrequency": 200000,
+                        "ambientTemperature": 25,
+                    }
+                ],
+            }
+        )
     )
     result = runner.invoke(
-        app, ["design", "buck", "--spec", str(spec), "--no-attach"],
+        app,
+        ["design", "buck", "--spec", str(spec), "--no-attach"],
     )
     assert result.exit_code == 2
     assert "magnetizing inductance not provided" in result.stderr.lower()
@@ -102,19 +107,23 @@ def test_design_bad_turns_flag_exits_2(tmp_path: Path) -> None:
     spec = tmp_path / "spec.json"
     # Spec must pass per-topology validation (post-2026-05-22) so we
     # exercise the --turns flag parsing rather than the spec validator.
-    spec.write_text(json.dumps({
-        "inputVoltage": {"nominal": 48.0, "minimum": 36.0, "maximum": 60.0},
-        "desiredInductance": 1e-6,
-        "operatingPoints": [{
-            "outputVoltages": [12.0],
-            "outputCurrents": [5.0],
-            "switchingFrequency": 200000,
-            "ambientTemperature": 25,
-        }],
-    }))
-    result = runner.invoke(
-        app, ["design", "buck", "--spec", str(spec), "--turns", "not_a_number"]
+    spec.write_text(
+        json.dumps(
+            {
+                "inputVoltage": {"nominal": 48.0, "minimum": 36.0, "maximum": 60.0},
+                "desiredInductance": 1e-6,
+                "operatingPoints": [
+                    {
+                        "outputVoltages": [12.0],
+                        "outputCurrents": [5.0],
+                        "switchingFrequency": 200000,
+                        "ambientTemperature": 25,
+                    }
+                ],
+            }
+        )
     )
+    result = runner.invoke(app, ["design", "buck", "--spec", str(spec), "--turns", "not_a_number"])
     assert result.exit_code == 2
     assert "--turns" in result.stderr
 
@@ -131,27 +140,29 @@ pytest.importorskip("PyOpenMagnetics")
 def buck_spec(tmp_path: Path) -> Path:
     spec = tmp_path / "buck.json"
     spec.write_text(
-        json.dumps({
-            "inputVoltage": {"minimum": 36, "maximum": 60, "nominal": 48},
-            "desiredInductance": 22e-6,
-            "currentRippleRatio": 0.4,
-            "diodeVoltageDrop": 0.7,
-            "efficiency": 0.95,
-            "operatingPoints": [{
-                "outputVoltages": [12.0],
-                "outputCurrents": [5.0],
-                "switchingFrequency": 200000,
-                "ambientTemperature": 25,
-            }],
-        })
+        json.dumps(
+            {
+                "inputVoltage": {"minimum": 36, "maximum": 60, "nominal": 48},
+                "desiredInductance": 22e-6,
+                "currentRippleRatio": 0.4,
+                "diodeVoltageDrop": 0.7,
+                "efficiency": 0.95,
+                "operatingPoints": [
+                    {
+                        "outputVoltages": [12.0],
+                        "outputCurrents": [5.0],
+                        "switchingFrequency": 200000,
+                        "ambientTemperature": 25,
+                    }
+                ],
+            }
+        )
     )
     return spec
 
 
 def test_design_buck_no_attach_emits_tas_to_stdout(buck_spec: Path) -> None:
-    result = runner.invoke(
-        app, ["design", "buck", "--spec", str(buck_spec), "--no-attach"]
-    )
+    result = runner.invoke(app, ["design", "buck", "--spec", str(buck_spec), "--no-attach"])
     assert result.exit_code == 0, result.stderr
     tas = json.loads(result.stdout)
     assert "topology" in tas
@@ -165,19 +176,23 @@ def test_design_buck_no_attach_emits_tas_to_stdout(buck_spec: Path) -> None:
         for comp in stage.get("circuit", {}).get("components", []):
             assert "mas" not in comp
             data = comp.get("data")
-            assert not (isinstance(data, dict) and (
-                "magnetic" in data or "capacitor" in data
-                or "semiconductor" in data or "resistor" in data
-                or "controller" in data
-            )), f"pre-attach component {comp.get('name')!r} unexpectedly carries inline PEAS data"
+            assert not (
+                isinstance(data, dict)
+                and (
+                    "magnetic" in data
+                    or "capacitor" in data
+                    or "semiconductor" in data
+                    or "resistor" in data
+                    or "controller" in data
+                )
+            ), f"pre-attach component {comp.get('name')!r} unexpectedly carries inline PEAS data"
 
 
 def test_design_buck_no_attach_writes_file(buck_spec: Path, tmp_path: Path) -> None:
     out = tmp_path / "out" / "buck.tas.json"
     result = runner.invoke(
         app,
-        ["design", "buck", "--spec", str(buck_spec), "--no-attach",
-         "--out", str(out), "--compact"],
+        ["design", "buck", "--spec", str(buck_spec), "--no-attach", "--out", str(out), "--compact"],
     )
     assert result.exit_code == 0, result.stderr
     assert out.is_file()
@@ -234,8 +249,6 @@ def test_design_realism_on_decompose_only_is_incomplete_exit_6(buck_spec: Path) 
 def test_design_realism_without_flag_exits_0(buck_spec: Path) -> None:
     """Without ``--realism`` the gate must not run; exit 0 even though
     the TAS is sparse."""
-    result = runner.invoke(
-        app, ["design", "buck", "--spec", str(buck_spec), "--no-attach"]
-    )
+    result = runner.invoke(app, ["design", "buck", "--spec", str(buck_spec), "--no-attach"])
     assert result.exit_code == 0, result.stderr
     assert "realism:" not in result.stderr

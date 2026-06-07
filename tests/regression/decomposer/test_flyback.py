@@ -60,9 +60,7 @@ def test_flyback_decompose_matches_golden() -> None:
     _maybe_update(TAS_GOLDEN, tas_json)
 
     if not SPICE_GOLDEN.exists() or not TAS_GOLDEN.exists():
-        pytest.fail(
-            "Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create."
-        )
+        pytest.fail("Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create.")
 
     assert netlist == SPICE_GOLDEN.read_text(), (
         "MKF spice deck for flyback has drifted from the golden fixture."
@@ -86,37 +84,64 @@ def test_flyback_tas_round_trip_shape() -> None:
     assert roles == ["switchingCell", "isolation", "outputRectifier", "control"], roles
 
     # Primary switch stage holds Q1 only.
-    sw_names = {c["name"] for c in tas["topology"]["stages"][0]["circuit"]["components"] if not c["name"].startswith("P_")}
+    sw_names = {
+        c["name"]
+        for c in tas["topology"]["stages"][0]["circuit"]["components"]
+        if not c["name"].startswith("P_")
+    }
     assert sw_names == {"Q1"}, sw_names
 
     # Isolation stage holds T1 only, with pri+sec0 pins.
     iso = tas["topology"]["stages"][1]
     iso_names = {c["name"] for c in iso["circuit"]["components"] if not c["name"].startswith("P_")}
     assert iso_names == {"T1"}, iso_names
-    t1 = iso["circuit"]["components"][0]
     # Pins derived from observed connection endpoints (writer convention).
-    t1_pins = {ep["pin"] for w in tas["topology"]["interStageCircuit"] for ep in w.get("endpoints", []) if ep["component"] == "T1"}
+    t1_pins = {
+        ep["pin"]
+        for w in tas["topology"]["interStageCircuit"]
+        for ep in w.get("endpoints", [])
+        if ep["component"] == "T1"
+    }
     assert t1_pins == {"pri.1", "pri.2", "sec0.1", "sec0.2"}, t1_pins
 
     # Output rectifier stage holds D_out0 and C_out0.
-    rect_names = {c["name"] for c in tas["topology"]["stages"][2]["circuit"]["components"] if not c["name"].startswith("P_")}
+    rect_names = {
+        c["name"]
+        for c in tas["topology"]["stages"][2]["circuit"]["components"]
+        if not c["name"].startswith("P_")
+    }
     assert rect_names == {"D_out0", "C_out0"}, rect_names
 
     # interStageCircuit must wire switch_node and sec0_node, plus Vin/Vout0.
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    assert set(ports) == {"Vin", "switch_node", "sec0_node", "Vout0",
-                          "GND"}
+    assert set(ports) == {"Vin", "switch_node", "sec0_node", "Vout0", "GND"}
 
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
+    vin_eps = {
+        (e["component"], e["pin"])
+        for e in ports["Vin"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert vin_eps == {("Q1", "D")}, vin_eps
 
-    sw_eps = {(e["component"], e["pin"]) for e in ports["switch_node"]["endpoints"] if not e["component"].startswith("P_")}
+    sw_eps = {
+        (e["component"], e["pin"])
+        for e in ports["switch_node"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert sw_eps == {("Q1", "S"), ("T1", "pri.1")}, sw_eps
 
-    sec_eps = {(e["component"], e["pin"]) for e in ports["sec0_node"]["endpoints"] if not e["component"].startswith("P_")}
+    sec_eps = {
+        (e["component"], e["pin"])
+        for e in ports["sec0_node"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert sec_eps == {("T1", "sec0.2"), ("D_out0", "A")}, sec_eps
 
-    vout_eps = {(e["component"], e["pin"]) for e in ports["Vout0"]["endpoints"] if not e["component"].startswith("P_")}
+    vout_eps = {
+        (e["component"], e["pin"])
+        for e in ports["Vout0"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert vout_eps == {("D_out0", "K"), ("C_out0", "1")}, vout_eps
 
     # Controller drives Q1.

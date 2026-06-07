@@ -74,20 +74,18 @@ from referencing.jsonschema import DRAFT202012
 from heaviside.librarian import safe_access as _sa
 from heaviside.librarian.safe_access import (
     LibrarianError,
-    UnknownCategoryError,
     safe_append,
 )
 
-
 __all__ = [
+    "SCHEMA_MAP",
     "DuplicateComponentError",
     "SchemaNotFoundError",
     "ValidationError",
-    "SCHEMA_MAP",
+    "add_component",
+    "component_exists",
     "load_validator",
     "validate_component",
-    "component_exists",
-    "add_component",
 ]
 
 
@@ -113,9 +111,7 @@ class ValidationError(LibrarianError):
         self.mpn = mpn
         self.errors = errors
         formatted = "\n".join(f"  [{p}] {m}" for p, m in errors)
-        super().__init__(
-            f"schema validation failed for {category}/{mpn!r}:\n{formatted}"
-        )
+        super().__init__(f"schema validation failed for {category}/{mpn!r}:\n{formatted}")
 
 
 class DuplicateComponentError(LibrarianError):
@@ -132,36 +128,59 @@ class DuplicateComponentError(LibrarianError):
 # and rarely needs to move.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+
 def _unwrap_top(key: str):
     """Build an unwrapper that descends one envelope key."""
+
     def _u(rec: dict[str, Any]) -> Any:
         if not isinstance(rec, dict) or key not in rec:
             raise ValidationError(
-                "<envelope>", _extract_mpn(rec),
-                [("(root)", f"missing envelope key {key!r}; "
-                            f"top-level keys: {sorted(rec) if isinstance(rec, dict) else type(rec).__name__}")],
+                "<envelope>",
+                _extract_mpn(rec),
+                [
+                    (
+                        "(root)",
+                        f"missing envelope key {key!r}; "
+                        f"top-level keys: {sorted(rec) if isinstance(rec, dict) else type(rec).__name__}",
+                    )
+                ],
             )
         return rec[key]
+
     return _u
 
 
 def _unwrap_two(outer: str, inner: str):
     """Build an unwrapper that descends two envelope keys."""
+
     def _u(rec: dict[str, Any]) -> Any:
         if not isinstance(rec, dict) or outer not in rec:
             raise ValidationError(
-                "<envelope>", _extract_mpn(rec),
-                [("(root)", f"missing envelope key {outer!r}; "
-                            f"top-level keys: {sorted(rec) if isinstance(rec, dict) else type(rec).__name__}")],
+                "<envelope>",
+                _extract_mpn(rec),
+                [
+                    (
+                        "(root)",
+                        f"missing envelope key {outer!r}; "
+                        f"top-level keys: {sorted(rec) if isinstance(rec, dict) else type(rec).__name__}",
+                    )
+                ],
             )
         mid = rec[outer]
         if not isinstance(mid, dict) or inner not in mid:
             raise ValidationError(
-                f"{outer}.<envelope>", _extract_mpn(rec),
-                [(outer, f"missing nested envelope key {inner!r}; "
-                         f"keys: {sorted(mid) if isinstance(mid, dict) else type(mid).__name__}")],
+                f"{outer}.<envelope>",
+                _extract_mpn(rec),
+                [
+                    (
+                        outer,
+                        f"missing nested envelope key {inner!r}; "
+                        f"keys: {sorted(mid) if isinstance(mid, dict) else type(mid).__name__}",
+                    )
+                ],
             )
         return mid[inner]
+
     return _u
 
 
@@ -181,12 +200,18 @@ def _unwrap_two(outer: str, inner: str):
 # are intentionally absent — strict-mode policy refuses to write
 # unvalidated rows through the librarian.
 SCHEMA_MAP: dict[str, tuple[Path, Any]] = {
-    "mosfets":    (_REPO_ROOT / "SAS" / "schemas" / "mosfet.json",    _unwrap_two("semiconductor", "mosfet")),
-    "diodes":     (_REPO_ROOT / "SAS" / "schemas" / "diode.json",     _unwrap_two("semiconductor", "diode")),
-    "igbts":      (_REPO_ROOT / "SAS" / "schemas" / "igbt.json",      _unwrap_two("semiconductor", "igbt")),
+    "mosfets": (
+        _REPO_ROOT / "SAS" / "schemas" / "mosfet.json",
+        _unwrap_two("semiconductor", "mosfet"),
+    ),
+    "diodes": (
+        _REPO_ROOT / "SAS" / "schemas" / "diode.json",
+        _unwrap_two("semiconductor", "diode"),
+    ),
+    "igbts": (_REPO_ROOT / "SAS" / "schemas" / "igbt.json", _unwrap_two("semiconductor", "igbt")),
     "capacitors": (_REPO_ROOT / "CAS" / "schemas" / "capacitor.json", _unwrap_top("capacitor")),
-    "resistors":  (_REPO_ROOT / "RAS" / "schemas" / "resistor.json",  _unwrap_top("resistor")),
-    "magnetics":  (_REPO_ROOT / "MAS" / "schemas" / "magnetic.json",  _unwrap_top("magnetic")),
+    "resistors": (_REPO_ROOT / "RAS" / "schemas" / "resistor.json", _unwrap_top("resistor")),
+    "magnetics": (_REPO_ROOT / "MAS" / "schemas" / "magnetic.json", _unwrap_top("magnetic")),
 }
 
 
@@ -206,13 +231,10 @@ def _read_schema(path: Path) -> dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise SchemaNotFoundError(
-            f"cannot read schema at {path}: {exc}"
-        ) from exc
+        raise SchemaNotFoundError(f"cannot read schema at {path}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise LibrarianError(
-            f"schema at {path} is not valid JSON: {exc.msg} "
-            f"(line {exc.lineno}, col {exc.colno})"
+            f"schema at {path} is not valid JSON: {exc.msg} (line {exc.lineno}, col {exc.colno})"
         ) from exc
 
 
@@ -256,7 +278,8 @@ def _build_registry(schema_path: Path) -> Registry:
         sid = local_utils.get("$id")
         if sid:
             resource = Resource.from_contents(
-                local_utils, default_specification=DRAFT202012,
+                local_utils,
+                default_specification=DRAFT202012,
             )
             registry = registry.with_resource(sid, resource)
             registry = registry.with_resource("./utils.json", resource)
@@ -269,7 +292,8 @@ def _build_registry(schema_path: Path) -> Registry:
         sid = peas_utils.get("$id")
         if sid:
             resource = Resource.from_contents(
-                peas_utils, default_specification=DRAFT202012,
+                peas_utils,
+                default_specification=DRAFT202012,
             )
             registry = registry.with_resource(sid, resource)
             if not local_utils_registered:
@@ -334,8 +358,7 @@ def _extract_mpn(component: dict[str, Any]) -> str:
     Returns ``"UNKNOWN"`` if no MPN can be located — never throws,
     because this is used only to label error messages.
     """
-    for envelope in ("resistor", "capacitor", "magnetic",
-                     "mosfet", "controller"):
+    for envelope in ("resistor", "capacitor", "magnetic", "mosfet", "controller"):
         inner = component.get(envelope)
         if isinstance(inner, dict):
             mi = inner.get("manufacturerInfo")
@@ -391,7 +414,7 @@ def validate_component(category: str, component: dict[str, Any]) -> None:
     """
     validator = load_validator(category)
     _, unwrap = SCHEMA_MAP[category]
-    payload = unwrap(component)   # may raise ValidationError on bad envelope
+    payload = unwrap(component)  # may raise ValidationError on bad envelope
 
     errors = list(validator.iter_errors(payload))
     if not errors:
@@ -494,9 +517,7 @@ def component_exists(category: str, part_number: str) -> bool:
     """
     _sa._validate_category(category)
     if not part_number:
-        raise LibrarianError(
-            "component_exists: part_number must be a non-empty string"
-        )
+        raise LibrarianError("component_exists: part_number must be a non-empty string")
     target = part_number.upper()
 
     path = _sa.TAS_DATA_DIR / f"{category}.ndjson"
@@ -555,8 +576,7 @@ def add_component(category: str, component: dict[str, Any]) -> None:
     """
     if not isinstance(component, dict):
         raise LibrarianError(
-            f"add_component: component must be a dict, got "
-            f"{type(component).__name__}"
+            f"add_component: component must be a dict, got {type(component).__name__}"
         )
 
     validate_component(category, component)

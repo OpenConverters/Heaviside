@@ -24,7 +24,6 @@ from heaviside.agents.tools import (
     resolve_tools,
 )
 
-
 EXPECTED_TOOL_NAMES = {
     "add_component",
     "validate_component",
@@ -45,7 +44,7 @@ def test_registry_advertises_expected_tools() -> None:
 def test_agent_tools_list_matches_registry() -> None:
     assert len(AGENT_TOOLS) == len(TOOL_REGISTRY)
     # Same identity, registration order
-    for tool, (name, registered) in zip(AGENT_TOOLS, TOOL_REGISTRY.items()):
+    for tool, (_name, registered) in zip(AGENT_TOOLS, TOOL_REGISTRY.items(), strict=False):
         assert tool is registered
 
 
@@ -75,10 +74,18 @@ def test_resolve_tools_raises_on_unknown_name() -> None:
 def test_list_categories_reports_writable_and_auditable() -> None:
     raw = RAW_FUNCTIONS["list_categories"]()
     assert set(raw["writable"]) >= {
-        "mosfets", "diodes", "igbts", "capacitors", "resistors", "magnetics",
+        "mosfets",
+        "diodes",
+        "igbts",
+        "capacitors",
+        "resistors",
+        "magnetics",
     }
     assert set(raw["auditable"]) >= {
-        "mosfets", "diodes", "capacitors", "magnetics",
+        "mosfets",
+        "diodes",
+        "capacitors",
+        "magnetics",
     }
 
 
@@ -91,29 +98,34 @@ def test_validate_component_runs_real_schema(tmp_path, monkeypatch) -> None:
     # A bare envelope should be rejected by the SAS schema for missing
     # required electrical fields.
     from heaviside.librarian import ValidationError
+
     payload = json.dumps({"mosfet": {"manufacturerInfo": {}}})
     with pytest.raises(ValidationError):
         RAW_FUNCTIONS["validate_component"]("mosfets", payload)
 
 
 def test_audit_component_serializes_dataclass() -> None:
-    payload = json.dumps({
-        "mosfet": {
-            "manufacturerInfo": {
-                "name": "TestMfr",
-                "reference": "TEST-FET-001",
-                "datasheetInfo": {
-                    "part": {"partNumber": "TEST-FET-001"},
-                    "electrical": {},
+    payload = json.dumps(
+        {
+            "mosfet": {
+                "manufacturerInfo": {
+                    "name": "TestMfr",
+                    "reference": "TEST-FET-001",
+                    "datasheetInfo": {
+                        "part": {"partNumber": "TEST-FET-001"},
+                        "electrical": {},
+                    },
                 },
             },
-        },
-    })
+        }
+    )
     out = RAW_FUNCTIONS["audit_component"]("mosfets", payload)
     assert out["mpn"] == "TEST-FET-001"
     assert out["passed"] is False
     assert {g["field"] for g in out["critical_failures"]} >= {
-        "outputCapacitance", "totalGateCharge", "gateThresholdVoltage",
+        "outputCapacitance",
+        "totalGateCharge",
+        "gateThresholdVoltage",
     }
 
 
@@ -133,7 +145,8 @@ def test_component_exists_wrapper_delegates() -> None:
     # L2802/L2806/L2810 (gated via strict-xfail tests) which would
     # legitimately raise from component_exists.  resistors is clean.
     result = RAW_FUNCTIONS["component_exists"](
-        "resistors", "ZZZ-NOT-A-REAL-MPN-XYZ-9999",
+        "resistors",
+        "ZZZ-NOT-A-REAL-MPN-XYZ-9999",
     )
     assert result is False
 

@@ -56,9 +56,10 @@ adversarial dynamic between auditor and librarian agents.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict, replace
-from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
+from typing import Any
 
 from heaviside.librarian.auditor import (
     AUDITABLE_CATEGORIES,
@@ -70,26 +71,25 @@ from heaviside.librarian.auditor import (
 from heaviside.librarian.fetcher.base import IncompleteSourceError
 from heaviside.librarian.safe_access import LibrarianError
 
-
 __all__ = [
+    "DATASHEET_FIRST_ORDER",
     "DATASHEET_PREFERRED_FIELDS",
     "DEFAULT_SOURCE_ORDER",
-    "DATASHEET_FIRST_ORDER",
     "KNOWN_SOURCES",
     "PRIORITY_CRITICAL",
     "PRIORITY_WARNING",
     "RECIPE_SCHEMA_VERSION",
-    "RepairTask",
     "RepairRecipe",
+    "RepairTask",
     "filter_by_category",
     "filter_by_first_source",
     "is_exhausted",
-    "record_attempt",
-    "record_failure",
     "recipe_from_audit_all",
     "recipe_from_category_audit",
     "recipe_from_json",
     "recipe_to_json",
+    "record_attempt",
+    "record_failure",
     "sources_for_field",
     "tasks_from_component_audit",
 ]
@@ -118,32 +118,34 @@ KNOWN_SOURCES: frozenset[str] = frozenset({"digikey", "mouser", "datasheet"})
 #   datasheet to avoid the per-technology branching.
 # * Junction-T max is reported inconsistently across distributors
 #   (sometimes °C, sometimes K, sometimes absent).
-DATASHEET_PREFERRED_FIELDS: frozenset[str] = frozenset({
-    # MOSFETs
-    "reverseRecoveryCharge",
-    "bodyDiodeForwardVoltage",
-    "reverseRecoveryTime",
-    "reverseTransferCapacitance",
-    "gateDrainCharge",
-    "gateSourceCharge",
-    # IGBTs
-    "turnOnEnergy",
-    "turnOffEnergy",
-    "gateEmitterThreshold",
-    "switchingEnergyOn",
-    "switchingEnergyOff",
-    # Capacitors
-    "esr",
-    "rippleCurrent",
-    "dissipationFactor",
-    "leakageCurrent",
-    "lifetimeHours",
-    # Resistors
-    "temperatureCoefficient",
-    "maximumVoltage",
-    # Thermal (any category)
-    "junctionTemperatureMax",
-})
+DATASHEET_PREFERRED_FIELDS: frozenset[str] = frozenset(
+    {
+        # MOSFETs
+        "reverseRecoveryCharge",
+        "bodyDiodeForwardVoltage",
+        "reverseRecoveryTime",
+        "reverseTransferCapacitance",
+        "gateDrainCharge",
+        "gateSourceCharge",
+        # IGBTs
+        "turnOnEnergy",
+        "turnOffEnergy",
+        "gateEmitterThreshold",
+        "switchingEnergyOn",
+        "switchingEnergyOff",
+        # Capacitors
+        "esr",
+        "rippleCurrent",
+        "dissipationFactor",
+        "leakageCurrent",
+        "lifetimeHours",
+        # Resistors
+        "temperatureCoefficient",
+        "maximumVoltage",
+        # Thermal (any category)
+        "junctionTemperatureMax",
+    }
+)
 
 
 DEFAULT_SOURCE_ORDER: tuple[str, ...] = ("digikey", "mouser", "datasheet")
@@ -225,6 +227,7 @@ class RepairTask:
         through so the librarian agent can write the enriched row
         back to the same line on the safe-access transaction.
     """
+
     category: str
     mpn: str
     field: str
@@ -244,6 +247,7 @@ class RepairRecipe:
     (:func:`record_attempt`, :func:`record_failure`) return new
     recipes.
     """
+
     generated_at: str
     schema_version: str
     tasks: tuple[RepairTask, ...]
@@ -264,8 +268,7 @@ def _validate_gap(gap: FieldGap) -> None:
     """Ensure the gap describes an actually-missing field."""
     if gap.status == FieldStatus.PRESENT:
         raise LibrarianError(
-            f"_validate_gap: FieldGap with status PRESENT cannot become "
-            f"a repair task; gap={gap!r}"
+            f"_validate_gap: FieldGap with status PRESENT cannot become a repair task; gap={gap!r}"
         )
 
 
@@ -315,7 +318,7 @@ def tasks_from_component_audit(audit: ComponentAudit) -> list[RepairTask]:
 
 
 def _now_iso() -> str:
-    return datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(tz=UTC).isoformat(timespec="seconds")
 
 
 def _summary(tasks: Iterable[RepairTask]) -> dict[str, int]:
@@ -326,7 +329,9 @@ def _summary(tasks: Iterable[RepairTask]) -> dict[str, int]:
 
 
 def recipe_from_category_audit(
-    audit: CategoryAudit, *, generated_at: str | None = None,
+    audit: CategoryAudit,
+    *,
+    generated_at: str | None = None,
 ) -> RepairRecipe:
     """Build a recipe from a single category audit.
 
@@ -405,32 +410,31 @@ def recipe_to_json(recipe: RepairRecipe, *, indent: int | None = 2) -> str:
 def _coerce_task(raw: Any) -> RepairTask:
     if not isinstance(raw, dict):
         raise LibrarianError(
-            f"recipe_from_json: task entries must be JSON objects; got "
-            f"{type(raw).__name__}"
+            f"recipe_from_json: task entries must be JSON objects; got {type(raw).__name__}"
         )
     required = {
-        "category", "mpn", "field", "missing_field", "status",
-        "sources", "priority",
+        "category",
+        "mpn",
+        "field",
+        "missing_field",
+        "status",
+        "sources",
+        "priority",
     }
     missing = required - set(raw)
     if missing:
         raise LibrarianError(
-            f"recipe_from_json: task is missing fields {sorted(missing)}; "
-            f"got keys {sorted(raw)}"
+            f"recipe_from_json: task is missing fields {sorted(missing)}; got keys {sorted(raw)}"
         )
     sources = raw["sources"]
-    if not isinstance(sources, list) or any(
-        not isinstance(s, str) for s in sources
-    ):
+    if not isinstance(sources, list) or any(not isinstance(s, str) for s in sources):
         raise LibrarianError(
-            f"recipe_from_json: 'sources' must be a list of strings; "
-            f"got {sources!r}"
+            f"recipe_from_json: 'sources' must be a list of strings; got {sources!r}"
         )
     line = raw.get("line")
     if line is not None and not isinstance(line, int):
         raise LibrarianError(
-            f"recipe_from_json: 'line' must be int or null; got "
-            f"{type(line).__name__}"
+            f"recipe_from_json: 'line' must be int or null; got {type(line).__name__}"
         )
     return RepairTask(
         category=raw["category"],
@@ -454,20 +458,15 @@ def recipe_from_json(text: str) -> RepairRecipe:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise LibrarianError(
-            f"recipe_from_json: not valid JSON: {exc}"
-        ) from exc
+        raise LibrarianError(f"recipe_from_json: not valid JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise LibrarianError(
-            f"recipe_from_json: top-level value must be a JSON object; "
-            f"got {type(payload).__name__}"
+            f"recipe_from_json: top-level value must be a JSON object; got {type(payload).__name__}"
         )
     required_top = {"schema_version", "generated_at", "summary", "tasks"}
     missing = required_top - set(payload)
     if missing:
-        raise LibrarianError(
-            f"recipe_from_json: payload missing keys {sorted(missing)}"
-        )
+        raise LibrarianError(f"recipe_from_json: payload missing keys {sorted(missing)}")
     if payload["schema_version"] != RECIPE_SCHEMA_VERSION:
         raise LibrarianError(
             f"recipe_from_json: schema_version "
@@ -477,8 +476,7 @@ def recipe_from_json(text: str) -> RepairRecipe:
         )
     if not isinstance(payload["tasks"], list):
         raise LibrarianError(
-            f"recipe_from_json: 'tasks' must be a JSON array; got "
-            f"{type(payload['tasks']).__name__}"
+            f"recipe_from_json: 'tasks' must be a JSON array; got {type(payload['tasks']).__name__}"
         )
     if not isinstance(payload["summary"], dict):
         raise LibrarianError(
@@ -524,12 +522,9 @@ def filter_by_first_source(recipe: RepairRecipe, source: str) -> RepairRecipe:
     """
     if source not in KNOWN_SOURCES:
         raise LibrarianError(
-            f"filter_by_first_source: unknown source {source!r}; "
-            f"known: {sorted(KNOWN_SOURCES)}"
+            f"filter_by_first_source: unknown source {source!r}; known: {sorted(KNOWN_SOURCES)}"
         )
-    selected = tuple(
-        t for t in recipe.tasks if t.sources and t.sources[0] == source
-    )
+    selected = tuple(t for t in recipe.tasks if t.sources and t.sources[0] == source)
     return RepairRecipe(
         generated_at=recipe.generated_at,
         schema_version=recipe.schema_version,
@@ -571,9 +566,7 @@ def _replace_task(
         else:
             new_tasks.append(t)
     if not matched:
-        raise LibrarianError(
-            f"recipe has no task for (mpn={mpn!r}, field={field_name!r})"
-        )
+        raise LibrarianError(f"recipe has no task for (mpn={mpn!r}, field={field_name!r})")
     tasks = tuple(new_tasks)
     return RepairRecipe(
         generated_at=recipe.generated_at,
@@ -607,8 +600,7 @@ def record_attempt(
     """
     if source not in KNOWN_SOURCES:
         raise LibrarianError(
-            f"record_attempt: unknown source {source!r}; "
-            f"known: {sorted(KNOWN_SOURCES)}"
+            f"record_attempt: unknown source {source!r}; known: {sorted(KNOWN_SOURCES)}"
         )
     # Locate the task first so we can validate the source claim.
     for t in recipe.tasks:
@@ -623,10 +615,7 @@ def record_attempt(
                 )
             break
     else:
-        raise LibrarianError(
-            f"record_attempt: no task for (mpn={mpn!r}, "
-            f"field={field_name!r})"
-        )
+        raise LibrarianError(f"record_attempt: no task for (mpn={mpn!r}, field={field_name!r})")
     if succeeded:
         return _replace_task(recipe, mpn, field_name, None)
     new_sources = tuple(s for s in t.sources if s != source)
@@ -634,7 +623,8 @@ def record_attempt(
 
 
 def record_failure(
-    recipe: RepairRecipe, error: IncompleteSourceError,
+    recipe: RepairRecipe,
+    error: IncompleteSourceError,
 ) -> RepairRecipe:
     """Shortcut for the common case: the librarian agent caught an
     :class:`IncompleteSourceError` (or its subclass
@@ -651,7 +641,7 @@ def record_failure(
             f"does not start with 'electrical.'; cannot map to a "
             f"RepairTask.field"
         )
-    bare = error.missing_field[len("electrical."):]
+    bare = error.missing_field[len("electrical.") :]
     return record_attempt(
         recipe,
         mpn=error.mpn,

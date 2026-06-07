@@ -49,8 +49,8 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from heaviside.topologies.registry import TopologyEntry, get
 from heaviside._pyom_cache import cached_call
+from heaviside.topologies.registry import TopologyEntry, get
 
 ExtraComponentsMode = Literal["IDEAL", "REAL"]
 
@@ -149,6 +149,7 @@ def _import_pyom() -> Any:
     import contextlib
 
     from PyOpenMagnetics import PyOpenMagnetics as _ext
+
     if not _pyom_settings_applied:
         # If a future PyOM build drops one of these keys, swallow it
         # rather than crashing import — the realism gate is independent
@@ -228,7 +229,7 @@ def design_magnetics(
     if use_only_cores_in_stock is not None:
         try:
             _prior_in_stock = bool(pyom.get_settings().get("useOnlyCoresInStock", True))
-        except Exception:  # noqa: BLE001
+        except Exception:
             _prior_in_stock = None
         pyom.set_settings({"useOnlyCoresInStock": bool(use_only_cores_in_stock)})
 
@@ -240,17 +241,28 @@ def design_magnetics(
             _weights_arg = dict(weights) if weights is not None else None
             result = cached_call(
                 "design_magnetics_from_converter",
-                (variant, _spec_arg, int(max_results), str(core_mode),
-                 bool(use_ngspice), _weights_arg,
-                 # cache-key discriminator: None preserves the legacy key
-                 # (callers that never pin the flag get identical keys to
-                 # before); an explicit bool partitions the namespace.
-                 ("stock" if use_only_cores_in_stock else "allcores")
-                 if use_only_cores_in_stock is not None else None),
+                (
+                    variant,
+                    _spec_arg,
+                    int(max_results),
+                    str(core_mode),
+                    bool(use_ngspice),
+                    _weights_arg,
+                    # cache-key discriminator: None preserves the legacy key
+                    # (callers that never pin the flag get identical keys to
+                    # before); an explicit bool partitions the namespace.
+                    ("stock" if use_only_cores_in_stock else "allcores")
+                    if use_only_cores_in_stock is not None
+                    else None,
+                ),
                 call=lambda v=variant, s=_spec_arg, w=_weights_arg: (
                     pyom.design_magnetics_from_converter(
-                        v, s, int(max_results), str(core_mode),
-                        bool(use_ngspice), w,
+                        v,
+                        s,
+                        int(max_results),
+                        str(core_mode),
+                        bool(use_ngspice),
+                        w,
                     )
                 ),
             )
@@ -270,9 +282,7 @@ def design_magnetics(
                 if isinstance(err, str) and "Unknown topology" in err:
                     last_error = err
                     continue
-                raise BridgeError(
-                    f"PyOpenMagnetics rejected topology {variant!r}: {err}"
-                )
+                raise BridgeError(f"PyOpenMagnetics rejected topology {variant!r}: {err}")
 
             data = result.get("data")
             if not isinstance(data, list):
@@ -373,14 +383,15 @@ def design_magnetics_fast(
 
         t0 = time.monotonic()
         result = pyom.calculate_advised_magnetics_fast(
-            inputs_raw, int(max_results), str(core_mode),
+            inputs_raw,
+            int(max_results),
+            str(core_mode),
         )
         elapsed = time.monotonic() - t0
 
         if not isinstance(result, dict):
             raise BridgeError(
-                f"calculate_advised_magnetics_fast returned "
-                f"{type(result).__name__}, expected dict."
+                f"calculate_advised_magnetics_fast returned {type(result).__name__}, expected dict."
             )
         if result.get("error"):
             raise BridgeError(
@@ -412,11 +423,13 @@ def design_magnetics_fast(
                     f"calculate_advised_magnetics_fast entry missing mas/scoring: "
                     f"{sorted(item) if isinstance(item, Mapping) else type(item).__name__}"
                 )
-            designs.append(MagneticDesign(
-                scoring=float(scoring),
-                mas=dict(mas),
-                elapsed_s=float(elapsed) / max(1, len(data)),
-            ))
+            designs.append(
+                MagneticDesign(
+                    scoring=float(scoring),
+                    mas=dict(mas),
+                    elapsed_s=float(elapsed) / max(1, len(data)),
+                )
+            )
         # PyOM returns ascending losses; lower scoring = better magnetic.
         # Heaviside's MagneticDesign convention (used by design_magnetics)
         # is "higher scoring = better", so keep as-is and let callers
@@ -581,9 +594,7 @@ def _tas_capacitor_components(tas: Mapping[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _attach_one_capacitor(
-    component: dict[str, Any], spec: ExtraCapacitorSpec
-) -> None:
+def _attach_one_capacitor(component: dict[str, Any], spec: ExtraCapacitorSpec) -> None:
     """Emit a PEAS capacitor document into ``component['data']`` (mutating).
 
     Pre-binding the capacitor body is an empty stub ``{}`` (allowed by
@@ -637,9 +648,7 @@ def _resolve_extra_role(
     return target
 
 
-def _binding_role(
-    name: str, binding: Mapping[str, str | None]
-) -> str | None | "_Unbound":
+def _binding_role(name: str, binding: Mapping[str, str | None]) -> str | None | _Unbound:
     """Look up the binding role for a TAS magnetic ``name``.
 
     Output chokes of a multi-output forward-family converter are named
@@ -712,9 +721,7 @@ def attach_components_to_tas(
         )
 
     tas_names = [c.get("name") for c in magnetics]
-    missing = [
-        n for n in tas_names if isinstance(_binding_role(n or "", binding), _Unbound)
-    ]
+    missing = [n for n in tas_names if isinstance(_binding_role(n or "", binding), _Unbound)]
     if missing:
         raise BridgeError(
             f"attach_components_to_tas: TAS magnetics {missing} have no "
@@ -739,9 +746,7 @@ def attach_components_to_tas(
             # ``target`` is a role string (the _Unbound case was rejected
             # by the missing-check above). Resolve per-rail fan-out.
             assert isinstance(target, str)
-            resolved = _resolve_extra_role(
-                target, name, components.extra_magnetics.keys()
-            )
+            resolved = _resolve_extra_role(target, name, components.extra_magnetics.keys())
             if resolved not in components.extra_magnetics:
                 raise BridgeError(
                     f"attach_components_to_tas: TAS magnetic {name!r} "
@@ -937,11 +942,7 @@ def _harvest_authoritative_inductance(mas: Mapping[str, Any]) -> float:
     #    Order: nominal → minimum → maximum. Buck/boost only set
     #    minimum and its value is a *floor*, not the L actually used,
     #    so this branch is best-effort.
-    mi = (
-        mas.get("inputs", {})
-           .get("designRequirements", {})
-           .get("magnetizingInductance", {})
-    )
+    mi = mas.get("inputs", {}).get("designRequirements", {}).get("magnetizingInductance", {})
     if isinstance(mi, Mapping):
         for key in ("nominal", "minimum", "maximum"):
             value = mi.get(key)
@@ -986,9 +987,7 @@ def extra_components(
     pyom = _import_pyom()
 
     if mode not in ("IDEAL", "REAL"):
-        raise BridgeError(
-            f"extra_components: mode must be 'IDEAL' or 'REAL', got {mode!r}."
-        )
+        raise BridgeError(f"extra_components: mode must be 'IDEAL' or 'REAL', got {mode!r}.")
     if mode == "REAL" and main_magnetic_mas is None:
         raise BridgeError(
             "extra_components: mode='REAL' requires main_magnetic_mas "
@@ -1001,14 +1000,12 @@ def extra_components(
     last_error: str | None = None
     for variant in entry.pyom_names:
         _spec_arg = dict(converter_spec)
-        _mmm_arg = (
-            dict(main_magnetic_mas) if main_magnetic_mas is not None else None
-        )
+        _mmm_arg = dict(main_magnetic_mas) if main_magnetic_mas is not None else None
         result = cached_call(
             "get_extra_components_inputs",
             (variant, _spec_arg, mode, _mmm_arg),
-            call=lambda v=variant, s=_spec_arg, m=_mmm_arg: (
-                pyom.get_extra_components_inputs(v, s, mode, m)
+            call=lambda v=variant, s=_spec_arg, m=_mmm_arg: pyom.get_extra_components_inputs(
+                v, s, mode, m
             ),
         )
 
@@ -1018,9 +1015,7 @@ def extra_components(
             if isinstance(err, str) and "Unknown topology" in err:
                 last_error = err
                 continue
-            raise BridgeError(
-                f"get_extra_components_inputs({variant!r}) failed: {err}"
-            )
+            raise BridgeError(f"get_extra_components_inputs({variant!r}) failed: {err}")
 
         if not isinstance(result, list):
             raise BridgeError(
@@ -1094,8 +1089,7 @@ def design_extra_magnetic(
     """
     if not isinstance(spec, ExtraMagneticSpec):
         raise BridgeError(
-            f"design_extra_magnetic: spec must be ExtraMagneticSpec, "
-            f"got {type(spec).__name__}."
+            f"design_extra_magnetic: spec must be ExtraMagneticSpec, got {type(spec).__name__}."
         )
     pyom = _import_pyom()
 
@@ -1104,8 +1098,8 @@ def design_extra_magnetic(
     result = cached_call(
         "calculate_advised_magnetics",
         (_spec_inputs, int(max_results), str(core_mode)),
-        call=lambda s=_spec_inputs: (
-            pyom.calculate_advised_magnetics(s, int(max_results), str(core_mode))
+        call=lambda s=_spec_inputs: pyom.calculate_advised_magnetics(
+            s, int(max_results), str(core_mode)
         ),
     )
     elapsed = time.monotonic() - t0
@@ -1119,9 +1113,7 @@ def design_extra_magnetic(
     if isinstance(data, str):
         # PyOM signals catalog-empty / schema errors by putting an error
         # string in 'data' rather than 'error'.
-        raise BridgeError(
-            f"calculate_advised_magnetics({spec.name!r}) failed: {data}"
-        )
+        raise BridgeError(f"calculate_advised_magnetics({spec.name!r}) failed: {data}")
     if not isinstance(data, list):
         raise BridgeError(
             f"calculate_advised_magnetics({spec.name!r}) returned "
@@ -1220,6 +1212,7 @@ def _ipeak_worst_from_stress(topology: str, spec: Mapping[str, Any]) -> float | 
     the filter" and falls back to PyMKF's top scorer.
     """
     from heaviside.pipeline.stress import StressDerivationError, derive_stresses
+
     try:
         s = derive_stresses(topology, spec)
     except StressDerivationError:
@@ -1233,11 +1226,11 @@ _IPEAK_WORST: dict[str, Any] = {
     # Buck stays on the L-derived ripple formula (Vout * (1 - Dmin) /
     # (0.8 * L * fsw) / 2) so the post-filter and realism extract.py
     # agree on Ipeak without requiring currentRippleRatio in the spec.
-    "buck":    _ipeak_worst_buck,
+    "buck": _ipeak_worst_buck,
     # Other topologies use the spec.currentRippleRatio path via the
     # stress deriver (less restrictive — works without knowing L).
-    "boost":   lambda spec: _ipeak_worst_from_stress("boost", spec),
-    "cuk":     lambda spec: _ipeak_worst_from_stress("cuk", spec),
+    "boost": lambda spec: _ipeak_worst_from_stress("boost", spec),
+    "cuk": lambda spec: _ipeak_worst_from_stress("cuk", spec),
     "flyback": lambda spec: _ipeak_worst_from_stress("flyback", spec),
 }
 
@@ -1248,69 +1241,41 @@ def _isat_from_mas(
     *,
     temperature_c: float = 100.0,
 ) -> float | None:
-    """Authoritative saturation current for a candidate magnetic.
+    """Authoritative saturation current for a candidate magnetic, or
+    ``None`` if it cannot be evaluated.
 
-    Calls ``PyOpenMagnetics.calculate_saturation_current(magnetic, T)``
-    which accounts for the air gap (vital — gapped cores have Isat several
-    times larger than ungapped, because the gap dominates the reluctance).
-    Falls back to the analytical ``B_sat * N * A_e / L`` only if the PyOM
-    call fails; that fallback is wildly conservative for gapped cores so
-    we log nothing — the caller treats ``None`` as "skip this candidate".
+    Delegates entirely to ``PyOpenMagnetics.calculate_saturation_current(
+    magnetic, T)`` — MKF owns this physics (it accounts for the air gap,
+    which is vital: gapped cores have Isat several times larger than
+    ungapped because the gap dominates the reluctance). There is **no**
+    analytical fallback: per the project rule, magnetics math lives in MKF
+    and we never substitute a fabricated ``B_sat·N·A_e/L`` scalar.
 
-    The ``L_henries`` parameter is retained for the fallback branch and
-    for caller-side sanity checks. ``temperature_c`` defaults to 100 °C
-    because that's the conservative worst case for ferrite B_sat across
-    a typical 25–125 °C operating range.
+    When PyOM cannot evaluate the candidate (missing fields, unknown gap
+    type, …) this returns ``None`` — an honest "cannot evaluate, skip this
+    candidate" signal, not a fabricated value. The post-filter callers
+    treat ``None`` accordingly; if *no* candidate can be evaluated the
+    strict-mode path surfaces that honestly instead of shipping a guess.
+    Note the safety-critical Isat the realism gate consumes comes from the
+    extract enricher, which *raises* (never returns) on PyOM rejection.
+
+    The ``L_henries`` parameter is retained for the ``L_henries <= 0``
+    sanity guard and caller-side checks. ``temperature_c`` defaults to
+    100 °C because that's the conservative worst case for ferrite B_sat
+    across a typical 25–125 °C operating range.
     """
     if not isinstance(mas, Mapping) or L_henries <= 0:
         return None
     try:
         pyom = _import_pyom()
         isat = pyom.calculate_saturation_current(dict(mas), float(temperature_c))
-        if isinstance(isat, (int, float)) and isat > 0:
-            return float(isat)
     except Exception:
-        # PyOM may reject the MAS (missing fields, unknown gap type, …)
-        # — fall through to the analytical fallback rather than crashing
-        # the whole post-filter run.
-        pass
-    # Analytical fallback (treats gap as zero — wildly conservative for
-    # gapped cores; only useful as a "better than nothing" lower bound).
-    try:
-        A_e = (
-            mas.get("core", {})
-            .get("processedDescription", {})
-            .get("effectiveParameters", {})
-            .get("effectiveArea")
-        )
-        if not isinstance(A_e, (int, float)) or A_e <= 0:
-            return None
-        fd = mas.get("coil", {}).get("functionalDescription")
-        if not (isinstance(fd, list) and fd and isinstance(fd[0], Mapping)):
-            return None
-        N = fd[0].get("numberTurns")
-        if not isinstance(N, (int, float)) or N <= 0:
-            return None
-        sat = (
-            mas.get("core", {})
-            .get("functionalDescription", {})
-            .get("material", {})
-            .get("saturation")
-        )
-        if not (isinstance(sat, list) and sat):
-            return None
-        b_values = [
-            p["magneticFluxDensity"] for p in sat
-            if isinstance(p, Mapping)
-            and isinstance(p.get("magneticFluxDensity"), (int, float))
-            and p.get("magneticFluxDensity") > 0
-        ]
-        if not b_values:
-            return None
-        b_sat = min(b_values)
-        return float(b_sat) * float(N) * float(A_e) / float(L_henries)
-    except (KeyError, TypeError, AttributeError):
+        # PyOM rejected the MAS — cannot evaluate this candidate. Return
+        # None so the post-filter skips it; do NOT fabricate a value.
         return None
+    if isinstance(isat, (int, float)) and isat > 0:
+        return float(isat)
+    return None
 
 
 def _select_main_by_isat_margin(
@@ -1402,7 +1367,10 @@ def select_fast_by_isat_margin(
     """
     entry = topology if isinstance(topology, TopologyEntry) else get(topology)
     candidates = design_magnetics_fast(
-        entry, spec, max_results=n_candidates, core_mode=core_mode,
+        entry,
+        spec,
+        max_results=n_candidates,
+        core_mode=core_mode,
     )
     if min_isat_ratio <= 0 or not candidates:
         return candidates
@@ -1424,7 +1392,10 @@ def select_fast_by_isat_margin(
     clearing = [c for c in candidates if _clears(c)]
     if not clearing and n_candidates < widen_pool:
         widened = design_magnetics_fast(
-            entry, spec, max_results=widen_pool, core_mode=core_mode,
+            entry,
+            spec,
+            max_results=widen_pool,
+            core_mode=core_mode,
         )
         clearing = [c for c in widened if _clears(c)]
     return clearing if clearing else candidates
@@ -1448,13 +1419,20 @@ def _try_pick_main(
     retry without a third design_magnetics call.
     """
     candidates = design_magnetics(
-        entry, converter_spec, max_results=pool,
-        core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
+        entry,
+        converter_spec,
+        max_results=pool,
+        core_mode=core_mode,
+        use_ngspice=use_ngspice,
+        weights=weights,
         use_only_cores_in_stock=use_only_cores_in_stock,
     )
     picked = _select_main_by_isat_margin(
-        candidates, entry, converter_spec,
-        min_isat_ratio=min_isat_ratio, strict=strict,
+        candidates,
+        entry,
+        converter_spec,
+        min_isat_ratio=min_isat_ratio,
+        strict=strict,
     )
     return picked, candidates
 
@@ -1527,14 +1505,14 @@ def design_converter_components(
     # honestly and we never enter the tier-2 branch.
     try:
         main, main_designs = _try_pick_main(
-            entry, converter_spec, pool=pool,
-            core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
+            entry,
+            converter_spec,
+            pool=pool,
+            core_mode=core_mode,
+            use_ngspice=use_ngspice,
+            weights=weights,
             min_isat_ratio=min_isat_ratio,
-            strict=(
-                not _is_crashy
-                and min_isat_ratio > 0
-                and int(fallback_pool_size) > pool
-            ),
+            strict=(not _is_crashy and min_isat_ratio > 0 and int(fallback_pool_size) > pool),
         )
     except BridgeError as exc:
         # Tier-1 (stock-only) found zero candidates. For high-step-down
@@ -1568,10 +1546,7 @@ def design_converter_components(
         # (stock-only exhausted by the saturation filter), the segfault guard
         # does not apply — the full catalogue is a different, larger pool — so
         # request the full fallback_pool_size to let passing candidates appear.
-        if main_designs:
-            safe_pool = max(pool, 2 * len(main_designs))
-        else:
-            safe_pool = int(fallback_pool_size)
+        safe_pool = max(pool, 2 * len(main_designs)) if main_designs else int(fallback_pool_size)
         tier2_pool = min(int(fallback_pool_size), safe_pool)
         if tier2_pool <= pool and main_designs:
             # No room to actually escalate — accept tier-1's top scorer.
@@ -1583,9 +1558,12 @@ def design_converter_components(
             # tier-1 (same args) would be replayed and the escalation would be
             # a no-op. design_magnetics restores the prior setting itself.
             main2, main_designs2 = _try_pick_main(
-                entry, converter_spec,
+                entry,
+                converter_spec,
                 pool=tier2_pool,
-                core_mode=core_mode, use_ngspice=use_ngspice, weights=weights,
+                core_mode=core_mode,
+                use_ngspice=use_ngspice,
+                weights=weights,
                 min_isat_ratio=min_isat_ratio,
                 strict=False,  # last attempt: honest fallback to top scorer
                 use_only_cores_in_stock=False,
@@ -1619,8 +1597,11 @@ def design_converter_components(
             )
             if _main_isat is None or _main_isat < _threshold:
                 for _cand in select_fast_by_isat_margin(
-                    entry, converter_spec, n_candidates=5,
-                    core_mode=core_mode, min_isat_ratio=min_isat_ratio,
+                    entry,
+                    converter_spec,
+                    n_candidates=5,
+                    core_mode=core_mode,
+                    min_isat_ratio=min_isat_ratio,
                 ):
                     _cL = _harvest_authoritative_inductance(_cand.mas)
                     _ci = (

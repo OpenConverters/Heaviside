@@ -34,7 +34,6 @@ import pytest
 from heaviside.librarian import safe_access as sa
 from heaviside.librarian import tas
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -83,7 +82,9 @@ _VALID_RECORDS: dict[str, dict[str, Any]] = {
                             # SAS schema tightening (May 2026): the three
                             # below are now schema-required for mosfets.
                             "gateThresholdVoltage": {
-                                "minimum": 2.0, "nominal": 3.0, "maximum": 4.0,
+                                "minimum": 2.0,
+                                "nominal": 3.0,
+                                "maximum": 4.0,
                             },
                             "outputCapacitance": 250e-12,
                             "totalGateCharge": 80e-9,
@@ -118,7 +119,6 @@ def _load_first_real_record(category: str) -> dict[str, Any]:
 
 
 class TestSchemaMap:
-
     def test_all_known_categories_load(self):
         for cat in tas.SCHEMA_MAP:
             v = tas.load_validator(cat)
@@ -143,15 +143,18 @@ class TestSchemaMap:
         assert v1 is v2
 
     def test_missing_schema_file_raises(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ):
         bogus = tmp_path / "missing.json"
         monkeypatch.setitem(
-            tas.SCHEMA_MAP, "mosfets",
+            tas.SCHEMA_MAP,
+            "mosfets",
             (bogus, tas.SCHEMA_MAP["mosfets"][1]),
         )
         tas._clear_validator_cache()
-        with pytest.raises(tas.SchemaNotFoundError, match="missing.json"):
+        with pytest.raises(tas.SchemaNotFoundError, match=r"missing\.json"):
             tas.load_validator("mosfets")
 
 
@@ -161,7 +164,6 @@ class TestSchemaMap:
 
 
 class TestValidateEnvelope:
-
     def test_missing_top_envelope_throws(self):
         with pytest.raises(tas.ValidationError, match="semiconductor"):
             tas.validate_component("mosfets", {"wrong": {}})
@@ -218,71 +220,121 @@ def _seed(category: str, records: list[dict[str, Any]]) -> Path:
 
 
 class TestComponentExistsLookup:
-
     def test_returns_false_when_file_missing(self):
         assert tas.component_exists("mosfets", "ANY") is False
 
     def test_finds_mosfet_via_manufacturer_reference(self):
-        _seed("mosfets", [{
-            "semiconductor": {"mosfet": {
-                "manufacturerInfo": {"reference": "EPC2019"},
-            }},
-        }])
+        _seed(
+            "mosfets",
+            [
+                {
+                    "semiconductor": {
+                        "mosfet": {
+                            "manufacturerInfo": {"reference": "EPC2019"},
+                        }
+                    },
+                }
+            ],
+        )
         assert tas.component_exists("mosfets", "EPC2019") is True
         assert tas.component_exists("mosfets", "epc2019") is True  # case-insens
         assert tas.component_exists("mosfets", "NOPE") is False
 
     def test_finds_diode_via_nested_semiconductor_envelope(self):
-        _seed("diodes", [{
-            "semiconductor": {"diode": {
-                "manufacturerInfo": {"reference": "STPS30L60CT"},
-            }},
-        }])
+        _seed(
+            "diodes",
+            [
+                {
+                    "semiconductor": {
+                        "diode": {
+                            "manufacturerInfo": {"reference": "STPS30L60CT"},
+                        }
+                    },
+                }
+            ],
+        )
         assert tas.component_exists("diodes", "STPS30L60CT") is True
 
     def test_finds_igbt_via_nested_envelope(self):
-        _seed("igbts", [{
-            "semiconductor": {"igbt": {
-                "manufacturerInfo": {"reference": "2MBI100XAA120-50"},
-            }},
-        }])
+        _seed(
+            "igbts",
+            [
+                {
+                    "semiconductor": {
+                        "igbt": {
+                            "manufacturerInfo": {"reference": "2MBI100XAA120-50"},
+                        }
+                    },
+                }
+            ],
+        )
         assert tas.component_exists("igbts", "2MBI100XAA120-50") is True
 
     def test_finds_capacitor_via_reference_field(self):
-        _seed("capacitors", [{
-            "capacitor": {"manufacturerInfo": {"reference": "GRM188R71C"}},
-        }])
+        _seed(
+            "capacitors",
+            [
+                {
+                    "capacitor": {"manufacturerInfo": {"reference": "GRM188R71C"}},
+                }
+            ],
+        )
         assert tas.component_exists("capacitors", "GRM188R71C") is True
 
     def test_finds_capacitor_via_datasheet_part_number(self):
-        _seed("capacitors", [{
-            "capacitor": {"manufacturerInfo": {
-                "datasheetInfo": {"part": {"partNumber": "UPW1H102MHD"}},
-            }},
-        }])
+        _seed(
+            "capacitors",
+            [
+                {
+                    "capacitor": {
+                        "manufacturerInfo": {
+                            "datasheetInfo": {"part": {"partNumber": "UPW1H102MHD"}},
+                        }
+                    },
+                }
+            ],
+        )
         assert tas.component_exists("capacitors", "UPW1H102MHD") is True
 
     def test_finds_resistor_via_datasheet_part_number(self):
-        _seed("resistors", [{
-            "resistor": {"manufacturerInfo": {
-                "datasheetInfo": {"part": {"partNumber": "WSL2512"}},
-            }},
-        }])
+        _seed(
+            "resistors",
+            [
+                {
+                    "resistor": {
+                        "manufacturerInfo": {
+                            "datasheetInfo": {"part": {"partNumber": "WSL2512"}},
+                        }
+                    },
+                }
+            ],
+        )
         assert tas.component_exists("resistors", "WSL2512") is True
 
     def test_finds_magnetic_via_reference(self):
-        _seed("magnetics", [{
-            "magnetic": {"manufacturerInfo": {"reference": "744383560R33"}},
-        }])
+        _seed(
+            "magnetics",
+            [
+                {
+                    "magnetic": {"manufacturerInfo": {"reference": "744383560R33"}},
+                }
+            ],
+        )
         assert tas.component_exists("magnetics", "744383560R33") is True
 
     def test_blank_lines_are_skipped(self):
         path = sa.TAS_DATA_DIR / "mosfets.ndjson"
         path.write_text(
             "\n"
-            + json.dumps({"semiconductor": {"mosfet": {
-                "manufacturerInfo": {"reference": "X"},
-            }}})
+            + json.dumps(
+                {
+                    "semiconductor": {
+                        "mosfet": {
+                            "manufacturerInfo": {"reference": "X"},
+                        }
+                    }
+                }
+            )
             + "\n\n",
             encoding="utf-8",
         )
@@ -315,7 +367,6 @@ class TestComponentExistsCorruption:
 
 
 class TestAddComponent:
-
     def test_happy_path_appends_validated_row(self):
         tas.add_component("mosfets", _VALID_RECORDS["mosfets"])
         path = sa.TAS_DATA_DIR / "mosfets.ndjson"
@@ -323,8 +374,10 @@ class TestAddComponent:
         lines = path.read_text().splitlines()
         assert len(lines) == 1
         round_trip = json.loads(lines[0])
-        assert (round_trip["semiconductor"]["mosfet"]["manufacturerInfo"]["reference"]
-                == "TEST-MOSFET-001")
+        assert (
+            round_trip["semiconductor"]["mosfet"]["manufacturerInfo"]["reference"]
+            == "TEST-MOSFET-001"
+        )
 
     def test_compact_json_no_whitespace(self):
         tas.add_component("mosfets", _VALID_RECORDS["mosfets"])
@@ -336,8 +389,7 @@ class TestAddComponent:
 
     def test_duplicate_rejected(self):
         tas.add_component("mosfets", _VALID_RECORDS["mosfets"])
-        with pytest.raises(tas.DuplicateComponentError,
-                           match="TEST-MOSFET-001"):
+        with pytest.raises(tas.DuplicateComponentError, match="TEST-MOSFET-001"):
             tas.add_component("mosfets", _VALID_RECORDS["mosfets"])
         # Only one row written.
         lines = (sa.TAS_DATA_DIR / "mosfets.ndjson").read_text().splitlines()
@@ -359,6 +411,7 @@ class TestAddComponent:
         class _AcceptAll:
             def iter_errors(self, _):
                 return []
+
         # Override the validator cache for "mosfets" only for this test.
         with tas._VALIDATOR_LOCK:
             tas._VALIDATOR_CACHE["mosfets"] = _AcceptAll()
@@ -399,30 +452,53 @@ class TestAddComponent:
 
 
 class TestExtractMpn:
-
     def test_mosfet_envelope(self):
-        assert tas._extract_mpn({
-            "mosfet": {"manufacturerInfo": {"reference": "M1"}},
-        }) == "M1"
+        assert (
+            tas._extract_mpn(
+                {
+                    "mosfet": {"manufacturerInfo": {"reference": "M1"}},
+                }
+            )
+            == "M1"
+        )
 
     def test_diode_nested_envelope(self):
-        assert tas._extract_mpn({
-            "semiconductor": {"diode": {
-                "manufacturerInfo": {"reference": "D1"},
-            }},
-        }) == "D1"
+        assert (
+            tas._extract_mpn(
+                {
+                    "semiconductor": {
+                        "diode": {
+                            "manufacturerInfo": {"reference": "D1"},
+                        }
+                    },
+                }
+            )
+            == "D1"
+        )
 
     def test_falls_back_to_datasheet_part_number(self):
-        assert tas._extract_mpn({
-            "resistor": {"manufacturerInfo": {
-                "datasheetInfo": {"part": {"partNumber": "R1"}},
-            }},
-        }) == "R1"
+        assert (
+            tas._extract_mpn(
+                {
+                    "resistor": {
+                        "manufacturerInfo": {
+                            "datasheetInfo": {"part": {"partNumber": "R1"}},
+                        }
+                    },
+                }
+            )
+            == "R1"
+        )
 
     def test_legacy_top_level_manufacturer_info(self):
-        assert tas._extract_mpn({
-            "manufacturerInfo": {"reference": "LEGACY"},
-        }) == "LEGACY"
+        assert (
+            tas._extract_mpn(
+                {
+                    "manufacturerInfo": {"reference": "LEGACY"},
+                }
+            )
+            == "LEGACY"
+        )
 
     def test_unknown_when_nothing_present(self):
         assert tas._extract_mpn({"unrelated": 42}) == "UNKNOWN"

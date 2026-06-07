@@ -41,7 +41,6 @@ from heaviside.librarian.datasheet.extract import (
 )
 from heaviside.librarian.fetcher.base import IncompleteSourceError
 
-
 # ---------------------------------------------------------------------------
 # match_param_name
 # ---------------------------------------------------------------------------
@@ -260,12 +259,14 @@ def test_extract_params_diode_end_to_end() -> None:
         ["Reverse Recovery Charge", "Qrr", "20 nC"],
     )
     result = extract_params([table], category="diodes")
-    assert result == pytest.approx({
-        "reverseVoltage": 600.0,
-        "forwardVoltage": 1.5,
-        "forwardCurrent": 10.0,
-        "reverseRecoveryCharge": 20e-9,
-    })
+    assert result == pytest.approx(
+        {
+            "reverseVoltage": 600.0,
+            "forwardVoltage": 1.5,
+            "forwardCurrent": 10.0,
+            "reverseRecoveryCharge": 20e-9,
+        }
+    )
 
 
 def test_extract_params_first_occurrence_wins() -> None:
@@ -351,8 +352,12 @@ def test_extract_required_params_happy() -> None:
     )
     result = extract_required_params([table], category="mosfets", mpn="TEST123")
     assert set(result) >= {
-        "drainSourceVoltage", "onResistance", "continuousDrainCurrent",
-        "totalGateCharge", "gateThresholdVoltage", "outputCapacitance",
+        "drainSourceVoltage",
+        "onResistance",
+        "continuousDrainCurrent",
+        "totalGateCharge",
+        "gateThresholdVoltage",
+        "outputCapacitance",
     }
 
 

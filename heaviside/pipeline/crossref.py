@@ -100,23 +100,23 @@ class CrossRefOutcome:
     def from_state(cls, state: CrossRefState) -> CrossRefOutcome:
         components = []
         for row in state.crossref_result:
-            components.append(CrossRefComponent(
-                ref_des=row.get("ref_des", "?"),
-                component_type=row.get("component_type", "?"),
-                original_mpn=row.get("original_pn", ""),
-                original_value=row.get("original_value", ""),
-                original_voltage=row.get("original_voltage", ""),
-                original_package=row.get("original_package", ""),
-                substitute_mpn=row.get("substitute_pn"),
-                substitute_value=row.get("substitute_value", ""),
-                substitute_voltage=row.get("substitute_voltage", ""),
-                substitute_package=row.get("substitute_package", ""),
-                status=SubstitutionStatus(
-                    row.get("status", "no_substitute")
-                ),
-                notes=row.get("notes", ""),
-                guardrail_fires=tuple(row.get("guardrail_fires", [])),
-            ))
+            components.append(
+                CrossRefComponent(
+                    ref_des=row.get("ref_des", "?"),
+                    component_type=row.get("component_type", "?"),
+                    original_mpn=row.get("original_pn", ""),
+                    original_value=row.get("original_value", ""),
+                    original_voltage=row.get("original_voltage", ""),
+                    original_package=row.get("original_package", ""),
+                    substitute_mpn=row.get("substitute_pn"),
+                    substitute_value=row.get("substitute_value", ""),
+                    substitute_voltage=row.get("substitute_voltage", ""),
+                    substitute_package=row.get("substitute_package", ""),
+                    status=SubstitutionStatus(row.get("status", "no_substitute")),
+                    notes=row.get("notes", ""),
+                    guardrail_fires=tuple(row.get("guardrail_fires", [])),
+                )
+            )
         return cls(
             source_bom=tuple(state.source_bom),
             target_manufacturer=state.target_manufacturer,

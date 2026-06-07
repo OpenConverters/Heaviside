@@ -45,7 +45,6 @@ from typing import Any
 
 from heaviside.librarian.fetcher.base import FetcherError
 
-
 __all__ = [
     "CONFIG_DIR",
     "CREDENTIALS_PATH",
@@ -60,8 +59,7 @@ __all__ = [
 ]
 
 
-CONFIG_DIR: Path = Path(os.environ.get("HEAVISIDE_CONFIG_DIR", "")
-                         or Path.home() / ".heaviside")
+CONFIG_DIR: Path = Path(os.environ.get("HEAVISIDE_CONFIG_DIR", "") or Path.home() / ".heaviside")
 CREDENTIALS_PATH: Path = CONFIG_DIR / "credentials.json"
 TOKEN_CACHE_PATH: Path = CONFIG_DIR / "digikey-token.json"
 
@@ -90,6 +88,7 @@ class MouserCredentials:
 @dataclass(frozen=True)
 class Credentials:
     """Container holding whichever distributor credentials were resolved."""
+
     digikey: DigiKeyCredentials | None = None
     mouser: MouserCredentials | None = None
 
@@ -115,37 +114,28 @@ def _read_credentials_file(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise CredentialError(
-            f"{path}: invalid JSON: {exc.msg} (line {exc.lineno})"
-        ) from exc
+        raise CredentialError(f"{path}: invalid JSON: {exc.msg} (line {exc.lineno})") from exc
     if not isinstance(data, dict):
         raise CredentialError(
-            f"{path}: top-level JSON must be an object, got "
-            f"{type(data).__name__}"
+            f"{path}: top-level JSON must be an object, got {type(data).__name__}"
         )
     return data
 
 
 def _digikey_from_sources(
-    env: dict[str, str], file_data: dict[str, Any],
+    env: dict[str, str],
+    file_data: dict[str, Any],
 ) -> DigiKeyCredentials | None:
     """Resolve Digi-Key credentials with env > file precedence."""
     file_dk = file_data.get("digikey") or {}
     if not isinstance(file_dk, dict):
         raise CredentialError(
-            f"{CREDENTIALS_PATH}: 'digikey' key must be an object, got "
-            f"{type(file_dk).__name__}"
+            f"{CREDENTIALS_PATH}: 'digikey' key must be an object, got {type(file_dk).__name__}"
         )
 
     client_id = env.get("HEAVISIDE_DIGIKEY_CLIENT_ID") or file_dk.get("client_id")
-    client_secret = (
-        env.get("HEAVISIDE_DIGIKEY_CLIENT_SECRET")
-        or file_dk.get("client_secret")
-    )
-    refresh = (
-        env.get("HEAVISIDE_DIGIKEY_REFRESH_TOKEN")
-        or file_dk.get("refresh_token")
-    )
+    client_secret = env.get("HEAVISIDE_DIGIKEY_CLIENT_SECRET") or file_dk.get("client_secret")
+    refresh = env.get("HEAVISIDE_DIGIKEY_REFRESH_TOKEN") or file_dk.get("refresh_token")
 
     # Neither configured → no Digi-Key credentials available.
     if client_id is None and client_secret is None:
@@ -165,13 +155,13 @@ def _digikey_from_sources(
 
 
 def _mouser_from_sources(
-    env: dict[str, str], file_data: dict[str, Any],
+    env: dict[str, str],
+    file_data: dict[str, Any],
 ) -> MouserCredentials | None:
     file_m = file_data.get("mouser") or {}
     if not isinstance(file_m, dict):
         raise CredentialError(
-            f"{CREDENTIALS_PATH}: 'mouser' key must be an object, got "
-            f"{type(file_m).__name__}"
+            f"{CREDENTIALS_PATH}: 'mouser' key must be an object, got {type(file_m).__name__}"
         )
     api_key = env.get("HEAVISIDE_MOUSER_API_KEY") or file_m.get("api_key")
     if not api_key:
@@ -254,13 +244,10 @@ class TokenCache:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise CredentialError(
-                f"{self.path}: corrupt token cache: {exc.msg}"
-            ) from exc
+            raise CredentialError(f"{self.path}: corrupt token cache: {exc.msg}") from exc
         if not isinstance(data, dict):
             raise CredentialError(
-                f"{self.path}: token cache must be a JSON object, got "
-                f"{type(data).__name__}"
+                f"{self.path}: token cache must be a JSON object, got {type(data).__name__}"
             )
         return data
 

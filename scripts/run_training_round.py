@@ -16,14 +16,13 @@ Usage:
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import sys
 import time
 import traceback
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,10 +55,10 @@ def _extract_spec(name: str) -> dict[str, Any] | None:
     from heaviside.pipeline.cre_pipeline import (
         _stage0_extract_pdf,
         _stage1_competitor,
-        _stage2_reverse_engineer,
         _stage2_5_verify_mpns,
-        _stage2_65_extract_rdson,
         _stage2_7_extract_claims,
+        _stage2_65_extract_rdson,
+        _stage2_reverse_engineer,
     )
 
     pdf = PROTEUS_DIR / f"{name}.pdf"
@@ -95,6 +94,7 @@ def _run_designer(spec: Mapping[str, Any], ref_topology: str) -> dict[str, Any]:
         topo = ref_topology.lower().replace(" ", "_").replace("-", "_")
         # Normalize common aliases
         from heaviside.pipeline.cre_testbench import _normalize_topology
+
         norm = _normalize_topology(topo)
         if norm and norm in static:
             return [norm] + [t for t in static if t != norm], f"training: prefer {norm}"
@@ -188,49 +188,57 @@ def _compare(ref_spec, ref_claims, designer_result: dict) -> dict[str, Any]:
 
 
 def _store_training_lessons(
-    name: str, ref_spec, comparison: dict, designer_result: dict,
+    name: str,
+    ref_spec,
+    comparison: dict,
+    designer_result: dict,
 ) -> int:
     """Store comparison-specific training lessons."""
-    from heaviside.pipeline.teacher import Lesson, store_lessons, review_design_run
+    from heaviside.pipeline.teacher import Lesson, review_design_run, store_lessons
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     fp = hashlib.sha256(name.encode()).hexdigest()[:12]
     lessons: list[Lesson] = []
 
     # Lesson from topology match/mismatch
-    lessons.append(Lesson(
-        id=hashlib.sha256(f"train-topo:{name}".encode()).hexdigest()[:16],
-        timestamp=now,
-        topology=ref_spec.topology,
-        category="training_topology_match",
-        severity="info" if comparison["topo_match"] else "warning",
-        detail=(
-            f"Designer {'matched' if comparison['topo_match'] else 'did NOT match'} "
-            f"reference topology. Designer: {comparison['designer_topo']}, "
-            f"Reference: {ref_spec.topology}"
-        ),
-        spec_fingerprint=fp,
-        suggestion=None if comparison["topo_match"] else
-            f"Consider preferring {ref_spec.topology} for similar specs",
-    ))
+    lessons.append(
+        Lesson(
+            id=hashlib.sha256(f"train-topo:{name}".encode()).hexdigest()[:16],
+            timestamp=now,
+            topology=ref_spec.topology,
+            category="training_topology_match",
+            severity="info" if comparison["topo_match"] else "warning",
+            detail=(
+                f"Designer {'matched' if comparison['topo_match'] else 'did NOT match'} "
+                f"reference topology. Designer: {comparison['designer_topo']}, "
+                f"Reference: {ref_spec.topology}"
+            ),
+            spec_fingerprint=fp,
+            suggestion=None
+            if comparison["topo_match"]
+            else f"Consider preferring {ref_spec.topology} for similar specs",
+        )
+    )
 
     # Lesson from efficiency gap
     if comparison["eta_gap_pp"] is not None:
         severity = "info" if abs(comparison["eta_gap_pp"]) < 5 else "warning"
-        lessons.append(Lesson(
-            id=hashlib.sha256(f"train-eta:{name}".encode()).hexdigest()[:16],
-            timestamp=now,
-            topology=ref_spec.topology,
-            category="training_efficiency_gap",
-            severity=severity,
-            detail=(
-                f"Designer η={comparison['designer_eta']:.1%} vs "
-                f"reference η={comparison['ref_eta']:.1%} "
-                f"(Δ={comparison['eta_gap_pp']:+.1f}pp)"
-            ),
-            spec_fingerprint=fp,
-            suggestion=None,
-        ))
+        lessons.append(
+            Lesson(
+                id=hashlib.sha256(f"train-eta:{name}".encode()).hexdigest()[:16],
+                timestamp=now,
+                topology=ref_spec.topology,
+                category="training_efficiency_gap",
+                severity=severity,
+                detail=(
+                    f"Designer η={comparison['designer_eta']:.1%} vs "
+                    f"reference η={comparison['ref_eta']:.1%} "
+                    f"(Δ={comparison['eta_gap_pp']:+.1f}pp)"
+                ),
+                spec_fingerprint=fp,
+                suggestion=None,
+            )
+        )
 
     # Lesson from verdict + failed checks
     verdict_detail = f"Verdict: {comparison['verdict']} for {name}"
@@ -238,21 +246,26 @@ def _store_training_lessons(
     if best and best.verdict_dict:
         checks = best.verdict_dict.get("checks", [])
         if isinstance(checks, list):
-            failed = [c.get("name", "?") for c in checks
-                      if isinstance(c, dict) and c.get("status") == "fail"]
+            failed = [
+                c.get("name", "?")
+                for c in checks
+                if isinstance(c, dict) and c.get("status") == "fail"
+            ]
             if failed:
                 verdict_detail += f". Failed checks: {', '.join(failed)}"
 
-    lessons.append(Lesson(
-        id=hashlib.sha256(f"train-verdict:{name}".encode()).hexdigest()[:16],
-        timestamp=now,
-        topology=ref_spec.topology,
-        category="training_verdict",
-        severity="info" if comparison["verdict"] == "pass" else "error",
-        detail=verdict_detail,
-        spec_fingerprint=fp,
-        suggestion=None,
-    ))
+    lessons.append(
+        Lesson(
+            id=hashlib.sha256(f"train-verdict:{name}".encode()).hexdigest()[:16],
+            timestamp=now,
+            topology=ref_spec.topology,
+            category="training_verdict",
+            severity="info" if comparison["verdict"] == "pass" else "error",
+            detail=verdict_detail,
+            spec_fingerprint=fp,
+            suggestion=None,
+        )
+    )
 
     # Also extract standard design lessons from outcomes
     if designer_result.get("outcomes"):
@@ -265,7 +278,7 @@ def _store_training_lessons(
 
 def run_one(name: str) -> dict[str, Any]:
     """Run the full training loop for one design."""
-    from heaviside.agents.llm_call import reset_token_usage, get_token_usage
+    from heaviside.agents.llm_call import get_token_usage, reset_token_usage
 
     reset_token_usage()
     t0 = time.time()
@@ -315,7 +328,7 @@ def main():
     results = []
 
     for i, name in enumerate(designs):
-        print(f"\n[{i+1}/{len(designs)}] {name}", flush=True)
+        print(f"\n[{i + 1}/{len(designs)}] {name}", flush=True)
         try:
             r = run_one(name)
             results.append(r)
@@ -338,10 +351,12 @@ def main():
             results.append({"name": name, "error": str(exc)})
 
     # Summary
-    print(f"\n{'='*90}")
+    print(f"\n{'=' * 90}")
     print("TRAINING ROUND SUMMARY")
-    print(f"{'='*90}")
-    print(f"{'Design':<35s} {'Ref Topo':<15s} {'Match':>5} {'η_des':>7} {'η_ref':>7} {'Δpp':>6} {'Verdict':>8} {'Time':>6} {'Cost':>6}")
+    print(f"{'=' * 90}")
+    print(
+        f"{'Design':<35s} {'Ref Topo':<15s} {'Match':>5} {'η_des':>7} {'η_ref':>7} {'Δpp':>6} {'Verdict':>8} {'Time':>6} {'Cost':>6}"
+    )
     print("-" * 100)
     total_time = 0
     total_cost = 0
@@ -367,9 +382,9 @@ def main():
         ref_str = f"{r['ref_eta']:.1%}" if r.get("ref_eta") else "—"
         gap_str = f"{r['eta_gap_pp']:+.1f}" if r.get("eta_gap_pp") is not None else "—"
         print(
-            f"{r['name'][:34]:<35s} {r.get('ref_topology','?')[:14]:<15s} "
+            f"{r['name'][:34]:<35s} {r.get('ref_topology', '?')[:14]:<15s} "
             f"{topo_mark:>5} {eta_str:>7} {ref_str:>7} {gap_str:>6} "
-            f"{r.get('verdict','?'):>8} {t:5.0f}s ${c:.2f}"
+            f"{r.get('verdict', '?'):>8} {t:5.0f}s ${c:.2f}"
         )
     print("-" * 100)
     n_valid = len([r for r in results if "ref_topology" in r])

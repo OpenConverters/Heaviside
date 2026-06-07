@@ -46,7 +46,6 @@ from typing import Any
 
 from heaviside.librarian.fetcher.base import IncompleteSourceError
 
-
 __all__ = [
     "DIGIKEY_MOSFET_PARAM_MAP",
     "convert_digikey_to_tas_capacitor",
@@ -71,11 +70,13 @@ def detect_category(product: dict[str, Any], distributor: str) -> str | None:
     ``resistors``, ``magnetics``, or ``None`` if unrecognised.
     """
     if distributor == "digikey":
-        family = (product.get("Category", {}).get("Value", "")
-                  + " " + product.get("Family", {}).get("Value", "")).lower()
+        family = (
+            product.get("Category", {}).get("Value", "")
+            + " "
+            + product.get("Family", {}).get("Value", "")
+        ).lower()
     elif distributor == "mouser":
-        family = (product.get("Category", "") + " "
-                  + product.get("ProductDetailUrl", "")).lower()
+        family = (product.get("Category", "") + " " + product.get("ProductDetailUrl", "")).lower()
     else:
         family = ""
 
@@ -115,7 +116,7 @@ _VALUE_RE = re.compile(
 )
 
 _PREFIX_MULT: dict[str, float] = {
-    "":  1.0,
+    "": 1.0,
     "p": 1e-12,
     "n": 1e-9,
     "u": 1e-6,
@@ -285,9 +286,7 @@ def _extract_optional_numeric(
         return None
 
 
-def _extract_gate_threshold(
-    *, source: str, mpn: str, params: dict[str, str]
-) -> dict[str, float]:
+def _extract_gate_threshold(*, source: str, mpn: str, params: dict[str, str]) -> dict[str, float]:
     """Extract Vgs(th) as a SAS ``dimensionWithTolerance`` object.
 
     Digi-Key publishes only a single value for V_GS(th), usually the
@@ -321,7 +320,10 @@ def _extract_gate_threshold(
 
 
 def _require_str(
-    source: str, mpn_for_error: str, field: str, value: Any,
+    source: str,
+    mpn_for_error: str,
+    field: str,
+    value: Any,
 ) -> str:
     if not isinstance(value, str) or not value.strip():
         raise IncompleteSourceError(source, mpn_for_error, field)
@@ -353,14 +355,18 @@ def convert_digikey_to_tas_mosfet(
     manufacturer = manufacturer_block.get("Value") if isinstance(manufacturer_block, dict) else None
     if not manufacturer:
         raise IncompleteSourceError(
-            source, mpn, "manufacturerInfo.name",
+            source,
+            mpn,
+            "manufacturerInfo.name",
             detail="Manufacturer.Value missing from Digi-Key payload",
         )
 
     raw_params = product.get("Parameters") or []
     if not isinstance(raw_params, list):
         raise IncompleteSourceError(
-            source, mpn, "Parameters",
+            source,
+            mpn,
+            "Parameters",
             detail=f"Parameters is {type(raw_params).__name__}, expected list",
         )
     params: dict[str, str] = {}
@@ -386,30 +392,42 @@ def convert_digikey_to_tas_mosfet(
 
     electrical = {
         "drainSourceVoltage": _extract_required_numeric(
-            source=source, mpn=mpn, params=params,
+            source=source,
+            mpn=mpn,
+            params=params,
             field="drainSourceVoltage",
             candidates=DIGIKEY_MOSFET_PARAM_MAP["drainSourceVoltage"],
         ),
         "onResistance": _extract_required_numeric(
-            source=source, mpn=mpn, params=params,
+            source=source,
+            mpn=mpn,
+            params=params,
             field="onResistance",
             candidates=DIGIKEY_MOSFET_PARAM_MAP["onResistance"],
         ),
         "continuousDrainCurrent": _extract_required_numeric(
-            source=source, mpn=mpn, params=params,
+            source=source,
+            mpn=mpn,
+            params=params,
             field="continuousDrainCurrent",
             candidates=DIGIKEY_MOSFET_PARAM_MAP["continuousDrainCurrent"],
         ),
         "gateThresholdVoltage": _extract_gate_threshold(
-            source=source, mpn=mpn, params=params,
+            source=source,
+            mpn=mpn,
+            params=params,
         ),
         "outputCapacitance": _extract_required_numeric(
-            source=source, mpn=mpn, params=params,
+            source=source,
+            mpn=mpn,
+            params=params,
             field="outputCapacitance",
             candidates=DIGIKEY_MOSFET_PARAM_MAP["outputCapacitance"],
         ),
         "totalGateCharge": _extract_required_numeric(
-            source=source, mpn=mpn, params=params,
+            source=source,
+            mpn=mpn,
+            params=params,
             field="totalGateCharge",
             candidates=DIGIKEY_MOSFET_PARAM_MAP["totalGateCharge"],
         ),
@@ -428,16 +446,14 @@ def convert_digikey_to_tas_mosfet(
 
     datasheet_url = product.get("PrimaryDatasheet") or ""
 
-    distributor_ref = (
-        product.get("DigiKeyPartNumber")
-        or product.get("MouserPartNumber")
-        or ""
-    )
+    distributor_ref = product.get("DigiKeyPartNumber") or product.get("MouserPartNumber") or ""
     try:
         cost = float(product.get("UnitPrice", 0) or 0)
     except (TypeError, ValueError) as exc:
         raise IncompleteSourceError(
-            source, mpn, "distributorsInfo.cost",
+            source,
+            mpn,
+            "distributorsInfo.cost",
             detail=f"UnitPrice {product.get('UnitPrice')!r} not numeric: {exc}",
         ) from exc
 
@@ -494,7 +510,9 @@ def convert_mouser_to_tas_mosfet(product: dict[str, Any]) -> dict[str, Any]:
     manufacturer = product.get("Manufacturer")
     if not isinstance(manufacturer, str) or not manufacturer.strip():
         raise IncompleteSourceError(
-            source, mpn, "manufacturerInfo.name",
+            source,
+            mpn,
+            "manufacturerInfo.name",
             detail="Manufacturer string missing from Mouser payload",
         )
 
@@ -504,11 +522,7 @@ def convert_mouser_to_tas_mosfet(product: dict[str, Any]) -> dict[str, Any]:
 
     # Mouser attribute names diverge from Digi-Key — they live in
     # ``ProductAttributes`` (newer schema) or ``Attributes`` (older).
-    raw_attrs = (
-        product.get("ProductAttributes")
-        or product.get("Attributes")
-        or []
-    )
+    raw_attrs = product.get("ProductAttributes") or product.get("Attributes") or []
     if not isinstance(raw_attrs, list):
         raw_attrs = []
     attrs: dict[str, str] = {}
@@ -532,10 +546,16 @@ def convert_mouser_to_tas_mosfet(product: dict[str, Any]) -> dict[str, Any]:
     electrical: dict[str, Any] = {}
     for field, candidates in mouser_param_map.items():
         electrical[field] = _extract_required_numeric(
-            source=source, mpn=mpn, params=attrs, field=field, candidates=candidates,
+            source=source,
+            mpn=mpn,
+            params=attrs,
+            field=field,
+            candidates=candidates,
         )
     electrical["gateThresholdVoltage"] = _extract_gate_threshold(
-        source=source, mpn=mpn, params=attrs,
+        source=source,
+        mpn=mpn,
+        params=attrs,
     )
 
     technology = _resolve_mosfet_technology(description, mpn)
@@ -556,7 +576,9 @@ def convert_mouser_to_tas_mosfet(product: dict[str, Any]) -> dict[str, Any]:
                     cost = float(stripped)
                 except ValueError as exc:
                     raise IncompleteSourceError(
-                        source, mpn, "distributorsInfo.cost",
+                        source,
+                        mpn,
+                        "distributorsInfo.cost",
                         detail=f"unparseable Mouser price {raw_price!r}: {exc}",
                     ) from exc
 
@@ -629,7 +651,9 @@ def _reject_igbt_module(source: str, mpn: str, description: str) -> None:
     for token in _IGBT_MODULE_TOKENS:
         if token in blob:
             raise IncompleteSourceError(
-                source, mpn, "semiconductor.igbt",
+                source,
+                mpn,
+                "semiconductor.igbt",
                 detail=(
                     f"description contains module/multi-die token "
                     f"{token!r}; single-IGBT envelope cannot represent it"
@@ -641,7 +665,9 @@ def _extract_digikey_params(source: str, mpn: str, product: dict[str, Any]) -> d
     raw_params = product.get("Parameters") or []
     if not isinstance(raw_params, list):
         raise IncompleteSourceError(
-            source, mpn, "Parameters",
+            source,
+            mpn,
+            "Parameters",
             detail=f"Parameters is {type(raw_params).__name__}, expected list",
         )
     params: dict[str, str] = {}
@@ -656,11 +682,7 @@ def _extract_digikey_params(source: str, mpn: str, product: dict[str, Any]) -> d
 
 
 def _extract_mouser_attrs(product: dict[str, Any]) -> dict[str, str]:
-    raw_attrs = (
-        product.get("ProductAttributes")
-        or product.get("Attributes")
-        or []
-    )
+    raw_attrs = product.get("ProductAttributes") or product.get("Attributes") or []
     if not isinstance(raw_attrs, list):
         return {}
     attrs: dict[str, str] = {}
@@ -688,7 +710,9 @@ def _digikey_manufacturer(source: str, mpn: str, product: dict[str, Any]) -> str
     name = block.get("Value") if isinstance(block, dict) else None
     if not name:
         raise IncompleteSourceError(
-            source, mpn, "manufacturerInfo.name",
+            source,
+            mpn,
+            "manufacturerInfo.name",
             detail="Manufacturer.Value missing from Digi-Key payload",
         )
     return name
@@ -698,20 +722,27 @@ def _mouser_manufacturer(source: str, mpn: str, product: dict[str, Any]) -> str:
     name = product.get("Manufacturer")
     if not isinstance(name, str) or not name.strip():
         raise IncompleteSourceError(
-            source, mpn, "manufacturerInfo.name",
+            source,
+            mpn,
+            "manufacturerInfo.name",
             detail="Manufacturer string missing from Mouser payload",
         )
     return name
 
 
 def _digikey_distributor_block(
-    source: str, mpn: str, product: dict[str, Any], distributor: str,
+    source: str,
+    mpn: str,
+    product: dict[str, Any],
+    distributor: str,
 ) -> dict[str, Any]:
     try:
         cost = float(product.get("UnitPrice", 0) or 0)
     except (TypeError, ValueError) as exc:
         raise IncompleteSourceError(
-            source, mpn, "distributorsInfo.cost",
+            source,
+            mpn,
+            "distributorsInfo.cost",
             detail=f"UnitPrice {product.get('UnitPrice')!r} not numeric: {exc}",
         ) from exc
     return {
@@ -725,7 +756,9 @@ def _digikey_distributor_block(
 
 
 def _mouser_distributor_block(
-    source: str, mpn: str, product: dict[str, Any],
+    source: str,
+    mpn: str,
+    product: dict[str, Any],
 ) -> dict[str, Any]:
     cost = 0.0
     price_breaks = product.get("PriceBreaks") or []
@@ -739,7 +772,9 @@ def _mouser_distributor_block(
                     cost = float(stripped)
                 except ValueError as exc:
                     raise IncompleteSourceError(
-                        source, mpn, "distributorsInfo.cost",
+                        source,
+                        mpn,
+                        "distributorsInfo.cost",
                         detail=f"unparseable Mouser price {raw_price!r}: {exc}",
                     ) from exc
     quantity_raw = product.get("AvailabilityInStock") or 0
@@ -834,9 +869,15 @@ DIGIKEY_DIODE_PARAM_MAP: dict[str, tuple[tuple[str, str], ...]] = {
 
 
 def _build_diode_envelope(
-    *, source: str, mpn: str, manufacturer: str, description: str,
-    params: dict[str, str], distributor_block: dict[str, Any],
-    datasheet_url: str, status: str,
+    *,
+    source: str,
+    mpn: str,
+    manufacturer: str,
+    description: str,
+    params: dict[str, str],
+    distributor_block: dict[str, Any],
+    datasheet_url: str,
+    status: str,
 ) -> dict[str, Any]:
     _DIODE_OPTIONAL = {"forwardVoltage", "reverseRecoveryCharge"}
     electrical: dict[str, Any] = {}
@@ -847,7 +888,10 @@ def _build_diode_envelope(
                 electrical[field] = val
         else:
             electrical[field] = _extract_required_numeric(
-                source=source, mpn=mpn, params=params, field=field,
+                source=source,
+                mpn=mpn,
+                params=params,
+                field=field,
                 candidates=candidates,
             )
     technology = _resolve_semi_technology(description, mpn)
@@ -880,7 +924,9 @@ def _build_diode_envelope(
 
 
 def convert_digikey_to_tas_diode(
-    product: dict[str, Any], *, distributor: str = "Digi-Key",
+    product: dict[str, Any],
+    *,
+    distributor: str = "Digi-Key",
 ) -> dict[str, Any]:
     """Convert a Digi-Key Product v3 payload into a TAS
     ``{"semiconductor": {"diode": {...}}}`` envelope.
@@ -899,8 +945,11 @@ def convert_digikey_to_tas_diode(
     description = _digikey_description(product)
     status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
     return _build_diode_envelope(
-        source=source, mpn=mpn, manufacturer=manufacturer,
-        description=description, params=params,
+        source=source,
+        mpn=mpn,
+        manufacturer=manufacturer,
+        description=description,
+        params=params,
         distributor_block=_digikey_distributor_block(source, mpn, product, distributor),
         datasheet_url=product.get("PrimaryDatasheet") or "",
         status=status,
@@ -917,8 +966,11 @@ def convert_mouser_to_tas_diode(product: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(description, str):
         description = ""
     return _build_diode_envelope(
-        source=source, mpn=mpn, manufacturer=manufacturer,
-        description=description, params=attrs,
+        source=source,
+        mpn=mpn,
+        manufacturer=manufacturer,
+        description=description,
+        params=attrs,
         distributor_block=_mouser_distributor_block(source, mpn, product),
         datasheet_url=product.get("DataSheetUrl") or "",
         status="production",
@@ -948,15 +1000,24 @@ DIGIKEY_IGBT_PARAM_MAP: dict[str, tuple[tuple[str, str], ...]] = {
 
 
 def _build_igbt_envelope(
-    *, source: str, mpn: str, manufacturer: str, description: str,
-    params: dict[str, str], distributor_block: dict[str, Any],
-    datasheet_url: str, status: str,
+    *,
+    source: str,
+    mpn: str,
+    manufacturer: str,
+    description: str,
+    params: dict[str, str],
+    distributor_block: dict[str, Any],
+    datasheet_url: str,
+    status: str,
 ) -> dict[str, Any]:
     _reject_igbt_module(source, mpn, description)
     electrical: dict[str, Any] = {}
     for field, candidates in DIGIKEY_IGBT_PARAM_MAP.items():
         electrical[field] = _extract_required_numeric(
-            source=source, mpn=mpn, params=params, field=field,
+            source=source,
+            mpn=mpn,
+            params=params,
+            field=field,
             candidates=candidates,
         )
     technology = _resolve_semi_technology(description, mpn)
@@ -989,7 +1050,9 @@ def _build_igbt_envelope(
 
 
 def convert_digikey_to_tas_igbt(
-    product: dict[str, Any], *, distributor: str = "Digi-Key",
+    product: dict[str, Any],
+    *,
+    distributor: str = "Digi-Key",
 ) -> dict[str, Any]:
     """Convert a Digi-Key Product v3 payload into a TAS
     ``{"semiconductor": {"igbt": {...}}}`` envelope.
@@ -1006,8 +1069,11 @@ def convert_digikey_to_tas_igbt(
     description = _digikey_description(product)
     status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
     return _build_igbt_envelope(
-        source=source, mpn=mpn, manufacturer=manufacturer,
-        description=description, params=params,
+        source=source,
+        mpn=mpn,
+        manufacturer=manufacturer,
+        description=description,
+        params=params,
         distributor_block=_digikey_distributor_block(source, mpn, product, distributor),
         datasheet_url=product.get("PrimaryDatasheet") or "",
         status=status,
@@ -1024,8 +1090,11 @@ def convert_mouser_to_tas_igbt(product: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(description, str):
         description = ""
     return _build_igbt_envelope(
-        source=source, mpn=mpn, manufacturer=manufacturer,
-        description=description, params=attrs,
+        source=source,
+        mpn=mpn,
+        manufacturer=manufacturer,
+        description=description,
+        params=attrs,
         distributor_block=_mouser_distributor_block(source, mpn, product),
         datasheet_url=product.get("DataSheetUrl") or "",
         status="production",
@@ -1059,7 +1128,9 @@ _RESISTOR_TECHNOLOGY_MAP: dict[str, str] = {
 def _resolve_resistor_technology(source: str, mpn: str, raw: str | None) -> str:
     if not raw:
         raise IncompleteSourceError(
-            source, mpn, "datasheetInfo.part.technology",
+            source,
+            mpn,
+            "datasheetInfo.part.technology",
             detail="distributor payload lacks Composition parameter",
         )
     lowered = raw.lower()
@@ -1067,7 +1138,9 @@ def _resolve_resistor_technology(source: str, mpn: str, raw: str | None) -> str:
         if needle in lowered:
             return enum
     raise IncompleteSourceError(
-        source, mpn, "datasheetInfo.part.technology",
+        source,
+        mpn,
+        "datasheetInfo.part.technology",
         detail=f"unknown resistor composition {raw!r}; extend _RESISTOR_TECHNOLOGY_MAP",
     )
 
@@ -1081,7 +1154,9 @@ def _parse_tolerance(source: str, mpn: str, raw: str | None) -> float:
     """
     if not raw or not isinstance(raw, str):
         raise IncompleteSourceError(
-            source, mpn, "electrical.tolerance",
+            source,
+            mpn,
+            "electrical.tolerance",
             detail="no Tolerance parameter present in distributor payload",
         )
     cleaned = raw.strip().lstrip("±").rstrip("%").strip()
@@ -1089,39 +1164,51 @@ def _parse_tolerance(source: str, mpn: str, raw: str | None) -> float:
         pct = float(cleaned)
     except ValueError as exc:
         raise IncompleteSourceError(
-            source, mpn, "electrical.tolerance",
+            source,
+            mpn,
+            "electrical.tolerance",
             detail=f"unparseable tolerance {raw!r}: {exc}",
         ) from exc
     return pct / 100.0
 
 
 DIGIKEY_RESISTOR_PARAM_MAP: dict[str, tuple[tuple[str, str], ...]] = {
-    "resistance": (
-        ("Resistance", "Ω"),
-    ),
-    "powerRating": (
-        ("Power (Watts)", "W"),
-    ),
+    "resistance": (("Resistance", "Ω"),),
+    "powerRating": (("Power (Watts)", "W"),),
 }
 
 
 def _build_resistor_envelope(
-    *, source: str, mpn: str, manufacturer: str, params: dict[str, str],
-    distributor_block: dict[str, Any], datasheet_url: str, status: str,
+    *,
+    source: str,
+    mpn: str,
+    manufacturer: str,
+    params: dict[str, str],
+    distributor_block: dict[str, Any],
+    datasheet_url: str,
+    status: str,
 ) -> dict[str, Any]:
     resistance = _extract_required_numeric(
-        source=source, mpn=mpn, params=params, field="resistance",
+        source=source,
+        mpn=mpn,
+        params=params,
+        field="resistance",
         candidates=DIGIKEY_RESISTOR_PARAM_MAP["resistance"],
     )
     power = _extract_required_numeric(
-        source=source, mpn=mpn, params=params, field="powerRating",
+        source=source,
+        mpn=mpn,
+        params=params,
+        field="powerRating",
         candidates=DIGIKEY_RESISTOR_PARAM_MAP["powerRating"],
     )
     tolerance = _parse_tolerance(source, mpn, params.get("Tolerance"))
     case = params.get("Supplier Device Package") or params.get("Package / Case")
     if not case:
         raise IncompleteSourceError(
-            source, mpn, "datasheetInfo.part.case",
+            source,
+            mpn,
+            "datasheetInfo.part.case",
             detail="no Package/Case parameter present",
         )
     technology = _resolve_resistor_technology(source, mpn, params.get("Composition"))
@@ -1154,7 +1241,9 @@ def _build_resistor_envelope(
 
 
 def convert_digikey_to_tas_resistor(
-    product: dict[str, Any], *, distributor: str = "Digi-Key",
+    product: dict[str, Any],
+    *,
+    distributor: str = "Digi-Key",
 ) -> dict[str, Any]:
     """Convert a Digi-Key resistor payload into a TAS ``{"resistor": {...}}``
     envelope.
@@ -1172,7 +1261,10 @@ def convert_digikey_to_tas_resistor(
     params = _extract_digikey_params(source, mpn, product)
     status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
     return _build_resistor_envelope(
-        source=source, mpn=mpn, manufacturer=manufacturer, params=params,
+        source=source,
+        mpn=mpn,
+        manufacturer=manufacturer,
+        params=params,
         distributor_block=_digikey_distributor_block(source, mpn, product, distributor),
         datasheet_url=product.get("PrimaryDatasheet") or "",
         status=status,
@@ -1186,7 +1278,10 @@ def convert_mouser_to_tas_resistor(product: dict[str, Any]) -> dict[str, Any]:
     manufacturer = _mouser_manufacturer(source, mpn, product)
     attrs = _extract_mouser_attrs(product)
     return _build_resistor_envelope(
-        source=source, mpn=mpn, manufacturer=manufacturer, params=attrs,
+        source=source,
+        mpn=mpn,
+        manufacturer=manufacturer,
+        params=attrs,
         distributor_block=_mouser_distributor_block(source, mpn, product),
         datasheet_url=product.get("DataSheetUrl") or "",
         status="production",
@@ -1205,7 +1300,9 @@ def convert_mouser_to_tas_resistor(product: dict[str, Any]) -> dict[str, Any]:
 def _resolve_capacitor_technology(source: str, mpn: str, family: str | None) -> str:
     if not family:
         raise IncompleteSourceError(
-            source, mpn, "datasheetInfo.part.technology",
+            source,
+            mpn,
+            "datasheetInfo.part.technology",
             detail="distributor payload lacks Family/Series parameter",
         )
     blob = family.lower()
@@ -1224,7 +1321,9 @@ def _resolve_capacitor_technology(source: str, mpn: str, family: str | None) -> 
     if "supercap" in blob or "super cap" in blob or "edlc" in blob:
         return "Supercapacitor"
     raise IncompleteSourceError(
-        source, mpn, "datasheetInfo.part.technology",
+        source,
+        mpn,
+        "datasheetInfo.part.technology",
         detail=f"unrecognised capacitor family {family!r}",
     )
 
@@ -1233,7 +1332,9 @@ def _resolve_capacitor_technology(source: str, mpn: str, family: str | None) -> 
 def _resolve_capacitor_assembly(source: str, mpn: str, mounting: str | None) -> str:
     if not mounting:
         raise IncompleteSourceError(
-            source, mpn, "datasheetInfo.mechanical.shape.assembly",
+            source,
+            mpn,
+            "datasheetInfo.mechanical.shape.assembly",
             detail="no Mounting Type parameter present",
         )
     blob = mounting.lower()
@@ -1246,13 +1347,18 @@ def _resolve_capacitor_assembly(source: str, mpn: str, mounting: str | None) -> 
     if "through hole" in blob or "through-hole" in blob or "tht" in blob:
         return "THT"
     raise IncompleteSourceError(
-        source, mpn, "datasheetInfo.mechanical.shape.assembly",
+        source,
+        mpn,
+        "datasheetInfo.mechanical.shape.assembly",
         detail=f"unrecognised Mounting Type {mounting!r}",
     )
 
 
 def _resolve_capacitor_shape_type(
-    source: str, mpn: str, assembly: str, technology: str,
+    source: str,
+    mpn: str,
+    assembly: str,
+    technology: str,
 ) -> str:
     """Resolve CAS shape.shapeType from assembly + technology.
 
@@ -1264,25 +1370,22 @@ def _resolve_capacitor_shape_type(
     if assembly == "SMT" and technology in {"MLCC", "Film", "Tantalum", "TantalumPolymer"}:
         return "rectangular"
     if assembly in {"THT", "Snap-In", "Screw Type"} and technology in {
-        "AluminumElectrolytic", "AluminumPolymer", "Supercapacitor",
+        "AluminumElectrolytic",
+        "AluminumPolymer",
+        "Supercapacitor",
     }:
         return "cylindrical"
     raise IncompleteSourceError(
-        source, mpn, "datasheetInfo.mechanical.shape.shapeType",
-        detail=(
-            f"cannot infer shapeType from assembly={assembly!r}, "
-            f"technology={technology!r}"
-        ),
+        source,
+        mpn,
+        "datasheetInfo.mechanical.shape.shapeType",
+        detail=(f"cannot infer shapeType from assembly={assembly!r}, technology={technology!r}"),
     )
 
 
 DIGIKEY_CAPACITOR_PARAM_MAP: dict[str, tuple[tuple[str, str], ...]] = {
-    "capacitance": (
-        ("Capacitance", "F"),
-    ),
-    "ratedVoltage": (
-        ("Voltage - Rated", "V"),
-    ),
+    "capacitance": (("Capacitance", "F"),),
+    "ratedVoltage": (("Voltage - Rated", "V"),),
     "esr": (
         ("ESR (Equivalent Series Resistance)", "Ω"),
         ("ESR", "Ω"),
@@ -1296,15 +1399,27 @@ DIGIKEY_CAPACITOR_PARAM_MAP: dict[str, tuple[tuple[str, str], ...]] = {
 
 
 def _build_capacitor_envelope(
-    *, source: str, mpn: str, manufacturer: str, params: dict[str, str],
-    distributor_block: dict[str, Any], datasheet_url: str, status: str,
+    *,
+    source: str,
+    mpn: str,
+    manufacturer: str,
+    params: dict[str, str],
+    distributor_block: dict[str, Any],
+    datasheet_url: str,
+    status: str,
 ) -> dict[str, Any]:
     capacitance = _extract_required_numeric(
-        source=source, mpn=mpn, params=params, field="capacitance",
+        source=source,
+        mpn=mpn,
+        params=params,
+        field="capacitance",
         candidates=DIGIKEY_CAPACITOR_PARAM_MAP["capacitance"],
     )
     rated_voltage = _extract_required_numeric(
-        source=source, mpn=mpn, params=params, field="ratedVoltage",
+        source=source,
+        mpn=mpn,
+        params=params,
+        field="ratedVoltage",
         candidates=DIGIKEY_CAPACITOR_PARAM_MAP["ratedVoltage"],
     )
     esr = _extract_optional_numeric(
@@ -1318,19 +1433,19 @@ def _build_capacitor_envelope(
     case = params.get("Package / Case") or params.get("Supplier Device Package")
     if not case:
         raise IncompleteSourceError(
-            source, mpn, "datasheetInfo.part.case",
+            source,
+            mpn,
+            "datasheetInfo.part.case",
             detail="no Package/Case parameter present",
         )
-    family = (
-        params.get("Family")
-        or params.get("Family.Value")
-        or params.get("Capacitor Type")
-    )
+    family = params.get("Family") or params.get("Family.Value") or params.get("Capacitor Type")
     technology = _resolve_capacitor_technology(source, mpn, family)
     series = params.get("Series")
     if not series:
         raise IncompleteSourceError(
-            source, mpn, "datasheetInfo.part.series",
+            source,
+            mpn,
+            "datasheetInfo.part.series",
             detail="no Series parameter present",
         )
     assembly = _resolve_capacitor_assembly(source, mpn, params.get("Mounting Type"))
@@ -1375,7 +1490,9 @@ def _build_capacitor_envelope(
 
 
 def convert_digikey_to_tas_capacitor(
-    product: dict[str, Any], *, distributor: str = "Digi-Key",
+    product: dict[str, Any],
+    *,
+    distributor: str = "Digi-Key",
 ) -> dict[str, Any]:
     """Convert a Digi-Key capacitor payload into a TAS ``{"capacitor": {...}}``
     envelope.
@@ -1392,7 +1509,10 @@ def convert_digikey_to_tas_capacitor(
     params = _extract_digikey_params(source, mpn, product)
     status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
     return _build_capacitor_envelope(
-        source=source, mpn=mpn, manufacturer=manufacturer, params=params,
+        source=source,
+        mpn=mpn,
+        manufacturer=manufacturer,
+        params=params,
         distributor_block=_digikey_distributor_block(source, mpn, product, distributor),
         datasheet_url=product.get("PrimaryDatasheet") or "",
         status=status,
@@ -1406,7 +1526,10 @@ def convert_mouser_to_tas_capacitor(product: dict[str, Any]) -> dict[str, Any]:
     manufacturer = _mouser_manufacturer(source, mpn, product)
     attrs = _extract_mouser_attrs(product)
     return _build_capacitor_envelope(
-        source=source, mpn=mpn, manufacturer=manufacturer, params=attrs,
+        source=source,
+        mpn=mpn,
+        manufacturer=manufacturer,
+        params=attrs,
         distributor_block=_mouser_distributor_block(source, mpn, product),
         datasheet_url=product.get("DataSheetUrl") or "",
         status="production",
@@ -1456,12 +1579,16 @@ def _build_magnetic_envelope(
 ) -> dict[str, Any]:
     """Build a TAS ``{"magnetic": {...}}`` envelope from parsed parameters."""
     inductance = _extract_required_numeric(
-        source=source, mpn=mpn, params=params,
+        source=source,
+        mpn=mpn,
+        params=params,
         field="inductance",
         candidates=DIGIKEY_MAGNETIC_PARAM_MAP["inductance"],
     )
     dcr = _extract_required_numeric(
-        source=source, mpn=mpn, params=params,
+        source=source,
+        mpn=mpn,
+        params=params,
         field="dcResistance",
         candidates=DIGIKEY_MAGNETIC_PARAM_MAP["dcResistance"],
     )
@@ -1526,7 +1653,9 @@ def _build_magnetic_envelope(
 
 
 def convert_digikey_to_tas_magnetic(
-    product: dict[str, Any], *, distributor: str = "Digi-Key",
+    product: dict[str, Any],
+    *,
+    distributor: str = "Digi-Key",
 ) -> dict[str, Any]:
     """Convert a Digi-Key inductor/magnetic payload into a TAS
     ``{"magnetic": {...}}`` envelope.
@@ -1540,7 +1669,10 @@ def convert_digikey_to_tas_magnetic(
     params = _extract_digikey_params(source, mpn, product)
     status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
     return _build_magnetic_envelope(
-        source=source, mpn=mpn, manufacturer=manufacturer, params=params,
+        source=source,
+        mpn=mpn,
+        manufacturer=manufacturer,
+        params=params,
         distributor_block=_digikey_distributor_block(source, mpn, product, distributor),
         datasheet_url=product.get("PrimaryDatasheet") or "",
         status=status,

@@ -37,8 +37,8 @@ import hashlib
 import json
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -90,7 +90,7 @@ def _spec_fingerprint(spec: Mapping[str, Any]) -> str:
         if iouts:
             parts.append(f"{iouts[0]}A")
         if isinstance(fsw, (int, float)):
-            parts.append(f"{fsw/1e3:.0f}kHz")
+            parts.append(f"{fsw / 1e3:.0f}kHz")
     return "-".join(str(p) for p in parts) or "unknown"
 
 
@@ -123,59 +123,66 @@ def analyze_outcome(
 ) -> list[Lesson]:
     """Extract lessons from a single DesignOutcome."""
     lessons: list[Lesson] = []
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     topo = outcome.pick.topology.name
     fp = _spec_fingerprint(spec)
 
     # --- Diagnostics: pipeline-level failures ---
     for diag in outcome.diagnostics:
         if "StressDerivationError" in diag or "spec missing" in diag.lower():
-            lessons.append(Lesson(
-                id=_lesson_id(topo, "missing_spec_field", _detail_hash(diag)),
-                timestamp=now,
-                topology=topo,
-                category="missing_spec_field",
-                severity="error",
-                detail=diag,
-                spec_fingerprint=fp,
-                suggestion="add the missing field to the spec before running this topology",
-            ))
+            lessons.append(
+                Lesson(
+                    id=_lesson_id(topo, "missing_spec_field", _detail_hash(diag)),
+                    timestamp=now,
+                    topology=topo,
+                    category="missing_spec_field",
+                    severity="error",
+                    detail=diag,
+                    spec_fingerprint=fp,
+                    suggestion="add the missing field to the spec before running this topology",
+                )
+            )
         elif "BOM selection" in diag or "SelectionError" in diag:
-            lessons.append(Lesson(
-                id=_lesson_id(topo, "component_unavailable", _detail_hash(diag)),
-                timestamp=now,
-                topology=topo,
-                category="component_unavailable",
-                severity="warning",
-                detail=diag,
-                spec_fingerprint=fp,
-                suggestion="run librarian fetch to expand TAS DB coverage for this stress range",
-            ))
+            lessons.append(
+                Lesson(
+                    id=_lesson_id(topo, "component_unavailable", _detail_hash(diag)),
+                    timestamp=now,
+                    topology=topo,
+                    category="component_unavailable",
+                    severity="warning",
+                    detail=diag,
+                    spec_fingerprint=fp,
+                    suggestion="run librarian fetch to expand TAS DB coverage for this stress range",
+                )
+            )
         elif "sim skipped" in diag or "sim runner" in diag.lower():
-            lessons.append(Lesson(
-                id=_lesson_id(topo, "simulation_failure", _detail_hash(diag)),
-                timestamp=now,
-                topology=topo,
-                category="simulation_failure",
-                severity="warning",
-                detail=diag,
-                spec_fingerprint=fp,
-            ))
+            lessons.append(
+                Lesson(
+                    id=_lesson_id(topo, "simulation_failure", _detail_hash(diag)),
+                    timestamp=now,
+                    topology=topo,
+                    category="simulation_failure",
+                    severity="warning",
+                    detail=diag,
+                    spec_fingerprint=fp,
+                )
+            )
         elif "component design failed" in diag:
-            lessons.append(Lesson(
-                id=_lesson_id(topo, "design_failure", _detail_hash(diag)),
-                timestamp=now,
-                topology=topo,
-                category="design_failure",
-                severity="error",
-                detail=diag,
-                spec_fingerprint=fp,
-            ))
+            lessons.append(
+                Lesson(
+                    id=_lesson_id(topo, "design_failure", _detail_hash(diag)),
+                    timestamp=now,
+                    topology=topo,
+                    category="design_failure",
+                    severity="error",
+                    detail=diag,
+                    spec_fingerprint=fp,
+                )
+            )
 
     # --- Realism gate: check-level failures and tight margins ---
     if outcome.verdict_dict:
         checks = outcome.verdict_dict.get("checks", [])
-        verdict = outcome.verdict_dict.get("verdict", "")
 
         for c in checks:
             name = c.get("name", "")
@@ -185,17 +192,19 @@ def analyze_outcome(
 
             if status == "fail":
                 detail = f"{name} FAILED: value={value}, margin={margin}"
-                lessons.append(Lesson(
-                    id=_lesson_id(topo, "realism_fail", _detail_hash(detail)),
-                    timestamp=now,
-                    topology=topo,
-                    category="realism_fail",
-                    severity="error",
-                    check_name=name,
-                    detail=detail,
-                    spec_fingerprint=fp,
-                    suggestion=_suggest_for_check(name, value, margin),
-                ))
+                lessons.append(
+                    Lesson(
+                        id=_lesson_id(topo, "realism_fail", _detail_hash(detail)),
+                        timestamp=now,
+                        topology=topo,
+                        category="realism_fail",
+                        severity="error",
+                        check_name=name,
+                        detail=detail,
+                        spec_fingerprint=fp,
+                        suggestion=_suggest_for_check(name, value, margin),
+                    )
+                )
 
             elif status == "pass" and margin is not None:
                 threshold = _TIGHT_THRESHOLDS.get(name)
@@ -204,50 +213,58 @@ def analyze_outcome(
                         f"{name}: margin={margin:.4f} < {threshold} — "
                         f"tight under nominal conditions"
                     )
-                    lessons.append(Lesson(
-                        id=_lesson_id(topo, "margin_violation", _detail_hash(detail)),
-                        timestamp=now,
-                        topology=topo,
-                        category="margin_violation",
-                        severity="warning",
-                        check_name=name,
-                        detail=detail,
-                        spec_fingerprint=fp,
-                        suggestion=_suggest_for_check(name, value, margin),
-                    ))
+                    lessons.append(
+                        Lesson(
+                            id=_lesson_id(topo, "margin_violation", _detail_hash(detail)),
+                            timestamp=now,
+                            topology=topo,
+                            category="margin_violation",
+                            severity="warning",
+                            check_name=name,
+                            detail=detail,
+                            spec_fingerprint=fp,
+                            suggestion=_suggest_for_check(name, value, margin),
+                        )
+                    )
 
             elif status == "unavailable":
                 detail = f"{name}: UNAVAILABLE — enricher or analyst not implemented"
-                lessons.append(Lesson(
-                    id=_lesson_id(topo, "check_unavailable", _detail_hash(detail)),
-                    timestamp=now,
-                    topology=topo,
-                    category="check_unavailable",
-                    severity="info",
-                    check_name=name,
-                    detail=detail,
-                    spec_fingerprint=fp,
-                    ttl_days=30,
-                ))
+                lessons.append(
+                    Lesson(
+                        id=_lesson_id(topo, "check_unavailable", _detail_hash(detail)),
+                        timestamp=now,
+                        topology=topo,
+                        category="check_unavailable",
+                        severity="info",
+                        check_name=name,
+                        detail=detail,
+                        spec_fingerprint=fp,
+                        ttl_days=30,
+                    )
+                )
 
     # --- Gatekeeper objections ---
     if outcome.gatekeeper and not outcome.gatekeeper.approved:
         for obj in outcome.gatekeeper.objections:
-            lessons.append(Lesson(
-                id=_lesson_id(topo, "gatekeeper_block", _detail_hash(obj)),
-                timestamp=now,
-                topology=topo,
-                category="gatekeeper_block",
-                severity="error",
-                detail=obj,
-                spec_fingerprint=fp,
-            ))
+            lessons.append(
+                Lesson(
+                    id=_lesson_id(topo, "gatekeeper_block", _detail_hash(obj)),
+                    timestamp=now,
+                    topology=topo,
+                    category="gatekeeper_block",
+                    severity="error",
+                    detail=obj,
+                    spec_fingerprint=fp,
+                )
+            )
 
     return lessons
 
 
 def _suggest_for_check(
-    name: str, value: Any, margin: Any,
+    name: str,
+    value: Any,
+    margin: Any,
 ) -> str | None:
     """Generate an actionable suggestion for a specific check failure."""
     suggestions = {
@@ -264,12 +281,10 @@ def _suggest_for_check(
             "or reduce input voltage range"
         ),
         "diode_voltage_derating": (
-            "diode Vrrm too close to reverse voltage stress; pick a "
-            "higher-voltage diode"
+            "diode Vrrm too close to reverse voltage stress; pick a higher-voltage diode"
         ),
         "capacitor_voltage_derating": (
-            "capacitor voltage rating too close to working voltage; "
-            "pick a higher-voltage cap"
+            "capacitor voltage rating too close to working voltage; pick a higher-voltage cap"
         ),
         "duty_cycle_bounds": (
             "duty cycle at edge of valid range; consider a different "
@@ -336,7 +351,7 @@ def load_lessons(
     if not store_path.exists():
         return []
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     lessons: list[Lesson] = []
     for line in store_path.read_text().splitlines():
         line = line.strip()
@@ -364,18 +379,20 @@ def load_lessons(
             except (ValueError, TypeError):
                 pass
 
-        lessons.append(Lesson(
-            id=obj.get("id", ""),
-            timestamp=obj.get("timestamp", ""),
-            topology=obj.get("topology", ""),
-            category=obj.get("category", ""),
-            severity=obj.get("severity", "info"),
-            detail=obj.get("detail", ""),
-            spec_fingerprint=obj.get("spec_fingerprint", ""),
-            check_name=obj.get("check_name"),
-            suggestion=obj.get("suggestion"),
-            ttl_days=obj.get("ttl_days", 90),
-        ))
+        lessons.append(
+            Lesson(
+                id=obj.get("id", ""),
+                timestamp=obj.get("timestamp", ""),
+                topology=obj.get("topology", ""),
+                category=obj.get("category", ""),
+                severity=obj.get("severity", "info"),
+                detail=obj.get("detail", ""),
+                spec_fingerprint=obj.get("spec_fingerprint", ""),
+                check_name=obj.get("check_name"),
+                suggestion=obj.get("suggestion"),
+                ttl_days=obj.get("ttl_days", 90),
+            )
+        )
 
     return lessons
 
@@ -406,7 +423,9 @@ def review_design_run(
         n_new = store_lessons(all_lessons, path=store_path)
         logger.info(
             "teacher: reviewed %d outcomes, extracted %d lessons (%d new)",
-            len(outcomes), len(all_lessons), n_new,
+            len(outcomes),
+            len(all_lessons),
+            n_new,
         )
 
     return all_lessons

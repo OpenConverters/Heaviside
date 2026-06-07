@@ -28,7 +28,6 @@ from heaviside.librarian.datasheet.base import (
 from heaviside.librarian.datasheet.cache import PdfCache
 from heaviside.librarian.datasheet.reader import DatasheetReader
 
-
 _FAKE_PDF = b"%PDF-1.4\n%fake-for-tests\n%%EOF\n"
 
 
@@ -44,6 +43,7 @@ def _ok_transport(counter: dict[str, int] | None = None) -> httpx.MockTransport:
         if counter is not None:
             counter["n"] = counter.get("n", 0) + 1
         return httpx.Response(200, content=_FAKE_PDF)
+
     return httpx.MockTransport(handler)
 
 
@@ -76,8 +76,7 @@ _DIODE_TABLE_MISSING_QRR = [
 # ---------------------------------------------------------------------------
 
 
-def test_construct_with_default_cache_dir(monkeypatch: pytest.MonkeyPatch,
-                                          tmp_path: Path) -> None:
+def test_construct_with_default_cache_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # Point HEAVISIDE_DATASHEET_CACHE at tmp_path so we don't write
     # into the user's real ~/.heaviside dir.
     monkeypatch.setenv("HEAVISIDE_DATASHEET_CACHE", str(tmp_path / "default"))
@@ -112,12 +111,14 @@ def test_construct_rejects_cache_plus_transport(cache_dir: Path) -> None:
 
 
 def test_extract_returns_parsed_params(
-    cache_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    cache_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _stub_tables(monkeypatch, [_MOSFET_TABLE])
     r = DatasheetReader(cache_dir=cache_dir, transport=_ok_transport())
     result = r.extract(
-        "https://example.com/mosfet.pdf", category="mosfets",
+        "https://example.com/mosfet.pdf",
+        category="mosfets",
     )
     assert result["drainSourceVoltage"] == pytest.approx(100.0)
     assert result["onResistance"] == pytest.approx(0.020)
@@ -125,7 +126,8 @@ def test_extract_returns_parsed_params(
 
 
 def test_extract_uses_cache_on_second_call(
-    cache_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    cache_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     counter: dict[str, int] = {"n": 0}
     _stub_tables(monkeypatch, [_MOSFET_TABLE])
@@ -137,7 +139,8 @@ def test_extract_uses_cache_on_second_call(
 
 
 def test_extract_force_download_bypasses_cache(
-    cache_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    cache_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     counter: dict[str, int] = {"n": 0}
     _stub_tables(monkeypatch, [_MOSFET_TABLE])
@@ -149,12 +152,15 @@ def test_extract_force_download_bypasses_cache(
 
 
 def test_extract_propagates_download_errors(
-    cache_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    cache_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, text="missing")
+
     r = DatasheetReader(
-        cache_dir=cache_dir, transport=httpx.MockTransport(handler),
+        cache_dir=cache_dir,
+        transport=httpx.MockTransport(handler),
     )
     with pytest.raises(DatasheetDownloadError):
         r.extract("https://example.com/nope.pdf", category="mosfets")
@@ -166,7 +172,8 @@ def test_extract_propagates_download_errors(
 
 
 def test_extract_required_happy(
-    cache_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    cache_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _stub_tables(monkeypatch, [_MOSFET_TABLE])
     r = DatasheetReader(cache_dir=cache_dir, transport=_ok_transport())
@@ -176,13 +183,18 @@ def test_extract_required_happy(
         mpn="TESTFET01",
     )
     assert set(result) >= {
-        "drainSourceVoltage", "onResistance", "continuousDrainCurrent",
-        "totalGateCharge", "gateThresholdVoltage", "outputCapacitance",
+        "drainSourceVoltage",
+        "onResistance",
+        "continuousDrainCurrent",
+        "totalGateCharge",
+        "gateThresholdVoltage",
+        "outputCapacitance",
     }
 
 
 def test_extract_required_raises_on_missing_field(
-    cache_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    cache_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _stub_tables(monkeypatch, [_DIODE_TABLE_MISSING_QRR])
     r = DatasheetReader(cache_dir=cache_dir, transport=_ok_transport())
@@ -204,7 +216,9 @@ def test_extract_required_raises_on_missing_field(
 
 
 def test_extract_from_path_bypasses_cache(
-    cache_dir: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    cache_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     counter: dict[str, int] = {"n": 0}
     _stub_tables(monkeypatch, [_MOSFET_TABLE])

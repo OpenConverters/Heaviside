@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Extract Vishay product data from saved HTML files and convert to TAS format."""
 
+import contextlib
 import json
 import re
 import sys
@@ -16,15 +17,15 @@ OUTPUT_DIR = REPO_ROOT / "TAS" / "data"
 
 def extract_json_from_html(html_path: Path) -> dict:
     """Extract Next.js page props JSON from HTML file."""
-    with open(html_path, "r", encoding="utf-8") as f:
+    with open(html_path, encoding="utf-8") as f:
         html = f.read()
-    
+
     # Find all script tags
     scripts = re.findall(r"<script[^\u003e]*\u003e(.*?)\u003c/script\u003e", html, re.DOTALL)
-    
+
     # Find the largest script (contains the data)
     largest_script = max(scripts, key=len)
-    
+
     # Parse JSON
     data = json.loads(largest_script)
     return data["props"]["pageProps"]
@@ -67,14 +68,14 @@ def parse_case_size(case_str: str) -> tuple[float | None, float | None]:
         return None, None
     # Remove HTML entities
     case_str = case_str.replace("&#216;", "Ø").replace("&#176;", "°")
-    
+
     # Match diameter x length pattern
     match = re.search(r"Ø(\d+(?:\.\d+)?)[xX](\d+(?:\.\d+)?)", case_str)
     if match:
         diameter_mm = float(match.group(1))
         length_mm = float(match.group(2))
         return diameter_mm * 1e-3, length_mm * 1e-3
-    
+
     return None, None
 
 
@@ -82,28 +83,26 @@ def make_capacitor_document(product: dict) -> dict[str, Any]:
     """Convert Vishay capacitor product to CAS document."""
     order_code = product.get("order_code", "")
     series = product.get("P1001", "")
-    
+
     # Parse electrical specs
     capacitance_f = parse_capacitance(product.get("cap"))
     voltage = parse_voltage(product.get("Voltage"))
-    
+
     if not capacitance_f or not voltage:
         return None
-    
+
     # Parse dimensions
     case_str = product.get("case_size", "").replace("&#216;", "Ø").replace("&#176;", "°")
     diameter_m, length_m = parse_case_size(case_str)
-    
+
     # Parse temperature
     temp = parse_temperature(product.get("temp_max", ""))
-    
+
     # Useful life
     useful_life = None
-    try:
+    with contextlib.suppress(ValueError, TypeError):
         useful_life = float(product.get("Useful_Life", 0))
-    except (ValueError, TypeError):
-        pass
-    
+
     # Build document
     doc = {
         "capacitor": {
@@ -147,23 +146,23 @@ def make_capacitor_document(product: dict) -> dict[str, Any]:
             }
         }
     }
-    
+
     # Add dimensions if available
     if diameter_m:
-        doc["capacitor"]["manufacturerInfo"]["datasheetInfo"]["mechanical"]["dimensions"]["diameter"] = {
-            "nominal": diameter_m
-        }
+        doc["capacitor"]["manufacturerInfo"]["datasheetInfo"]["mechanical"]["dimensions"][
+            "diameter"
+        ] = {"nominal": diameter_m}
     if length_m:
-        doc["capacitor"]["manufacturerInfo"]["datasheetInfo"]["mechanical"]["dimensions"]["length"] = {
-            "nominal": length_m
-        }
-    
+        doc["capacitor"]["manufacturerInfo"]["datasheetInfo"]["mechanical"]["dimensions"][
+            "length"
+        ] = {"nominal": length_m}
+
     # Add useful life if available
     if useful_life:
         doc["capacitor"]["manufacturerInfo"]["datasheetInfo"]["lifetime"] = {
             "lifetimeEndurance": useful_life,
         }
-    
+
     return doc
 
 
@@ -173,16 +172,16 @@ def process_capacitors() -> list[dict[str, Any]]:
     if not html_path.exists():
         print(f"WARNING: {html_path} not found")
         return []
-    
+
     pageProps = extract_json_from_html(html_path)
     products = pageProps.get("paramResults", [])
-    
+
     results = []
     for product in products:
         doc = make_capacitor_document(product)
         if doc:
             results.append(doc)
-    
+
     print(f"Processed {len(results)} capacitors from {len(products)} raw entries")
     return results
 
@@ -193,10 +192,10 @@ def process_mosfets() -> list[dict[str, Any]]:
     if not html_path.exists():
         print(f"WARNING: {html_path} not found")
         return []
-    
+
     pageProps = extract_json_from_html(html_path)
     products = pageProps.get("paramResults", [])
-    
+
     print(f"Found {len(products)} MOSFETs (SAS format not yet implemented)")
     return []
 
@@ -212,16 +211,16 @@ def main():
     print("=" * 60)
     print("Vishay HTML to TAS Converter")
     print("=" * 60)
-    
+
     all_caps = process_capacitors()
-    all_mosfets = process_mosfets()
-    
+    process_mosfets()  # side effects only; result intentionally unused here
+
     # Write capacitors
     if all_caps:
         caps_path = OUTPUT_DIR / "capacitors.ndjson"
         write_ndjson(all_caps, caps_path)
         print(f"\nWrote {len(all_caps)} capacitors to {caps_path}")
-    
+
     print("\n" + "=" * 60)
     print("Conversion complete!")
     print(f"  Total capacitors: {len(all_caps)}")

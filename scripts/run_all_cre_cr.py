@@ -65,6 +65,7 @@ def run_one(name: str) -> dict:
         source_bom = json.loads(proteus_bom_path.read_text())
 
     from heaviside.agents.llm_call import reset_token_usage
+
     reset_token_usage()
 
     t0 = time.time()
@@ -86,6 +87,7 @@ def run_one(name: str) -> dict:
 
     # Get actual token usage
     from heaviside.agents.llm_call import get_token_usage
+
     usage = get_token_usage()
     # kimi-k2.5 pricing: $0.002/1K input, $0.01/1K output
     est_cost = (usage["input"] * 0.002 + usage["output"] * 0.01) / 1000
@@ -111,25 +113,30 @@ def main():
     results = []
 
     for i, name in enumerate(GOLDEN_DESIGNS):
-        print(f"\n{'='*70}")
-        print(f"[{i+1}/{len(GOLDEN_DESIGNS)}] {name}")
-        print(f"{'='*70}")
+        print(f"\n{'=' * 70}")
+        print(f"[{i + 1}/{len(GOLDEN_DESIGNS)}] {name}")
+        print(f"{'=' * 70}")
         try:
             r = run_one(name)
             results.append(r)
-            print(f"  → {r['total']} components: {r['recommended']}R {r['exact']}E "
-                  f"{r['partial']}P {r['no_substitute']}N {r['keep_original']}K "
-                  f"| coverage={r['coverage']:.0%} | {r['guardrails']} guardrails "
-                  f"| {r['elapsed_s']}s | ~${r.get('est_cost_usd', 0):.2f}", flush=True)
+            print(
+                f"  → {r['total']} components: {r['recommended']}R {r['exact']}E "
+                f"{r['partial']}P {r['no_substitute']}N {r['keep_original']}K "
+                f"| coverage={r['coverage']:.0%} | {r['guardrails']} guardrails "
+                f"| {r['elapsed_s']}s | ~${r.get('est_cost_usd', 0):.2f}",
+                flush=True,
+            )
         except Exception as exc:
             traceback.print_exc()
             results.append({"name": name, "error": str(exc)})
 
     # Summary
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("CRE→CR SUMMARY")
-    print(f"{'='*70}")
-    print(f"{'Design':<40s} {'Total':>5} {'R':>3} {'E':>3} {'P':>3} {'N':>3} {'K':>3} {'Cov':>5} {'GR':>3} {'Time':>6} {'Cost':>6}")
+    print(f"{'=' * 70}")
+    print(
+        f"{'Design':<40s} {'Total':>5} {'R':>3} {'E':>3} {'P':>3} {'N':>3} {'K':>3} {'Cov':>5} {'GR':>3} {'Time':>6} {'Cost':>6}"
+    )
     print("-" * 90)
     total_time = 0
     total_cost = 0
@@ -137,17 +144,21 @@ def main():
         if "error" in r:
             print(f"{r['name'][:39]:<40s} ERROR: {r['error'][:45]}")
             continue
-        t = r.get('elapsed_s', 0)
-        c = r.get('est_cost_usd', 0)
+        t = r.get("elapsed_s", 0)
+        c = r.get("est_cost_usd", 0)
         total_time += t
         total_cost += c
-        print(f"{r['name'][:39]:<40s} {r['total']:5d} {r['recommended']:3d} "
-              f"{r['exact']:3d} {r['partial']:3d} {r['no_substitute']:3d} "
-              f"{r['keep_original']:3d} {r['coverage']:4.0%} {r['guardrails']:3d} "
-              f"{t:5.0f}s ${c:.2f}")
+        print(
+            f"{r['name'][:39]:<40s} {r['total']:5d} {r['recommended']:3d} "
+            f"{r['exact']:3d} {r['partial']:3d} {r['no_substitute']:3d} "
+            f"{r['keep_original']:3d} {r['coverage']:4.0%} {r['guardrails']:3d} "
+            f"{t:5.0f}s ${c:.2f}"
+        )
     print("-" * 90)
-    print(f"{'TOTAL':<40s} {'':>5} {'':>3} {'':>3} {'':>3} {'':>3} {'':>3} {'':>5} {'':>3} "
-          f"{total_time:5.0f}s ${total_cost:.2f}")
+    print(
+        f"{'TOTAL':<40s} {'':>5} {'':>3} {'':>3} {'':>3} {'':>3} {'':>3} {'':>5} {'':>3} "
+        f"{total_time:5.0f}s ${total_cost:.2f}"
+    )
 
 
 if __name__ == "__main__":

@@ -67,14 +67,16 @@ def run_one(name: str) -> dict:
         "components": [],
     }
     for c in outcome.components:
-        result["components"].append({
-            "ref_des": c.ref_des,
-            "component_type": c.component_type,
-            "original_mpn": c.original_mpn,
-            "substitute_mpn": c.substitute_mpn,
-            "status": c.status.value,
-            "notes": c.notes,
-        })
+        result["components"].append(
+            {
+                "ref_des": c.ref_des,
+                "component_type": c.component_type,
+                "original_mpn": c.original_mpn,
+                "substitute_mpn": c.substitute_mpn,
+                "status": c.status.value,
+                "notes": c.notes,
+            }
+        )
 
     (out_dir / "outcome.json").write_text(json.dumps(result, indent=2) + "\n")
 
@@ -88,6 +90,7 @@ def run_one(name: str) -> dict:
 
     # Summary stats
     from collections import Counter
+
     counts = Counter(c.status.value for c in outcome.components)
     total = len(outcome.components)
     replaced = counts.get("recommended", 0) + counts.get("partial", 0) + counts.get("exact", 0)
@@ -96,10 +99,12 @@ def run_one(name: str) -> dict:
         "name": name,
         "total": total,
         "replaced": replaced,
-        "coverage": f"{100*replaced/total:.0f}%" if total else "0%",
+        "coverage": f"{100 * replaced / total:.0f}%" if total else "0%",
         "passed": outcome.passed,
         "elapsed": f"{elapsed:.0f}s",
-        "review": outcome.review_verdicts[-1].get("verdict", "?") if outcome.review_verdicts else "?",
+        "review": outcome.review_verdicts[-1].get("verdict", "?")
+        if outcome.review_verdicts
+        else "?",
     }
 
 
@@ -117,50 +122,67 @@ def main():
             # Load existing result
             existing = json.loads((OUTPUT_BASE / name / "outcome.json").read_text())
             from collections import Counter
+
             counts = Counter(c["status"] for c in existing["components"])
             total = len(existing["components"])
-            replaced = counts.get("recommended", 0) + counts.get("partial", 0) + counts.get("exact", 0)
-            results.append({
-                "name": name,
-                "total": total,
-                "replaced": replaced,
-                "coverage": f"{100*replaced/total:.0f}%" if total else "0%",
-                "passed": existing["passed"],
-                "elapsed": f"{existing.get('elapsed_s', '?')}s",
-                "review": "cached",
-            })
+            replaced = (
+                counts.get("recommended", 0) + counts.get("partial", 0) + counts.get("exact", 0)
+            )
+            results.append(
+                {
+                    "name": name,
+                    "total": total,
+                    "replaced": replaced,
+                    "coverage": f"{100 * replaced / total:.0f}%" if total else "0%",
+                    "passed": existing["passed"],
+                    "elapsed": f"{existing.get('elapsed_s', '?')}s",
+                    "review": "cached",
+                }
+            )
             continue
 
-        print(f"\n{'='*70}")
-        print(f"[{i+1}/{len(DESIGNS)}] {name}")
-        print(f"{'='*70}")
+        print(f"\n{'=' * 70}")
+        print(f"[{i + 1}/{len(DESIGNS)}] {name}")
+        print(f"{'=' * 70}")
         try:
             r = run_one(name)
             results.append(r)
             print(f"  → {r['coverage']} coverage, {r['review']}, {r['elapsed']}")
         except Exception as exc:
             print(f"  FAILED: {exc}")
-            results.append({"name": name, "total": 0, "replaced": 0,
-                           "coverage": "ERR", "passed": False,
-                           "elapsed": "?", "review": f"ERROR: {exc}"})
+            results.append(
+                {
+                    "name": name,
+                    "total": 0,
+                    "replaced": 0,
+                    "coverage": "ERR",
+                    "passed": False,
+                    "elapsed": "?",
+                    "review": f"ERROR: {exc}",
+                }
+            )
 
     # Summary table
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("SUMMARY")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"{'Design':<40} {'BOM':>4} {'Würth':>5} {'Cov':>5} {'Review':>10} {'Time':>6}")
     print("-" * 75)
     for r in results:
-        print(f"{r['name'][:39]:<40} {r['total']:>4} {r['replaced']:>5} "
-              f"{r['coverage']:>5} {str(r['review'])[:10]:>10} {r['elapsed']:>6}")
+        print(
+            f"{r['name'][:39]:<40} {r['total']:>4} {r['replaced']:>5} "
+            f"{r['coverage']:>5} {str(r['review'])[:10]:>10} {r['elapsed']:>6}"
+        )
 
     total_comps = sum(r["total"] for r in results)
     total_replaced = sum(r["replaced"] for r in results)
     total_passed = sum(1 for r in results if r["passed"])
     print("-" * 75)
-    print(f"{'TOTAL':<40} {total_comps:>4} {total_replaced:>5} "
-          f"{f'{100*total_replaced/total_comps:.0f}%' if total_comps else '?':>5} "
-          f"{f'{total_passed}/{len(results)}':>10}")
+    print(
+        f"{'TOTAL':<40} {total_comps:>4} {total_replaced:>5} "
+        f"{f'{100 * total_replaced / total_comps:.0f}%' if total_comps else '?':>5} "
+        f"{f'{total_passed}/{len(results)}':>10}"
+    )
 
 
 if __name__ == "__main__":

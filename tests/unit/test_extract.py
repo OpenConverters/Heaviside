@@ -7,14 +7,12 @@ MAS field must raise :class:`EnrichmentError`, never silently default.
 
 from __future__ import annotations
 
-import copy
-
 import pytest
 
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
-
+from tests.unit._real_mas import isat_of, real_magnetic
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -28,58 +26,58 @@ def _buck_spec() -> dict:
         "currentRippleRatio": 0.4,
         "diodeVoltageDrop": 0.7,
         "efficiency": 0.95,
-        "operatingPoints": [{
-            "outputVoltages": [12.0],
-            "outputCurrents": [5.0],
-            "switchingFrequency": 200_000.0,
-            "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [12.0],
+                "outputCurrents": [5.0],
+                "switchingFrequency": 200_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
     }
 
 
 def _buck_mas() -> dict:
-    """Minimal MAS shape sufficient for the buck extractor."""
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 8.0327e-5,
-                    "effectiveLength": 0.0909,
-                    "effectiveVolume": 7.3e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.4, "temperature": 100.0},
-                        {"magneticField": 392.0, "magneticFluxDensity": 0.473, "temperature": 25.0},
-                    ],
-                },
-            },
-        },
-        "coil": {
-            "functionalDescription": [
-                {"name": "Primary", "numberTurns": 9, "numberParallels": 1,
-                 "isolationSide": "primary"},
-            ],
-        },
-    }
+    """Complete, PyOM-evaluable MAS for the buck inductor.
+
+    A real gapped inductor (single primary winding, 9 turns) built by
+    :func:`real_magnetic` so the extractor's
+    ``calculate_saturation_current`` call returns genuine MKF physics
+    instead of silently exercising the (now-deleted) analytical fallback.
+    The harvest paths the extractor reads —
+    ``core.processedDescription.effectiveParameters.effectiveArea``,
+    ``coil.functionalDescription[0].numberTurns``, and
+    ``core.functionalDescription.material.saturation`` — are all populated
+    by autocomplete.
+    """
+    return real_magnetic(
+        shape="ETD 29/16/10",
+        material="3C95",
+        gap_mm=1.0,
+        windings=[{"name": "Primary", "turns": 9, "side": "primary"}],
+    )
 
 
 def _buck_tas() -> dict:
-    return {"topology": {
-        "stages": [{
-            "name": "power_stage",
-            "role": "switchingCell",
-            "circuit": {"components": [
-                {"name": "Q1", "data": "placeholder"},
-                {"name": "D1", "data": "placeholder"},
-                {"name": "L1", "category": "magnetic", "mas": _buck_mas()},
-                {"name": "C_out", "data": "placeholder"},
-            ]},
-        }],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "power_stage",
+                    "role": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "data": "placeholder"},
+                            {"name": "D1", "data": "placeholder"},
+                            {"name": "L1", "category": "magnetic", "mas": _buck_mas()},
+                            {"name": "C_out", "data": "placeholder"},
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -108,20 +106,25 @@ class TestBuckEnrichmentMath:
         #           = 12 · 0.8 / (0.8 · 22e-6 · 200_000)
         #           = 9.6 / 3.52  = 2.7272…  A_pp
         # Ipeak_worst = 5 + 2.7272/2 = 6.3636…
-        assert l1["ipeak_worst"] == pytest.approx(5.0 + (12.0 * 0.8) / (0.8 * 22e-6 * 200_000) / 2.0,
-                                                  rel=1e-6)
+        assert l1["ipeak_worst"] == pytest.approx(
+            5.0 + (12.0 * 0.8) / (0.8 * 22e-6 * 200_000) / 2.0, rel=1e-6
+        )
         # And worst-case L stamped in provenance must be 0.8·L exactly.
         assert l1["ipeak_provenance"]["L_worst_H"] == pytest.approx(0.8 * 22e-6)
 
-    def test_isat_picks_lowest_bsat_across_temperatures(self):
-        """Material has 0.4 T at 100°C and 0.473 T at 25°C; the
-        conservative pick is 0.4 T."""
+    def test_isat_matches_pyom_ground_truth(self):
+        """Ground truth = MKF: the stamped Isat must equal PyOM's
+        saturation current for the real L1 magnetic at the op-point
+        ambient (25 °C), NOT an analytical B_sat·N·A_e/L formula. The
+        provenance still records the conservative material B_sat (a real
+        ferrite value in 0.2–0.6 T) and the harvested turns count."""
+        themas = _buck_mas()
         out = enrich_tas_for_realism(_buck_tas(), topology="buck", spec=_buck_spec())
         l1 = out["topology"]["stages"][0]["circuit"]["components"][2]
-        # Isat = B_sat · N · A_e / L = 0.4 · 9 · 8.0327e-5 / 22e-6
-        expected = 0.4 * 9 * 8.0327e-5 / 22e-6
-        assert l1["isat"] == pytest.approx(expected, rel=1e-4)
-        assert l1["isat_provenance"]["b_sat_T"] == pytest.approx(0.4)
+        # ambientTemperature in _buck_spec()'s op-point is 25 °C.
+        expected = isat_of(themas, temperature_c=25.0)
+        assert l1["isat"] == pytest.approx(expected, rel=1e-3)
+        assert 0.2 < l1["isat_provenance"]["b_sat_T"] < 0.6
         assert l1["isat_provenance"]["n_turns"] == 9
 
     def test_runs_realism_end_to_end_to_pass(self):
@@ -134,12 +137,19 @@ class TestBuckEnrichmentMath:
 
     def test_isat_provenance_traces_every_input(self):
         """A reviewer must be able to reproduce the Isat number from the
-        provenance dict alone — no implicit inputs."""
+        provenance dict alone — no implicit inputs.  Ground truth = MKF:
+        re-running PyOM on the same L1 MAS at the recorded temperature must
+        reproduce the stamped Isat (never the analytical formula)."""
+        themas = _buck_mas()
         out = enrich_tas_for_realism(_buck_tas(), topology="buck", spec=_buck_spec())
         l1 = out["topology"]["stages"][0]["circuit"]["components"][2]
         p = l1["isat_provenance"]
-        recomputed = p["b_sat_T"] * p["n_turns"] * p["effective_area_m2"] / p["inductance_H"]
-        assert recomputed == pytest.approx(l1["isat"], rel=1e-4)
+        # Every input the extractor used is in the provenance dict, and the
+        # method is PyOM — reproduce it from those alone.
+        assert "PyOM" in p["method"]
+        assert p["n_turns"] == 9
+        recomputed = isat_of(themas, temperature_c=p["temperature_c"])
+        assert recomputed == pytest.approx(l1["isat"], rel=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -150,18 +160,21 @@ class TestBuckEnrichmentMath:
 class TestBuckEnrichmentFailureModes:
     def test_step_up_design_throws(self):
         spec = _buck_spec()
-        spec["operatingPoints"][0]["outputVoltages"] = [48.0]   # Vout >= Vin_min
+        spec["operatingPoints"][0]["outputVoltages"] = [48.0]  # Vout >= Vin_min
         with pytest.raises(EnrichmentError, match="step up"):
             enrich_tas_for_realism(_buck_tas(), topology="buck", spec=spec)
 
-    @pytest.mark.parametrize("mutate,match", [
-        (lambda s: s.pop("inputVoltage"), "inputVoltage"),
-        (lambda s: s["inputVoltage"].pop("minimum"), "min"),
-        (lambda s: s.pop("desiredInductance"), "desiredInductance"),
-        (lambda s: s.pop("operatingPoints"), "operatingPoints"),
-        (lambda s: s["operatingPoints"][0].pop("switchingFrequency"), "switchingFrequency"),
-        (lambda s: s["operatingPoints"][0].update({"outputCurrents": []}), "outputCurrents"),
-    ])
+    @pytest.mark.parametrize(
+        "mutate,match",
+        [
+            (lambda s: s.pop("inputVoltage"), "inputVoltage"),
+            (lambda s: s["inputVoltage"].pop("minimum"), "min"),
+            (lambda s: s.pop("desiredInductance"), "desiredInductance"),
+            (lambda s: s.pop("operatingPoints"), "operatingPoints"),
+            (lambda s: s["operatingPoints"][0].pop("switchingFrequency"), "switchingFrequency"),
+            (lambda s: s["operatingPoints"][0].update({"outputCurrents": []}), "outputCurrents"),
+        ],
+    )
     def test_missing_required_spec_fields_throw(self, mutate, match):
         spec = _buck_spec()
         mutate(spec)
@@ -198,15 +211,19 @@ class TestBuckEnrichmentFailureModes:
     def test_magnetic_without_mas_throws(self):
         tas = _buck_tas()
         tas["topology"]["stages"][0]["circuit"]["components"][2] = {
-            "name": "L1", "category": "magnetic",
+            "name": "L1",
+            "category": "magnetic",
         }
         with pytest.raises(EnrichmentError, match="no MAS"):
             enrich_tas_for_realism(tas, topology="buck", spec=_buck_spec())
 
-    @pytest.mark.parametrize("path,value", [
-        (("core", "processedDescription", "effectiveParameters", "effectiveArea"), 0.0),
-        (("coil", "functionalDescription", 0, "numberTurns"), 0),
-    ])
+    @pytest.mark.parametrize(
+        "path,value",
+        [
+            (("core", "processedDescription", "effectiveParameters", "effectiveArea"), 0.0),
+            (("coil", "functionalDescription", 0, "numberTurns"), 0),
+        ],
+    )
     def test_invalid_mas_fields_throw(self, path, value):
         tas = _buck_tas()
         mas = tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"]
@@ -219,15 +236,17 @@ class TestBuckEnrichmentFailureModes:
 
     def test_empty_saturation_curve_throws(self):
         tas = _buck_tas()
-        tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"]["core"]["functionalDescription"][
-            "material"]["saturation"] = []
+        tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"]["core"][
+            "functionalDescription"
+        ]["material"]["saturation"] = []
         with pytest.raises(EnrichmentError, match="saturation"):
             enrich_tas_for_realism(tas, topology="buck", spec=_buck_spec())
 
     def test_negative_bsat_throws(self):
         tas = _buck_tas()
-        tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"]["core"]["functionalDescription"][
-            "material"]["saturation"][0]["magneticFluxDensity"] = -0.1
+        tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"]["core"][
+            "functionalDescription"
+        ]["material"]["saturation"][0]["magneticFluxDensity"] = -0.1
         with pytest.raises(EnrichmentError, match="magneticFluxDensity"):
             enrich_tas_for_realism(tas, topology="buck", spec=_buck_spec())
 
@@ -256,7 +275,8 @@ class TestDispatcher:
         # the TAS structurally untouched (deep-copied) rather than
         # raising or silently stamping bogus fields.
         out = enrich_tas_for_realism(
-            tas, topology="__synthetic_unregistered_topology__",
+            tas,
+            topology="__synthetic_unregistered_topology__",
             spec=_buck_spec(),
         )
         # No enrichment — should be a structural deep copy of the input
@@ -309,7 +329,9 @@ def test_real_buck_enrichment_runs_both_real_checks(tmp_path):
     out_fp = Path("/tmp/buck_out.tas.json")
     spec_fp = Path("/tmp/buck_spec.json")
     if not (out_fp.is_file() and spec_fp.is_file()):
-        pytest.skip("regen with `heaviside design buck --spec /tmp/buck_spec.json -o /tmp/buck_out.tas.json`")
+        pytest.skip(
+            "regen with `heaviside design buck --spec /tmp/buck_spec.json -o /tmp/buck_out.tas.json`"
+        )
 
     tas = json.loads(out_fp.read_text())
     spec = json.loads(spec_fp.read_text())
@@ -317,10 +339,7 @@ def test_real_buck_enrichment_runs_both_real_checks(tmp_path):
     enriched = enrich_tas_for_realism(tas, topology="buck", spec=spec)
     r = evaluate_tas(enriched, topology="buck", spec=spec)
 
-    evaluated = {
-        c.name for c in r.checks
-        if c.status in (CheckStatus.PASS, CheckStatus.FAIL)
-    }
+    evaluated = {c.name for c in r.checks if c.status in (CheckStatus.PASS, CheckStatus.FAIL)}
     assert "duty_cycle_bounds" in evaluated, "duty extractor regressed"
     assert "inductor_isat_margin" in evaluated, "isat enrichment regressed"
 

@@ -19,17 +19,15 @@ forthcoming) will reference this entry point by name.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import httpx
 
-from heaviside.librarian.datasheet.cache import DEFAULT_CACHE_DIR, PdfCache
+from heaviside.librarian.datasheet.cache import PdfCache
 from heaviside.librarian.datasheet.extract import (
     extract_params,
     extract_required_params,
     extract_tables,
 )
-
 
 __all__ = ["DatasheetReader"]
 
@@ -59,9 +57,7 @@ class DatasheetReader:
     ) -> None:
         if cache is not None:
             if cache_dir is not None or transport is not None:
-                raise ValueError(
-                    "pass either `cache` or `cache_dir`/`transport`, not both"
-                )
+                raise ValueError("pass either `cache` or `cache_dir`/`transport`, not both")
             self.cache = cache
         else:
             self.cache = PdfCache(
@@ -90,7 +86,9 @@ class DatasheetReader:
         pdf_path = self.cache.fetch(url, force=force_download)
         tables = extract_tables(pdf_path)
         return extract_params(
-            tables, category=category, require_section=require_section,
+            tables,
+            category=category,
+            require_section=require_section,
         )
 
     # ------------------------------------------------------------------
@@ -119,7 +117,9 @@ class DatasheetReader:
         pdf_path = self.cache.fetch(url, force=force_download)
         tables = extract_tables(pdf_path)
         return extract_required_params(
-            tables, category=category, mpn=mpn,
+            tables,
+            category=category,
+            mpn=mpn,
             require_section=require_section,
         )
 
@@ -142,5 +142,7 @@ class DatasheetReader:
         """
         tables = extract_tables(pdf_path)
         return extract_params(
-            tables, category=category, require_section=require_section,
+            tables,
+            category=category,
+            require_section=require_section,
         )

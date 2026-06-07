@@ -48,11 +48,11 @@ _SI_MULTIPLIERS: dict[str, float] = {
 #   group(3) = unit suffix (F, H, V, Ohm, R, Ω) — unused by the parser
 #              but anchors the match to avoid false positives.
 _VALUE_RE = re.compile(
-    r"([-+]?\d*\.?\d+(?:e[+-]?\d+)?)"   # number
+    r"([-+]?\d*\.?\d+(?:e[+-]?\d+)?)"  # number
     r"\s*"
-    r"([pnuµμmkKMGT]?)"                 # SI prefix
+    r"([pnuµμmkKMGT]?)"  # SI prefix
     r"\s*"
-    r"(F|H|V|Ω|Ohm|ohm|R)?",           # unit (optional)
+    r"(F|H|V|Ω|Ohm|ohm|R)?",  # unit (optional)
     re.IGNORECASE,
 )
 
@@ -63,6 +63,7 @@ _EIA_R_RE = re.compile(r"^(\d+)R(\d+)$", re.IGNORECASE)
 # ---------------------------------------------------------------------------
 # Generic SI parser (internal)
 # ---------------------------------------------------------------------------
+
 
 def _parse_si(s: Any, unit_letter: str, plausibility_max: float) -> float:
     """Parse a string with an SI prefix into a base-unit float.
@@ -114,6 +115,7 @@ def _parse_si(s: Any, unit_letter: str, plausibility_max: float) -> float:
 # ---------------------------------------------------------------------------
 # Public API — one function per component class
 # ---------------------------------------------------------------------------
+
 
 def parse_capacitance(s: str) -> float:
     """Parse a capacitance string to Farads.
@@ -188,6 +190,7 @@ def parse_voltage(s: str) -> float:
 # ---------------------------------------------------------------------------
 # Generic entry point (for callers that dispatch by category)
 # ---------------------------------------------------------------------------
+
 
 def parse_si_value(s: Any) -> float | None:
     """Parse an arbitrary SI-prefixed value string to a float.

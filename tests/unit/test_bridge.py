@@ -15,7 +15,6 @@ import pytest
 
 from heaviside import bridge
 
-
 # -----------------------------------------------------------------------------
 # Fake PyOpenMagnetics extension
 # -----------------------------------------------------------------------------
@@ -47,16 +46,19 @@ class _FakePyOM:
     def design_magnetics_from_converter(
         self, name, spec, max_results, core_mode, use_ngspice, weights
     ):
-        self.calls.append(
-            (name, dict(spec), max_results, core_mode, use_ngspice, weights)
-        )
+        self.calls.append((name, dict(spec), max_results, core_mode, use_ngspice, weights))
         if not self._responses:
             raise AssertionError("FakePyOM ran out of programmed responses.")
         return self._responses.pop(0)
 
     def get_extra_components_inputs(self, name, spec, mode, magnetic_json):
         self.extras_calls.append(
-            (name, dict(spec), mode, magnetic_json if magnetic_json is None else dict(magnetic_json))
+            (
+                name,
+                dict(spec),
+                mode,
+                magnetic_json if magnetic_json is None else dict(magnetic_json),
+            )
         )
         if not self._extras:
             raise AssertionError("FakePyOM ran out of extras responses.")
@@ -95,9 +97,11 @@ def _mas(*, scoring: float, shape: str, material: str, n_windings: int) -> dict:
                 },
                 "coil": {
                     "functionalDescription": [
-                        {"name": (["pri", "sec0", "sec1"][i] if i < 3 else f"w{i}"),
-                         "numberTurns": 10 * (i + 1),
-                         "wire": {"name": f"AWG{20 + i}"}}
+                        {
+                            "name": (["pri", "sec0", "sec1"][i] if i < 3 else f"w{i}"),
+                            "numberTurns": 10 * (i + 1),
+                            "wire": {"name": f"AWG{20 + i}"},
+                        }
                         for i in range(n_windings)
                     ],
                 },
@@ -116,11 +120,13 @@ def test_design_magnetics_returns_sorted_designs(monkeypatch: pytest.MonkeyPatch
     """Top-scoring design comes first, even if PyOM returns them out of order."""
     fake = _FakePyOM(
         responses=[
-            {"data": [
-                _mas(scoring=2.0, shape="PQ 26/25", material="3C95", n_windings=1),
-                _mas(scoring=5.0, shape="RM 8/I",   material="3C97", n_windings=1),
-                _mas(scoring=3.5, shape="ETD 29",   material="N87",  n_windings=1),
-            ]}
+            {
+                "data": [
+                    _mas(scoring=2.0, shape="PQ 26/25", material="3C95", n_windings=1),
+                    _mas(scoring=5.0, shape="RM 8/I", material="3C97", n_windings=1),
+                    _mas(scoring=3.5, shape="ETD 29", material="N87", n_windings=1),
+                ]
+            }
         ],
     )
     _patch_pyom(monkeypatch, fake)
@@ -230,22 +236,24 @@ def test_design_magnetics_missing_mas_raises(
 
 def _single_magnetic_tas() -> dict:
     """Minimal TAS with one magnetic (placeholder URL pattern)."""
-    return {"topology": {
-        "stages": [
-            {
-                "name": "power_stage",
-                "role": "switchingCell",
-                "circuit": {
-                    "components": [
-                        {"name": "Q1", "data": "TAS/data/mosfets.ndjson?placeholder"},
-                        {"name": "L1", "data": "TAS/data/magnetics.ndjson?placeholder"},
-                        {"name": "C_out", "data": "TAS/data/capacitors.ndjson?placeholder"},
-                    ],
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "power_stage",
+                    "role": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "data": "TAS/data/mosfets.ndjson?placeholder"},
+                            {"name": "L1", "data": "TAS/data/magnetics.ndjson?placeholder"},
+                            {"name": "C_out", "data": "TAS/data/capacitors.ndjson?placeholder"},
+                        ],
+                    },
                 },
-            },
-        ],
-        "interStageCircuit": [],
-    }}
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 def test_attach_single_magnetic_replaces_placeholder() -> None:
@@ -282,16 +290,27 @@ def test_attach_single_magnetic_replaces_placeholder() -> None:
 
 def test_attach_picks_up_inline_category_magnetic() -> None:
     """Magnetics declared by inline ``category=='magnetic'`` are also bound."""
-    tas = {"topology": {
-        "stages": [{
-            "name": "x", "role": "switchingCell",
-            "circuit": {"components": [
-                {"name": "T1", "category": "magnetic",
-                 "inductances": [1e-3, 250e-6], "coupling": 0.999},
-            ]},
-        }],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "x",
+                    "role": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {
+                                "name": "T1",
+                                "category": "magnetic",
+                                "inductances": [1e-3, 250e-6],
+                                "coupling": 0.999,
+                            },
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
     designs = [
         bridge.MagneticDesign(
             scoring=1.0,
@@ -315,15 +334,22 @@ def test_attach_empty_designs_raises() -> None:
 
 
 def test_attach_no_magnetics_in_tas_raises() -> None:
-    tas = {"topology": {
-        "stages": [{
-            "name": "x", "role": "switchingCell",
-            "circuit": {"components": [
-                {"name": "Q1", "data": "TAS/data/mosfets.ndjson?p"},
-            ]},
-        }],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "x",
+                    "role": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "data": "TAS/data/mosfets.ndjson?p"},
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
     designs = [
         bridge.MagneticDesign(
             scoring=1.0,
@@ -342,24 +368,35 @@ def test_attach_no_magnetics_in_tas_raises() -> None:
 
 def _multi_magnetic_tas() -> dict:
     """Two magnetics: T1 + L_out0 (ACF-style)."""
-    return {"topology": {
-        "stages": [
-            {
-                "name": "iso", "role": "isolation",
-                "circuit": {"components": [
-                    {"name": "T1", "data": "TAS/data/magnetics.ndjson?placeholder=T1"},
-                ]},
-            },
-            {
-                "name": "out0", "role": "outputRectifier",
-                "circuit": {"components": [
-                    {"name": "L_out0", "data": "TAS/data/magnetics.ndjson?placeholder=L_out0"},
-                    {"name": "C_out0", "data": "TAS/data/capacitors.ndjson?p"},
-                ]},
-            },
-        ],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "iso",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "data": "TAS/data/magnetics.ndjson?placeholder=T1"},
+                        ]
+                    },
+                },
+                {
+                    "name": "out0",
+                    "role": "outputRectifier",
+                    "circuit": {
+                        "components": [
+                            {
+                                "name": "L_out0",
+                                "data": "TAS/data/magnetics.ndjson?placeholder=L_out0",
+                            },
+                            {"name": "C_out0", "data": "TAS/data/capacitors.ndjson?p"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 def test_attach_multi_magnetic_without_mapping_raises() -> None:
@@ -390,7 +427,9 @@ def test_attach_multi_magnetic_with_mapping_succeeds() -> None:
         ),
     ]
     bridge.attach_magnetics_to_tas(
-        tas, designs, mapping={"T1": 0, "L_out0": 1},
+        tas,
+        designs,
+        mapping={"T1": 0, "L_out0": 1},
     )
 
     t1 = tas["topology"]["stages"][0]["circuit"]["components"][0]
@@ -423,7 +462,9 @@ def test_attach_multi_magnetic_mapping_bad_index_raises() -> None:
     ]
     with pytest.raises(bridge.BridgeError, match="out of range"):
         bridge.attach_magnetics_to_tas(
-            tas, designs, mapping={"T1": 0, "L_out0": 5},
+            tas,
+            designs,
+            mapping={"T1": 0, "L_out0": 5},
         )
 
 
@@ -470,7 +511,7 @@ def test_extra_components_parses_magnetic_and_capacitor(
 
     # Confirm REAL mode passed the magnetic through.
     assert len(fake.extras_calls) == 1
-    name, spec, mode, mag = fake.extras_calls[0]
+    _name, _spec, mode, mag = fake.extras_calls[0]
     assert mode == "REAL"
     assert mag == main_mas
 
@@ -523,7 +564,7 @@ def test_extra_components_missing_name_raises(
         extras_responses=[[{"kind": "magnetic", "inputs": {"designRequirements": {}}}]],
     )
     _patch_pyom(monkeypatch, fake)
-    with pytest.raises(bridge.BridgeError, match="designRequirements.name"):
+    with pytest.raises(bridge.BridgeError, match=r"designRequirements\.name"):
         bridge.extra_components("buck", {"any": "spec"}, mode="IDEAL")
 
 
@@ -537,11 +578,13 @@ def test_design_extra_magnetic_returns_sorted(
 ) -> None:
     fake = _FakePyOM(
         advised_responses=[
-            {"data": [
-                _mas(scoring=1.0, shape="A", material="X", n_windings=1),
-                _mas(scoring=4.0, shape="B", material="Y", n_windings=1),
-                _mas(scoring=2.5, shape="C", material="Z", n_windings=1),
-            ]},
+            {
+                "data": [
+                    _mas(scoring=1.0, shape="A", material="X", n_windings=1),
+                    _mas(scoring=4.0, shape="B", material="Y", n_windings=1),
+                    _mas(scoring=2.5, shape="C", material="Z", n_windings=1),
+                ]
+            },
         ],
     )
     _patch_pyom(monkeypatch, fake)
@@ -624,9 +667,7 @@ def test_design_converter_components_acf_two_extras(
     )
     _patch_pyom(monkeypatch, fake)
 
-    components = bridge.design_converter_components(
-        "active_clamp_forward", {"any": "spec"}
-    )
+    components = bridge.design_converter_components("active_clamp_forward", {"any": "spec"})
     assert components.main_magnetic.core_shape_name == "ETD 39"
     assert "outputInductor" in components.extra_magnetics
     assert components.extra_magnetics["outputInductor"].core_shape_name == "RM 8"
@@ -640,17 +681,31 @@ def test_design_converter_components_acf_two_extras(
 
 
 def test_attach_components_acf_binds_main_and_extras() -> None:
-    tas = {"topology": {
-        "stages": [
-            {"name": "iso", "role": "isolation", "circuit": {"components": [
-                {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
-            ]}},
-            {"name": "out0", "role": "outputRectifier", "circuit": {"components": [
-                {"name": "L_out0", "data": "TAS/data/magnetics.ndjson?p=L_out0"},
-            ]}},
-        ],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "iso",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
+                        ]
+                    },
+                },
+                {
+                    "name": "out0",
+                    "role": "outputRectifier",
+                    "circuit": {
+                        "components": [
+                            {"name": "L_out0", "data": "TAS/data/magnetics.ndjson?p=L_out0"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
     main = bridge.MagneticDesign(
         scoring=5.0,
         mas=_mas(scoring=5.0, shape="ETD 39", material="N87", n_windings=2)["mas"],
@@ -676,13 +731,23 @@ def test_attach_components_acf_binds_main_and_extras() -> None:
 
 def test_attach_components_unknown_tas_magnetic_raises() -> None:
     """TAS has a magnetic not in the registry binding."""
-    tas = {"topology": {
-        "stages": [{"name": "x", "role": "isolation", "circuit": {"components": [
-            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p"},
-            {"name": "BOGUS", "data": "TAS/data/magnetics.ndjson?p"},
-        ]}}],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "x",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p"},
+                            {"name": "BOGUS", "data": "TAS/data/magnetics.ndjson?p"},
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
     main = bridge.MagneticDesign(
         scoring=1.0,
         mas=_mas(scoring=1.0, shape="x", material="y", n_windings=1)["mas"],
@@ -695,17 +760,31 @@ def test_attach_components_unknown_tas_magnetic_raises() -> None:
 
 def test_attach_components_missing_extras_raises() -> None:
     """Registry binds L_out0→outputInductor but components lacks it."""
-    tas = {"topology": {
-        "stages": [
-            {"name": "iso", "role": "iso", "circuit": {"components": [
-                {"name": "T1", "data": "TAS/data/magnetics.ndjson?p"},
-            ]}},
-            {"name": "out", "role": "out", "circuit": {"components": [
-                {"name": "L_out0", "data": "TAS/data/magnetics.ndjson?p"},
-            ]}},
-        ],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "iso",
+                    "role": "iso",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p"},
+                        ]
+                    },
+                },
+                {
+                    "name": "out",
+                    "role": "out",
+                    "circuit": {
+                        "components": [
+                            {"name": "L_out0", "data": "TAS/data/magnetics.ndjson?p"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
     main = bridge.MagneticDesign(
         scoring=1.0,
         mas=_mas(scoring=1.0, shape="x", material="y", n_windings=1)["mas"],
@@ -713,19 +792,27 @@ def test_attach_components_missing_extras_raises() -> None:
     )
     components = bridge.ConverterComponents(main_magnetic=main)  # no extras
     with pytest.raises(bridge.BridgeError, match="outputInductor"):
-        bridge.attach_components_to_tas(
-            tas, components, topology="active_clamp_forward"
-        )
+        bridge.attach_components_to_tas(tas, components, topology="active_clamp_forward")
 
 
 def test_attach_components_topology_without_binding_raises() -> None:
     """A registry entry with empty magnetic_binding cannot auto-bind."""
-    tas = {"topology": {
-        "stages": [{"name": "x", "role": "x", "circuit": {"components": [
-            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p"},
-        ]}}],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "x",
+                    "role": "x",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p"},
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
     main = bridge.MagneticDesign(
         scoring=1.0,
         mas=_mas(scoring=1.0, shape="x", material="y", n_windings=1)["mas"],
@@ -733,9 +820,7 @@ def test_attach_components_topology_without_binding_raises() -> None:
     )
     components = bridge.ConverterComponents(main_magnetic=main)
     with pytest.raises(bridge.BridgeError, match="no magnetic_binding"):
-        bridge.attach_components_to_tas(
-            tas, components, topology="phase_shifted_half_bridge"
-        )
+        bridge.attach_components_to_tas(tas, components, topology="phase_shifted_half_bridge")
 
 
 # -----------------------------------------------------------------------------
@@ -791,18 +876,32 @@ def _cas_inputs(name: str, capacitance: float) -> dict[str, Any]:
 def test_attach_components_binds_resonant_capacitors() -> None:
     """Stencil emits Cr1/Cr2 placeholder caps; bridge attaches CAS::Inputs."""
     entry = _cllc_like_entry()
-    tas = {"topology": {
-        "stages": [
-            {"name": "iso", "role": "isolation", "circuit": {"components": [
-                {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
-                {"name": "Cr1", "data": "TAS/data/capacitors.ndjson?p=Cr1"},
-            ]}},
-            {"name": "rect", "role": "outputRectifier", "circuit": {"components": [
-                {"name": "Cr2", "data": "TAS/data/capacitors.ndjson?p=Cr2"},
-            ]}},
-        ],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "iso",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
+                            {"name": "Cr1", "data": "TAS/data/capacitors.ndjson?p=Cr1"},
+                        ]
+                    },
+                },
+                {
+                    "name": "rect",
+                    "role": "outputRectifier",
+                    "circuit": {
+                        "components": [
+                            {"name": "Cr2", "data": "TAS/data/capacitors.ndjson?p=Cr2"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
     main = bridge.MagneticDesign(
         scoring=1.0,
         mas=_mas(scoring=1.0, shape="x", material="y", n_windings=2)["mas"],
@@ -811,12 +910,8 @@ def test_attach_components_binds_resonant_capacitors() -> None:
     components = bridge.ConverterComponents(
         main_magnetic=main,
         extra_capacitors=(
-            bridge.ExtraCapacitorSpec(
-                "resonantCapacitor_primary", _cas_inputs("Cr1", 22e-9)
-            ),
-            bridge.ExtraCapacitorSpec(
-                "resonantCapacitor_secondary", _cas_inputs("Cr2", 44e-9)
-            ),
+            bridge.ExtraCapacitorSpec("resonantCapacitor_primary", _cas_inputs("Cr1", 22e-9)),
+            bridge.ExtraCapacitorSpec("resonantCapacitor_secondary", _cas_inputs("Cr2", 44e-9)),
         ),
     )
     out = bridge.attach_components_to_tas(tas, components, topology=entry)
@@ -843,13 +938,23 @@ def test_attach_components_binds_resonant_capacitors() -> None:
 def test_attach_components_picks_up_inline_category_capacitor() -> None:
     """Stencil that emits ``category="capacitor"`` directly is also recognised."""
     entry = _cllc_like_entry(cap_binding={"Cr1": "resonantCapacitor_primary"})
-    tas = {"topology": {
-        "stages": [{"name": "iso", "role": "isolation", "circuit": {"components": [
-            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
-            {"name": "Cr1", "category": "capacitor"},
-        ]}}],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "iso",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
+                            {"name": "Cr1", "category": "capacitor"},
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
     main = bridge.MagneticDesign(
         scoring=1.0,
         mas=_mas(scoring=1.0, shape="x", material="y", n_windings=2)["mas"],
@@ -858,9 +963,7 @@ def test_attach_components_picks_up_inline_category_capacitor() -> None:
     components = bridge.ConverterComponents(
         main_magnetic=main,
         extra_capacitors=(
-            bridge.ExtraCapacitorSpec(
-                "resonantCapacitor_primary", _cas_inputs("Cr1", 10e-9)
-            ),
+            bridge.ExtraCapacitorSpec("resonantCapacitor_primary", _cas_inputs("Cr1", 10e-9)),
         ),
     )
     bridge.attach_components_to_tas(tas, components, topology=entry)
@@ -877,13 +980,23 @@ def test_attach_components_leaves_unbound_capacitors_alone() -> None:
     behaviour (cap left untouched, librarian sizes it later) must be
     preserved verbatim.
     """
-    tas = {"topology": {
-        "stages": [{"name": "ps", "role": "power_stage", "circuit": {"components": [
-            {"name": "L1", "data": "TAS/data/magnetics.ndjson?p=L1"},
-            {"name": "C_out", "data": "TAS/data/capacitors.ndjson?p=C_out"},
-        ]}}],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "ps",
+                    "role": "power_stage",
+                    "circuit": {
+                        "components": [
+                            {"name": "L1", "data": "TAS/data/magnetics.ndjson?p=L1"},
+                            {"name": "C_out", "data": "TAS/data/capacitors.ndjson?p=C_out"},
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
     main = bridge.MagneticDesign(
         scoring=1.0,
         mas=_mas(scoring=1.0, shape="x", material="y", n_windings=1)["mas"],
@@ -899,14 +1012,24 @@ def test_attach_components_leaves_unbound_capacitors_alone() -> None:
 def test_attach_components_cap_binding_missing_in_tas_raises() -> None:
     """Registry binds Cr2 but stencil never emitted it — drift detected."""
     entry = _cllc_like_entry()
-    tas = {"topology": {
-        "stages": [{"name": "iso", "role": "isolation", "circuit": {"components": [
-            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
-            {"name": "Cr1", "data": "TAS/data/capacitors.ndjson?p=Cr1"},
-            # Cr2 missing
-        ]}}],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "iso",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
+                            {"name": "Cr1", "data": "TAS/data/capacitors.ndjson?p=Cr1"},
+                            # Cr2 missing
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
     main = bridge.MagneticDesign(
         scoring=1.0,
         mas=_mas(scoring=1.0, shape="x", material="y", n_windings=2)["mas"],
@@ -915,12 +1038,8 @@ def test_attach_components_cap_binding_missing_in_tas_raises() -> None:
     components = bridge.ConverterComponents(
         main_magnetic=main,
         extra_capacitors=(
-            bridge.ExtraCapacitorSpec(
-                "resonantCapacitor_primary", _cas_inputs("Cr1", 22e-9)
-            ),
-            bridge.ExtraCapacitorSpec(
-                "resonantCapacitor_secondary", _cas_inputs("Cr2", 44e-9)
-            ),
+            bridge.ExtraCapacitorSpec("resonantCapacitor_primary", _cas_inputs("Cr1", 22e-9)),
+            bridge.ExtraCapacitorSpec("resonantCapacitor_secondary", _cas_inputs("Cr2", 44e-9)),
         ),
     )
     with pytest.raises(bridge.BridgeError, match="Cr2"):
@@ -930,14 +1049,24 @@ def test_attach_components_cap_binding_missing_in_tas_raises() -> None:
 def test_attach_components_cap_role_missing_in_extras_raises() -> None:
     """Stencil emits Cr1/Cr2 but Phase B only returned one cap envelope."""
     entry = _cllc_like_entry()
-    tas = {"topology": {
-        "stages": [{"name": "iso", "role": "isolation", "circuit": {"components": [
-            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
-            {"name": "Cr1", "data": "TAS/data/capacitors.ndjson?p=Cr1"},
-            {"name": "Cr2", "data": "TAS/data/capacitors.ndjson?p=Cr2"},
-        ]}}],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "iso",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
+                            {"name": "Cr1", "data": "TAS/data/capacitors.ndjson?p=Cr1"},
+                            {"name": "Cr2", "data": "TAS/data/capacitors.ndjson?p=Cr2"},
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
     main = bridge.MagneticDesign(
         scoring=1.0,
         mas=_mas(scoring=1.0, shape="x", material="y", n_windings=2)["mas"],
@@ -946,9 +1075,7 @@ def test_attach_components_cap_role_missing_in_extras_raises() -> None:
     components = bridge.ConverterComponents(
         main_magnetic=main,
         extra_capacitors=(
-            bridge.ExtraCapacitorSpec(
-                "resonantCapacitor_primary", _cas_inputs("Cr1", 22e-9)
-            ),
+            bridge.ExtraCapacitorSpec("resonantCapacitor_primary", _cas_inputs("Cr1", 22e-9)),
             # secondary missing
         ),
     )
@@ -964,21 +1091,35 @@ def test_attach_components_llc_registry_binds_C_r_resonant_cap() -> None:
     consumes the new cap-attach plumbing.
     """
     # Hand-crafted minimal LLC-shaped TAS (mirrors the stencil layout).
-    tas = {"topology": {
-        "stages": [
-            {"name": "inverter", "role": "inverter", "circuit": {"components": [
-                {"name": "T1",       "data": "TAS/data/magnetics.ndjson?p=T1"},
-                {"name": "L_r",      "data": "TAS/data/magnetics.ndjson?p=L_r"},
-                {"name": "C_r",      "data": "TAS/data/capacitors.ndjson?p=C_r"},
-                {"name": "C_bus_hi", "data": "TAS/data/capacitors.ndjson?p=C_bus_hi"},
-                {"name": "C_bus_lo", "data": "TAS/data/capacitors.ndjson?p=C_bus_lo"},
-            ]}},
-            {"name": "out", "role": "outputRectifier", "circuit": {"components": [
-                {"name": "C_out0", "data": "TAS/data/capacitors.ndjson?p=C_out0"},
-            ]}},
-        ],
-        "interStageCircuit": [],
-    }}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "name": "inverter",
+                    "role": "inverter",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "data": "TAS/data/magnetics.ndjson?p=T1"},
+                            {"name": "L_r", "data": "TAS/data/magnetics.ndjson?p=L_r"},
+                            {"name": "C_r", "data": "TAS/data/capacitors.ndjson?p=C_r"},
+                            {"name": "C_bus_hi", "data": "TAS/data/capacitors.ndjson?p=C_bus_hi"},
+                            {"name": "C_bus_lo", "data": "TAS/data/capacitors.ndjson?p=C_bus_lo"},
+                        ]
+                    },
+                },
+                {
+                    "name": "out",
+                    "role": "outputRectifier",
+                    "circuit": {
+                        "components": [
+                            {"name": "C_out0", "data": "TAS/data/capacitors.ndjson?p=C_out0"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
     main = bridge.MagneticDesign(
         scoring=2.0,
         mas=_mas(scoring=2.0, shape="ETD 39", material="N87", n_windings=3)["mas"],
@@ -1028,9 +1169,15 @@ def test_attach_components_llc_registry_binds_C_r_resonant_cap() -> None:
         assert cap["data"].startswith("TAS/data/capacitors.ndjson")
 
     # Sanity: main magnetic and L_r still attached as before.
-    assert tas["topology"]["stages"][0]["circuit"]["components"][0]["data"]["magnetic"][
-        "core"
-    ]["functionalDescription"]["shape"]["name"] == "ETD 39"
-    assert tas["topology"]["stages"][0]["circuit"]["components"][1]["data"]["magnetic"][
-        "core"
-    ]["functionalDescription"]["shape"]["name"] == "RM 8"
+    assert (
+        tas["topology"]["stages"][0]["circuit"]["components"][0]["data"]["magnetic"]["core"][
+            "functionalDescription"
+        ]["shape"]["name"]
+        == "ETD 39"
+    )
+    assert (
+        tas["topology"]["stages"][0]["circuit"]["components"][1]["data"]["magnetic"]["core"][
+            "functionalDescription"
+        ]["shape"]["name"]
+        == "RM 8"
+    )

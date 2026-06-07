@@ -29,7 +29,7 @@ def _load_system_prompt() -> str:
     text = path.read_text()
     if text.startswith("---"):
         end = text.index("---", 3)
-        text = text[end + 3:].strip()
+        text = text[end + 3 :].strip()
     return text
 
 
@@ -46,14 +46,9 @@ def topology_selector_llm(
 
     Raises ``LLMUnavailableError`` if no API key is set or the call fails.
     """
-    api_key = (
-        os.environ.get("MOONSHOT_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-    )
+    api_key = os.environ.get("MOONSHOT_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise LLMUnavailableError(
-            "no MOONSHOT_API_KEY or OPENAI_API_KEY in environment"
-        )
+        raise LLMUnavailableError("no MOONSHOT_API_KEY or OPENAI_API_KEY in environment")
 
     base_url = os.environ.get(
         "HEAVISIDE_LLM_BASE_URL",
@@ -88,14 +83,13 @@ def topology_selector_llm(
     )
 
     if response.status_code != 200:
-        raise LLMUnavailableError(
-            f"LLM API returned {response.status_code}: {response.text[:200]}"
-        )
+        raise LLMUnavailableError(f"LLM API returned {response.status_code}: {response.text[:200]}")
 
     data = response.json()
     text = data["choices"][0]["message"]["content"]
 
     from heaviside.pipeline.full_design import _parse_topology_selector_response
+
     return _parse_topology_selector_response(text)
 
 
@@ -119,5 +113,6 @@ def topology_selector_with_fallback(
             exc,
         )
         from heaviside.pipeline.topology_screen import feasible_topology_names
+
         names = feasible_topology_names(spec)
         return names, f"LLM unavailable ({type(exc).__name__}); mirrored static screen"

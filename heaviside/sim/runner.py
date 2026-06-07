@@ -122,9 +122,16 @@ def _parse_tran_window(deck: str) -> tuple[float, float]:
 
 
 _SPICE_SUFFIXES = {
-    "f": 1e-15, "p": 1e-12, "n": 1e-9, "u": 1e-6, "µ": 1e-6,
+    "f": 1e-15,
+    "p": 1e-12,
+    "n": 1e-9,
+    "u": 1e-6,
+    "µ": 1e-6,
     "m": 1e-3,
-    "k": 1e3, "meg": 1e6, "g": 1e9, "t": 1e12,
+    "k": 1e3,
+    "meg": 1e6,
+    "g": 1e9,
+    "t": 1e12,
 }
 
 
@@ -139,7 +146,7 @@ def _spice_time(token: str) -> float:
     low = t.lower()
     for suf in ("meg", "f", "p", "n", "u", "m", "k", "g", "t"):
         if low.endswith(suf):
-            num = low[:-len(suf)]
+            num = low[: -len(suf)]
             try:
                 return float(num) * _SPICE_SUFFIXES[suf]
             except (KeyError, ValueError) as exc:
@@ -196,17 +203,17 @@ _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
     # total power.  Must match before the forward-family / flyback
     # entries below, which would wrongly select vout0.
     "isolated_buck_boost": [
-        ("v(vin_dc)",  "i(vin)",  "v(vpri_out)",  "i(vpri_out_sense)"),
+        ("v(vin_dc)", "i(vin)", "v(vpri_out)", "i(vpri_out_sense)"),
     ],
     # Push-pull: centre-tapped primary, vout is the output LC filter.
     # i(vin) for input current (includes both switch cycles).
     "push_pull": [
-        ("v(vin_dc)",  "i(vin)",  "v(vout)",  "i(vsec_sense)"),
-        ("v(vin_dc)",  "i(vin)",  "v(vout)",  "i(vct_sense)"),
+        ("v(vin_dc)", "i(vin)", "v(vout)", "i(vsec_sense)"),
+        ("v(vin_dc)", "i(vin)", "v(vout)", "i(vct_sense)"),
     ],
     # Weinberg: push-pull variant with combined secondary winding.
     "weinberg": [
-        ("v(vin_dc)",  "i(vin_sense)",  "v(out_node)",  "i(vout_sense)"),
+        ("v(vin_dc)", "i(vin_sense)", "v(out_node)", "i(vout_sense)"),
     ],
     # Asymmetric half-bridge (AHB).
     # DC source is ``Vdc vin_dc 0``; i(Vdc) is the true input current
@@ -214,30 +221,30 @@ _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
     # Full variant (v6+): v(out_node) / i(Vout_sense), v(vin_dc) in .save.
     # Simple variant (v5): v(co_top) / i(Vout_sense), no v(vin_dc) in .save.
     "asymmetric_half_bridge": [
-        ("v(vin_dc)",  "i(vdc)",  "v(out_node)",  "i(vout_sense)"),
+        ("v(vin_dc)", "i(vdc)", "v(out_node)", "i(vout_sense)"),
     ],
     # Phase-shifted full bridge (PSFB).
     # DC source is ``Vdc vin_dc 0``; i(Vdc) is the input current.
     # Per-output naming uses the ``_o<N>`` suffix convention.
     "phase_shifted_full_bridge": [
-        ("v(vin_dc)",  "i(vdc)",  "v(out_node_o1)",  "i(vout_sense_o1)"),
+        ("v(vin_dc)", "i(vdc)", "v(out_node_o1)", "i(vout_sense_o1)"),
     ],
     # Phase-shifted half bridge (PSHB).
     # Same DC source convention as PSFB; per-output ``_o<N>`` naming.
     "phase_shifted_half_bridge": [
-        ("v(vin_dc)",  "i(vdc)",  "v(out_node_o1)",  "i(vout_sense_o1)"),
+        ("v(vin_dc)", "i(vdc)", "v(out_node_o1)", "i(vout_sense_o1)"),
     ],
     # Dual active bridge: two full bridges. Primary input at vin_dc1,
     # secondary output at vout_cap_o1.
     "dual_active_bridge": [
-        ("v(vin_dc1)",  "i(vdc1)",  "v(vout_cap_o1)",  "i(vsec_sense_o1)"),
+        ("v(vin_dc1)", "i(vdc1)", "v(vout_cap_o1)", "i(vsec_sense_o1)"),
     ],
     # LLC / CLLC / CLLLC resonant: half-bridge primary, centre-tapped
     # secondary. vout at vout_cap_o1 or vout_pos_o1.
     "resonant_hb": [
-        ("v(vin_dc)",   "i(vin)",   "v(vout_cap_o1)",   "i(vsec_sense_o1)"),
-        ("v(vin_dc)",   "i(vin)",   "v(vout_pos_o1)",   "i(vsec_sense_o1)"),
-        ("v(vin_dc1)",  "i(vdc1)",  "v(vout_cap_o1)",   "i(vsec_sense_o1)"),
+        ("v(vin_dc)", "i(vin)", "v(vout_cap_o1)", "i(vsec_sense_o1)"),
+        ("v(vin_dc)", "i(vin)", "v(vout_pos_o1)", "i(vsec_sense_o1)"),
+        ("v(vin_dc1)", "i(vdc1)", "v(vout_cap_o1)", "i(vsec_sense_o1)"),
     ],
     # CLLLC (bidirectional symmetric resonant, dual full bridge): the HV
     # bridge sits on the input DC bus ``vdc_hv`` and the LV synchronous-rect
@@ -265,8 +272,8 @@ _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
     # the first output rail is at vout_cap_o1 with i(vsec_sense_o1) as the
     # rail current. Per-rail ``_o<N>`` naming mirrors PSFB/DAB.
     "series_resonant": [
-        ("v(vdc_supply)",  "i(vdc_supply)",  "v(vout_cap_o1)",  "i(vsec_sense_o1)"),
-        ("v(vdc_supply)",  "i(vdc_supply)",  "v(vout_pos_o1)",  "i(vsec_sense_o1)"),
+        ("v(vdc_supply)", "i(vdc_supply)", "v(vout_cap_o1)", "i(vsec_sense_o1)"),
+        ("v(vdc_supply)", "i(vdc_supply)", "v(vout_pos_o1)", "i(vsec_sense_o1)"),
     ],
     # Buck / boost / cuk / sepic / zeta / 4SBB / flyback (single-output).
     # ``i(vl_sense)`` is the inductor current; for boost-family decks
@@ -274,12 +281,12 @@ _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
     # input current. iout is computed AFTER the meas pass from
     # ``vout / Rload`` rather than probed (see _compute_iout_from_rload).
     "single_output_dc": [
-        ("v(vin_dc)",  "i(vin_sense)", "v(vout)",            "i(vout_sense)"),
-        ("v(vin_dc)",  "i(vin_sense)", "v(vout)",            "i(vl_sense)"),
-        ("v(vin_dc)",  "i(vin_sense)", "v(vout_cap)",        "i(vout_sense)"),
+        ("v(vin_dc)", "i(vin_sense)", "v(vout)", "i(vout_sense)"),
+        ("v(vin_dc)", "i(vin_sense)", "v(vout)", "i(vl_sense)"),
+        ("v(vin_dc)", "i(vin_sense)", "v(vout_cap)", "i(vout_sense)"),
         # Cuk-family: vout node is named vout_load_node (load is past
         # a 0V ammeter). Same convention used by sepic/zeta variants.
-        ("v(vin_dc)",  "i(vin_sense)", "v(vout_load_node)",  "i(vout_sense)"),
+        ("v(vin_dc)", "i(vin_sense)", "v(vout_load_node)", "i(vout_sense)"),
         # Forward-family (single-switch / two-switch / active-clamp):
         # MUST probe i(vin) for iin rather than i(vpri_sense), because
         # the reset return path runs D1 → Lpri → D2 → Vin (bypassing
@@ -289,17 +296,17 @@ _PROBE_CANDIDATES: dict[str, list[tuple[str, str, str, str]]] = {
         # net branch current and correctly includes reset returns.
         # Listed before the flyback-family candidate so forward decks
         # match this entry first (they save both i(vin) and i(vpri_sense)).
-        ("v(vin_dc)",  "i(vin)",       "v(vout0)",            "i(vsec_sense0)"),
+        ("v(vin_dc)", "i(vin)", "v(vout0)", "i(vsec_sense0)"),
         # Flyback-family: secondary is named vout0, sec_sense0 for the
         # first output rail (multi-output isolated topologies tag with
         # the rail index). Flyback has no reset return path so
         # vpri_sense is equivalent to vin and accepted as the iin source.
-        ("v(vin_dc)",  "i(vpri_sense)","v(vout0)",            "i(vsec_sense0)"),
+        ("v(vin_dc)", "i(vpri_sense)", "v(vout0)", "i(vsec_sense0)"),
         # Boost-family fallback: use vl_sense for both iin and iout,
         # then override iout = vout / Rload after the .meas pass.
-        ("v(vin_dc)",  "i(vl_sense)",  "v(vout)",            "i(vl_sense)"),
+        ("v(vin_dc)", "i(vl_sense)", "v(vout)", "i(vl_sense)"),
         # Vienna single-phase deck: vin is the AC phase voltage source
-        ("v(vphase)",  "i(vphase)",    "v(vdc_cap)",         "i(vph_sense)"),
+        ("v(vphase)", "i(vphase)", "v(vdc_cap)", "i(vph_sense)"),
     ],
 }
 
@@ -374,17 +381,15 @@ def _patch_tran_for_steady_state(deck: str) -> tuple[str, float, float]:
         target_tstep = max(tstep, 1e-7)
         target_tstart = target_tstop * 0.75
         new_tstart, new_tstop = target_tstart, target_tstop
-        out.append(
-            f".tran {target_tstep:.6e} {target_tstop:.6e} "
-            f"{target_tstart:.6e} UIC"
-        )
+        out.append(f".tran {target_tstep:.6e} {target_tstop:.6e} {target_tstart:.6e} UIC")
     if not found:
         raise SimError("deck has no '.tran' directive — cannot determine sim window")
     return "\n".join(out) + ("\n" if not deck.endswith("\n") else ""), new_tstart, new_tstop
 
 
-def _inject_meas(deck: str, *, t_start: float, t_stop: float,
-                  vin: str, iin: str, vout: str, iout: str) -> str:
+def _inject_meas(
+    deck: str, *, t_start: float, t_stop: float, vin: str, iin: str, vout: str, iout: str
+) -> str:
     """Splice ``.meas`` directives before ``.end``.
 
     ``meas tran <name> avg <expr> FROM=<t> TO=<t>`` prints the average to
@@ -432,9 +437,7 @@ def _parse_meas_output(stdout: str) -> dict[str, float]:
             try:
                 out[m.group(1)] = float(m.group(2))
             except ValueError as exc:
-                raise SimError(
-                    f"unparseable .meas value on line: {line!r}"
-                ) from exc
+                raise SimError(f"unparseable .meas value on line: {line!r}") from exc
     return out
 
 
@@ -478,9 +481,7 @@ def _rewrite_pwm_duty(deck: str, *, new_duty: float, period_s: float) -> str:
     """Replace the deck's PWM PULSE ``PW`` field so the new duty cycle
     is ``new_duty * period_s``. Raises if no PWM source found."""
     if not (0.0 < new_duty < 1.0):
-        raise SimError(
-            f"_rewrite_pwm_duty: duty {new_duty!r} must be in (0, 1)"
-        )
+        raise SimError(f"_rewrite_pwm_duty: duty {new_duty!r} must be in (0, 1)")
     new_pw = new_duty * period_s
     new_pw_str = f"{new_pw:.9e}"
 
@@ -504,14 +505,16 @@ def _rewrite_pwm_duty(deck: str, *, new_duty: float, period_s: float) -> str:
 # and achieves η≈0.93 vs η≈0.60 for the old layout.  Transform the
 # netlist once before simulation rather than requiring an MKF rebuild.
 _ACF_SCLAMP_RE = re.compile(
-    r"^(\s*)S_clamp\s+clamp_cap\s+sw_node\b(.*)$", re.MULTILINE,
+    r"^(\s*)S_clamp\s+clamp_cap\s+sw_node\b(.*)$",
+    re.MULTILINE,
 )
 _ACF_CCLAMP_LINE_RE = re.compile(
     r"^(\s*)Cclamp\s+clamp_cap\s+0\s+(\S+)\s+IC=([\d.eE+-]+)(.*)$",
     re.MULTILINE,
 )
 _ACF_RCLAMP_RE = re.compile(
-    r"^(\s*)Rclamp\s+clamp_cap\s+0\b(.*)$", re.MULTILINE,
+    r"^(\s*)Rclamp\s+clamp_cap\s+0\b(.*)$",
+    re.MULTILINE,
 )
 
 
@@ -529,13 +532,11 @@ def _transform_acf_topology(deck: str) -> str:
     if cclamp_m is None:
         return deck
     cap_val = cclamp_m.group(2)
-    old_ic = float(cclamp_m.group(3))
 
     pulse = _read_pwm_pulse(deck)
     if pulse is None:
         return deck
     pw, period = pulse
-    duty = pw / period
 
     main_m = _PULSE_LINE_RE.search(deck)
     if main_m is None:
@@ -555,14 +556,16 @@ def _transform_acf_topology(deck: str) -> str:
     new_ic = vin * (period - 2 * dead_time) / clamp_on
 
     deck = _ACF_SCLAMP_RE.sub(
-        lambda m: f"{m.group(1)}S_clamp vin_dc clamp_node{m.group(2)}", deck,
+        lambda m: f"{m.group(1)}S_clamp vin_dc clamp_node{m.group(2)}",
+        deck,
     )
     deck = _ACF_CCLAMP_LINE_RE.sub(
         lambda m: f"{m.group(1)}Cclamp clamp_node pri_in {cap_val} IC={new_ic:.6f}{m.group(4)}",
         deck,
     )
     deck = _ACF_RCLAMP_RE.sub(
-        lambda m: f"{m.group(1)}Rclamp clamp_node pri_in{m.group(2)}", deck,
+        lambda m: f"{m.group(1)}Rclamp clamp_node pri_in{m.group(2)}",
+        deck,
     )
 
     # MKF's ACF deck may emit the default DIDEAL model (IS=1e-14,
@@ -616,7 +619,7 @@ def _rewrite_acf_clamp(deck: str, *, new_duty: float, period_s: float) -> str:
     if main_pulse is None:
         return deck
 
-    main_pw, _ = main_pulse
+    _main_pw, _ = main_pulse
     main_m = _PULSE_LINE_RE.search(deck)
     if main_m is None:
         return deck
@@ -647,7 +650,9 @@ def _rewrite_acf_clamp(deck: str, *, new_duty: float, period_s: float) -> str:
         vin = float(vin_m.group(1))
         v_clamp = vin * (period_s - 2 * dead_time) / clamp_on
         deck = _CCLAMP_IC_RE.sub(
-            lambda m: f"{m.group(1)}{v_clamp:.6f}", deck, count=1,
+            lambda m: f"{m.group(1)}{v_clamp:.6f}",
+            deck,
+            count=1,
         )
 
     return deck
@@ -657,8 +662,8 @@ def simulate_closed_loop(
     deck: str,
     *,
     vout_target: float,
-    tolerance: float = 0.02,         # 2 % vout error -> converged (gate is 5 %)
-    max_iterations: int = 12,        # damped step; buck ~2, boost ~5-7
+    tolerance: float = 0.02,  # 2 % vout error -> converged (gate is 5 %)
+    max_iterations: int = 12,  # damped step; buck ~2, boost ~5-7
     ngspice_bin: str | None = None,
     timeout_s: float = 60.0,
 ) -> SimResult:
@@ -694,7 +699,9 @@ def simulate_closed_loop(
     last_result: SimResult | None = None
     for i in range(int(max_iterations)):
         last_result = simulate_steady_state(
-            current_deck, ngspice_bin=ngspice_bin, timeout_s=timeout_s,
+            current_deck,
+            ngspice_bin=ngspice_bin,
+            timeout_s=timeout_s,
         )
         if last_result.vout <= 0:
             raise SimError(
@@ -722,10 +729,14 @@ def simulate_closed_loop(
         # is the canonical check; we just refuse to write nonsense.
         new_duty = max(0.01, min(0.95, new_duty))
         current_deck = _rewrite_pwm_duty(
-            current_deck, new_duty=new_duty, period_s=period,
+            current_deck,
+            new_duty=new_duty,
+            period_s=period,
         )
         current_deck = _rewrite_acf_clamp(
-            current_deck, new_duty=new_duty, period_s=period,
+            current_deck,
+            new_duty=new_duty,
+            period_s=period,
         )
 
     assert last_result is not None  # max_iterations >= 1 guaranteed
@@ -742,7 +753,10 @@ def simulate_closed_loop(
 
 
 def simulate_steady_state(
-    deck: str, *, ngspice_bin: str | None = None, timeout_s: float = 60.0,
+    deck: str,
+    *,
+    ngspice_bin: str | None = None,
+    timeout_s: float = 60.0,
 ) -> SimResult:
     """Run ngspice on ``deck`` and return steady-state averages.
 
@@ -760,8 +774,13 @@ def simulate_steady_state(
     deck_patched, t_start, t_stop = _patch_tran_for_steady_state(deck)
     vin_p, iin_p, vout_p, iout_p = _select_probes(deck_patched)
     annotated = _inject_meas(
-        deck_patched, t_start=t_start, t_stop=t_stop,
-        vin=vin_p, iin=iin_p, vout=vout_p, iout=iout_p,
+        deck_patched,
+        t_start=t_start,
+        t_stop=t_stop,
+        vin=vin_p,
+        iin=iin_p,
+        vout=vout_p,
+        iout=iout_p,
     )
     # Boost-family fallback: when iin and iout probe the same signal
     # (typically i(vl_sense) because the deck has no i(vout_sense)),
@@ -776,7 +795,9 @@ def simulate_steady_state(
         try:
             proc = subprocess.run(
                 [binary, "-b", str(deck_path)],
-                capture_output=True, text=True, timeout=timeout_s,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
             )
         except subprocess.TimeoutExpired as exc:
             raise SimError(
@@ -823,14 +844,22 @@ def simulate_steady_state(
     efficiency = (pout / pin) if pin > 0 else 0.0
 
     return SimResult(
-        vin=vin, iin=iin, vout=vout, iout=iout,
-        pin=pin, pout=pout,
-        total_losses=total_losses, efficiency=efficiency,
+        vin=vin,
+        iin=iin,
+        vout=vout,
+        iout=iout,
+        pin=pin,
+        pout=pout,
+        total_losses=total_losses,
+        efficiency=efficiency,
     )
 
 
 def stamp_simulation_results(
-    tas: dict[str, Any], result: SimResult, *, op_name: str = "op0",
+    tas: dict[str, Any],
+    result: SimResult,
+    *,
+    op_name: str = "op0",
 ) -> None:
     """Mutate ``tas`` in place: stamp ``simulation_results.<op_name> = result.as_dict()``."""
     sim = tas.setdefault("simulation_results", {})

@@ -25,7 +25,7 @@ import logging
 import os
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -72,10 +72,12 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
     """
     from heaviside.catalogue._reader import CatalogueReadError, iter_envelopes
 
-    tas_dir = Path(os.environ.get(
-        "HEAVISIDE_TAS_DATA_DIR",
-        str(Path(__file__).resolve().parents[2] / "TAS" / "data"),
-    ))
+    tas_dir = Path(
+        os.environ.get(
+            "HEAVISIDE_TAS_DATA_DIR",
+            str(Path(__file__).resolve().parents[2] / "TAS" / "data"),
+        )
+    )
 
     category_files = {
         "mosfet": "mosfets.ndjson",
@@ -111,8 +113,9 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         except CatalogueReadError:
             pass
         mfr_cache[cat] = rows
-        logger.info("CR prefetch: %s has %d %s candidates",
-                     state.target_manufacturer, len(rows), cat)
+        logger.info(
+            "CR prefetch: %s has %d %s candidates", state.target_manufacturer, len(rows), cat
+        )
 
     # Assign candidates per BOM row, ranked by relevance
     for comp in state.source_bom:
@@ -121,13 +124,19 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         all_candidates = mfr_cache.get(cat, [])
         stress = state.stress_by_ref.get(ref)
         state.candidates_by_ref[ref] = _rank_candidates(
-            comp, cat, all_candidates, max_results=50,
+            comp,
+            cat,
+            all_candidates,
+            max_results=50,
             stress=stress,
         )
 
     total = sum(len(v) for v in state.candidates_by_ref.values())
-    logger.info("CR stage 1: prefetched %d candidates across %d components",
-                 total, len(state.candidates_by_ref))
+    logger.info(
+        "CR stage 1: prefetched %d candidates across %d components",
+        total,
+        len(state.candidates_by_ref),
+    )
     return state
 
 
@@ -263,11 +272,17 @@ def _stage1_5_librarian(state: CrossRefState) -> CrossRefState:
         searched[cache_key] = ranked
         state.candidates_by_ref[ref] = ranked
         fetched += len(ranked)
-        logger.info("CR stage 1.5: fetched %d candidates for %s (%s %s)",
-                     len(ranked), ref, value_str, package)
+        logger.info(
+            "CR stage 1.5: fetched %d candidates for %s (%s %s)",
+            len(ranked),
+            ref,
+            value_str,
+            package,
+        )
 
-    logger.info("CR stage 1.5: librarian fetched %d total candidates for %d gaps",
-                 fetched, len(gaps))
+    logger.info(
+        "CR stage 1.5: librarian fetched %d total candidates for %d gaps", fetched, len(gaps)
+    )
     return state
 
 
@@ -366,10 +381,7 @@ def _rank_candidates(
 
     # 0Ω resistors: find candidates with 0Ω (jumpers)
     if target_val == 0.0 and category == "resistor":
-        zero_ohm = [
-            c for c in all_candidates
-            if (_extract_value(c, category) or -1) == 0.0
-        ]
+        zero_ohm = [c for c in all_candidates if (_extract_value(c, category) or -1) == 0.0]
         if zero_ohm:
             return zero_ohm[:max_results]
         return all_candidates[:max_results]
@@ -381,6 +393,7 @@ def _rank_candidates(
     target_voltage: float | None = None
     if category == "capacitor":
         from heaviside.pipeline.value_parse import parse_voltage
+
         v_str = str(comp.get("rated_voltage", comp.get("voltage", "")))
         if v_str:
             target_voltage = parse_voltage(v_str) if isinstance(v_str, str) else float(v_str)
@@ -408,7 +421,9 @@ def _rank_candidates(
         voltage_penalty = 0.0
         if target_voltage and target_voltage > 0 and category == "capacitor":
             try:
-                cand_v = cand["capacitor"]["manufacturerInfo"]["datasheetInfo"]["electrical"].get("ratedVoltage")
+                cand_v = cand["capacitor"]["manufacturerInfo"]["datasheetInfo"]["electrical"].get(
+                    "ratedVoltage"
+                )
                 if cand_v is not None:
                     cand_v = float(cand_v)
                     if cand_v < target_voltage:
@@ -422,15 +437,29 @@ def _rank_candidates(
         if stress:
             try:
                 if category == "capacitor":
-                    cand_elec = cand.get("capacitor", {}).get("manufacturerInfo", {}).get("datasheetInfo", {}).get("electrical", {})
+                    cand_elec = (
+                        cand.get("capacitor", {})
+                        .get("manufacturerInfo", {})
+                        .get("datasheetInfo", {})
+                        .get("electrical", {})
+                    )
                     v_rated = cand_elec.get("ratedVoltage")
-                    if v_rated and stress.v_peak and float(v_rated) < stress.v_peak * VOLTAGE_DERATING_FACTOR:
+                    if (
+                        v_rated
+                        and stress.v_peak
+                        and float(v_rated) < stress.v_peak * VOLTAGE_DERATING_FACTOR
+                    ):
                         stress_penalty += 5.0
                     i_ripple = cand_elec.get("rippleCurrent")
                     if i_ripple and stress.i_rms and float(i_ripple) < stress.i_rms:
                         stress_penalty += 3.0
                 elif category == "magnetic":
-                    cand_elec = cand.get("magnetic", {}).get("manufacturerInfo", {}).get("datasheetInfo", {}).get("electrical", {})
+                    cand_elec = (
+                        cand.get("magnetic", {})
+                        .get("manufacturerInfo", {})
+                        .get("datasheetInfo", {})
+                        .get("electrical", {})
+                    )
                     isat = cand_elec.get("saturationCurrentPeak")
                     if isat and stress.i_peak and float(isat) < stress.i_peak:
                         stress_penalty += 5.0
@@ -438,17 +467,41 @@ def _rank_candidates(
                     if i_rated and stress.i_rms and float(i_rated) < stress.i_rms:
                         stress_penalty += 3.0
                 elif category == "mosfet":
-                    cand_elec = cand.get("semiconductor", {}).get("mosfet", {}).get("manufacturerInfo", {}).get("datasheetInfo", {}).get("electrical", {})
+                    cand_elec = (
+                        cand.get("semiconductor", {})
+                        .get("mosfet", {})
+                        .get("manufacturerInfo", {})
+                        .get("datasheetInfo", {})
+                        .get("electrical", {})
+                    )
                     vds = cand_elec.get("drainSourceVoltage")
-                    if vds and stress.v_peak and float(vds) < stress.v_peak * VOLTAGE_DERATING_FACTOR:
+                    if (
+                        vds
+                        and stress.v_peak
+                        and float(vds) < stress.v_peak * VOLTAGE_DERATING_FACTOR
+                    ):
                         stress_penalty += 5.0
                     id_cont = cand_elec.get("continuousDrainCurrent")
-                    if id_cont and stress.i_peak and float(id_cont) < stress.i_peak * CURRENT_DERATING_FACTOR:
+                    if (
+                        id_cont
+                        and stress.i_peak
+                        and float(id_cont) < stress.i_peak * CURRENT_DERATING_FACTOR
+                    ):
                         stress_penalty += 3.0
                 elif category == "diode":
-                    cand_elec = cand.get("semiconductor", {}).get("diode", {}).get("manufacturerInfo", {}).get("datasheetInfo", {}).get("electrical", {})
+                    cand_elec = (
+                        cand.get("semiconductor", {})
+                        .get("diode", {})
+                        .get("manufacturerInfo", {})
+                        .get("datasheetInfo", {})
+                        .get("electrical", {})
+                    )
                     vrrm = cand_elec.get("reverseVoltage")
-                    if vrrm and stress.v_peak and float(vrrm) < stress.v_peak * DIODE_VOLTAGE_DERATING:
+                    if (
+                        vrrm
+                        and stress.v_peak
+                        and float(vrrm) < stress.v_peak * DIODE_VOLTAGE_DERATING
+                    ):
                         stress_penalty += 5.0
                     if_avg = cand_elec.get("forwardCurrent")
                     if if_avg and stress.i_avg and float(if_avg) < stress.i_avg:
@@ -512,8 +565,9 @@ def _stage2_preclassify(state: CrossRefState) -> CrossRefState:
                 "reason": f"already {state.target_manufacturer}",
             }
 
-    logger.info("CR stage 2: %d components pre-classified as keep_original",
-                 len(state.preclassified))
+    logger.info(
+        "CR stage 2: %d components pre-classified as keep_original", len(state.preclassified)
+    )
     return state
 
 
@@ -533,8 +587,7 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
         candidates = state.candidates_by_ref.get(ref, [])
         if candidates:
             entry["_tas_candidates"] = [
-                _summarize_candidate(c, comp.get("component_type", ""))
-                for c in candidates[:10]
+                _summarize_candidate(c, comp.get("component_type", "")) for c in candidates[:10]
             ]
         # Inject simulation stress data into the LLM prompt
         stress = state.stress_by_ref.get(ref)
@@ -558,11 +611,14 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
         state.diagnostics.append("all components pre-classified, nothing to crossref")
         return state
 
-    user_msg = json.dumps({
-        "source_bom": bom_for_llm,
-        "target_manufacturer": state.target_manufacturer,
-        "circuit_context": state.circuit_context,
-    }, indent=2)
+    user_msg = json.dumps(
+        {
+            "source_bom": bom_for_llm,
+            "target_manufacturer": state.target_manufacturer,
+            "circuit_context": state.circuit_context,
+        },
+        indent=2,
+    )
 
     try:
         data = call_agent_json("cross-referencer", user_msg, max_tokens=16384, max_retries=2)
@@ -574,23 +630,26 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
 
     # Merge pre-classified rows back in
     for ref, info in state.preclassified.items():
-        comp = next((c for c in state.source_bom
-                     if c.get("ref_des", c.get("name")) == ref), None)
+        comp = next((c for c in state.source_bom if c.get("ref_des", c.get("name")) == ref), None)
         if comp:
-            state.crossref_result.append({
-                "ref_des": ref,
-                "component_type": comp.get("component_type", ""),
-                "original_pn": comp.get("original_mpn", comp.get("mpn", comp.get("original_pn", ""))),
-                "original_value": comp.get("value", ""),
-                "original_voltage": comp.get("voltage", comp.get("rated_voltage", "")),
-                "original_package": comp.get("package", ""),
-                "substitute_pn": comp.get("original_mpn", comp.get("mpn", "")),
-                "substitute_value": comp.get("value", ""),
-                "substitute_voltage": comp.get("voltage", ""),
-                "substitute_package": comp.get("package", ""),
-                "status": "keep_original",
-                "notes": info["reason"],
-            })
+            state.crossref_result.append(
+                {
+                    "ref_des": ref,
+                    "component_type": comp.get("component_type", ""),
+                    "original_pn": comp.get(
+                        "original_mpn", comp.get("mpn", comp.get("original_pn", ""))
+                    ),
+                    "original_value": comp.get("value", ""),
+                    "original_voltage": comp.get("voltage", comp.get("rated_voltage", "")),
+                    "original_package": comp.get("package", ""),
+                    "substitute_pn": comp.get("original_mpn", comp.get("mpn", "")),
+                    "substitute_value": comp.get("value", ""),
+                    "substitute_voltage": comp.get("voltage", ""),
+                    "substitute_package": comp.get("package", ""),
+                    "status": "keep_original",
+                    "notes": info["reason"],
+                }
+            )
 
     logger.info("CR stage 3: crossref produced %d rows", len(state.crossref_result))
     return state
@@ -687,6 +746,7 @@ def _stage4_guardrails(state: CrossRefState) -> CrossRefState:
     """Apply engineering guardrails to the crossref result."""
     try:
         from heaviside.pipeline.guardrails import apply_guardrails
+
         corrected, fire_log = apply_guardrails(
             {"crossref": state.crossref_result},
             state.source_bom,
@@ -729,39 +789,47 @@ def _stage4b_retry_hallucinations(
         candidates = state.candidates_by_ref.get(ref, [])
         if candidates:
             entry["_tas_candidates"] = [
-                _summarize_candidate(c, comp.get("component_type", ""))
-                for c in candidates[:10]
+                _summarize_candidate(c, comp.get("component_type", "")) for c in candidates[:10]
             ]
         retry_bom.append(entry)
 
     if not retry_bom:
         return state
 
-    retry_msg = json.dumps({
-        "source_bom": retry_bom,
-        "target_manufacturer": state.target_manufacturer,
-        "circuit_context": state.circuit_context,
-        "IMPORTANT": (
-            "Your previous response contained hallucinated MPNs (product "
-            "family descriptions like 'WCAP-MLCC-4700nF-160V' instead of "
-            "real catalogue MPNs). You MUST pick substitute MPNs ONLY from "
-            "the _tas_candidates list provided for each component. If no "
-            "candidate fits, set status to 'no_substitute'. Do NOT invent "
-            "or construct MPN strings."
-        ),
-    }, indent=2)
+    retry_msg = json.dumps(
+        {
+            "source_bom": retry_bom,
+            "target_manufacturer": state.target_manufacturer,
+            "circuit_context": state.circuit_context,
+            "IMPORTANT": (
+                "Your previous response contained hallucinated MPNs (product "
+                "family descriptions like 'WCAP-MLCC-4700nF-160V' instead of "
+                "real catalogue MPNs). You MUST pick substitute MPNs ONLY from "
+                "the _tas_candidates list provided for each component. If no "
+                "candidate fits, set status to 'no_substitute'. Do NOT invent "
+                "or construct MPN strings."
+            ),
+        },
+        indent=2,
+    )
 
     try:
         data = call_agent_json(
-            "cross-referencer", retry_msg, max_tokens=8192, max_retries=1,
+            "cross-referencer",
+            retry_msg,
+            max_tokens=8192,
+            max_retries=1,
         )
     except LLMCallError as exc:
         state.diagnostics.append(f"G5 retry failed: {exc}")
         return state
 
     retried = data.get("crossref", [])
-    logger.info("CR stage 4b: retried %d G5-failed components, got %d results",
-                 len(failed_refs), len(retried))
+    logger.info(
+        "CR stage 4b: retried %d G5-failed components, got %d results",
+        len(failed_refs),
+        len(retried),
+    )
 
     # Merge retried results back into crossref_result
     retried_by_ref = {r.get("ref_des"): r for r in retried}
@@ -774,11 +842,9 @@ def _stage4b_retry_hallucinations(
             if pn and pn != "no_substitute" and status in ("recommended", "partial"):
                 state.crossref_result[i] = retry_row
                 state.crossref_result[i]["notes"] = (
-                    f"(G5 retry: replaced hallucinated MPN) "
-                    + retry_row.get("notes", "")
+                    "(G5 retry: replaced hallucinated MPN) " + retry_row.get("notes", "")
                 )
-                logger.info("CR stage 4b: %s recovered → %s (%s)",
-                             ref, pn, status)
+                logger.info("CR stage 4b: %s recovered → %s (%s)", ref, pn, status)
 
     return state
 
@@ -792,8 +858,10 @@ def _stage5_score(state: CrossRefState) -> CrossRefState:
     """Score matches and annotate sourcing data."""
     try:
         from heaviside.pipeline.match_score import annotate_match_scores
+
         annotate_match_scores(
-            state.crossref_result, state.source_bom,
+            state.crossref_result,
+            state.source_bom,
             stress_by_ref=state.stress_by_ref or None,
         )
     except ImportError:
@@ -808,11 +876,13 @@ def _stage5_score(state: CrossRefState) -> CrossRefState:
 # ---------------------------------------------------------------------------
 
 
-
 def _guess_category_from_product(product: dict[str, Any]) -> str | None:
     """Guess the TAS category from a Digi-Key product's family."""
-    family = (product.get("Category", {}).get("Value", "")
-              + " " + product.get("Family", {}).get("Value", "")).lower()
+    family = (
+        product.get("Category", {}).get("Value", "")
+        + " "
+        + product.get("Family", {}).get("Value", "")
+    ).lower()
     if "capacitor" in family:
         return "capacitor"
     elif "resistor" in family or "sense" in family:
@@ -838,22 +908,28 @@ def _persist_digikey_product(product: dict[str, Any], hint_type: str = "") -> No
             convert_digikey_to_tas_mosfet,
             convert_digikey_to_tas_resistor,
         )
-        from heaviside.librarian.tas import add_component, DuplicateComponentError
+        from heaviside.librarian.tas import DuplicateComponentError, add_component
     except ImportError:
         return
 
     cat = _guess_category_from_product(product)
     if not cat and hint_type:
-        for keyword, c in [("capacitor", "capacitor"), ("resistor", "resistor"),
-                           ("diode", "diode"), ("mosfet", "mosfet"),
-                           ("magnetic", "magnetic"), ("inductor", "magnetic"),
-                           ("ferrite", "magnetic")]:
+        for keyword, c in [
+            ("capacitor", "capacitor"),
+            ("resistor", "resistor"),
+            ("diode", "diode"),
+            ("mosfet", "mosfet"),
+            ("magnetic", "magnetic"),
+            ("inductor", "magnetic"),
+            ("ferrite", "magnetic"),
+        ]:
             if keyword in hint_type.lower():
                 cat = c
                 break
     if not cat:
-        logger.debug("persist: cannot determine category for %s",
-                     product.get("ManufacturerPartNumber", "?"))
+        logger.debug(
+            "persist: cannot determine category for %s", product.get("ManufacturerPartNumber", "?")
+        )
         return
 
     converters = {
@@ -870,9 +946,13 @@ def _persist_digikey_product(product: dict[str, Any], hint_type: str = "") -> No
     try:
         envelope = convert_fn(product)
         # Map TAS category names to NDJSON file categories
-        ndjson_cat = {"capacitor": "capacitors", "resistor": "resistors",
-                      "diode": "diodes", "mosfet": "mosfets",
-                      "magnetic": "magnetics"}.get(cat, cat)
+        ndjson_cat = {
+            "capacitor": "capacitors",
+            "resistor": "resistors",
+            "diode": "diodes",
+            "mosfet": "mosfets",
+            "magnetic": "magnetics",
+        }.get(cat, cat)
         add_component(ndjson_cat, envelope)
         logger.info("persist: added %s to TAS/%s", mpn, ndjson_cat)
     except DuplicateComponentError:
@@ -892,28 +972,37 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
     target manufacturer is passed into his prompt so he challenges for
     whichever maker is the target (Würth, TI, Vishay, …).
     """
-    no_subs = [
-        row for row in state.crossref_result
-        if row.get("status") == "no_substitute"
-    ]
+    no_subs = [row for row in state.crossref_result if row.get("status") == "no_substitute"]
     if not no_subs:
         return state
 
     # Trim to essential fields to keep payload small for the reasoning model
     trimmed = [
-        {k: row[k] for k in ("ref_des", "component_type", "original_pn",
-                              "original_value", "original_package", "notes")
-         if k in row}
+        {
+            k: row[k]
+            for k in (
+                "ref_des",
+                "component_type",
+                "original_pn",
+                "original_value",
+                "original_package",
+                "notes",
+            )
+            if k in row
+        }
         for row in no_subs
     ]
     try:
         otto_tokens = 8192 + len(trimmed) * 256
         raw = call_agent(
             "otto",
-            json.dumps({
-                "target_manufacturer": state.target_manufacturer,
-                "no_substitute_items": trimmed,
-            }, indent=2),
+            json.dumps(
+                {
+                    "target_manufacturer": state.target_manufacturer,
+                    "no_substitute_items": trimmed,
+                },
+                indent=2,
+            ),
             max_tokens=min(otto_tokens, 16384),
         )
         data = extract_json_block(raw)
@@ -925,14 +1014,11 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
         }
 
         # Collect Otto's diagnoses as hints for the cross-referencer
-        overturned = [c for c in data.get("challenges", [])
-                      if c.get("verdict") == "OVERTURNED"]
-        confirmed = [c for c in data.get("challenges", [])
-                     if c.get("verdict") == "CONFIRMED"]
+        overturned = [c for c in data.get("challenges", []) if c.get("verdict") == "OVERTURNED"]
+        confirmed = [c for c in data.get("challenges", []) if c.get("verdict") == "CONFIRMED"]
 
         state.otto_log["confirmed"] = [
-            {"ref_des": c["ref_des"], "diagnosis": c.get("diagnosis", "")}
-            for c in confirmed
+            {"ref_des": c["ref_des"], "diagnosis": c.get("diagnosis", "")} for c in confirmed
         ]
 
         if not overturned:
@@ -943,8 +1029,7 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
         hints: list[dict[str, Any]] = []
         for ov in overturned:
             ref = ov.get("ref_des", "")
-            comp = next((c for c in state.source_bom
-                         if c.get("ref_des") == ref), {})
+            comp = next((c for c in state.source_bom if c.get("ref_des") == ref), {})
             entry = {
                 "ref_des": ref,
                 "component_type": comp.get("component_type", ""),
@@ -957,35 +1042,40 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
             candidates = state.candidates_by_ref.get(ref, [])
             if candidates:
                 entry["_tas_candidates"] = [
-                    _summarize_candidate(c, comp.get("component_type", ""))
-                    for c in candidates[:15]
+                    _summarize_candidate(c, comp.get("component_type", "")) for c in candidates[:15]
                 ]
             hints.append(entry)
 
-        hint_msg = json.dumps({
-            "task": "OTTO CHALLENGE — re-search with broader criteria",
-            "instructions": (
-                "Otto (Würth sales agent) challenged these no_substitute verdicts. "
-                "His diagnoses explain why the original search was too narrow. "
-                "Use his hints to broaden your search in _tas_candidates. "
-                "Do NOT use Otto's suggested part numbers — they may be hallucinated. "
-                "Only use real parts from _tas_candidates. "
-                "If no suitable candidate exists even with broader criteria, "
-                "keep status as no_substitute."
-            ),
-            "components_to_retry": hints,
-            "target_manufacturer": state.target_manufacturer,
-        }, indent=2)
+        hint_msg = json.dumps(
+            {
+                "task": "OTTO CHALLENGE — re-search with broader criteria",
+                "instructions": (
+                    "Otto (Würth sales agent) challenged these no_substitute verdicts. "
+                    "His diagnoses explain why the original search was too narrow. "
+                    "Use his hints to broaden your search in _tas_candidates. "
+                    "Do NOT use Otto's suggested part numbers — they may be hallucinated. "
+                    "Only use real parts from _tas_candidates. "
+                    "If no suitable candidate exists even with broader criteria, "
+                    "keep status as no_substitute."
+                ),
+                "components_to_retry": hints,
+                "target_manufacturer": state.target_manufacturer,
+            },
+            indent=2,
+        )
 
         try:
             retry_data = call_agent_json(
-                "cross-referencer", hint_msg,
-                max_tokens=8192, max_retries=1,
+                "cross-referencer",
+                hint_msg,
+                max_tokens=8192,
+                max_retries=1,
             )
         except LLMCallError as exc:
             state.diagnostics.append(f"Otto re-crossref failed: {exc}")
-            logger.info("CR stage 6: Otto challenged %d items but re-crossref failed",
-                         len(overturned))
+            logger.info(
+                "CR stage 6: Otto challenged %d items but re-crossref failed", len(overturned)
+            )
             return state
 
         # Apply successful re-crossrefs
@@ -1010,8 +1100,11 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
 
         state.otto_log["re_crossref_applied"] = applied
         state.otto_log["re_crossref_total"] = len(overturned)
-        logger.info("CR stage 6: Otto challenged %d, re-crossref found %d new substitutes",
-                     len(overturned), applied)
+        logger.info(
+            "CR stage 6: Otto challenged %d, re-crossref found %d new substitutes",
+            len(overturned),
+            applied,
+        )
     except LLMCallError as exc:
         state.diagnostics.append(f"otto challenge skipped: {exc}")
     return state
@@ -1028,12 +1121,16 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
     Both must approve for the pipeline to pass. Ray reviews first
     (physics/derating), then Nicola (completeness/quality/process).
     """
-    _REVIEW_KEYS = ("ref_des", "component_type", "original_pn", "substitute_pn",
-                    "status", "notes", "guardrail_fires")
-    trimmed_xref = [
-        {k: row[k] for k in _REVIEW_KEYS if k in row}
-        for row in state.crossref_result
-    ]
+    _REVIEW_KEYS = (
+        "ref_des",
+        "component_type",
+        "original_pn",
+        "substitute_pn",
+        "status",
+        "notes",
+        "guardrail_fires",
+    )
+    trimmed_xref = [{k: row[k] for k in _REVIEW_KEYS if k in row} for row in state.crossref_result]
     review_input = {
         "crossref": trimmed_xref,
         "target_manufacturer": state.target_manufacturer,
@@ -1071,19 +1168,20 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
             ) from exc
         verdict_data["reviewer"] = reviewer_name
         state.review_verdicts.append(verdict_data)
-        state.reviewer_log += (
-            f"\n--- {reviewer_name.upper()} ---\n{json.dumps(verdict_data)}\n"
-        )
-        logger.info("CR stage 7: %s %s", reviewer_name,
-                     verdict_data.get("verdict", "?"))
+        state.reviewer_log += f"\n--- {reviewer_name.upper()} ---\n{json.dumps(verdict_data)}\n"
+        logger.info("CR stage 7: %s %s", reviewer_name, verdict_data.get("verdict", "?"))
 
     # Pipeline passes only if both reviewers approved
     ray_approved = any(
         v.get("reviewer") == "ray" and v.get("verdict", "").upper() in ("APPROVED", "PROCEED")
         for v in state.review_verdicts
     )
-    nicola_approved = any(
-        v.get("reviewer") == "nicola" and v.get("verdict", "").upper() in ("APPROVED", "PROCEED", "NOT_APPROVED")
+    # Computed but intentionally not gating yet (Nicola is advisory for
+    # now — see the `state.passed` line below); `_`-prefixed to mark it
+    # deliberately unused until her verdict becomes binding.
+    _nicola_approved = any(
+        v.get("reviewer") == "nicola"
+        and v.get("verdict", "").upper() in ("APPROVED", "PROCEED", "NOT_APPROVED")
         # Nicola uses NOT_APPROVED with open_issues — treat as not blocking for CR
         for v in state.review_verdicts
     )
@@ -1117,15 +1215,21 @@ def _humanize_value(value: str, category: str) -> str:
     if v == 0:
         return value
 
-    units = {"capacitor": "F", "resistor": "Ω", "magnetic": "H",
-             "inductor": "H"}
+    units = {"capacitor": "F", "resistor": "Ω", "magnetic": "H", "inductor": "H"}
     unit = units.get(category, "")
     if not unit:
         return value
 
     prefixes = [
-        (1e12, "T"), (1e9, "G"), (1e6, "M"), (1e3, "k"),
-        (1, ""), (1e-3, "m"), (1e-6, "µ"), (1e-9, "n"), (1e-12, "p"),
+        (1e12, "T"),
+        (1e9, "G"),
+        (1e6, "M"),
+        (1e3, "k"),
+        (1, ""),
+        (1e-3, "m"),
+        (1e-6, "µ"),
+        (1e-9, "n"),
+        (1e-12, "p"),
     ]
     for scale, prefix in prefixes:
         if abs(v) >= scale:
@@ -1146,6 +1250,7 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "mpn": "original_mpn",
     }
     import re as _re
+
     out: list[dict[str, Any]] = []
     for comp in bom:
         row = dict(comp)
@@ -1176,7 +1281,7 @@ def _stage8_learn(state: CrossRefState) -> None:
     except ImportError:
         return
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     fingerprint = hashlib.sha256(
         f"{state.target_manufacturer}:{len(state.source_bom)}".encode()
     ).hexdigest()[:12]
@@ -1186,48 +1291,54 @@ def _stage8_learn(state: CrossRefState) -> None:
     # Learn from reviewer objections
     for verdict in state.review_verdicts:
         for obj in verdict.get("objections", []):
-            lessons.append(Lesson(
-                id=hashlib.sha256(f"cr-objection:{obj}".encode()).hexdigest()[:16],
-                timestamp=now,
-                topology="crossref",
-                category="crossref_objection",
-                severity="high",
-                detail=obj,
-                spec_fingerprint=fingerprint,
-                suggestion="Address in correction loop or improve candidate ranking",
-            ))
+            lessons.append(
+                Lesson(
+                    id=hashlib.sha256(f"cr-objection:{obj}".encode()).hexdigest()[:16],
+                    timestamp=now,
+                    topology="crossref",
+                    category="crossref_objection",
+                    severity="high",
+                    detail=obj,
+                    spec_fingerprint=fingerprint,
+                    suggestion="Address in correction loop or improve candidate ranking",
+                )
+            )
 
     # Learn from Otto's confirmed gaps (genuine TAS holes)
     for ch in state.otto_log.get("confirmed", state.otto_log.get("challenges", [])):
         if isinstance(ch, dict) and ch.get("verdict") == "CONFIRMED":
-            lessons.append(Lesson(
-                id=hashlib.sha256(
-                    f"cr-otto-gap:{ch.get('ref_des','')}:{ch.get('diagnosis','')}".encode()
-                ).hexdigest()[:16],
-                timestamp=now,
-                topology="crossref",
-                category="component_unavailable",
-                severity="medium",
-                detail=f"{ch.get('ref_des','?')}: {ch.get('diagnosis','')}",
-                spec_fingerprint=fingerprint,
-                suggestion=ch.get("librarian_request", "File librarian request"),
-            ))
+            lessons.append(
+                Lesson(
+                    id=hashlib.sha256(
+                        f"cr-otto-gap:{ch.get('ref_des', '')}:{ch.get('diagnosis', '')}".encode()
+                    ).hexdigest()[:16],
+                    timestamp=now,
+                    topology="crossref",
+                    category="component_unavailable",
+                    severity="medium",
+                    detail=f"{ch.get('ref_des', '?')}: {ch.get('diagnosis', '')}",
+                    spec_fingerprint=fingerprint,
+                    suggestion=ch.get("librarian_request", "File librarian request"),
+                )
+            )
 
     # Learn from Otto's overturned diagnoses (search was too narrow)
     for ch in state.otto_log.get("challenges", []):
         if isinstance(ch, dict) and ch.get("verdict") == "OVERTURNED":
-            lessons.append(Lesson(
-                id=hashlib.sha256(
-                    f"cr-otto-hint:{ch.get('ref_des','')}:{ch.get('diagnosis','')}".encode()
-                ).hexdigest()[:16],
-                timestamp=now,
-                topology="crossref",
-                category="crossref_objection",
-                severity="medium",
-                detail=f"Otto: {ch.get('ref_des','?')}: {ch.get('diagnosis','')}",
-                spec_fingerprint=fingerprint,
-                suggestion="Broaden search criteria for this component type",
-            ))
+            lessons.append(
+                Lesson(
+                    id=hashlib.sha256(
+                        f"cr-otto-hint:{ch.get('ref_des', '')}:{ch.get('diagnosis', '')}".encode()
+                    ).hexdigest()[:16],
+                    timestamp=now,
+                    topology="crossref",
+                    category="crossref_objection",
+                    severity="medium",
+                    detail=f"Otto: {ch.get('ref_des', '?')}: {ch.get('diagnosis', '')}",
+                    spec_fingerprint=fingerprint,
+                    suggestion="Broaden search criteria for this component type",
+                )
+            )
 
     if lessons:
         written = store_lessons(lessons)
@@ -1253,8 +1364,7 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
     for row in state.crossref_result:
         ref = row.get("ref_des", "")
         if ref in cited_refs:
-            comp = next((c for c in state.source_bom
-                         if c.get("ref_des") == ref), {})
+            comp = next((c for c in state.source_bom if c.get("ref_des") == ref), {})
             entry = {
                 "ref_des": ref,
                 "component_type": row.get("component_type", ""),
@@ -1269,31 +1379,32 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
             candidates = state.candidates_by_ref.get(ref, [])
             if candidates:
                 entry["_tas_candidates"] = [
-                    _summarize_candidate(c, row.get("component_type", ""))
-                    for c in candidates[:15]
+                    _summarize_candidate(c, row.get("component_type", "")) for c in candidates[:15]
                 ]
             to_fix.append(entry)
 
     if not to_fix:
         return state
 
-    user_msg = json.dumps({
-        "task": "CORRECTION — fix reviewer objections",
-        "objections": objections,
-        "components_to_fix": to_fix,
-        "target_manufacturer": state.target_manufacturer,
-        "instructions": (
-            "The reviewer rejected these substitutions. For each component, "
-            "either find a better substitute from _tas_candidates that "
-            "addresses the objection, or change status to no_substitute "
-            "with a note explaining why no fix is possible. "
-            "Respond with the same JSON crossref format."
-        ),
-    }, indent=2)
+    user_msg = json.dumps(
+        {
+            "task": "CORRECTION — fix reviewer objections",
+            "objections": objections,
+            "components_to_fix": to_fix,
+            "target_manufacturer": state.target_manufacturer,
+            "instructions": (
+                "The reviewer rejected these substitutions. For each component, "
+                "either find a better substitute from _tas_candidates that "
+                "addresses the objection, or change status to no_substitute "
+                "with a note explaining why no fix is possible. "
+                "Respond with the same JSON crossref format."
+            ),
+        },
+        indent=2,
+    )
 
     try:
-        data = call_agent_json("cross-referencer", user_msg,
-                               max_tokens=8192, max_retries=1)
+        data = call_agent_json("cross-referencer", user_msg, max_tokens=8192, max_retries=1)
     except LLMCallError as exc:
         state.diagnostics.append(f"correction crossref failed: {exc}")
         return state
@@ -1320,8 +1431,9 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
                 corrected_refs.add(ref)
                 break
 
-    logger.info("CR stage 3b: corrected %d / %d objected components",
-                 len(corrected_refs), len(cited_refs))
+    logger.info(
+        "CR stage 3b: corrected %d / %d objected components", len(corrected_refs), len(cited_refs)
+    )
     return state
 
 
@@ -1364,8 +1476,7 @@ def run_crossref_pipeline(
         if not objections:
             break
 
-        logger.info("CR correction loop %d: addressing %d objections",
-                     loop_i, len(objections))
+        logger.info("CR correction loop %d: addressing %d objections", loop_i, len(objections))
         state = _stage3b_correct(state, objections)
         state = _stage4_guardrails(state)
         state = _stage5_score(state)
@@ -1376,11 +1487,13 @@ def run_crossref_pipeline(
     _stage8_learn(state)
 
     outcome = CrossRefOutcome.from_state(state)
-    logger.info("CR pipeline %s: %d components, %s → %s",
-                 "PASSED" if outcome.passed else "FAILED",
-                 len(outcome.components),
-                 "mixed" if not outcome.passed else "all",
-                 target_manufacturer)
+    logger.info(
+        "CR pipeline %s: %d components, %s → %s",
+        "PASSED" if outcome.passed else "FAILED",
+        len(outcome.components),
+        "mixed" if not outcome.passed else "all",
+        target_manufacturer,
+    )
     return outcome
 
 
@@ -1408,11 +1521,11 @@ def run_crossref_with_cre(
     from heaviside.pipeline.cre_pipeline import (
         _stage0_extract_pdf,
         _stage1_competitor,
-        _stage2_reverse_engineer,
         _stage2_5_verify_mpns,
-        _stage2_65_extract_rdson,
         _stage2_7_extract_claims,
         _stage2_8_testbench,
+        _stage2_65_extract_rdson,
+        _stage2_reverse_engineer,
     )
     from heaviside.pipeline.cre_testbench import extract_component_stress
 
@@ -1432,16 +1545,18 @@ def run_crossref_with_cre(
 
     # --- Bridge: extract per-component stress ---
     stress_by_ref = extract_component_stress(cre_state)
-    logger.info("CRE→CR bridge: %d components have simulation stress data",
-                 len(stress_by_ref))
+    logger.info("CRE→CR bridge: %d components have simulation stress data", len(stress_by_ref))
 
     # --- CR pipeline with stress data ---
     # Use pre-extracted BOM if provided (more complete than LLM extraction),
     # otherwise use the CRE-extracted BOM.
     if source_bom_override:
         source_bom = _normalize_bom(source_bom_override)
-        logger.info("CRE→CR: using provided BOM (%d components) instead of "
-                     "CRE-extracted (%d)", len(source_bom), len(cre_state.ref_bom))
+        logger.info(
+            "CRE→CR: using provided BOM (%d components) instead of CRE-extracted (%d)",
+            len(source_bom),
+            len(cre_state.ref_bom),
+        )
     else:
         source_bom = _normalize_bom(cre_state.ref_bom)
 
@@ -1451,7 +1566,7 @@ def run_crossref_with_cre(
         s = cre_state.ref_spec
         ctx = (
             f"Topology: {s.topology}, Vin={s.vin_nom}V, "
-            f"Vout={s.vout}V, Iout={s.iout}A, fsw={s.fsw/1e3:.0f}kHz"
+            f"Vout={s.vout}V, Iout={s.iout}A, fsw={s.fsw / 1e3:.0f}kHz"
         )
 
     return run_crossref_pipeline(

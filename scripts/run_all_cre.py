@@ -39,8 +39,8 @@ GOLDEN_DESIGNS = [
     "um3491-getting-started-with-steval0606yadj-evaluation-board-based-on-dcp0606qtry-automotive-6-v--6-a-stepdown-converter-stmicroelectronics",
 ]
 
-DESIGNS = GOLDEN_DESIGNS if "--golden" in sys.argv else sorted(
-    p.stem for p in PROTEUS_DIR.glob("*.pdf")
+DESIGNS = (
+    GOLDEN_DESIGNS if "--golden" in sys.argv else sorted(p.stem for p in PROTEUS_DIR.glob("*.pdf"))
 )
 
 
@@ -93,9 +93,9 @@ def main():
     results = []
 
     for i, name in enumerate(DESIGNS):
-        print(f"\n{'='*70}")
-        print(f"[{i+1}/{len(DESIGNS)}] {name}")
-        print(f"{'='*70}")
+        print(f"\n{'=' * 70}")
+        print(f"[{i + 1}/{len(DESIGNS)}] {name}")
+        print(f"{'=' * 70}")
         try:
             r = run_one(name)
             results.append(r)
@@ -106,15 +106,19 @@ def main():
             comps = r.get("comparisons", [])
             if len(comps) >= 2:
                 ideal, bom_c = comps[0], comps[-1]
-                print(f"  → {topo} | BOM={bom} | ideal η={ideal['sim_eff']:.1%} "
-                      f"bom η={bom_c['sim_eff']:.1%} "
-                      f"claimed={bom_c['claimed_eff']:.1%} Δ={bom_c['delta_pp']:.1f}pp "
-                      f"| {passed} | {elapsed}s")
+                print(
+                    f"  → {topo} | BOM={bom} | ideal η={ideal['sim_eff']:.1%} "
+                    f"bom η={bom_c['sim_eff']:.1%} "
+                    f"claimed={bom_c['claimed_eff']:.1%} Δ={bom_c['delta_pp']:.1f}pp "
+                    f"| {passed} | {elapsed}s"
+                )
             elif comps:
                 last = comps[-1]
-                print(f"  → {topo} | BOM={bom} | η_sim={last['sim_eff']:.1%} "
-                      f"η_claimed={last['claimed_eff']:.1%} Δ={last['delta_pp']:.1f}pp "
-                      f"| {passed} | {elapsed}s")
+                print(
+                    f"  → {topo} | BOM={bom} | η_sim={last['sim_eff']:.1%} "
+                    f"η_claimed={last['claimed_eff']:.1%} Δ={last['delta_pp']:.1f}pp "
+                    f"| {passed} | {elapsed}s"
+                )
             else:
                 diags = r.get("diagnostics", [])
                 diag_short = "; ".join(d[:60] for d in diags[:2]) if diags else "no sim"
@@ -124,10 +128,12 @@ def main():
             results.append({"name": name, "error": str(exc), "passed": False})
 
     # Summary
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("CRE VIRTUAL TEST BENCH SUMMARY")
-    print(f"{'='*70}")
-    print(f"{'Design':<40s} {'Topo':<10s} {'BOM':>4} {'η_ideal':>7} {'η_bom':>6} {'η_ref':>6} {'Δpp':>5} {'Vout':>6} {'':>5}")
+    print(f"{'=' * 70}")
+    print(
+        f"{'Design':<40s} {'Topo':<10s} {'BOM':>4} {'η_ideal':>7} {'η_bom':>6} {'η_ref':>6} {'Δpp':>5} {'Vout':>6} {'':>5}"
+    )
     print("-" * 100)
     for r in results:
         if "error" in r:
@@ -139,19 +145,25 @@ def main():
         passed = "PASS" if r.get("passed") else "FAIL"
         if len(comps) >= 2:
             ideal, last = comps[0], comps[-1]
-            print(f"{r['name'][:39]:<40s} {topo:<10s} {bom:4d} "
-                  f"{ideal['sim_eff']:6.1%} {last['sim_eff']:5.1%} "
-                  f"{last['claimed_eff']:5.1%} "
-                  f"{last['delta_pp']:4.1f}p {last['sim_vout']:5.1f}V {passed}")
+            print(
+                f"{r['name'][:39]:<40s} {topo:<10s} {bom:4d} "
+                f"{ideal['sim_eff']:6.1%} {last['sim_eff']:5.1%} "
+                f"{last['claimed_eff']:5.1%} "
+                f"{last['delta_pp']:4.1f}p {last['sim_vout']:5.1f}V {passed}"
+            )
         elif comps:
             last = comps[-1]
-            print(f"{r['name'][:39]:<40s} {topo:<10s} {bom:4d} "
-                  f"{'—':>7s} {last['sim_eff']:5.1%} {last['claimed_eff']:5.1%} "
-                  f"{last['delta_pp']:4.1f}p {last['sim_vout']:5.1f}V {passed}")
+            print(
+                f"{r['name'][:39]:<40s} {topo:<10s} {bom:4d} "
+                f"{'—':>7s} {last['sim_eff']:5.1%} {last['claimed_eff']:5.1%} "
+                f"{last['delta_pp']:4.1f}p {last['sim_vout']:5.1f}V {passed}"
+            )
         else:
             diag = "; ".join(d[:60] for d in r.get("diagnostics", [])[:2])
-            print(f"{r['name'][:39]:<40s} {topo:<10s} {bom:4d} "
-                  f"{'—':>7s} {'—':>6s} {'—':>6s} {'—':>5s} {'—':>6s} {passed}")
+            print(
+                f"{r['name'][:39]:<40s} {topo:<10s} {bom:4d} "
+                f"{'—':>7s} {'—':>6s} {'—':>6s} {'—':>5s} {'—':>6s} {passed}"
+            )
             if diag:
                 print(f"  diag: {diag[:120]}")
 

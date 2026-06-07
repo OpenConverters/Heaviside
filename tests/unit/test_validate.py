@@ -10,7 +10,6 @@ import pytest
 from heaviside.validate import (
     Report,
     ValidatorError,
-    Violation,
     _build_registry,
     validate_tas,
     validate_tas_file,
@@ -118,8 +117,7 @@ def test_tas_root_rejects_flat_legacy_shape() -> None:
     legacy = {"stages": [], "interStageCircuit": []}
     report = validate_tas(legacy, strict=False)
     assert not report.ok
-    assert any("inputs" in v.message or "topology" in v.message
-               for v in report.violations)
+    assert any("inputs" in v.message or "topology" in v.message for v in report.violations)
 
 
 # ---------------------------------------------------------------------------
@@ -139,29 +137,31 @@ def _minimal_tas_with_data(data_value: object) -> dict:
                 "inputType": "dc",
                 "inputVoltage": {"nominal": 48.0},
                 "outputs": [
-                    {"name": "out0",
-                     "voltage": {"nominal": 12.0},
-                     "regulation": "voltage"},
+                    {"name": "out0", "voltage": {"nominal": 12.0}, "regulation": "voltage"},
                 ],
             },
-            "operatingPoints": [{
-                "name": "op0",
-                "inputVoltage": 48.0,
-                "ambientTemperature": 25.0,
-                "outputs": [{"name": "out0", "current": 5.0}],
-            }],
+            "operatingPoints": [
+                {
+                    "name": "op0",
+                    "inputVoltage": 48.0,
+                    "ambientTemperature": 25.0,
+                    "outputs": [{"name": "out0", "current": 5.0}],
+                }
+            ],
         },
         "topology": {
-            "stages": [{
-                "name": "power_stage",
-                "role": "switchingCell",
-                "inputPort": {"type": "dcBus", "wire": "Vin"},
-                "outputPorts": [{"type": "dcOutput", "wire": "Vout"}],
-                "circuit": {
-                    "components": [{"name": "Q1", "data": data_value}],
-                    "connections": [],
-                },
-            }],
+            "stages": [
+                {
+                    "name": "power_stage",
+                    "role": "switchingCell",
+                    "inputPort": {"type": "dcBus", "wire": "Vin"},
+                    "outputPorts": [{"type": "dcOutput", "wire": "Vout"}],
+                    "circuit": {
+                        "components": [{"name": "Q1", "data": data_value}],
+                        "connections": [],
+                    },
+                }
+            ],
             "interStageCircuit": [],
         },
     }
@@ -226,9 +226,7 @@ def test_tas_only_skips_uri_and_peas_layers() -> None:
 
 def test_validate_tas_file_round_trip(tmp_path: Path) -> None:
     p = tmp_path / "buck.tas.json"
-    p.write_text(json.dumps(_minimal_tas_with_data(
-        "TAS/data/mosfets.ndjson?mpn=EPC2019"
-    )))
+    p.write_text(json.dumps(_minimal_tas_with_data("TAS/data/mosfets.ndjson?mpn=EPC2019")))
     report = validate_tas_file(p, strict=False)
     assert report.ok, report.as_dict()
 

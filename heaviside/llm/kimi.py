@@ -43,12 +43,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-
 __all__ = [
     "DEFAULT_KIMI_MODEL_ID",
     "KIMI_MODEL_PREFIXES",
-    "MOONSHOT_BASE_URL_INTL",
     "MOONSHOT_BASE_URL_CN",
+    "MOONSHOT_BASE_URL_INTL",
     "KimiCredentialError",
     "KimiCredentials",
     "KimiDependencyError",
@@ -134,10 +133,7 @@ class KimiCredentials:
         the key are shown so two distinct keys can be told apart
         without leaking the full secret.
         """
-        if len(self.api_key) <= 8:
-            shown = "****"
-        else:
-            shown = f"{self.api_key[:4]}…{self.api_key[-4:]}"
+        shown = "****" if len(self.api_key) <= 8 else f"{self.api_key[:4]}…{self.api_key[-4:]}"
         return f"KimiCredentials(api_key={shown!r}, base_url={self.base_url!r})"
 
 
@@ -164,7 +160,8 @@ def _resolve_base_url(raw: str | None) -> str:
 
 
 def load_kimi_credentials(
-    *, env: Mapping[str, str] | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
 ) -> KimiCredentials:
     """Read Moonshot credentials from the process environment.
 
@@ -250,7 +247,9 @@ def build_kimi_model(
 
     if model_cls is None:
         try:
-            from strands.models.openai import OpenAIModel as model_cls  # type: ignore[no-redef]  # noqa: PLC0415
+            from strands.models.openai import (
+                OpenAIModel as model_cls,  # type: ignore[no-redef]
+            )
         except ImportError as exc:
             raise KimiDependencyError(
                 "the 'openai' package is required to construct a "

@@ -49,9 +49,9 @@ from heaviside.agents.tools import (
 
 __all__ = [
     "AGENT_TOOLS",
+    "TOOL_REGISTRY",
     "AgentDefinition",
     "AgentLoadError",
-    "TOOL_REGISTRY",
     "available_agents",
     "load_agent",
     "load_agent_definition",

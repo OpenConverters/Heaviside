@@ -7,12 +7,6 @@ slot in via Strands provider adapters without touching agent code.
 
 from __future__ import annotations
 
-from heaviside.llm.model_tiers import (
-    ModelTier,
-    classify_model,
-    context_window,
-    is_review_role_allowed,
-)
 from heaviside.llm.kimi import (
     DEFAULT_KIMI_MODEL_ID,
     KIMI_MODEL_PREFIXES,
@@ -26,16 +20,22 @@ from heaviside.llm.kimi import (
     is_kimi_model,
     load_kimi_credentials,
 )
+from heaviside.llm.model_tiers import (
+    ModelTier,
+    classify_model,
+    context_window,
+    is_review_role_allowed,
+)
 
 __all__ = [
     "DEFAULT_KIMI_MODEL_ID",
     "KIMI_MODEL_PREFIXES",
+    "MOONSHOT_BASE_URL_CN",
+    "MOONSHOT_BASE_URL_INTL",
     "KimiCredentialError",
     "KimiCredentials",
     "KimiDependencyError",
     "KimiError",
-    "MOONSHOT_BASE_URL_CN",
-    "MOONSHOT_BASE_URL_INTL",
     "ModelTier",
     "build_kimi_model",
     "classify_model",

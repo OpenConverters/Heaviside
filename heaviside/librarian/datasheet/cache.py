@@ -31,6 +31,7 @@ Strict-mode contract
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import tempfile
@@ -41,7 +42,6 @@ import httpx
 
 from heaviside.librarian.datasheet.base import DatasheetDownloadError
 
-
 __all__ = [
     "DEFAULT_CACHE_DIR",
     "PdfCache",
@@ -50,10 +50,12 @@ __all__ = [
 
 # Default cache lives in the user's home — never in the repository
 # tree (PDFs are large and binary; we never want them in git).
-DEFAULT_CACHE_DIR = Path(os.environ.get(
-    "HEAVISIDE_DATASHEET_CACHE",
-    str(Path.home() / ".heaviside" / "datasheet-cache"),
-))
+DEFAULT_CACHE_DIR = Path(
+    os.environ.get(
+        "HEAVISIDE_DATASHEET_CACHE",
+        str(Path.home() / ".heaviside" / "datasheet-cache"),
+    )
+)
 
 
 # User-Agent string — some manufacturer CDNs (Wolfspeed, Infineon)
@@ -160,17 +162,15 @@ class PdfCache:
                 response = client.get(url)
         except httpx.RequestError as exc:
             raise DatasheetDownloadError(
-                url, message=f"transport error fetching {url!r}: {exc}",
+                url,
+                message=f"transport error fetching {url!r}: {exc}",
             ) from exc
 
         if response.status_code >= 400:
             raise DatasheetDownloadError(
                 url,
                 status_code=response.status_code,
-                message=(
-                    f"HTTP {response.status_code} fetching {url!r}: "
-                    f"{response.text[:256]!r}"
-                ),
+                message=(f"HTTP {response.status_code} fetching {url!r}: {response.text[:256]!r}"),
             )
 
         content = response.content
@@ -184,7 +184,9 @@ class PdfCache:
         # Atomic write: temp file in same dir → rename.  ``rename`` is
         # atomic on POSIX within a single filesystem.
         fd, tmp_name = tempfile.mkstemp(
-            prefix=".dl-", suffix=".pdf.tmp", dir=str(self.cache_dir),
+            prefix=".dl-",
+            suffix=".pdf.tmp",
+            dir=str(self.cache_dir),
         )
         try:
             with os.fdopen(fd, "wb") as fp:
@@ -192,10 +194,8 @@ class PdfCache:
             os.replace(tmp_name, path)
         except Exception:
             # Best-effort cleanup; re-raise after.
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_name)
-            except OSError:
-                pass
             raise
 
         return path

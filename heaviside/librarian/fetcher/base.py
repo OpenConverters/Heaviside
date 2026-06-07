@@ -15,13 +15,12 @@ from __future__ import annotations
 
 from heaviside.librarian.safe_access import LibrarianError
 
-
 __all__ = [
-    "FetcherError",
     "DistributorError",
-    "RateLimitError",
-    "MalformedResponseError",
+    "FetcherError",
     "IncompleteSourceError",
+    "MalformedResponseError",
+    "RateLimitError",
 ]
 
 
@@ -51,9 +50,7 @@ class DistributorError(FetcherError):
         message: str | None = None,
     ) -> None:
         truncated = body[:1024] + ("..." if len(body) > 1024 else "")
-        text = message or (
-            f"{distributor} API returned HTTP {status_code}: {truncated}"
-        )
+        text = message or (f"{distributor} API returned HTTP {status_code}: {truncated}")
         super().__init__(text)
         self.distributor = distributor
         self.status_code = status_code
@@ -127,8 +124,7 @@ class IncompleteSourceError(FetcherError):
     ) -> None:
         suffix = f" ({detail})" if detail else ""
         super().__init__(
-            f"{source} payload for {mpn!r} is missing required field "
-            f"{missing_field!r}{suffix}"
+            f"{source} payload for {mpn!r} is missing required field {missing_field!r}{suffix}"
         )
         self.source = source
         self.mpn = mpn

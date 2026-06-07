@@ -29,7 +29,6 @@ from heaviside.librarian.fetcher.digikey import (
     DigiKeyClient,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -100,7 +99,9 @@ def test_get_access_token_returns_cached_when_fresh(tmp_path: Path) -> None:
         raise AssertionError(f"Unexpected HTTP call: {request.url}")
 
     client = DigiKeyClient(
-        _creds(), token_cache=cache, transport=httpx.MockTransport(handler),
+        _creds(),
+        token_cache=cache,
+        transport=httpx.MockTransport(handler),
     )
     assert client.get_access_token() == "from-cache"
 
@@ -159,7 +160,8 @@ def test_get_access_token_uses_credentials_refresh_when_no_cache(tmp_path: Path)
     def handler(request: httpx.Request) -> httpx.Response:
         assert "refresh_token=refresh-tok" in request.content.decode()
         return httpx.Response(
-            200, json={"access_token": "fresh", "refresh_token": "r2", "expires_in": 1800},
+            200,
+            json={"access_token": "fresh", "refresh_token": "r2", "expires_in": 1800},
         )
 
     client = DigiKeyClient(
@@ -222,7 +224,9 @@ def test_get_product_happy_path(tmp_path: Path) -> None:
         return httpx.Response(200, json={"Product": {"ManufacturerPartNumber": "C3M0020075K"}})
 
     client = DigiKeyClient(
-        _creds(), token_cache=cache, transport=httpx.MockTransport(handler),
+        _creds(),
+        token_cache=cache,
+        transport=httpx.MockTransport(handler),
     )
     payload = client.get_product("C3M0020075K")
     assert payload["Product"]["ManufacturerPartNumber"] == "C3M0020075K"
@@ -260,7 +264,9 @@ def test_search_happy_path_sends_expected_body(tmp_path: Path) -> None:
         return httpx.Response(200, json={"Products": [{"Mpn": "x"}], "ProductsCount": 1})
 
     client = DigiKeyClient(
-        _creds(), token_cache=cache, transport=httpx.MockTransport(handler),
+        _creds(),
+        token_cache=cache,
+        transport=httpx.MockTransport(handler),
     )
     payload = client.search("SiC MOSFET", limit=20, offset=5)
     assert payload["ProductsCount"] == 1
@@ -275,7 +281,9 @@ def test_search_missing_products_key_raises_malformed(tmp_path: Path) -> None:
         return httpx.Response(200, json={"ProductsCount": 0})
 
     client = DigiKeyClient(
-        _creds(), token_cache=cache, transport=httpx.MockTransport(handler),
+        _creds(),
+        token_cache=cache,
+        transport=httpx.MockTransport(handler),
     )
     with pytest.raises(MalformedResponseError, match="Products"):
         client.search("anything")
@@ -326,7 +334,9 @@ def test_401_triggers_single_refresh_and_retry(tmp_path: Path) -> None:
         raise AssertionError(f"Unexpected URL {request.url}")
 
     client = DigiKeyClient(
-        _creds(), token_cache=cache, transport=httpx.MockTransport(handler),
+        _creds(),
+        token_cache=cache,
+        transport=httpx.MockTransport(handler),
     )
     payload = client.get_product("X")
     assert payload == {"Product": {"Mpn": "x"}}
@@ -348,7 +358,9 @@ def test_second_401_after_refresh_surfaces_as_distributor_error(tmp_path: Path) 
         return httpx.Response(401, text="invalid_token")
 
     client = DigiKeyClient(
-        _creds(), token_cache=cache, transport=httpx.MockTransport(handler),
+        _creds(),
+        token_cache=cache,
+        transport=httpx.MockTransport(handler),
     )
     with pytest.raises(DistributorError) as excinfo:
         client.get_product("X")
@@ -368,7 +380,9 @@ def test_429_raises_rate_limit_error_with_retry_after(tmp_path: Path) -> None:
         return httpx.Response(429, text="slow down", headers={"Retry-After": "42"})
 
     client = DigiKeyClient(
-        _creds(), token_cache=cache, transport=httpx.MockTransport(handler),
+        _creds(),
+        token_cache=cache,
+        transport=httpx.MockTransport(handler),
     )
     with pytest.raises(RateLimitError) as excinfo:
         client.get_product("X")
@@ -384,7 +398,9 @@ def test_500_raises_distributor_error(tmp_path: Path) -> None:
         return httpx.Response(503, text="upstream down")
 
     client = DigiKeyClient(
-        _creds(), token_cache=cache, transport=httpx.MockTransport(handler),
+        _creds(),
+        token_cache=cache,
+        transport=httpx.MockTransport(handler),
     )
     with pytest.raises(DistributorError) as excinfo:
         client.get_product("X")
@@ -400,7 +416,9 @@ def test_non_json_body_raises_malformed(tmp_path: Path) -> None:
         return httpx.Response(200, text="<html>not json</html>")
 
     client = DigiKeyClient(
-        _creds(), token_cache=cache, transport=httpx.MockTransport(handler),
+        _creds(),
+        token_cache=cache,
+        transport=httpx.MockTransport(handler),
     )
     with pytest.raises(MalformedResponseError, match="non-JSON"):
         client.get_product("X")

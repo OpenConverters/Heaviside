@@ -22,7 +22,7 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
-
+from tests.unit._real_mas import isat_of, real_magnetic
 
 # ---------------------------------------------------------------------------
 # Fixtures (AHB stencil: T1 has pri+sec0 only; L_out0 in
@@ -32,118 +32,99 @@ from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 
 def _lout_mas(N: int = 14, *, L: float = 10e-6) -> dict:
     """Full MAS root for the output choke L_out0, matching the shape the
-    real bridge-attach phase produces: the wound/gapped magnetic device
-    under ``core``/``coil`` PLUS an ``outputs`` envelope carrying the
+    real bridge-attach phase produces: a **complete, PyOM-evaluable**
+    wound/gapped magnetic under ``core``/``coil`` (built by
+    :func:`real_magnetic` so ``calculate_saturation_current`` returns real
+    gap-aware MKF physics) PLUS an ``outputs`` envelope carrying the
     inductance MKF actually achieved.  The extractor harvests the achieved
     ``L`` from ``outputs[*].inductance.magnetizingInductance
     .magnetizingInductance.nominal`` (and would also accept
     ``inputs.designRequirements.magnetizingInductance.nominal``); both are
-    provided here so the fixture survives either harvest path.  ``L``
-    defaults to the spec's ``desiredInductance`` (10 µH) so the achieved
-    inductance is self-consistent with the Isat closed form under test.
+    provided here so the fixture survives either harvest path.  The choke
+    is gapped (~1 mm) as a real output inductor must be.
     """
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 8.0327e-5,
-                    "effectiveLength": 0.0909,
-                    "effectiveVolume": 7.3e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.4,
-                         "temperature": 100.0},
-                        {"magneticField": 392.0, "magneticFluxDensity": 0.473,
-                         "temperature": 25.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "Primary", "numberTurns": N, "numberParallels": 1,
-             "isolationSide": "primary"},
-        ]},
-        "inputs": {
-            "designRequirements": {
-                "magnetizingInductance": {"nominal": L},
-            },
-        },
-        "outputs": [
-            {"inductance": {"magnetizingInductance": {
-                "magnetizingInductance": {"nominal": L},
-            }}},
+    mas = real_magnetic(
+        shape="ETD 29/16/10",
+        material="3C95",
+        gap_mm=1.0,
+        windings=[
+            {"name": "Primary", "turns": N, "side": "primary"},
         ],
+    )
+    mas["inputs"] = {
+        "designRequirements": {"magnetizingInductance": {"nominal": L}},
     }
+    mas["outputs"] = [
+        {
+            "inductance": {
+                "magnetizingInductance": {
+                    "magnetizingInductance": {"nominal": L},
+                }
+            }
+        },
+    ]
+    return mas
 
 
 def _t1_mas(*, N_pri: int = 10, N_sec: int = 4) -> dict:
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 1.5e-4,
-                    "effectiveLength": 0.05,
-                    "effectiveVolume": 7.5e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.32,
-                         "temperature": 100.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "pri",  "numberTurns": N_pri, "numberParallels": 1,
-             "isolationSide": "primary"},
-            {"name": "sec0", "numberTurns": N_sec, "numberParallels": 1,
-             "isolationSide": "secondary"},
-        ]},
-    }
+    # T1 is deliberately NOT Isat-stamped (asymmetric drive + C_b cancel
+    # volt-seconds); the extractor harvests only its winding turns for the
+    # turns ratio, so a complete real (ungapped) transformer with the two
+    # named windings is all that's needed.
+    return real_magnetic(
+        shape="ETD 34/17/11",
+        material="3C95",
+        gap_mm=0.0,
+        windings=[
+            {"name": "pri", "turns": N_pri, "side": "primary"},
+            {"name": "sec0", "turns": N_sec, "side": "secondary"},
+        ],
+    )
 
 
 def _ahb_tas(*, t1_kwargs: dict | None = None) -> dict:
     t1_kwargs = dict(t1_kwargs or {})
-    return {"topology": {
-        "stages": [
-            {
-                "name": "inverter",
-                "role": "inverter",
-                "circuit": {"components": [
-                    {"name": "Q1",  "data": "placeholder"},
-                    {"name": "Q2",  "data": "placeholder"},
-                    {"name": "C_b", "data": "placeholder"},
-                ]},
-            },
-            {
-                "name": "isolation",
-                "role": "isolation",
-                "circuit": {"components": [
-                    {"name": "T1", "category": "magnetic",
-                     "mas": _t1_mas(**t1_kwargs)},
-                ]},
-            },
-            {
-                "name": "output_0",
-                "role": "outputRectifier",
-                "circuit": {"components": [
-                    {"name": "D1",     "data": "placeholder"},
-                    {"name": "D2",     "data": "placeholder"},
-                    {"name": "D3",     "data": "placeholder"},
-                    {"name": "D4",     "data": "placeholder"},
-                    {"name": "L_out0", "category": "magnetic",
-                     "mas": _lout_mas()},
-                    {"name": "C_out0", "data": "placeholder"},
-                ]},
-            },
-        ],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "inverter",
+                    "role": "inverter",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "data": "placeholder"},
+                            {"name": "Q2", "data": "placeholder"},
+                            {"name": "C_b", "data": "placeholder"},
+                        ]
+                    },
+                },
+                {
+                    "name": "isolation",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "category": "magnetic", "mas": _t1_mas(**t1_kwargs)},
+                        ]
+                    },
+                },
+                {
+                    "name": "output_0",
+                    "role": "outputRectifier",
+                    "circuit": {
+                        "components": [
+                            {"name": "D1", "data": "placeholder"},
+                            {"name": "D2", "data": "placeholder"},
+                            {"name": "D3", "data": "placeholder"},
+                            {"name": "D4", "data": "placeholder"},
+                            {"name": "L_out0", "category": "magnetic", "mas": _lout_mas()},
+                            {"name": "C_out0", "data": "placeholder"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 def _ahb_spec() -> dict:
@@ -157,12 +138,14 @@ def _ahb_spec() -> dict:
         "inputVoltage": {"minimum": 200.0, "maximum": 400.0, "nominal": 300.0},
         "desiredInductance": 10e-6,
         "efficiency": 0.93,
-        "operatingPoints": [{
-            "outputVoltages": [12.0],
-            "outputCurrents": [10.0],
-            "switchingFrequency": 100_000.0,
-            "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [12.0],
+                "outputCurrents": [10.0],
+                "switchingFrequency": 100_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
     }
 
 
@@ -186,10 +169,11 @@ def _d_solve(*, vout: float, vin: float, n: float) -> float:
 
 
 class TestAHBMath:
-
     def test_duty_smaller_root_at_both_vin_extremes(self):
         out = enrich_tas_for_realism(
-            _ahb_tas(), topology="asymmetric_half_bridge", spec=_ahb_spec(),
+            _ahb_tas(),
+            topology="asymmetric_half_bridge",
+            spec=_ahb_spec(),
         )
         n = 4.0 / 10.0
         d_q_max_expected = _d_solve(vout=12.0, vin=200.0, n=n)
@@ -202,16 +186,16 @@ class TestAHBMath:
             d_q_min_expected, abs=1e-5
         )
         # duty_max/min on TAS root use D_eff = 2·D_q
-        assert out["duty_max"] == pytest.approx(2.0 * d_q_max_expected,
-                                                  abs=1e-5)
-        assert out["duty_min"] == pytest.approx(2.0 * d_q_min_expected,
-                                                  abs=1e-5)
+        assert out["duty_max"] == pytest.approx(2.0 * d_q_max_expected, abs=1e-5)
+        assert out["duty_min"] == pytest.approx(2.0 * d_q_min_expected, abs=1e-5)
         assert out["duty"] == out["duty_max"]
 
     def test_d_solution_reproduces_vout_transfer(self):
         """Round-trip: plug solved D back into Vout = 2·n·D·(1−D)·Vin."""
         out = enrich_tas_for_realism(
-            _ahb_tas(), topology="asymmetric_half_bridge", spec=_ahb_spec(),
+            _ahb_tas(),
+            topology="asymmetric_half_bridge",
+            spec=_ahb_spec(),
         )
         n = 4.0 / 10.0
         l = _get_lout(out)
@@ -223,14 +207,18 @@ class TestAHBMath:
     def test_per_switch_duty_stays_below_half(self):
         """Practical AHB always operates in the smaller-root regime."""
         out = enrich_tas_for_realism(
-            _ahb_tas(), topology="asymmetric_half_bridge", spec=_ahb_spec(),
+            _ahb_tas(),
+            topology="asymmetric_half_bridge",
+            spec=_ahb_spec(),
         )
         l = _get_lout(out)
         assert l["ipeak_provenance"]["d_per_switch_max"] < 0.5
 
     def test_ripple_uses_2x_fsw_and_d_eff_min_buck_shape(self):
         out = enrich_tas_for_realism(
-            _ahb_tas(), topology="asymmetric_half_bridge", spec=_ahb_spec(),
+            _ahb_tas(),
+            topology="asymmetric_half_bridge",
+            spec=_ahb_spec(),
         )
         l = _get_lout(out)
         n = 4.0 / 10.0
@@ -238,19 +226,15 @@ class TestAHBMath:
         L_worst = 0.8 * 10e-6
         fsw_eff = 2.0 * 100_000.0
         expected = 12.0 * (1.0 - d_eff_min) / (L_worst * fsw_eff)
-        assert l["ipeak_provenance"]["ripple_worst_A_pp"] == pytest.approx(
-            expected, rel=1e-5
-        )
-        assert l["ipeak_provenance"]["fsw_effective_Hz"] == pytest.approx(
-            2.0 * 100_000.0
-        )
-        assert l["ipeak_provenance"]["fsw_per_switch_Hz"] == pytest.approx(
-            100_000.0
-        )
+        assert l["ipeak_provenance"]["ripple_worst_A_pp"] == pytest.approx(expected, rel=1e-5)
+        assert l["ipeak_provenance"]["fsw_effective_Hz"] == pytest.approx(2.0 * 100_000.0)
+        assert l["ipeak_provenance"]["fsw_per_switch_Hz"] == pytest.approx(100_000.0)
 
     def test_ipeak_is_iout_plus_half_ripple(self):
         out = enrich_tas_for_realism(
-            _ahb_tas(), topology="asymmetric_half_bridge", spec=_ahb_spec(),
+            _ahb_tas(),
+            topology="asymmetric_half_bridge",
+            spec=_ahb_spec(),
         )
         l = _get_lout(out)
         ripple = l["ipeak_provenance"]["ripple_worst_A_pp"]
@@ -259,27 +243,36 @@ class TestAHBMath:
     def test_turns_ratio_recorded_in_provenance(self):
         out = enrich_tas_for_realism(
             _ahb_tas(t1_kwargs={"N_pri": 20, "N_sec": 4}),
-            topology="asymmetric_half_bridge", spec=_ahb_spec(),
+            topology="asymmetric_half_bridge",
+            spec=_ahb_spec(),
         )
         l = _get_lout(out)
-        assert l["ipeak_provenance"][
-            "turns_ratio_n_sec_over_n_pri"
-        ] == pytest.approx(0.2, rel=1e-6)
+        assert l["ipeak_provenance"]["turns_ratio_n_sec_over_n_pri"] == pytest.approx(0.2, rel=1e-6)
         assert l["ipeak_provenance"]["n_primary"] == 20
         assert l["ipeak_provenance"]["n_secondary"] == 4
 
     def test_isat_uses_lout_mas_not_t1(self):
         out = enrich_tas_for_realism(
-            _ahb_tas(), topology="asymmetric_half_bridge", spec=_ahb_spec(),
+            _ahb_tas(),
+            topology="asymmetric_half_bridge",
+            spec=_ahb_spec(),
         )
         l = _get_lout(out)
-        expected = 0.4 * 14 * 8.0327e-5 / 10e-6
-        assert l["isat"] == pytest.approx(expected, rel=1e-4)
+        # Ground truth = MKF: the stamped Isat must equal PyOM's saturation
+        # current for the L_out magnetic at the op-point ambient (25 °C),
+        # NOT an analytical formula.  Recomputing it here on the same L_out
+        # MAS the extractor harvested also proves L_out (not T1) was the
+        # source.
+        expected = isat_of(_lout_mas(), temperature_c=25.0)
+        assert l["isat"] == pytest.approx(expected, rel=1e-3)
+        assert "PyOM" in l["isat_provenance"]["method"]
         assert "asymmetric_half_bridge" in l["isat_provenance"]["method"]
 
     def test_t1_is_not_isat_stamped(self):
         out = enrich_tas_for_realism(
-            _ahb_tas(), topology="asymmetric_half_bridge", spec=_ahb_spec(),
+            _ahb_tas(),
+            topology="asymmetric_half_bridge",
+            spec=_ahb_spec(),
         )
         for stage in out["topology"]["stages"]:
             if stage.get("role") == "isolation":
@@ -292,10 +285,11 @@ class TestAHBMath:
     def test_end_to_end_realism_passes(self):
         spec = _ahb_spec()
         enriched = enrich_tas_for_realism(
-            _ahb_tas(), topology="asymmetric_half_bridge", spec=spec,
+            _ahb_tas(),
+            topology="asymmetric_half_bridge",
+            spec=spec,
         )
-        r = evaluate_tas(enriched, topology="asymmetric_half_bridge",
-                         spec=spec)
+        r = evaluate_tas(enriched, topology="asymmetric_half_bridge", spec=spec)
         assert r.verdict is RealismVerdict.PASS
         passed = {c.name for c in r.checks if c.status is CheckStatus.PASS}
         assert {"duty_cycle_bounds", "inductor_isat_margin"}.issubset(passed)
@@ -307,7 +301,6 @@ class TestAHBMath:
 
 
 class TestDiscriminantGuard:
-
     def test_k_at_quarter_throws(self):
         """k = Vout/(2·n·Vin) = 0.25 exactly: D would be 0.5, hard limit."""
         # n = 4/10 = 0.4.  Need Vout/(2·0.4·Vin) = 0.25 ⇒ Vin = 5·Vout.
@@ -316,7 +309,9 @@ class TestDiscriminantGuard:
         spec["inputVoltage"]["minimum"] = 60.0
         with pytest.raises(EnrichmentError, match=r"k = Vout"):
             enrich_tas_for_realism(
-                _ahb_tas(), topology="asymmetric_half_bridge", spec=spec,
+                _ahb_tas(),
+                topology="asymmetric_half_bridge",
+                spec=spec,
             )
 
     def test_k_above_quarter_throws(self):
@@ -325,7 +320,9 @@ class TestDiscriminantGuard:
         spec["inputVoltage"]["minimum"] = 40.0  # k = 12/(0.8·40)=0.375
         with pytest.raises(EnrichmentError, match=r"no real root"):
             enrich_tas_for_realism(
-                _ahb_tas(), topology="asymmetric_half_bridge", spec=spec,
+                _ahb_tas(),
+                topology="asymmetric_half_bridge",
+                spec=spec,
             )
 
     def test_just_above_quarter_throws_at_vin_min_only(self):
@@ -335,7 +332,9 @@ class TestDiscriminantGuard:
         spec["inputVoltage"]["minimum"] = 50.0  # k_min = 0.3
         with pytest.raises(EnrichmentError, match=r"Vin = 50"):
             enrich_tas_for_realism(
-                _ahb_tas(), topology="asymmetric_half_bridge", spec=spec,
+                _ahb_tas(),
+                topology="asymmetric_half_bridge",
+                spec=spec,
             )
 
 
@@ -345,45 +344,41 @@ class TestDiscriminantGuard:
 
 
 class TestStructuralFailures:
-
     def test_missing_isolation_stage_throws(self):
         tas = _ahb_tas()
         tas["topology"]["stages"] = [
             s for s in tas["topology"]["stages"] if s.get("role") != "isolation"
         ]
         with pytest.raises(EnrichmentError, match="isolation"):
-            enrich_tas_for_realism(tas, topology="asymmetric_half_bridge",
-                                    spec=_ahb_spec())
+            enrich_tas_for_realism(tas, topology="asymmetric_half_bridge", spec=_ahb_spec())
 
     def test_missing_outputRectifier_stage_throws(self):
         tas = _ahb_tas()
         tas["topology"]["stages"] = [
-            s for s in tas["topology"]["stages"]
-            if s.get("role") != "outputRectifier"
+            s for s in tas["topology"]["stages"] if s.get("role") != "outputRectifier"
         ]
         with pytest.raises(EnrichmentError, match="outputRectifier"):
-            enrich_tas_for_realism(tas, topology="asymmetric_half_bridge",
-                                    spec=_ahb_spec())
+            enrich_tas_for_realism(tas, topology="asymmetric_half_bridge", spec=_ahb_spec())
 
     def test_missing_pri_winding_throws(self):
         tas = _ahb_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][0]["name"] = "primary"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][0][
+                    "name"
+                ] = "primary"
         with pytest.raises(EnrichmentError, match="'pri'"):
-            enrich_tas_for_realism(tas, topology="asymmetric_half_bridge",
-                                    spec=_ahb_spec())
+            enrich_tas_for_realism(tas, topology="asymmetric_half_bridge", spec=_ahb_spec())
 
     def test_missing_sec0_winding_throws(self):
         tas = _ahb_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][-1]["name"] = "secondary"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][-1][
+                    "name"
+                ] = "secondary"
         with pytest.raises(EnrichmentError, match="'sec0'"):
-            enrich_tas_for_realism(tas, topology="asymmetric_half_bridge",
-                                    spec=_ahb_spec())
+            enrich_tas_for_realism(tas, topology="asymmetric_half_bridge", spec=_ahb_spec())
 
     def test_missing_lout_inductance_throws(self):
         """The AHB extractor harvests the output-choke inductance from the
@@ -396,10 +391,8 @@ class TestStructuralFailures:
         # Strip both harvest paths: no outputs envelope, no inputs root.
         lout["mas"].pop("outputs", None)
         lout["mas"].pop("inputs", None)
-        with pytest.raises(EnrichmentError, match="full MAS root|usable inductance"):
-            enrich_tas_for_realism(tas,
-                                    topology="asymmetric_half_bridge",
-                                    spec=_ahb_spec())
+        with pytest.raises(EnrichmentError, match=r"full MAS root|usable inductance"):
+            enrich_tas_for_realism(tas, topology="asymmetric_half_bridge", spec=_ahb_spec())
 
     def test_desiredInductance_not_required_lout_mas_is_authoritative(self):
         """desiredInductance in spec is irrelevant to the AHB extractor:
@@ -408,7 +401,9 @@ class TestStructuralFailures:
         spec = _ahb_spec()
         del spec["desiredInductance"]
         out = enrich_tas_for_realism(
-            _ahb_tas(), topology="asymmetric_half_bridge", spec=spec,
+            _ahb_tas(),
+            topology="asymmetric_half_bridge",
+            spec=spec,
         )
         # L_out harvested from MAS (10 µH) drives the ripple math.
         assert _get_lout(out)["ipeak_provenance"]["L_worst_H"] == pytest.approx(

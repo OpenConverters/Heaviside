@@ -15,7 +15,7 @@ import csv
 import io
 from typing import Any
 
-__all__ = ["BomImportError", "parse_bom_file", "parse_bom_bytes"]
+__all__ = ["BomImportError", "parse_bom_bytes", "parse_bom_file"]
 
 
 class BomImportError(ValueError):
@@ -91,9 +91,7 @@ def _canon_header(raw: str) -> str:
     return key.replace(" ", "_")
 
 
-def _rows_to_components(
-    headers: list[str], rows: list[list[Any]]
-) -> list[dict[str, Any]]:
+def _rows_to_components(headers: list[str], rows: list[list[Any]]) -> list[dict[str, Any]]:
     canon = [_canon_header(h) for h in headers]
     if not any(canon):
         raise BomImportError("BOM file has no usable header row.")
@@ -114,9 +112,7 @@ def _rows_to_components(
         if row:
             components.append(row)
     if not components:
-        raise BomImportError(
-            "BOM file parsed but contained no component rows (all rows empty)."
-        )
+        raise BomImportError("BOM file parsed but contained no component rows (all rows empty).")
     if not any("original_mpn" in c for c in components):
         raise BomImportError(
             "BOM file has no recognisable part-number column. Include a column "
@@ -181,9 +177,7 @@ def parse_bom_bytes(raw: bytes, filename: str) -> list[dict[str, Any]]:
     if name.endswith((".xlsx", ".xlsm")):
         return _parse_xlsx(raw)
     if name.endswith(".xls"):
-        raise BomImportError(
-            "legacy .xls is not supported — re-save as .xlsx or export to CSV."
-        )
+        raise BomImportError("legacy .xls is not supported — re-save as .xlsx or export to CSV.")
     if name.endswith((".csv", ".tsv", ".txt", "")):
         return _parse_csv(raw)
     # Unknown extension: try CSV (most BOM exports are text) before giving up.

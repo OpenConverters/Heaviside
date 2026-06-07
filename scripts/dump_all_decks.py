@@ -8,6 +8,7 @@ of "extra fields PyOM reads but the JSON schema doesn't list" until either
 
 Dumps `{topology: {"status": ..., "netlist"|"error": ...}}` to /tmp/all_decks.json.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,9 +18,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from heaviside.topologies.registry import CONVERTERS  # noqa: E402
-
 from PyOpenMagnetics import PyOpenMagnetics as _ext  # type: ignore[import-not-found]
+
+from heaviside.topologies.registry import CONVERTERS
 
 # Universal optional fields shared across most topologies. Layered on top of
 # what each schema declares "required".
@@ -143,9 +144,7 @@ def _probe(entry) -> dict[str, object]:
     last_error = None
     for _ in range(20):
         try:
-            raw = _ext.generate_ngspice_circuit(
-                entry.name, spec, [2.0], 1e-3, 0, 0
-            )
+            raw = _ext.generate_ngspice_circuit(entry.name, spec, [2.0], 1e-3, 0, 0)
             result = json.loads(raw) if isinstance(raw, str) else dict(raw)
         except Exception as exc:
             return {"status": "EXCEPTION", "error": str(exc), "spec": spec}

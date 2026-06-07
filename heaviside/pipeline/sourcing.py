@@ -13,7 +13,7 @@ lookups instead of ``proteus.catalogue.index``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # TAS data directory
@@ -27,11 +27,12 @@ _TAS_DATA_DEFAULT = _REPO_ROOT / "TAS" / "data"
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _lookup_mpn_envelope(
     mpn: str,
     *,
     tas_data_dir: Path | None = None,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Find the raw TAS envelope for *mpn* across all NDJSON files.
 
     Returns the first matching envelope dict, or ``None``.
@@ -47,8 +48,7 @@ def _lookup_mpn_envelope(
     for ndjson_file in root.glob("*.ndjson"):
         try:
             for _lineno, env in iter_envelopes(ndjson_file):
-                for top_key in ("capacitor", "semiconductor", "resistor",
-                                "magnetics", "magnetic"):
+                for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
                     sub = env.get(top_key)
                     if not isinstance(sub, dict):
                         continue
@@ -64,15 +64,14 @@ def _lookup_mpn_envelope(
     return None
 
 
-def _best_distributor(env: dict[str, Any]) -> Optional[dict]:
+def _best_distributor(env: dict[str, Any]) -> dict | None:
     """Pick the lowest-price distributor entry with non-zero stock.
 
     Walks common TAS envelope shapes to find ``distributorsInfo``.
     """
     # distributorsInfo can live at several nesting levels.
     dlist: list = []
-    for top_key in ("capacitor", "semiconductor", "resistor",
-                    "magnetics", "magnetic"):
+    for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
         sub = env.get(top_key)
         if not isinstance(sub, dict):
             continue
@@ -120,7 +119,7 @@ def _orig_cost(
     orig_pn: str,
     *,
     tas_data_dir: Path | None = None,
-) -> Optional[float]:
+) -> float | None:
     """Best-effort cost for the original part — checks if it is in TAS."""
     if not orig_pn:
         return None
@@ -139,6 +138,7 @@ def _orig_cost(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def annotate_sourcing(
     crossref_components: list[dict],
@@ -174,10 +174,7 @@ def annotate_sourcing(
               "stock_warnings": list[str],
             }
     """
-    src_by_first = {
-        str(s.get("ref_des", "")).split(",")[0].strip(): s
-        for s in (source_bom or [])
-    }
+    src_by_first = {str(s.get("ref_des", "")).split(",")[0].strip(): s for s in (source_bom or [])}
 
     rows_priced = 0
     cost_orig_known = 0.0
@@ -232,7 +229,7 @@ def annotate_sourcing(
         if oc:
             cost_orig_known += oc * n_in_group
 
-    delta_pct: Optional[float] = None
+    delta_pct: float | None = None
     if cost_orig_known > 0:
         delta_pct = (cost_sub - cost_orig_known) / cost_orig_known * 100.0
 

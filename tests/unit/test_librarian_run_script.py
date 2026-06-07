@@ -19,7 +19,6 @@ from heaviside.librarian.fetcher.auth import DigiKeyCredentials, MouserCredentia
 from heaviside.librarian.fetcher.digikey import DigiKeyClient
 from heaviside.librarian.fetcher.mouser import MouserClient
 
-
 # Load scripts/librarian_run.py without it being a package member.
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "librarian_run.py"
 _spec = importlib.util.spec_from_file_location("librarian_run", _SCRIPT_PATH)
@@ -66,23 +65,30 @@ def _mouser_handler_returning_part() -> httpx.MockTransport:
                 },
             },
         )
+
     return httpx.MockTransport(handler)
 
 
 def _digikey_handler_rate_limited() -> httpx.MockTransport:
     def handler(_req: httpx.Request) -> httpx.Response:
         return httpx.Response(429, headers={"Retry-After": "60"}, text="rate limit")
+
     return httpx.MockTransport(handler)
 
 
-def test_process_mpn_mouser_success_dry_run(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_mpn_mouser_success_dry_run(
+    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Mouser returns a valid capacitor product; dry-run stages it without
     touching TAS."""
     # Retarget staging into tmp_path so nothing leaks into the repo.
     from heaviside.librarian.fetcher import staging
+
     monkeypatch.setattr(staging, "STAGING_DIR", Path(tmp_path) / "staging")  # type: ignore[arg-type]
 
-    mouser = MouserClient(MouserCredentials(api_key="test"), transport=_mouser_handler_returning_part())
+    mouser = MouserClient(
+        MouserCredentials(api_key="test"), transport=_mouser_handler_returning_part()
+    )
     digikey = DigiKeyClient(
         DigiKeyCredentials(client_id="x", client_secret="y", refresh_token="z"),
         transport=_digikey_handler_rate_limited(),
@@ -109,25 +115,34 @@ def test_process_mpn_mouser_success_dry_run(tmp_path: pytest.TempPathFactory, mo
 
 
 def test_process_mpn_mouser_miss_no_digikey_returns_miss(
-    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Mouser returns no matching part; Digi-Key is unavailable (None client).
     The runner reports a clean 'miss' rather than raising."""
     from heaviside.librarian.fetcher import staging
+
     monkeypatch.setattr(staging, "STAGING_DIR", Path(tmp_path) / "staging")  # type: ignore[arg-type]
 
     def mouser_empty(_req: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={
-            "Errors": [], "SearchResults": {"NumberOfResult": 0, "Parts": []},
-        })
+        return httpx.Response(
+            200,
+            json={
+                "Errors": [],
+                "SearchResults": {"NumberOfResult": 0, "Parts": []},
+            },
+        )
 
-    mouser = MouserClient(MouserCredentials(api_key="test"),
-                          transport=httpx.MockTransport(mouser_empty))
+    mouser = MouserClient(
+        MouserCredentials(api_key="test"), transport=httpx.MockTransport(mouser_empty)
+    )
 
     outcome, detail = librarian_run._process_mpn(
         "UNKNOWN-PART-XYZ-12345",
         category="capacitors",
-        mouser=mouser, digikey=None, dry_run=True,
+        mouser=mouser,
+        digikey=None,
+        dry_run=True,
     )
 
     mouser.close()
@@ -143,7 +158,9 @@ def test_process_mpn_skips_existing(monkeypatch: pytest.MonkeyPatch) -> None:
     outcome, detail = librarian_run._process_mpn(
         "ANY-MPN",
         category="capacitors",
-        mouser=None, digikey=None, dry_run=True,
+        mouser=None,
+        digikey=None,
+        dry_run=True,
     )
 
     assert outcome == "skipped_existing"

@@ -64,16 +64,51 @@ class TopologyEntry:
 # Ordered by family for readability; iteration order is stable.
 TOPOLOGIES: tuple[TopologyEntry, ...] = (
     # --- non-isolated DC/DC ---
-    TopologyEntry("buck", "buck", ("buck",), "process_buck", "converter", "non_isolated",
-                  magnetic_binding={"L1": None}),
-    TopologyEntry("boost", "boost", ("boost",), "process_boost", "converter", "non_isolated",
-                  magnetic_binding={"L1": None}),
-    TopologyEntry("cuk", "cuk", ("cuk", "cukConverter"), "process_cuk", "converter", "non_isolated",
-                  magnetic_binding={"L1": None, "L2": "outputInductor"}),
-    TopologyEntry("sepic", "sepic", ("sepic", "sepicConverter"), "process_sepic", "converter", "non_isolated",
-                  magnetic_binding={"L1": None, "L2": "outputInductor"}),
-    TopologyEntry("zeta", "zeta", ("zeta", "zetaConverter"), "process_zeta", "converter", "non_isolated",
-                  magnetic_binding={"L1": None, "L2": "outputInductor"}),
+    TopologyEntry(
+        "buck",
+        "buck",
+        ("buck",),
+        "process_buck",
+        "converter",
+        "non_isolated",
+        magnetic_binding={"L1": None},
+    ),
+    TopologyEntry(
+        "boost",
+        "boost",
+        ("boost",),
+        "process_boost",
+        "converter",
+        "non_isolated",
+        magnetic_binding={"L1": None},
+    ),
+    TopologyEntry(
+        "cuk",
+        "cuk",
+        ("cuk", "cukConverter"),
+        "process_cuk",
+        "converter",
+        "non_isolated",
+        magnetic_binding={"L1": None, "L2": "outputInductor"},
+    ),
+    TopologyEntry(
+        "sepic",
+        "sepic",
+        ("sepic", "sepicConverter"),
+        "process_sepic",
+        "converter",
+        "non_isolated",
+        magnetic_binding={"L1": None, "L2": "outputInductor"},
+    ),
+    TopologyEntry(
+        "zeta",
+        "zeta",
+        ("zeta", "zetaConverter"),
+        "process_zeta",
+        "converter",
+        "non_isolated",
+        magnetic_binding={"L1": None, "L2": "outputInductor"},
+    ),
     TopologyEntry(
         "four_switch_buck_boost",
         "fourSwitchBuckBoost",
@@ -244,7 +279,7 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         # main transformer. Both Lr1 (HV) and Lr2 (LV) are PyOM extras-
         # magnetic roles; T1 is the "main magnetic" (value=None).
         magnetic_binding={
-            "T1":   None,
+            "T1": None,
             "L_r1": "Lr1_HV_seriesInductor",
             "L_r2": "Lr2_LV_seriesInductor",
         },
@@ -284,7 +319,7 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         # DAB has the series leakage/external inductor L_r and the main
         # transformer T1. Both bridges are real MOSFETs (no diode rect).
         magnetic_binding={
-            "T1":  None,
+            "T1": None,
             "L_r": "seriesInductor",
         },
     ),
@@ -376,9 +411,7 @@ def get(name: str) -> TopologyEntry:
         return _BY_NAME[name]
     if name in _BY_ALIAS:
         return _BY_ALIAS[name]
-    raise KeyError(
-        f"Unknown topology {name!r}. Known: {', '.join(sorted(_BY_NAME))}."
-    )
+    raise KeyError(f"Unknown topology {name!r}. Known: {', '.join(sorted(_BY_NAME))}.")
 
 
 def names() -> tuple[str, ...]:

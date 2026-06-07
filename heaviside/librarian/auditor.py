@@ -55,26 +55,26 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from heaviside.librarian import safe_access as _sa
 from heaviside.librarian.safe_access import LibrarianError
 
-
 __all__ = [
+    "AUDITABLE_CATEGORIES",
     "CRITICAL_PARAMS",
     "REQUIRED_PARAMS",
-    "AUDITABLE_CATEGORIES",
-    "FieldStatus",
-    "FieldGap",
-    "CorruptLine",
-    "ComponentAudit",
     "CategoryAudit",
-    "audit_component",
-    "audit_category",
+    "ComponentAudit",
+    "CorruptLine",
+    "FieldGap",
+    "FieldStatus",
     "audit_all",
+    "audit_category",
+    "audit_component",
 ]
 
 
@@ -118,38 +118,52 @@ __all__ = [
 #   inductance, dcResistance, saturationCurrentPeak
 CRITICAL_PARAMS: dict[str, tuple[str, ...]] = {
     "mosfets": (
-        "drainSourceVoltage", "onResistance", "continuousDrainCurrent",
-        "outputCapacitance", "totalGateCharge", "gateThresholdVoltage",
+        "drainSourceVoltage",
+        "onResistance",
+        "continuousDrainCurrent",
+        "outputCapacitance",
+        "totalGateCharge",
+        "gateThresholdVoltage",
         "junctionTemperatureMax",
     ),
     "diodes": (
-        "reverseVoltage", "forwardVoltage", "forwardCurrent",
+        "reverseVoltage",
+        "forwardVoltage",
+        "forwardCurrent",
         "reverseRecoveryCharge",
     ),
     "igbts": (
-        "collectorEmitterVoltage", "continuousCollectorCurrent",
+        "collectorEmitterVoltage",
+        "continuousCollectorCurrent",
         "collectorEmitterSaturation",
     ),
     "capacitors": (
-        "capacitance", "ratedVoltage", "esr", "rippleCurrent",
+        "capacitance",
+        "ratedVoltage",
+        "esr",
+        "rippleCurrent",
     ),
     "resistors": (
-        "resistance", "tolerance", "powerRating",
+        "resistance",
+        "tolerance",
+        "powerRating",
     ),
     "magnetics": (
-        "inductance", "dcResistance", "saturationCurrentPeak",
+        "inductance",
+        "dcResistance",
+        "saturationCurrentPeak",
     ),
 }
 
 # REQUIRED_PARAMS: useful but not strictly blocking.  Reported as
 # warnings on the per-category audit; do not flip ``ComponentAudit.passed``.
 REQUIRED_PARAMS: dict[str, tuple[str, ...]] = {
-    "mosfets":    ("bodyDiodeForwardVoltage", "reverseRecoveryCharge"),
-    "diodes":     ("dynamicResistance",),
-    "igbts":      ("switchingEnergyOn", "switchingEnergyOff"),
+    "mosfets": ("bodyDiodeForwardVoltage", "reverseRecoveryCharge"),
+    "diodes": ("dynamicResistance",),
+    "igbts": ("switchingEnergyOn", "switchingEnergyOff"),
     "capacitors": ("dissipationFactor", "lifetimeHours"),
-    "resistors":  ("temperatureCoefficient",),
-    "magnetics":  ("selfResonantFrequency", "ratedCurrent"),
+    "resistors": ("temperatureCoefficient",),
+    "magnetics": ("selfResonantFrequency", "ratedCurrent"),
 }
 
 AUDITABLE_CATEGORIES: tuple[str, ...] = tuple(CRITICAL_PARAMS.keys())
@@ -165,12 +179,12 @@ AUDITABLE_CATEGORIES: tuple[str, ...] = tuple(CRITICAL_PARAMS.keys())
 # :mod:`heaviside.librarian.tas` which throws on a bad envelope as
 # part of write-side validation.
 _WRAPPER_KEY: dict[str, tuple[str, ...]] = {
-    "mosfets":    ("mosfet",),
-    "diodes":     ("semiconductor", "diode"),
-    "igbts":      ("semiconductor", "igbt"),
+    "mosfets": ("mosfet",),
+    "diodes": ("semiconductor", "diode"),
+    "igbts": ("semiconductor", "igbt"),
     "capacitors": ("capacitor",),
-    "resistors":  ("resistor",),
-    "magnetics":  ("magnetic",),
+    "resistors": ("resistor",),
+    "magnetics": ("magnetic",),
 }
 
 
@@ -199,77 +213,177 @@ def _unwrap(component: Any, category: str) -> dict[str, Any]:
 
 # Murata/Coilcraft/Bourns/Panasonic RF / signal-inductor prefixes.
 _RF_INDUCTOR_PREFIXES: tuple[str, ...] = (
-    "LQG", "LQW", "LQP", "LQM",
-    "MLF", "MLZ", "BLM", "DLW",
-    "AIMC", "AIML", "AIMO",
-    "CW", "CWF",
-    "0805HP", "0402HP", "1008CS",
-    "LPR", "LPS",
+    "LQG",
+    "LQW",
+    "LQP",
+    "LQM",
+    "MLF",
+    "MLZ",
+    "BLM",
+    "DLW",
+    "AIMC",
+    "AIML",
+    "AIMO",
+    "CW",
+    "CWF",
+    "0805HP",
+    "0402HP",
+    "1008CS",
+    "LPR",
+    "LPS",
     "RLB",
-    "CR32NP", "CR43NP", "CR54NP",
+    "CR32NP",
+    "CR43NP",
+    "CR54NP",
     "ETQ",
 )
 
 # MLCC MPN prefixes (Murata/Samsung/YAGEO/Vishay/Taiyo Yuden/TDK/generic).
 _MLCC_PREFIXES: tuple[str, ...] = (
-    "GRM", "GRT", "GRJ", "GCM",
-    "CL0", "CL1", "CL2", "CL3",
-    "CC0", "CC1", "CC2",
-    "RC0", "RC1", "RC2",
-    "C0402", "C0603", "C0805", "C1206",
-    "VJ0", "VJ1", "VJ2",
-    "EMK", "TMK", "LMK",
-    "C5750", "C3225", "C2012",
+    "GRM",
+    "GRT",
+    "GRJ",
+    "GCM",
+    "CL0",
+    "CL1",
+    "CL2",
+    "CL3",
+    "CC0",
+    "CC1",
+    "CC2",
+    "RC0",
+    "RC1",
+    "RC2",
+    "C0402",
+    "C0603",
+    "C0805",
+    "C1206",
+    "VJ0",
+    "VJ1",
+    "VJ2",
+    "EMK",
+    "TMK",
+    "LMK",
+    "C5750",
+    "C3225",
+    "C2012",
 )
 _MLCC_DESC_KEYWORDS: tuple[str, ...] = (
-    "mlcc", "ceramic", "class i", "class ii", "c0g", "np0",
-    "x7r", "x5r", "x8r", "y5v", "z5u",
+    "mlcc",
+    "ceramic",
+    "class i",
+    "class ii",
+    "c0g",
+    "np0",
+    "x7r",
+    "x5r",
+    "x8r",
+    "y5v",
+    "z5u",
 )
 
 # Schottky diode MPN prefixes + the unambiguous subType / desc tokens.
 _SCHOTTKY_PREFIXES: tuple[str, ...] = (
-    "STPS", "STPSC",
-    "SS", "SK", "SR",
-    "MBR", "MBRD", "MBRB",
-    "SBR", "SBRD",
-    "B340", "B360", "B520", "B540",
-    "BYS", "BAT",
-    "SL", "SM", "SN",
-    "CUS", "CMS",
-    "NSR", "NSQ",
-    "BAR", "BAS",
-    "DSS", "DSK",
+    "STPS",
+    "STPSC",
+    "SS",
+    "SK",
+    "SR",
+    "MBR",
+    "MBRD",
+    "MBRB",
+    "SBR",
+    "SBRD",
+    "B340",
+    "B360",
+    "B520",
+    "B540",
+    "BYS",
+    "BAT",
+    "SL",
+    "SM",
+    "SN",
+    "CUS",
+    "CMS",
+    "NSR",
+    "NSQ",
+    "BAR",
+    "BAS",
+    "DSS",
+    "DSK",
     "PDS",
 )
 _SCHOTTKY_DESC_KEYWORDS: tuple[str, ...] = ("schottky",)
-_NO_QRR_SUBTYPES: frozenset[str] = frozenset({
-    "schottky", "sicschottky", "tvs", "zener", "signal",
-})
+_NO_QRR_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "schottky",
+        "sicschottky",
+        "tvs",
+        "zener",
+        "signal",
+    }
+)
 
 # Magnetic families / keywords for which Isat is not a meaningful
 # datasheet field (CMCs, transformers, ferrite beads, coupled inductors).
-_NO_ISAT_FAMILIES: frozenset[str] = frozenset({
-    "choke_cmc_1mh", "choke_cmc_10mh", "choke_cmc_100mh",
-    "transformer_1to1_1mh", "transformer_1to1_10mh",
-})
+_NO_ISAT_FAMILIES: frozenset[str] = frozenset(
+    {
+        "choke_cmc_1mh",
+        "choke_cmc_10mh",
+        "choke_cmc_100mh",
+        "transformer_1to1_1mh",
+        "transformer_1to1_10mh",
+    }
+)
 _NO_ISAT_DESC_KEYWORDS: tuple[str, ...] = (
-    "common mode", "line filter", "cm filter", "differential mode choke",
-    "power line choke", "transformer", "flyback transformer",
-    "coupled inductor", "energy harvesting", "balun",
-    "ferrite bead", "emi suppression", "impedance bead", "bead array",
-    "chip bead", "smt bead",
+    "common mode",
+    "line filter",
+    "cm filter",
+    "differential mode choke",
+    "power line choke",
+    "transformer",
+    "flyback transformer",
+    "coupled inductor",
+    "energy harvesting",
+    "balun",
+    "ferrite bead",
+    "emi suppression",
+    "impedance bead",
+    "bead array",
+    "chip bead",
+    "smt bead",
 )
 _NO_ISAT_MPN_PREFIXES: tuple[str, ...] = (
-    "WE-CNSW", "WE-CNSA", "WE-SCC", "WE-SL1", "WE-CCMF", "WE-CNSW HF",
+    "WE-CNSW",
+    "WE-CNSA",
+    "WE-SCC",
+    "WE-SL1",
+    "WE-CCMF",
+    "WE-CNSW HF",
     "WE-EHPI",
 )
-_NO_ISAT_MI_FAMILIES: frozenset[str] = frozenset({
-    "we-fi",
-    "we-cnsw", "we-cnsa", "we-scc", "we-sl1", "we-ccmf",
-    "we-cbf", "we-cba", "we-mpsb", "we-tmsb", "we-cbf hf",
-    "we-mls", "we-ukw", "we-pf", "we-pbf", "ferrite bead",
-    "we-gf", "we-gfh",
-})
+_NO_ISAT_MI_FAMILIES: frozenset[str] = frozenset(
+    {
+        "we-fi",
+        "we-cnsw",
+        "we-cnsa",
+        "we-scc",
+        "we-sl1",
+        "we-ccmf",
+        "we-cbf",
+        "we-cba",
+        "we-mpsb",
+        "we-tmsb",
+        "we-cbf hf",
+        "we-mls",
+        "we-ukw",
+        "we-pf",
+        "we-pbf",
+        "ferrite bead",
+        "we-gf",
+        "we-gfh",
+    }
+)
 
 
 def _is_rf_inductor(component: dict[str, Any]) -> bool:
@@ -293,10 +407,16 @@ def _is_rf_inductor(component: dict[str, Any]) -> bool:
     if ind and ind < 1e-6 and srf and srf > 100e6:
         return True
 
-    return any(kw in desc for kw in (
-        "rf inductor", "signal inductor", "air core",
-        "wirewound rf", "chip inductor",
-    ))
+    return any(
+        kw in desc
+        for kw in (
+            "rf inductor",
+            "signal inductor",
+            "air core",
+            "wirewound rf",
+            "chip inductor",
+        )
+    )
 
 
 def _is_transformer_or_cmc(component: dict[str, Any]) -> bool:
@@ -308,9 +428,7 @@ def _is_transformer_or_cmc(component: dict[str, Any]) -> bool:
     part = ds.get("part") or {}
     elec = ds.get("electrical") or {}
     desc = (part.get("description") or "").lower()
-    family = (part.get("family")
-              or part.get("matchCode")
-              or mi_family).lower()
+    family = (part.get("family") or part.get("matchCode") or mi_family).lower()
 
     if elec.get("turnsRatio") is not None or elec.get("turnsRatios") is not None:
         return True
@@ -320,9 +438,7 @@ def _is_transformer_or_cmc(component: dict[str, Any]) -> bool:
         return True
     if any(mpn.startswith(p.upper()) for p in _NO_ISAT_MPN_PREFIXES):
         return True
-    if elec.get("impedancePoints") is not None:
-        return True
-    return False
+    return elec.get("impedancePoints") is not None
 
 
 def _is_mlcc(component: dict[str, Any]) -> bool:
@@ -393,18 +509,18 @@ def _extract_electrical(component: dict[str, Any], category: str) -> dict[str, A
       reduction at read time.
     """
     body = _unwrap(component, category)
-    ds = (body.get("manufacturerInfo", {}) or {}).get("datasheetInfo") \
-        or body.get("datasheetInfo") \
+    ds = (
+        (body.get("manufacturerInfo", {}) or {}).get("datasheetInfo")
+        or body.get("datasheetInfo")
         or {}
+    )
     elec: dict[str, Any] = dict(ds.get("electrical", {}) or {})
 
     thermal = ds.get("thermal") or {}
     if thermal:
-        if ("maximumJunctionTemperature" in thermal
-                and "junctionTemperatureMax" not in elec):
+        if "maximumJunctionTemperature" in thermal and "junctionTemperatureMax" not in elec:
             elec["junctionTemperatureMax"] = thermal["maximumJunctionTemperature"]
-        if ("junctionTemperatureMax" in thermal
-                and "junctionTemperatureMax" not in elec):
+        if "junctionTemperatureMax" in thermal and "junctionTemperatureMax" not in elec:
             elec["junctionTemperatureMax"] = thermal["junctionTemperatureMax"]
 
     for k, v in list(elec.items()):
@@ -479,13 +595,15 @@ def _field_status(elec: dict[str, Any], field_name: str) -> str:
 @dataclass(frozen=True)
 class FieldGap:
     """A single missing-or-empty pipeline field on a component."""
+
     field: str
-    status: str   # one of FieldStatus.*
+    status: str  # one of FieldStatus.*
 
 
 @dataclass
 class ComponentAudit:
     """Per-component audit result."""
+
     mpn: str
     category: str
     line: int | None = None
@@ -504,6 +622,7 @@ class CorruptLine:
     Reported as first-class audit data when ``on_corruption="report"``;
     corruption is never silently skipped in either mode.
     """
+
     line: int
     reason: str
 
@@ -511,6 +630,7 @@ class CorruptLine:
 @dataclass
 class CategoryAudit:
     """Per-category aggregated audit."""
+
     category: str
     total: int = 0
     passed: int = 0
@@ -534,22 +654,23 @@ class CategoryAudit:
 # ---------------------------------------------------------------------------
 
 
-def _applicable_critical_fields(component: dict[str, Any],
-                                 category: str) -> list[str]:
+def _applicable_critical_fields(component: dict[str, Any], category: str) -> list[str]:
     """Apply subtype carve-outs to :data:`CRITICAL_PARAMS`."""
     fields = list(CRITICAL_PARAMS.get(category, ()))
-    if category == "magnetics" and "saturationCurrentPeak" in fields:
-        if _is_rf_inductor(component) or _is_transformer_or_cmc(component):
-            fields.remove("saturationCurrentPeak")
+    if (
+        category == "magnetics"
+        and "saturationCurrentPeak" in fields
+        and (_is_rf_inductor(component) or _is_transformer_or_cmc(component))
+    ):
+        fields.remove("saturationCurrentPeak")
     if category == "capacitors":
         if "rippleCurrent" in fields and _is_mlcc(component):
             fields.remove("rippleCurrent")
         if "esr" in fields and _is_mlcc(component):
             # MLCC datasheets express loss via DF, not explicit ESR.
             fields.remove("esr")
-    if category == "diodes" and "reverseRecoveryCharge" in fields:
-        if _is_schottky(component):
-            fields.remove("reverseRecoveryCharge")
+    if category == "diodes" and "reverseRecoveryCharge" in fields and _is_schottky(component):
+        fields.remove("reverseRecoveryCharge")
     return fields
 
 
@@ -613,8 +734,7 @@ def _iter_records(
     """
     if on_corruption not in {"raise", "report"}:
         raise LibrarianError(
-            f"_iter_records: on_corruption must be 'raise' or 'report', "
-            f"got {on_corruption!r}"
+            f"_iter_records: on_corruption must be 'raise' or 'report', got {on_corruption!r}"
         )
     with path.open("r", encoding="utf-8") as fh:
         for lineno, line in enumerate(fh, start=1):
@@ -626,8 +746,7 @@ def _iter_records(
             try:
                 rec = json.loads(stripped)
             except json.JSONDecodeError as exc:
-                msg = (f"JSONDecodeError: {exc.msg} "
-                       f"(col {exc.colno})")
+                msg = f"JSONDecodeError: {exc.msg} (col {exc.colno})"
                 if on_corruption == "raise":
                     raise LibrarianError(
                         f"auditor: corrupt JSON at {path}:{lineno}: "
@@ -637,8 +756,7 @@ def _iter_records(
                 yield lineno, CorruptLine(line=lineno, reason=msg)
                 continue
             if not isinstance(rec, dict):
-                msg = (f"top-level value is {type(rec).__name__}, "
-                       "expected JSON object")
+                msg = f"top-level value is {type(rec).__name__}, expected JSON object"
                 if on_corruption == "raise":
                     raise LibrarianError(
                         f"auditor: {path}:{lineno} decodes to "
@@ -694,7 +812,9 @@ def audit_category(
     req_misses: dict[str, int] = defaultdict(int)
 
     for lineno, item in _iter_records(
-        path, sample=sample, on_corruption=on_corruption,
+        path,
+        sample=sample,
+        on_corruption=on_corruption,
     ):
         if isinstance(item, CorruptLine):
             report.corrupt_lines.append(item)
@@ -731,6 +851,7 @@ def audit_all(
 
     ``on_corruption`` is forwarded to every per-category audit.
     """
-    return {cat: audit_category(cat, sample=sample,
-                                 on_corruption=on_corruption)
-            for cat in AUDITABLE_CATEGORIES}
+    return {
+        cat: audit_category(cat, sample=sample, on_corruption=on_corruption)
+        for cat in AUDITABLE_CATEGORIES
+    }

@@ -39,21 +39,20 @@ from heaviside.librarian.datasheet.patterns import (
 )
 from heaviside.librarian.datasheet.reader import DatasheetReader
 
-
 __all__ = [
     "CATEGORY_PATTERNS",
     "DEFAULT_CACHE_DIR",
+    "ELECTRICAL_SECTION_HEADERS",
+    "PARAM_UNITS",
+    "REQUIRED_BY_CATEGORY",
+    "SECTION_TERMINATORS",
     "DatasheetDownloadError",
     "DatasheetError",
     "DatasheetParseError",
     "DatasheetReader",
-    "ELECTRICAL_SECTION_HEADERS",
     "IncompleteDatasheetError",
     "MissingDependencyError",
-    "PARAM_UNITS",
     "PdfCache",
-    "REQUIRED_BY_CATEGORY",
-    "SECTION_TERMINATORS",
     "extract_params",
     "extract_required_params",
     "extract_tables",

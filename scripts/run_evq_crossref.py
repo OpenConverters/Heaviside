@@ -15,7 +15,9 @@ import sys
 from pathlib import Path
 
 # ── Paths ──────────────────────────────────────────────────────────────
-PROTEUS_DIR = Path("/home/alf/OpenConverters/Proteus/tests/reference_designs/crossref_wurth/EVQ3359C-LE-00A")
+PROTEUS_DIR = Path(
+    "/home/alf/OpenConverters/Proteus/tests/reference_designs/crossref_wurth/EVQ3359C-LE-00A"
+)
 GOLDEN_BOM = PROTEUS_DIR / "bom_full.json"
 GOLDEN_REPORT = PROTEUS_DIR / "report.md"
 OUTPUT_DIR = Path("/home/alf/OpenConverters/Heaviside/tests/crossref_output/EVQ3359C-LE-00A")
@@ -67,6 +69,7 @@ def _expand_refs(ref_cell: str) -> list[str]:
         if "-" in part and not part.startswith("-"):
             # Range like C19-C22
             import re
+
             m = re.match(r"([A-Z]+)(\d+)\s*-\s*([A-Z]*)(\d+)", part)
             if m:
                 prefix = m.group(1)
@@ -106,7 +109,7 @@ def run_deterministic(bom: list[dict]) -> None:
         comp = next((c for c in state.source_bom if c.get("ref_des") == ref), {})
         cat = comp.get("component_type", "?")
         cats[cat] = cats.get(cat, 0) + len(cands)
-    print(f"\nPrefetch candidates by category:")
+    print("\nPrefetch candidates by category:")
     for cat, count in sorted(cats.items()):
         print(f"  {cat}: {count} candidates")
 
@@ -136,6 +139,7 @@ def run_deterministic(bom: list[dict]) -> None:
 def run_full(bom: list[dict]) -> None:
     """Run the full CR pipeline including LLM stages."""
     import logging
+
     logging.basicConfig(level=logging.INFO)
 
     from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
@@ -160,16 +164,18 @@ def run_full(bom: list[dict]) -> None:
         "components": [],
     }
     for c in outcome.components:
-        result["components"].append({
-            "ref_des": c.ref_des,
-            "component_type": c.component_type,
-            "original_mpn": c.original_mpn,
-            "substitute_mpn": c.substitute_mpn,
-            "status": c.status.value,
-            "notes": c.notes,
-            "guardrail_fires": list(c.guardrail_fires),
-            "match_score": c.match_score,
-        })
+        result["components"].append(
+            {
+                "ref_des": c.ref_des,
+                "component_type": c.component_type,
+                "original_mpn": c.original_mpn,
+                "substitute_mpn": c.substitute_mpn,
+                "status": c.status.value,
+                "notes": c.notes,
+                "guardrail_fires": list(c.guardrail_fires),
+                "match_score": c.match_score,
+            }
+        )
 
     out_file = OUTPUT_DIR / "outcome.json"
     out_file.write_text(json.dumps(result, indent=2) + "\n")
@@ -200,20 +206,22 @@ def compare_with_golden(outcome) -> None:
     status_counts = {}
     for c in outcome.components:
         status_counts[c.status.value] = status_counts.get(c.status.value, 0) + 1
-    print(f"\nHeaviside status breakdown:")
+    print("\nHeaviside status breakdown:")
     for s, n in sorted(status_counts.items()):
         print(f"  {s}: {n}")
 
     # Golden stats
     golden_counts = {}
-    for ref, info in golden.items():
+    for _ref, info in golden.items():
         golden_counts[info["status"]] = golden_counts.get(info["status"], 0) + 1
-    print(f"\nProteus golden status breakdown:")
+    print("\nProteus golden status breakdown:")
     for s, n in sorted(golden_counts.items()):
         print(f"  {s}: {n}")
 
     # Per-component comparison
-    print(f"\n{'Ref':<10} {'Golden':<16} {'Heaviside':<16} {'Golden PN':<18} {'Heavi PN':<18} {'Match?'}")
+    print(
+        f"\n{'Ref':<10} {'Golden':<16} {'Heaviside':<16} {'Golden PN':<18} {'Heavi PN':<18} {'Match?'}"
+    )
     print("-" * 96)
 
     matches = 0
@@ -255,7 +263,7 @@ def compare_with_golden(outcome) -> None:
 
     total = matches + mismatches
     if total > 0:
-        print(f"\nAgreement: {matches}/{total} = {100*matches/total:.0f}%")
+        print(f"\nAgreement: {matches}/{total} = {100 * matches / total:.0f}%")
     print(f"Mismatches: {mismatches}")
 
 
@@ -267,6 +275,7 @@ def main() -> None:
         run_deterministic(bom)
     else:
         import os
+
         if not os.environ.get("MOONSHOT_API_KEY"):
             print("\nMOONSHOT_API_KEY not set.")
             print("  Run with --deterministic-only to test prefetch/preclassify")

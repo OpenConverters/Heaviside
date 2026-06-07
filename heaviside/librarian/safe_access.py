@@ -49,28 +49,28 @@ auditable operation; see :func:`describe_lock`.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import fcntl
 import json
 import os
 import shutil
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import IO, Any
 
-
 __all__ = [
+    "CATEGORIES",
+    "LOCK_DIR",
+    "TAS_DATA_DIR",
     "LibrarianError",
     "LockTimeoutError",
+    "Transaction",
     "UnknownCategoryError",
-    "TAS_DATA_DIR",
-    "LOCK_DIR",
-    "CATEGORIES",
     "acquire_lock",
     "describe_lock",
     "safe_append",
-    "Transaction",
 ]
 
 
@@ -92,11 +92,20 @@ LOCK_DIR: Path = _REPO_ROOT / ".heaviside" / "librarian-locks"
 We deliberately keep locks **outside** the TAS submodule so a
 ``git submodule update`` cannot interfere with a live lock."""
 
-CATEGORIES: frozenset[str] = frozenset({
-    # Order matches AGENTS.md "Component Database" table.
-    "mosfets", "diodes", "capacitors", "resistors", "magnetics",
-    "igbts", "controllers", "converters", "quarantine",
-})
+CATEGORIES: frozenset[str] = frozenset(
+    {
+        # Order matches AGENTS.md "Component Database" table.
+        "mosfets",
+        "diodes",
+        "capacitors",
+        "resistors",
+        "magnetics",
+        "igbts",
+        "controllers",
+        "converters",
+        "quarantine",
+    }
+)
 """Whitelist of TAS NDJSON categories the librarian is allowed to touch.
 
 A typo in a caller would otherwise quietly create a fresh
@@ -154,10 +163,14 @@ def _write_lock_metadata(fh: IO[str]) -> None:
     """
     fh.seek(0)
     fh.truncate()
-    fh.write(json.dumps({
-        "pid": os.getpid(),
-        "acquired_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
-    }))
+    fh.write(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "acquired_utc": _dt.datetime.now(_dt.UTC).isoformat(),
+            }
+        )
+    )
     fh.flush()
 
 
@@ -241,11 +254,9 @@ def acquire_lock(
     finally:
         fh.close()
         if unlink_on_release:
-            try:
+            # Another holder may have unlinked it; not an error.
+            with contextlib.suppress(FileNotFoundError):
                 lock_path.unlink()
-            except FileNotFoundError:
-                # Another holder may have unlinked it; not an error.
-                pass
 
 
 def describe_lock(category: str) -> dict[str, Any] | None:
@@ -267,9 +278,7 @@ def describe_lock(category: str) -> dict[str, Any] | None:
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise LibrarianError(
-            f"describe_lock({category!r}): cannot read {path}: {exc}"
-        ) from exc
+        raise LibrarianError(f"describe_lock({category!r}): cannot read {path}: {exc}") from exc
     try:
         meta = json.loads(raw) if raw.strip() else {}
     except json.JSONDecodeError as exc:
@@ -285,13 +294,15 @@ def describe_lock(category: str) -> dict[str, Any] | None:
         )
 
     stat = path.stat()
-    mtime = _dt.datetime.fromtimestamp(stat.st_mtime, _dt.timezone.utc)
-    now = _dt.datetime.now(_dt.timezone.utc)
-    meta.update({
-        "path": str(path),
-        "mtime_utc": mtime.isoformat(),
-        "age_s": (now - mtime).total_seconds(),
-    })
+    mtime = _dt.datetime.fromtimestamp(stat.st_mtime, _dt.UTC)
+    now = _dt.datetime.now(_dt.UTC)
+    meta.update(
+        {
+            "path": str(path),
+            "mtime_utc": mtime.isoformat(),
+            "age_s": (now - mtime).total_seconds(),
+        }
+    )
     return meta
 
 
@@ -310,19 +321,18 @@ def safe_append(category: str, *, timeout_s: float = 30.0) -> Iterator[IO[str]]:
             f"safe_append({category!r}): TAS_DATA_DIR {TAS_DATA_DIR} does "
             "not exist.  Did the submodule fail to initialise?"
         )
-    with acquire_lock(category, timeout_s=timeout_s):
-        with path.open("a", encoding="utf-8") as fh:
+    with acquire_lock(category, timeout_s=timeout_s), path.open("a", encoding="utf-8") as fh:
+        try:
+            yield fh
+        finally:
+            fh.flush()
             try:
-                yield fh
-            finally:
-                fh.flush()
-                try:
-                    os.fsync(fh.fileno())
-                except OSError:
-                    # fsync on some FS types (procfs / virtualised tmpfs)
-                    # can fail; re-raise so the librarian operator knows
-                    # the write isn't durable.  No silent skip.
-                    raise
+                os.fsync(fh.fileno())
+            except OSError:
+                # fsync on some FS types (procfs / virtualised tmpfs)
+                # can fail; re-raise so the librarian operator knows
+                # the write isn't durable.  No silent skip.
+                raise
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +378,7 @@ class Transaction:
 
     # Context manager ---------------------------------------------------
 
-    def __enter__(self) -> "Transaction":
+    def __enter__(self) -> Transaction:
         if not self.filepath.parent.exists():
             raise LibrarianError(
                 f"Transaction({self.category!r}): TAS_DATA_DIR "
@@ -384,10 +394,8 @@ class Transaction:
             if exc_type is not None and self.temp_path.exists():
                 # Clean up only the half-written tmp.  Backup stays for
                 # post-mortem.
-                try:
+                with suppress(FileNotFoundError):
                     self.temp_path.unlink()
-                except FileNotFoundError:
-                    pass
             elif exc_type is None and self._wrote and self.backup_path.exists():
                 # Successful write: drop the now-redundant backup.
                 self.backup_path.unlink()
@@ -428,8 +436,7 @@ class Transaction:
         for i, line in enumerate(lines):
             if not isinstance(line, str):
                 raise LibrarianError(
-                    f"Transaction.write: lines[{i}] is "
-                    f"{type(line).__name__}, expected str."
+                    f"Transaction.write: lines[{i}] is {type(line).__name__}, expected str."
                 )
 
         # Backup the current file (if any) before touching anything.

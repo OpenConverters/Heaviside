@@ -58,9 +58,7 @@ def test_4sbb_decompose_matches_golden() -> None:
     _maybe_update(TAS_GOLDEN, tas_json)
 
     if not SPICE_GOLDEN.exists() or not TAS_GOLDEN.exists():
-        pytest.fail(
-            "Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create."
-        )
+        pytest.fail("Golden fixtures missing. Run with HEAVISIDE_UPDATE_GOLDENS=1 to create.")
 
     assert netlist == SPICE_GOLDEN.read_text(), (
         "MKF spice deck for 4SBB has drifted from the golden fixture."
@@ -91,9 +89,17 @@ def test_4sbb_tas_round_trip_shape() -> None:
 
     ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
     assert set(ports) == {"Vin", "Vout", "GND"}
-    vin_eps = {(e["component"], e["pin"]) for e in ports["Vin"]["endpoints"] if not e["component"].startswith("P_")}
+    vin_eps = {
+        (e["component"], e["pin"])
+        for e in ports["Vin"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert vin_eps == {("Q1", "D"), ("C_in", "1")}, vin_eps
-    vout_eps = {(e["component"], e["pin"]) for e in ports["Vout"]["endpoints"] if not e["component"].startswith("P_")}
+    vout_eps = {
+        (e["component"], e["pin"])
+        for e in ports["Vout"]["endpoints"]
+        if not e["component"].startswith("P_")
+    }
     assert vout_eps == {("Q3", "S"), ("C_out", "1")}, vout_eps
 
     # Controller must drive all four switches.

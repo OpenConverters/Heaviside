@@ -36,8 +36,12 @@ th { background: #f3f4f6; font-weight: 600; }
 
 _CAT_ORDER = ["capacitor", "resistor", "magnetic", "mosfet", "diode", "ic"]
 _CAT_LABELS = {
-    "capacitor": "Capacitors", "resistor": "Resistors", "magnetic": "Magnetics",
-    "mosfet": "MOSFETs", "diode": "Diodes", "ic": "ICs",
+    "capacitor": "Capacitors",
+    "resistor": "Resistors",
+    "magnetic": "Magnetics",
+    "mosfet": "MOSFETs",
+    "diode": "Diodes",
+    "ic": "ICs",
 }
 _STATUS_LABELS = {
     "exact": ("EXACT", "exact"),
@@ -91,7 +95,7 @@ def render_crossref_html(
             cat_stats[cat]["keep"] += 1
 
     parts: list[str] = []
-    parts.append(f"<!DOCTYPE html><html><head><meta charset='utf-8'>")
+    parts.append("<!DOCTYPE html><html><head><meta charset='utf-8'>")
     parts.append(f"<title>{_e(title or f'{target} Cross-Reference Report')}</title>")
     parts.append(f"<style>{_CSS}</style></head><body>")
 
@@ -104,25 +108,35 @@ def render_crossref_html(
 
     # Summary box
     parts.append('<div class="summary-box">')
-    parts.append(f'<p class="coverage">{_e(target)} coverage: {coverage} / {total} = {100*coverage/total:.0f}%</p>')
-    parts.append(f"<p>Already {_e(target)}: {exact} · Newly replaced: {replaced} · "
-                 f"Not replaced: {no_sub} · Keep/NC: {keep}</p>")
+    parts.append(
+        f'<p class="coverage">{_e(target)} coverage: {coverage} / {total} = {100 * coverage / total:.0f}%</p>'
+    )
+    parts.append(
+        f"<p>Already {_e(target)}: {exact} · Newly replaced: {replaced} · "
+        f"Not replaced: {no_sub} · Keep/NC: {keep}</p>"
+    )
     parts.append("</div>")
 
     # Summary table
     parts.append("<h2>1. Outcome Summary</h2>")
-    parts.append("<table><tr><th>Category</th><th>Fitted</th><th>Already Würth</th>"
-                 "<th>Newly Replaced</th><th>Not Replaced</th></tr>")
+    parts.append(
+        "<table><tr><th>Category</th><th>Fitted</th><th>Already Würth</th>"
+        "<th>Newly Replaced</th><th>Not Replaced</th></tr>"
+    )
     for cat in _CAT_ORDER:
         if cat not in cat_stats:
             continue
         s = cat_stats[cat]
         label = _CAT_LABELS.get(cat, cat.title())
-        parts.append(f"<tr><td>{_e(label)}</td><td>{s['total']}</td><td>{s['exact']}</td>"
-                     f"<td>{s['replaced']}</td><td>{s['no_sub'] + s['keep']}</td></tr>")
-    parts.append(f"<tr><td><strong>Total</strong></td><td><strong>{total}</strong></td>"
-                 f"<td><strong>{exact}</strong></td><td><strong>{replaced}</strong></td>"
-                 f"<td><strong>{no_sub + keep}</strong></td></tr>")
+        parts.append(
+            f"<tr><td>{_e(label)}</td><td>{s['total']}</td><td>{s['exact']}</td>"
+            f"<td>{s['replaced']}</td><td>{s['no_sub'] + s['keep']}</td></tr>"
+        )
+    parts.append(
+        f"<tr><td><strong>Total</strong></td><td><strong>{total}</strong></td>"
+        f"<td><strong>{exact}</strong></td><td><strong>{replaced}</strong></td>"
+        f"<td><strong>{no_sub + keep}</strong></td></tr>"
+    )
     parts.append("</table>")
 
     # Per-category tables
@@ -134,15 +148,17 @@ def render_crossref_html(
         label = _CAT_LABELS.get(cat, cat.title())
         parts.append(f"<h3>{_e(label)}</h3>")
         parts.append("<table>")
-        parts.append("<tr><th>Ref</th><th>Original MPN</th><th>Würth PN</th>"
-                     "<th>Status</th><th>Notes</th></tr>")
+        parts.append(
+            "<tr><th>Ref</th><th>Original MPN</th><th>Würth PN</th>"
+            "<th>Status</th><th>Notes</th></tr>"
+        )
         for c in cat_comps:
             sl, sc = _STATUS_LABELS.get(c["status"], (c["status"], ""))
             sub = c.get("substitute_mpn") or "—"
             orig = c.get("original_mpn") or "—"
             notes = _e(c.get("notes", "") or "")
             parts.append(
-                f'<tr><td>{_e(c["ref_des"])}</td>'
+                f"<tr><td>{_e(c['ref_des'])}</td>"
                 f'<td class="mpn">{_e(orig)}</td>'
                 f'<td class="mpn"><strong>{_e(sub)}</strong></td>'
                 f'<td class="{sc}">{_e(sl)}</td>'
@@ -155,18 +171,24 @@ def render_crossref_html(
     if guardrails:
         parts.append("<h2>3. Guardrail Fires</h2>")
         for g in guardrails:
-            parts.append(f'<div class="guardrail">G{_e(g.get("guardrail_id", "?"))} '
-                         f'{_e(g.get("ref_des", "?"))}: {_e(g.get("reason", ""))}</div>')
+            parts.append(
+                f'<div class="guardrail">G{_e(g.get("guardrail_id", "?"))} '
+                f"{_e(g.get('ref_des', '?'))}: {_e(g.get('reason', ''))}</div>"
+            )
 
     # Otto challenge log
     otto = outcome.get("otto_log", {})
     challenges = otto.get("challenges", [])
     if challenges:
         parts.append("<h2>4. Otto Challenge Log</h2>")
-        parts.append("<p><em>Otto is a Würth Elektronik sales agent that challenges every "
-                     "no_substitute verdict. Proposals are verified against Digi-Key before acceptance.</em></p>")
-        parts.append("<table><tr><th>Ref</th><th>Verdict</th><th>Diagnosis</th>"
-                     "<th>Counter-Proposal</th><th>Verified?</th></tr>")
+        parts.append(
+            "<p><em>Otto is a Würth Elektronik sales agent that challenges every "
+            "no_substitute verdict. Proposals are verified against Digi-Key before acceptance.</em></p>"
+        )
+        parts.append(
+            "<table><tr><th>Ref</th><th>Verdict</th><th>Diagnosis</th>"
+            "<th>Counter-Proposal</th><th>Verified?</th></tr>"
+        )
         verified_refs = {v["ref_des"] for v in otto.get("verified", [])}
         rejected_refs = {r["ref_des"] for r in otto.get("rejected", [])}
         for ch in challenges:
@@ -190,9 +212,11 @@ def render_crossref_html(
         parts.append("</table>")
         summary = otto.get("summary", {})
         if summary:
-            parts.append(f"<p>Otto summary: {_e(summary.get('overturned', 0))} overturned, "
-                         f"{_e(summary.get('confirmed', 0))} confirmed out of "
-                         f"{_e(summary.get('total_challenged', 0))} challenged.</p>")
+            parts.append(
+                f"<p>Otto summary: {_e(summary.get('overturned', 0))} overturned, "
+                f"{_e(summary.get('confirmed', 0))} confirmed out of "
+                f"{_e(summary.get('total_challenged', 0))} challenged.</p>"
+            )
 
     # Reviewer verdict
     verdicts = outcome.get("review_verdicts", [])
@@ -202,8 +226,9 @@ def render_crossref_html(
         for v in verdicts:
             vc = v.get("verdict", "?").upper()
             css = "exact" if vc == "APPROVED" else ("partial" if vc == "PROCEED" else "no-sub")
-            parts.append(f'<p>Verdict: <span class="{css}" style="font-size:1.2em">'
-                         f"{_e(vc)}</span></p>")
+            parts.append(
+                f'<p>Verdict: <span class="{css}" style="font-size:1.2em">{_e(vc)}</span></p>'
+            )
             summary_text = v.get("summary", "")
             if summary_text:
                 parts.append(f"<p>{_e(summary_text)}</p>")

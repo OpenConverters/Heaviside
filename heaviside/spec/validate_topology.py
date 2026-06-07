@@ -18,7 +18,7 @@ Authoritative source for what's required: ``docs/mkf-handoff.md``
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -32,9 +32,8 @@ class SpecValidationError(ValueError):
     def __init__(self, topology: str, problems: list[str]) -> None:
         self.topology = topology
         self.problems = problems
-        msg = (
-            f"spec is missing or invalid for topology {topology!r}:\n  - "
-            + "\n  - ".join(problems)
+        msg = f"spec is missing or invalid for topology {topology!r}:\n  - " + "\n  - ".join(
+            problems
         )
         super().__init__(msg)
 
@@ -44,17 +43,13 @@ class SpecValidationError(ValueError):
 # ---------------------------------------------------------------------------
 
 
-def _require_root_field(
-    spec: Mapping[str, Any], field: str, hint: str
-) -> str | None:
+def _require_root_field(spec: Mapping[str, Any], field: str, hint: str) -> str | None:
     if field not in spec or spec[field] is None:
         return f"missing root-level {field!r} — {hint}"
     return None
 
 
-def _require_positive_number(
-    spec: Mapping[str, Any], field: str, hint: str
-) -> str | None:
+def _require_positive_number(spec: Mapping[str, Any], field: str, hint: str) -> str | None:
     val = spec.get(field)
     if val is None:
         return f"missing root-level {field!r} — {hint}"
@@ -63,9 +58,7 @@ def _require_positive_number(
     return None
 
 
-def _require_voltage_range(
-    spec: Mapping[str, Any], field: str, hint: str
-) -> str | None:
+def _require_voltage_range(spec: Mapping[str, Any], field: str, hint: str) -> str | None:
     v = spec.get(field)
     if v is None:
         return f"missing root-level {field!r} — {hint}"
@@ -77,9 +70,7 @@ def _require_voltage_range(
     return None
 
 
-def _require_operating_point_field(
-    spec: Mapping[str, Any], op_field: str, hint: str
-) -> str | None:
+def _require_operating_point_field(spec: Mapping[str, Any], op_field: str, hint: str) -> str | None:
     ops = spec.get("operatingPoints")
     if not isinstance(ops, list) or not ops:
         return "missing 'operatingPoints' (at least one operating point required)"
@@ -87,9 +78,7 @@ def _require_operating_point_field(
     if not isinstance(op, Mapping):
         return "operatingPoints[0] must be an object"
     if op_field not in op or op[op_field] is None:
-        return (
-            f"missing operatingPoints[0].{op_field!r} — {hint}"
-        )
+        return f"missing operatingPoints[0].{op_field!r} — {hint}"
     return None
 
 
@@ -99,46 +88,65 @@ def _require_operating_point_field(
 
 
 def _check_flyback(spec: Mapping[str, Any]) -> list[str]:
-    return [p for p in (
-        _require_positive_number(
-            spec, "maximumDutyCycle",
-            "flyback's required duty grows with Vin_min; PyMKF needs an upper "
-            "bound. Try 0.55 for a 36-60V→12V design.",
-        ),
-        _require_root_field(
-            spec, "desiredTurnsRatios",
-            "flyback transformer turns ratio (e.g. [5.0] for 48→12V).",
-        ),
-    ) if p]
+    return [
+        p
+        for p in (
+            _require_positive_number(
+                spec,
+                "maximumDutyCycle",
+                "flyback's required duty grows with Vin_min; PyMKF needs an upper "
+                "bound. Try 0.55 for a 36-60V→12V design.",
+            ),
+            _require_root_field(
+                spec,
+                "desiredTurnsRatios",
+                "flyback transformer turns ratio (e.g. [5.0] for 48→12V).",
+            ),
+        )
+        if p
+    ]
 
 
 def _check_dab(spec: Mapping[str, Any]) -> list[str]:
-    return [p for p in (
-        _require_positive_number(
-            spec, "desiredMagnetizingInductance",
-            "DAB transformer Lm in henries (try 1e-3 = 1 mH as a starting point).",
-        ),
-        _require_root_field(
-            spec, "desiredTurnsRatios",
-            "DAB transformer turns ratio (e.g. [1.6] for 400→250V).",
-        ),
-    ) if p]
+    return [
+        p
+        for p in (
+            _require_positive_number(
+                spec,
+                "desiredMagnetizingInductance",
+                "DAB transformer Lm in henries (try 1e-3 = 1 mH as a starting point).",
+            ),
+            _require_root_field(
+                spec,
+                "desiredTurnsRatios",
+                "DAB transformer turns ratio (e.g. [1.6] for 400→250V).",
+            ),
+        )
+        if p
+    ]
 
 
 def _check_cllc(spec: Mapping[str, Any]) -> list[str]:
-    problems = [p for p in (
-        _require_positive_number(
-            spec, "desiredMagnetizingInductance",
-            "CLLC transformer Lm in henries (try 1e-3).",
-        ),
-        _require_root_field(
-            spec, "desiredTurnsRatios",
-            "CLLC turns ratio (e.g. [1.0] for a symmetric 1:1 tank).",
-        ),
-    ) if p]
+    problems = [
+        p
+        for p in (
+            _require_positive_number(
+                spec,
+                "desiredMagnetizingInductance",
+                "CLLC transformer Lm in henries (try 1e-3).",
+            ),
+            _require_root_field(
+                spec,
+                "desiredTurnsRatios",
+                "CLLC turns ratio (e.g. [1.0] for a symmetric 1:1 tank).",
+            ),
+        )
+        if p
+    ]
     # powerFlow lives inside operatingPoints[0], not at root.
     op_problem = _require_operating_point_field(
-        spec, "powerFlow",
+        spec,
+        "powerFlow",
         "CLLC needs powerFlow ('forward' or 'reverse') inside the "
         "operating point, NOT at root level.",
     )
@@ -148,62 +156,84 @@ def _check_cllc(spec: Mapping[str, Any]) -> list[str]:
 
 
 def _check_clllc(spec: Mapping[str, Any]) -> list[str]:
-    return [p for p in (
-        _require_positive_number(
-            spec, "desiredMagnetizingInductance",
-            "CLLLC transformer Lm in henries (try 1e-3).",
-        ),
-        _require_root_field(
-            spec, "desiredTurnsRatios",
-            "CLLLC turns ratios — symmetric tank takes [n_pri_sec, n_pri_pri] "
-            "(e.g. [8.0, 1.0] for 400→48V).",
-        ),
-        _require_root_field(
-            spec, "powerFlow",
-            "CLLLC needs powerFlow ('forward' or 'reverse') at root level.",
-        ),
-    ) if p]
+    return [
+        p
+        for p in (
+            _require_positive_number(
+                spec,
+                "desiredMagnetizingInductance",
+                "CLLLC transformer Lm in henries (try 1e-3).",
+            ),
+            _require_root_field(
+                spec,
+                "desiredTurnsRatios",
+                "CLLLC turns ratios — symmetric tank takes [n_pri_sec, n_pri_pri] "
+                "(e.g. [8.0, 1.0] for 400→48V).",
+            ),
+            _require_root_field(
+                spec,
+                "powerFlow",
+                "CLLLC needs powerFlow ('forward' or 'reverse') at root level.",
+            ),
+        )
+        if p
+    ]
 
 
 def _check_vienna(spec: Mapping[str, Any]) -> list[str]:
-    return [p for p in (
-        _require_voltage_range(
-            spec, "lineToLineVoltage",
-            "Vienna needs the 3-phase L-L voltage range (e.g. "
-            "{minimum: 380, nominal: 400, maximum: 440}).",
-        ),
-        _require_positive_number(
-            spec, "outputDcVoltage",
-            "Vienna DC bus voltage MUST exceed sqrt(2) * V_LL_max "
-            "(try 800 V for a 400 V L-L input).",
-        ),
-        _require_positive_number(
-            spec, "switchingFrequency",
-            "Vienna requires root-level switchingFrequency (distinct from "
-            "operatingPoints[*].switchingFrequency).",
-        ),
-    ) if p]
+    return [
+        p
+        for p in (
+            _require_voltage_range(
+                spec,
+                "lineToLineVoltage",
+                "Vienna needs the 3-phase L-L voltage range (e.g. "
+                "{minimum: 380, nominal: 400, maximum: 440}).",
+            ),
+            _require_positive_number(
+                spec,
+                "outputDcVoltage",
+                "Vienna DC bus voltage MUST exceed sqrt(2) * V_LL_max "
+                "(try 800 V for a 400 V L-L input).",
+            ),
+            _require_positive_number(
+                spec,
+                "switchingFrequency",
+                "Vienna requires root-level switchingFrequency (distinct from "
+                "operatingPoints[*].switchingFrequency).",
+            ),
+        )
+        if p
+    ]
 
 
 def _check_pfc(spec: Mapping[str, Any]) -> list[str]:
-    return [p for p in (
-        _require_positive_number(
-            spec, "outputVoltage",
-            "PFC boost output voltage (try 400 V).",
-        ),
-        _require_positive_number(
-            spec, "outputPower",
-            "PFC rated output power (try 300 W).",
-        ),
-        _require_positive_number(
-            spec, "lineFrequency",
-            "PFC line frequency (50 Hz EU / 60 Hz US).",
-        ),
-        _require_positive_number(
-            spec, "switchingFrequency",
-            "PFC requires root-level switchingFrequency.",
-        ),
-    ) if p]
+    return [
+        p
+        for p in (
+            _require_positive_number(
+                spec,
+                "outputVoltage",
+                "PFC boost output voltage (try 400 V).",
+            ),
+            _require_positive_number(
+                spec,
+                "outputPower",
+                "PFC rated output power (try 300 W).",
+            ),
+            _require_positive_number(
+                spec,
+                "lineFrequency",
+                "PFC line frequency (50 Hz EU / 60 Hz US).",
+            ),
+            _require_positive_number(
+                spec,
+                "switchingFrequency",
+                "PFC requires root-level switchingFrequency.",
+            ),
+        )
+        if p
+    ]
 
 
 # Map topology canonical name -> validator. Topologies with no extra
@@ -234,11 +264,10 @@ def _check_universal(spec: Mapping[str, Any]) -> list[str]:
             "missing root-level 'inputVoltage' (needed for every dc-input "
             "topology). Try {nominal: 48, minimum: 36, maximum: 60}."
         )
-    elif isinstance(iv, Mapping):
-        if "nominal" not in iv or not isinstance(iv["nominal"], (int, float)):
-            problems.append(
-                "inputVoltage.nominal must be a positive number"
-            )
+    elif isinstance(iv, Mapping) and (
+        "nominal" not in iv or not isinstance(iv["nominal"], (int, float))
+    ):
+        problems.append("inputVoltage.nominal must be a positive number")
 
     # operatingPoints[0] must carry outputVoltages, outputCurrents, fsw
     ops = spec.get("operatingPoints")
@@ -255,14 +284,13 @@ def _check_universal(spec: Mapping[str, Any]) -> list[str]:
             ("switchingFrequency", "positive number in Hz, e.g. 200000"),
         ):
             if field not in op or op[field] is None:
-                problems.append(
-                    f"missing operatingPoints[0].{field!r} ({hint})"
-                )
+                problems.append(f"missing operatingPoints[0].{field!r} ({hint})")
     return problems
 
 
 def validate_spec_for_topology(
-    topology: str, spec: Mapping[str, Any],
+    topology: str,
+    spec: Mapping[str, Any],
 ) -> None:
     """Validate ``spec`` against ``topology``'s requirements.
 

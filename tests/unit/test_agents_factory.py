@@ -103,9 +103,7 @@ def test_unknown_frontmatter_key_raises(tmp_path: Path) -> None:
 
 
 def test_missing_required_key_raises(tmp_path: Path) -> None:
-    (tmp_path / "incomplete.md").write_text(
-        "---\nname: incomplete\ndescription: x\n---\n\nbody\n"
-    )
+    (tmp_path / "incomplete.md").write_text("---\nname: incomplete\ndescription: x\n---\n\nbody\n")
     with pytest.raises(AgentLoadError, match="missing required key"):
         load_agent_definition("incomplete", prompts_dir=tmp_path)
 
@@ -237,6 +235,7 @@ def test_load_agent_constructs_real_strands_agent_object() -> None:
     live eval at ``tests/evals/test_kimi_smoke.py``.
     """
     from strands import Agent
+
     agent = load_agent("component-librarian", model="claude-opus-4-6")
     assert isinstance(agent, Agent)
     # Strands keeps the tool list under .tool_registry — not asserting

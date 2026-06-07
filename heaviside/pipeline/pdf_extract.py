@@ -104,8 +104,7 @@ def extract_pdf_tables(path: Path) -> list[list[list[str]]]:
             for page in pdf.pages:
                 for raw_table in page.extract_tables() or []:
                     normalised = [
-                        [str(cell) if cell is not None else "" for cell in row]
-                        for row in raw_table
+                        [str(cell) if cell is not None else "" for cell in row] for row in raw_table
                     ]
                     if normalised:
                         tables.append(normalised)
@@ -115,4 +114,4 @@ def extract_pdf_tables(path: Path) -> list[list[list[str]]]:
     return tables
 
 
-__all__ = ["extract_pdf_text", "extract_pdf_tables"]
+__all__ = ["extract_pdf_tables", "extract_pdf_text"]

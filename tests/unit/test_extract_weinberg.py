@@ -22,8 +22,8 @@ import pytest
 
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
-from heaviside.pipeline.realism import CheckStatus, RealismVerdict
-
+from heaviside.pipeline.realism import CheckStatus
+from tests.unit._real_mas import isat_of, real_magnetic
 
 # ---------------------------------------------------------------------------
 # Fixtures (Weinberg stencil: L1 in lineFilter stage with 2 windings
@@ -34,127 +34,108 @@ from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 
 def _l1_mas(N: int = 22, *, L: float = 100e-6) -> dict:
     """Full MAS root for L1 (input coupled inductor), matching the shape
-    the real bridge-attach phase produces: the wound/gapped magnetic
-    device under ``core``/``coil`` PLUS the ``inputs``/``outputs``
-    envelopes carrying the inductance MKF actually achieved.  The
-    extractor harvests the achieved ``L`` via
-    :func:`_read_full_mas_root` + :func:`_harvest_inductance` from
-    ``outputs[*].inductance.magnetizingInductance.magnetizingInductance
+    the real bridge-attach phase produces: a **complete, PyOM-evaluable**
+    wound/gapped magnetic under ``core``/``coil`` (built by
+    :func:`real_magnetic` so ``calculate_saturation_current`` returns real
+    MKF physics) PLUS the ``inputs``/``outputs`` envelopes carrying the
+    inductance MKF actually achieved.  The extractor harvests the achieved
+    ``L`` via :func:`_read_full_mas_root` + :func:`_harvest_inductance`
+    from ``outputs[*].inductance.magnetizingInductance.magnetizingInductance
     .nominal`` (and would also accept
-    ``inputs.designRequirements.magnetizingInductance.nominal``); both
-    are provided so the fixture survives either harvest path.
+    ``inputs.designRequirements.magnetizingInductance.nominal``); both are
+    provided so the fixture survives either harvest path.
     """
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 1.2e-4,
-                    "effectiveLength": 0.08,
-                    "effectiveVolume": 9.6e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.42,
-                         "temperature": 100.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "a", "numberTurns": N, "numberParallels": 1,
-             "isolationSide": "primary"},
-            {"name": "b", "numberTurns": N, "numberParallels": 1,
-             "isolationSide": "primary"},
-        ]},
-        "inputs": {
-            "designRequirements": {
-                "magnetizingInductance": {"nominal": L},
-            },
-        },
-        "outputs": [
-            {"inductance": {"magnetizingInductance": {
-                "magnetizingInductance": {"nominal": L},
-            }}},
+    mas = real_magnetic(
+        shape="ETD 29/16/10",
+        material="3C95",
+        gap_mm=1.0,
+        windings=[
+            {"name": "a", "turns": N, "side": "primary"},
+            {"name": "b", "turns": N, "side": "primary"},
         ],
+    )
+    mas["inputs"] = {
+        "designRequirements": {"magnetizingInductance": {"nominal": L}},
     }
+    mas["outputs"] = [
+        {
+            "inductance": {
+                "magnetizingInductance": {
+                    "magnetizingInductance": {"nominal": L},
+                }
+            }
+        },
+    ]
+    return mas
 
 
 def _t1_mas(*, N_pri: int = 6, N_sec: int = 18) -> dict:
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 1.5e-4,
-                    "effectiveLength": 0.05,
-                    "effectiveVolume": 7.5e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.32,
-                         "temperature": 100.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": [
-            {"name": "pri_a", "numberTurns": N_pri, "numberParallels": 1,
-             "isolationSide": "primary"},
-            {"name": "pri_b", "numberTurns": N_pri, "numberParallels": 1,
-             "isolationSide": "primary"},
-            {"name": "sec_a", "numberTurns": N_sec, "numberParallels": 1,
-             "isolationSide": "secondary"},
-            {"name": "sec_b", "numberTurns": N_sec, "numberParallels": 1,
-             "isolationSide": "secondary"},
-        ]},
-    }
+    # T1 is deliberately NOT Isat-stamped (symmetric push-pull resets the
+    # core every cycle); the extractor harvests only its winding turns for
+    # the turns ratio, so a complete real magnetic with the four named
+    # half-windings is all that's needed.
+    return real_magnetic(
+        shape="ETD 34/17/11",
+        material="3C95",
+        gap_mm=0.0,
+        windings=[
+            {"name": "pri_a", "turns": N_pri, "side": "primary"},
+            {"name": "pri_b", "turns": N_pri, "side": "primary"},
+            {"name": "sec_a", "turns": N_sec, "side": "secondary"},
+            {"name": "sec_b", "turns": N_sec, "side": "secondary"},
+        ],
+    )
 
 
-def _wb_tas(*, t1_kwargs: dict | None = None,
-            l1_kwargs: dict | None = None) -> dict:
+def _wb_tas(*, t1_kwargs: dict | None = None, l1_kwargs: dict | None = None) -> dict:
     t1_kwargs = dict(t1_kwargs or {})
     l1_kwargs = dict(l1_kwargs or {})
-    return {"topology": {
-        "stages": [
-            {
-                "name": "input_coupled_inductor",
-                "role": "lineFilter",
-                "circuit": {"components": [
-                    {"name": "L1", "category": "magnetic",
-                     "mas": _l1_mas(**l1_kwargs)},
-                ]},
-            },
-            {
-                "name": "primary_switch",
-                "role": "switchingCell",
-                "circuit": {"components": [
-                    {"name": "Q1", "data": "placeholder"},
-                    {"name": "Q2", "data": "placeholder"},
-                ]},
-            },
-            {
-                "name": "isolation",
-                "role": "isolation",
-                "circuit": {"components": [
-                    {"name": "T1", "category": "magnetic",
-                     "mas": _t1_mas(**t1_kwargs)},
-                ]},
-            },
-            {
-                "name": "output_0",
-                "role": "outputRectifier",
-                "circuit": {"components": [
-                    {"name": "D1",     "data": "placeholder"},
-                    {"name": "D2",     "data": "placeholder"},
-                    {"name": "C_out0", "data": "placeholder"},
-                ]},
-            },
-        ],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "input_coupled_inductor",
+                    "role": "lineFilter",
+                    "circuit": {
+                        "components": [
+                            {"name": "L1", "category": "magnetic", "mas": _l1_mas(**l1_kwargs)},
+                        ]
+                    },
+                },
+                {
+                    "name": "primary_switch",
+                    "role": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "data": "placeholder"},
+                            {"name": "Q2", "data": "placeholder"},
+                        ]
+                    },
+                },
+                {
+                    "name": "isolation",
+                    "role": "isolation",
+                    "circuit": {
+                        "components": [
+                            {"name": "T1", "category": "magnetic", "mas": _t1_mas(**t1_kwargs)},
+                        ]
+                    },
+                },
+                {
+                    "name": "output_0",
+                    "role": "outputRectifier",
+                    "circuit": {
+                        "components": [
+                            {"name": "D1", "data": "placeholder"},
+                            {"name": "D2", "data": "placeholder"},
+                            {"name": "C_out0", "data": "placeholder"},
+                        ]
+                    },
+                },
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 def _wb_spec() -> dict:
@@ -169,12 +150,14 @@ def _wb_spec() -> dict:
         "inputVoltage": {"minimum": 36.0, "maximum": 60.0, "nominal": 48.0},
         "desiredInductance": 100e-6,
         "efficiency": 0.92,
-        "operatingPoints": [{
-            "outputVoltages": [270.0],
-            "outputCurrents": [2.0],
-            "switchingFrequency": 100_000.0,
-            "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [270.0],
+                "outputCurrents": [2.0],
+                "switchingFrequency": 100_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
     }
 
 
@@ -193,10 +176,8 @@ def _get_l1(tas: dict) -> dict:
 
 
 class TestWeinbergMath:
-
     def test_duty_at_both_vin_extremes(self):
-        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg",
-                                      spec=_wb_spec())
+        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=_wb_spec())
         # n = 18/6 = 3
         d_max_expected = 1.0 - 3.0 * 36.0 / (2.0 * 270.0)
         d_min_expected = 1.0 - 3.0 * 60.0 / (2.0 * 270.0)
@@ -205,15 +186,13 @@ class TestWeinbergMath:
         assert out["duty"] == out["duty_max"]
 
     def test_per_switch_duty_above_half(self):
-        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg",
-                                      spec=_wb_spec())
+        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=_wb_spec())
         # Boost mode requires D > 0.5 for both extremes.
         assert out["duty_min"] > 0.5
 
     def test_voltage_transfer_round_trip(self):
         """Plug solved D back into Vout = n·Vin / (2·(1 − D))."""
-        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg",
-                                      spec=_wb_spec())
+        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=_wb_spec())
         # At Vin_min: reconstructed Vout must equal spec Vout.
         d_max = out["duty_max"]
         vout_reconstructed = 3.0 * 36.0 / (2.0 * (1.0 - d_max))
@@ -222,22 +201,19 @@ class TestWeinbergMath:
     def test_turns_ratio_recorded(self):
         out = enrich_tas_for_realism(
             _wb_tas(t1_kwargs={"N_pri": 4, "N_sec": 16}),
-            topology="weinberg", spec=_wb_spec(),
+            topology="weinberg",
+            spec=_wb_spec(),
         )
         l = _get_l1(out)
-        assert l["ipeak_provenance"][
-            "turns_ratio_n_sec_over_n_pri"
-        ] == pytest.approx(4.0, rel=1e-6)
+        assert l["ipeak_provenance"]["turns_ratio_n_sec_over_n_pri"] == pytest.approx(4.0, rel=1e-6)
         assert l["ipeak_provenance"]["n_primary_half"] == 4
         assert l["ipeak_provenance"]["n_secondary_half"] == 16
 
     def test_input_current_at_vin_min(self):
-        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg",
-                                      spec=_wb_spec())
+        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=_wb_spec())
         l = _get_l1(out)
         # Iin = Iout * Vout / Vin_min = 2 * 270 / 36 = 15 A
-        assert l["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(15.0,
-                                                                       rel=1e-6)
+        assert l["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(15.0, rel=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +222,6 @@ class TestWeinbergMath:
 
 
 class TestRipple:
-
     def test_ripple_at_boundary_when_interior_outside_range(self):
         """n=3, Vout=270 ⇒ Vout/(2n)=45. Vin range 36-60: 45 is inside.
         So the interior peak IS sampled; this test uses a spec where
@@ -255,25 +230,27 @@ class TestRipple:
         # Shrink Vin to 50-60 — interior peak 45 is outside.
         spec = _wb_spec()
         spec["inputVoltage"]["minimum"] = 50.0
-        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg",
-                                      spec=spec)
+        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=spec)
         l = _get_l1(out)
         L_worst = 0.8 * 100e-6
         fsw_eff = 2.0 * 100_000.0
-        ripple_at = lambda v: v * (1.0 - 3.0 * v / 270.0) / (L_worst * fsw_eff)
+
+        def ripple_at(v):
+            return v * (1.0 - 3.0 * v / 270.0) / (L_worst * fsw_eff)
+
         expected = max(ripple_at(50.0), ripple_at(60.0))
-        assert l["ipeak_provenance"]["ripple_worst_A_pp"] == pytest.approx(
-            expected, rel=1e-6
-        )
+        assert l["ipeak_provenance"]["ripple_worst_A_pp"] == pytest.approx(expected, rel=1e-6)
 
     def test_ripple_picks_interior_when_in_range(self):
-        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg",
-                                      spec=_wb_spec())
+        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=_wb_spec())
         l = _get_l1(out)
         L_worst = 0.8 * 100e-6
         fsw_eff = 2.0 * 100_000.0
-        ripple_at = lambda v: v * (1.0 - 3.0 * v / 270.0) / (L_worst * fsw_eff)
-        interior = 270.0 / (2.0 * 3.0)   # = 45 V, inside [36, 60]
+
+        def ripple_at(v):
+            return v * (1.0 - 3.0 * v / 270.0) / (L_worst * fsw_eff)
+
+        interior = 270.0 / (2.0 * 3.0)  # = 45 V, inside [36, 60]
         candidates = [ripple_at(36.0), ripple_at(60.0), ripple_at(interior)]
         assert max(candidates) == ripple_at(interior)
         assert l["ipeak_provenance"]["ripple_worst_A_pp"] == pytest.approx(
@@ -281,8 +258,7 @@ class TestRipple:
         )
 
     def test_ipeak_is_iin_plus_half_ripple(self):
-        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg",
-                                      spec=_wb_spec())
+        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=_wb_spec())
         l = _get_l1(out)
         ripple = l["ipeak_provenance"]["ripple_worst_A_pp"]
         iin = l["ipeak_provenance"]["iL_avg_max_A"]
@@ -295,19 +271,21 @@ class TestRipple:
 
 
 class TestIsat:
-
     def test_isat_uses_l1_mas(self):
-        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg",
-                                      spec=_wb_spec())
+        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=_wb_spec())
         l = _get_l1(out)
-        # B_sat = 0.42, N = 22, A_e = 1.2e-4, L = 100e-6
-        expected = 0.42 * 22 * 1.2e-4 / 100e-6
-        assert l["isat"] == pytest.approx(expected, rel=1e-4)
+        # Ground truth = MKF: the stamped Isat must equal PyOM's
+        # saturation current for the L1 magnetic at the op-point ambient
+        # (25 °C), NOT an analytical formula. Computing it here on the
+        # same L1 MAS the extractor harvested also proves L1 (not T1) was
+        # the source.
+        expected = isat_of(_l1_mas(), temperature_c=25.0)
+        assert l["isat"] == pytest.approx(expected, rel=1e-3)
+        assert "PyOM" in l["isat_provenance"]["method"]
         assert "weinberg" in l["isat_provenance"]["method"]
 
     def test_t1_is_not_isat_stamped(self):
-        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg",
-                                      spec=_wb_spec())
+        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=_wb_spec())
         for stage in out["topology"]["stages"]:
             if stage.get("role") == "isolation":
                 t1 = stage["circuit"]["components"][0]
@@ -317,11 +295,9 @@ class TestIsat:
         raise AssertionError("isolation stage missing")
 
     def test_secondary_reflected_current_flag_pinned(self):
-        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg",
-                                      spec=_wb_spec())
+        out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=_wb_spec())
         l = _get_l1(out)
-        assert l["ipeak_provenance"][
-            "secondary_reflected_current_modelled"] is False
+        assert l["ipeak_provenance"]["secondary_reflected_current_modelled"] is False
 
     def test_end_to_end_realism_passes(self):
         spec = _wb_spec()
@@ -329,7 +305,8 @@ class TestIsat:
         # comfortably with our chosen MAS.
         enriched = enrich_tas_for_realism(
             _wb_tas(l1_kwargs={"N_pri": None} if False else None),
-            topology="weinberg", spec=spec,
+            topology="weinberg",
+            spec=spec,
         )
         r = evaluate_tas(enriched, topology="weinberg", spec=spec)
         # End-to-end may PASS or FAIL depending on Isat margins; the
@@ -338,10 +315,8 @@ class TestIsat:
         # the extractor stamped the fields.
         check_status = {c.name: c.status for c in r.checks}
         for name in ("duty_cycle_bounds", "inductor_isat_margin"):
-            assert check_status.get(name) in (CheckStatus.PASS,
-                                               CheckStatus.FAIL), (
-                f"{name} must be evaluated, got "
-                f"{check_status.get(name)}"
+            assert check_status.get(name) in (CheckStatus.PASS, CheckStatus.FAIL), (
+                f"{name} must be evaluated, got {check_status.get(name)}"
             )
 
 
@@ -351,7 +326,6 @@ class TestIsat:
 
 
 class TestBoostModeGuard:
-
     def test_d_min_at_half_throws(self):
         """Set n so D_min = 0.5 exactly: 1 - n·Vin_max/(2·Vout) = 0.5
         ⇒ n·Vin_max = Vout ⇒ at Vin_max=60, Vout=270 ⇒ n = 4.5.
@@ -359,7 +333,8 @@ class TestBoostModeGuard:
         with pytest.raises(EnrichmentError, match=r"≤ 0\.5"):
             enrich_tas_for_realism(
                 _wb_tas(t1_kwargs={"N_pri": 4, "N_sec": 18}),
-                topology="weinberg", spec=_wb_spec(),
+                topology="weinberg",
+                spec=_wb_spec(),
             )
 
     def test_d_min_below_half_throws(self):
@@ -367,7 +342,8 @@ class TestBoostModeGuard:
         with pytest.raises(EnrichmentError, match=r"D_min"):
             enrich_tas_for_realism(
                 _wb_tas(t1_kwargs={"N_pri": 2, "N_sec": 18}),
-                topology="weinberg", spec=_wb_spec(),
+                topology="weinberg",
+                spec=_wb_spec(),
             )
 
 
@@ -377,7 +353,6 @@ class TestBoostModeGuard:
 
 
 class TestStructuralFailures:
-
     def test_missing_isolation_stage_throws(self):
         tas = _wb_tas()
         tas["topology"]["stages"] = [
@@ -398,8 +373,9 @@ class TestStructuralFailures:
         tas = _wb_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "isolation":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][0]["name"] = "primary_a"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][0][
+                    "name"
+                ] = "primary_a"
         with pytest.raises(EnrichmentError, match="'pri_a'"):
             enrich_tas_for_realism(tas, topology="weinberg", spec=_wb_spec())
 
@@ -411,8 +387,9 @@ class TestStructuralFailures:
         tas = _wb_tas()
         for stage in tas["topology"]["stages"]:
             if stage.get("role") == "lineFilter":
-                stage["circuit"]["components"][0]["mas"]["coil"][
-                    "functionalDescription"][0]["name"] = "winding_x"
+                stage["circuit"]["components"][0]["mas"]["coil"]["functionalDescription"][0][
+                    "name"
+                ] = "winding_x"
         with pytest.raises(EnrichmentError, match="'a'"):
             enrich_tas_for_realism(tas, topology="weinberg", spec=_wb_spec())
 
@@ -428,7 +405,7 @@ class TestStructuralFailures:
                 c = stage["circuit"]["components"][0]
                 c["mas"].pop("outputs", None)
                 c["mas"].pop("inputs", None)
-        with pytest.raises(EnrichmentError, match="full MAS root|inductance"):
+        with pytest.raises(EnrichmentError, match=r"full MAS root|inductance"):
             enrich_tas_for_realism(tas, topology="weinberg", spec=_wb_spec())
 
     def test_spec_present_but_inductance_mas_harvested(self):
@@ -440,6 +417,4 @@ class TestStructuralFailures:
         out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=spec)
         l = _get_l1(out)
         # L_worst = 0.8 * 100µH harvested from the MAS root.
-        assert l["ipeak_provenance"]["L_worst_H"] == pytest.approx(
-            0.8 * 100e-6, rel=1e-9
-        )
+        assert l["ipeak_provenance"]["L_worst_H"] == pytest.approx(0.8 * 100e-6, rel=1e-9)

@@ -34,7 +34,6 @@ a similar regex approach; we keep it and tighten the failure path
 
 from __future__ import annotations
 
-
 __all__ = [
     "CATEGORY_PATTERNS",
     "PARAM_UNITS",
@@ -259,36 +258,46 @@ CATEGORY_PATTERNS: dict[str, dict[str, list[str]]] = {
 # converters in :mod:`heaviside.librarian.fetcher.convert` refuse to
 # default and the auditor flags as critical gaps.
 REQUIRED_BY_CATEGORY: dict[str, frozenset[str]] = {
-    "mosfets": frozenset({
-        "drainSourceVoltage",
-        "onResistance",
-        "continuousDrainCurrent",
-        "gateThresholdVoltage",
-        "outputCapacitance",
-        "totalGateCharge",
-    }),
-    "diodes": frozenset({
-        "reverseVoltage",
-        "forwardVoltage",
-        "forwardCurrent",
-        "reverseRecoveryCharge",
-    }),
-    "igbts": frozenset({
-        "collectorEmitterVoltage",
-        "collectorEmitterSaturation",
-        "continuousCollectorCurrent",
-    }),
-    "capacitors": frozenset({
-        "capacitance",
-        "ratedVoltage",
-        "esr",
-        "rippleCurrent",
-    }),
-    "resistors": frozenset({
-        "resistance",
-        "tolerance",
-        "powerRating",
-    }),
+    "mosfets": frozenset(
+        {
+            "drainSourceVoltage",
+            "onResistance",
+            "continuousDrainCurrent",
+            "gateThresholdVoltage",
+            "outputCapacitance",
+            "totalGateCharge",
+        }
+    ),
+    "diodes": frozenset(
+        {
+            "reverseVoltage",
+            "forwardVoltage",
+            "forwardCurrent",
+            "reverseRecoveryCharge",
+        }
+    ),
+    "igbts": frozenset(
+        {
+            "collectorEmitterVoltage",
+            "collectorEmitterSaturation",
+            "continuousCollectorCurrent",
+        }
+    ),
+    "capacitors": frozenset(
+        {
+            "capacitance",
+            "ratedVoltage",
+            "esr",
+            "rippleCurrent",
+        }
+    ),
+    "resistors": frozenset(
+        {
+            "resistance",
+            "tolerance",
+            "powerRating",
+        }
+    ),
 }
 
 

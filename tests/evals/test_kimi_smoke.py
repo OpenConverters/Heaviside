@@ -48,7 +48,6 @@ import os
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Gating
 # ---------------------------------------------------------------------------
@@ -90,8 +89,7 @@ def test_load_real_kimi_credentials() -> None:
     # already), but useful to flag pasted-junk credentials.
     assert creds.api_key, "MOONSHOT_API_KEY decoded to empty string"
     assert creds.base_url.startswith("https://"), (
-        f"resolved base_url {creds.base_url!r} is not https — refusing "
-        f"to send a key over cleartext"
+        f"resolved base_url {creds.base_url!r} is not https — refusing to send a key over cleartext"
     )
 
 

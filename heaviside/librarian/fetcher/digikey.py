@@ -43,7 +43,6 @@ from heaviside.librarian.fetcher.base import (
     RateLimitError,
 )
 
-
 __all__ = [
     "DIGIKEY_PROD_BASE",
     "DIGIKEY_SANDBOX_BASE",
@@ -89,9 +88,7 @@ class DigiKeyClient:
         timeout: float = _DEFAULT_TIMEOUT,
     ) -> None:
         if not credentials.client_id or not credentials.client_secret:
-            raise MissingCredentialError(
-                "DigiKeyClient requires both client_id and client_secret."
-            )
+            raise MissingCredentialError("DigiKeyClient requires both client_id and client_secret.")
         self.credentials = credentials
         self.base_url = base_url.rstrip("/")
         self.token_cache = token_cache or TokenCache()
@@ -171,8 +168,7 @@ class DigiKeyClient:
             access_token = payload["access_token"]
         except (KeyError, TypeError) as exc:
             raise MalformedResponseError(
-                "Digi-Key token refresh response missing 'access_token': "
-                f"{payload!r}"
+                f"Digi-Key token refresh response missing 'access_token': {payload!r}"
             ) from exc
         new_refresh = payload.get("refresh_token", refresh_token)
         expires_in = int(payload.get("expires_in", _DEFAULT_EXPIRES_IN))
@@ -212,9 +208,7 @@ class DigiKeyClient:
         for nothing — Heaviside actually honours it.
         """
         if not keywords or not isinstance(keywords, str):
-            raise ValueError(
-                f"search requires a non-empty keyword string, got {keywords!r}"
-            )
+            raise ValueError(f"search requires a non-empty keyword string, got {keywords!r}")
         body = {
             "Keywords": keywords,
             "RecordCount": record_count if record_count is not None else limit,
@@ -259,9 +253,7 @@ class DigiKeyClient:
             raise RateLimitError(
                 "digikey",
                 response.text,
-                retry_after_seconds=_parse_retry_after(
-                    response.headers.get("Retry-After")
-                ),
+                retry_after_seconds=_parse_retry_after(response.headers.get("Retry-After")),
             )
         if response.status_code >= 400:
             raise DistributorError("digikey", response.status_code, response.text)
@@ -276,8 +268,7 @@ class DigiKeyClient:
                 refresh = cached_refresh
         if not refresh:
             raise MissingCredentialError(
-                "Digi-Key returned 401 and no refresh token is available "
-                "for a recovery refresh."
+                "Digi-Key returned 401 and no refresh token is available for a recovery refresh."
             )
         return self._refresh_token(refresh)
 
@@ -309,7 +300,6 @@ class DigiKeyClient:
             ) from exc
         if not isinstance(payload, dict):
             raise MalformedResponseError(
-                f"Digi-Key {context} returned non-object JSON: "
-                f"{type(payload).__name__}"
+                f"Digi-Key {context} returned non-object JSON: {type(payload).__name__}"
             )
         return payload

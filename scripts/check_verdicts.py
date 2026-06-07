@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Check which realism checks fail for each design."""
-import os, sys, json, logging
+
+import logging
+import os
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -11,9 +14,48 @@ from heaviside.pipeline.cre import ReferenceSpec
 from heaviside.pipeline.full_design import full_design
 
 specs = [
-    ("EVL1653F", ReferenceSpec(topology="buck", vin_min=4.5, vin_nom=12, vin_max=16, vout=3.3, iout=3, pout=9.9, fsw=1100000, efficiency_target=0.917)),
-    ("lt80602", ReferenceSpec(topology="buck", vin_min=4.5, vin_nom=24, vin_max=65, vout=5, iout=3.5, pout=17.5, fsw=400000, efficiency_target=0.926)),
-    ("um3491", ReferenceSpec(topology="buck", vin_min=6, vin_nom=12, vin_max=36, vout=3.3, iout=6, pout=19.8, fsw=500000, efficiency_target=0.9)),
+    (
+        "EVL1653F",
+        ReferenceSpec(
+            topology="buck",
+            vin_min=4.5,
+            vin_nom=12,
+            vin_max=16,
+            vout=3.3,
+            iout=3,
+            pout=9.9,
+            fsw=1100000,
+            efficiency_target=0.917,
+        ),
+    ),
+    (
+        "lt80602",
+        ReferenceSpec(
+            topology="buck",
+            vin_min=4.5,
+            vin_nom=24,
+            vin_max=65,
+            vout=5,
+            iout=3.5,
+            pout=17.5,
+            fsw=400000,
+            efficiency_target=0.926,
+        ),
+    ),
+    (
+        "um3491",
+        ReferenceSpec(
+            topology="buck",
+            vin_min=6,
+            vin_nom=12,
+            vin_max=36,
+            vout=3.3,
+            iout=6,
+            pout=19.8,
+            fsw=500000,
+            efficiency_target=0.9,
+        ),
+    ),
 ]
 
 for name, spec in specs:

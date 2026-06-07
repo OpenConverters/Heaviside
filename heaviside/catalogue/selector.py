@@ -63,17 +63,17 @@ class Mosfet:
 
     mpn: str
     manufacturer: str
-    vds_rated: float          # drainSourceVoltage (volts)
-    id_continuous: float      # continuousDrainCurrent (amps, Tc-spec)
-    rds_on: float             # onResistance (ohms at gate_vgs / id_test)
-    qg_total: float           # totalGateCharge (coulombs)
+    vds_rated: float  # drainSourceVoltage (volts)
+    id_continuous: float  # continuousDrainCurrent (amps, Tc-spec)
+    rds_on: float  # onResistance (ohms at gate_vgs / id_test)
+    qg_total: float  # totalGateCharge (coulombs)
     vgs_threshold_max: float  # gateThresholdVoltage.maximum (volts)
-    rth_ja: float | None      # thermalResistanceJunctionAmbient (K/W)
-    rth_jc: float | None      # thermalResistanceJunctionCase (K/W)
-    tj_max: float | None      # junctionTemperatureMax (°C)
-    case: str                 # package code from part.case
-    technology: str           # Si / SiC / GaN
-    status: str               # production / discontinued
+    rth_ja: float | None  # thermalResistanceJunctionAmbient (K/W)
+    rth_jc: float | None  # thermalResistanceJunctionCase (K/W)
+    tj_max: float | None  # junctionTemperatureMax (°C)
+    case: str  # package code from part.case
+    technology: str  # Si / SiC / GaN
+    status: str  # production / discontinued
     datasheet_url: str
     raw_envelope: Mapping[str, Any]  # for provenance / librarian round-trip
 
@@ -105,10 +105,7 @@ class Mosfet:
         id_cont = elec.get("continuousDrainCurrent")
         rds_on = elec.get("onResistance")
         qg_total = elec.get("totalGateCharge")
-        if not all(
-            isinstance(x, (int, float)) and x > 0
-            for x in (vds_rated, id_cont, rds_on)
-        ):
+        if not all(isinstance(x, (int, float)) and x > 0 for x in (vds_rated, id_cont, rds_on)):
             return None
         if qg_total is None:
             qg_total = 0.0  # legacy rows; Qg constraint becomes vacuous
@@ -137,9 +134,13 @@ class Mosfet:
 
         thermal = di.get("thermal") or {}
         rth_ja_raw = thermal.get("thermalResistanceJunctionAmbient")
-        rth_ja = float(rth_ja_raw) if isinstance(rth_ja_raw, (int, float)) and rth_ja_raw > 0 else None
+        rth_ja = (
+            float(rth_ja_raw) if isinstance(rth_ja_raw, (int, float)) and rth_ja_raw > 0 else None
+        )
         rth_jc_raw = thermal.get("thermalResistanceJunctionCase")
-        rth_jc = float(rth_jc_raw) if isinstance(rth_jc_raw, (int, float)) and rth_jc_raw > 0 else None
+        rth_jc = (
+            float(rth_jc_raw) if isinstance(rth_jc_raw, (int, float)) and rth_jc_raw > 0 else None
+        )
         tj_max_raw = thermal.get("junctionTemperatureMax")
         tj_max = float(tj_max_raw) if isinstance(tj_max_raw, (int, float)) else None
 
@@ -219,13 +220,9 @@ class MosfetConstraints:
         for name in ("vds_min", "id_min", "rds_on_max", "qg_max"):
             val = getattr(self, name)
             if not isinstance(val, (int, float)) or val <= 0:
-                raise ValueError(
-                    f"MosfetConstraints.{name} must be a positive number, got {val!r}"
-                )
+                raise ValueError(f"MosfetConstraints.{name} must be a positive number, got {val!r}")
         if not self.technology_allowed:
-            raise ValueError(
-                "MosfetConstraints.technology_allowed cannot be empty"
-            )
+            raise ValueError("MosfetConstraints.technology_allowed cannot be empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,18 +347,22 @@ def select_mosfet(
     elif tiebreaker is MosfetTiebreaker.HIGHEST_ID_MARGIN:
         winner = min(passing, key=lambda m: (_no_thermal(m), -m.id_continuous / c.id_min))
     elif tiebreaker is MosfetTiebreaker.LOWEST_TOTAL_LOSS:
-        if not all(isinstance(x, (int, float)) and x > 0 for x in
-                   (c.op_i_rms, c.op_vds, c.op_duty, c.op_fsw)):
+        if not all(
+            isinstance(x, (int, float)) and x > 0
+            for x in (c.op_i_rms, c.op_vds, c.op_duty, c.op_fsw)
+        ):
             raise ValueError(
-                "LOWEST_TOTAL_LOSS requires op_i_rms/op_vds/op_duty/op_fsw "
-                "on MosfetConstraints"
+                "LOWEST_TOTAL_LOSS requires op_i_rms/op_vds/op_duty/op_fsw on MosfetConstraints"
             )
         _IG = 1.0  # gate-drive current proxy; matches analyst _GATE_DRIVE_CURRENT_A
 
         def _total_loss(m: Mosfet) -> float:
             p_cond = float(c.op_duty) * (float(c.op_i_rms) ** 2) * m.rds_on
-            p_sw = (0.5 * float(c.op_vds) * float(c.op_i_rms)
-                    * m.qg_total * float(c.op_fsw) / _IG) if m.qg_total > 0 else 0.0
+            p_sw = (
+                (0.5 * float(c.op_vds) * float(c.op_i_rms) * m.qg_total * float(c.op_fsw) / _IG)
+                if m.qg_total > 0
+                else 0.0
+            )
             return p_cond + p_sw
 
         winner = min(passing, key=lambda m: (_no_thermal(m), _total_loss(m)))
@@ -394,16 +395,16 @@ class Diode:
 
     mpn: str
     manufacturer: str
-    vrrm_rated: float       # reverseVoltage (volts)
-    if_avg_rated: float     # forwardCurrent (amps)
-    vf_typ: float           # forwardVoltage (volts) at rated current
-    qrr: float              # reverseRecoveryCharge (coulombs); 0 for Schottky
-    trr: float              # reverseRecoveryTime (seconds); 0 for Schottky
-    rth_ja: float | None    # thermalResistanceJunctionAmbient (K/W)
-    rth_jc: float | None    # thermalResistanceJunctionCase (K/W)
-    tj_max: float | None    # junctionTemperatureMax (°C)
+    vrrm_rated: float  # reverseVoltage (volts)
+    if_avg_rated: float  # forwardCurrent (amps)
+    vf_typ: float  # forwardVoltage (volts) at rated current
+    qrr: float  # reverseRecoveryCharge (coulombs); 0 for Schottky
+    trr: float  # reverseRecoveryTime (seconds); 0 for Schottky
+    rth_ja: float | None  # thermalResistanceJunctionAmbient (K/W)
+    rth_jc: float | None  # thermalResistanceJunctionCase (K/W)
+    tj_max: float | None  # junctionTemperatureMax (°C)
     case: str
-    technology: str         # Si / SiC schottky / fast / ultrafast (from subType)
+    technology: str  # Si / SiC schottky / fast / ultrafast (from subType)
     status: str
     datasheet_url: str
     raw_envelope: Mapping[str, Any]
@@ -431,10 +432,7 @@ class Diode:
         # rows where Vf is missing (treated as 0 via silent fallback),
         # which is exactly the "no silent fallbacks" trap. Rows without
         # a published Vf get skipped here; the auditor flags them.
-        if not all(
-            isinstance(x, (int, float)) and x > 0
-            for x in (vrrm, if_avg, vf)
-        ):
+        if not all(isinstance(x, (int, float)) and x > 0 for x in (vrrm, if_avg, vf)):
             return None
 
         qrr = elec.get("reverseRecoveryCharge")
@@ -462,9 +460,13 @@ class Diode:
 
         thermal = di.get("thermal") or {}
         rth_ja_raw = thermal.get("thermalResistanceJunctionAmbient")
-        rth_ja = float(rth_ja_raw) if isinstance(rth_ja_raw, (int, float)) and rth_ja_raw > 0 else None
+        rth_ja = (
+            float(rth_ja_raw) if isinstance(rth_ja_raw, (int, float)) and rth_ja_raw > 0 else None
+        )
         rth_jc_raw = thermal.get("thermalResistanceJunctionCase")
-        rth_jc = float(rth_jc_raw) if isinstance(rth_jc_raw, (int, float)) and rth_jc_raw > 0 else None
+        rth_jc = (
+            float(rth_jc_raw) if isinstance(rth_jc_raw, (int, float)) and rth_jc_raw > 0 else None
+        )
         tj_max_raw = thermal.get("junctionTemperatureMax")
         tj_max = float(tj_max_raw) if isinstance(tj_max_raw, (int, float)) else None
 
@@ -505,13 +507,9 @@ class DiodeConstraints:
         for name in ("vrrm_min", "if_avg_min"):
             val = getattr(self, name)
             if not isinstance(val, (int, float)) or val <= 0:
-                raise ValueError(
-                    f"DiodeConstraints.{name} must be a positive number, got {val!r}"
-                )
+                raise ValueError(f"DiodeConstraints.{name} must be a positive number, got {val!r}")
         if self.qrr_max is not None and self.qrr_max < 0:
-            raise ValueError(
-                f"DiodeConstraints.qrr_max must be non-negative, got {self.qrr_max!r}"
-            )
+            raise ValueError(f"DiodeConstraints.qrr_max must be non-negative, got {self.qrr_max!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -582,8 +580,11 @@ def select_diode(
         ),
     }
     return DiodeSelection(
-        chosen=winner, constraints=c, tiebreaker=tiebreaker,
-        margins=margins, alternatives_considered=len(passing),
+        chosen=winner,
+        constraints=c,
+        tiebreaker=tiebreaker,
+        margins=margins,
+        alternatives_considered=len(passing),
     )
 
 
@@ -598,12 +599,12 @@ class Capacitor:
 
     mpn: str
     manufacturer: str
-    capacitance: float           # capacitance.nominal (farads)
-    v_rated: float               # ratedVoltage (volts)
-    ripple_current_rms: float    # rippleCurrent (amps RMS)
-    esr: float                   # esr (ohms); 0 for MLCC when not declared
-    rth: float | None            # thermalResistance (K/W) case-to-ambient
-    technology: str              # ceramic / aluminum_electrolytic / film / tantalum
+    capacitance: float  # capacitance.nominal (farads)
+    v_rated: float  # ratedVoltage (volts)
+    ripple_current_rms: float  # rippleCurrent (amps RMS)
+    esr: float  # esr (ohms); 0 for MLCC when not declared
+    rth: float | None  # thermalResistance (K/W) case-to-ambient
+    technology: str  # ceramic / aluminum_electrolytic / film / tantalum
     case: str
     status: str
     datasheet_url: str
@@ -629,10 +630,7 @@ class Capacitor:
         cap_field = elec.get("capacitance")
         cap_nom = cap_field.get("nominal") if isinstance(cap_field, Mapping) else cap_field
         v_rated = elec.get("ratedVoltage")
-        if not all(
-            isinstance(x, (int, float)) and x > 0
-            for x in (cap_nom, v_rated)
-        ):
+        if not all(isinstance(x, (int, float)) and x > 0 for x in (cap_nom, v_rated)):
             return None
 
         ripple = elec.get("rippleCurrent")
@@ -643,7 +641,7 @@ class Capacitor:
             esr = 0.0
 
         # Capacitor technology comes from part.family/series/subType — varies.
-        tech = (part.get("family") or part.get("subType") or part.get("series"))
+        tech = part.get("family") or part.get("subType") or part.get("series")
         if not isinstance(tech, str):
             tech = ""
 
@@ -697,9 +695,9 @@ class CapacitorConstraints:
     binding stress.
     """
 
-    capacitance_min: float           # F; smallest acceptable C
-    capacitance_max: float           # F; largest acceptable C (avoid 10x oversizing)
-    v_rated_min: float               # V; minimum rated voltage (= V_working * derating)
+    capacitance_min: float  # F; smallest acceptable C
+    capacitance_max: float  # F; largest acceptable C (avoid 10x oversizing)
+    v_rated_min: float  # V; minimum rated voltage (= V_working * derating)
     ripple_current_min: float | None = None
     technology_allowed: frozenset[str] = frozenset()  # empty = any
     exclude_discontinued: bool = True
@@ -712,8 +710,7 @@ class CapacitorConstraints:
                     f"CapacitorConstraints.{name} must be a positive number, got {val!r}"
                 )
         if self.ripple_current_min is not None and (
-            not isinstance(self.ripple_current_min, (int, float))
-            or self.ripple_current_min < 0
+            not isinstance(self.ripple_current_min, (int, float)) or self.ripple_current_min < 0
         ):
             raise ValueError(
                 f"CapacitorConstraints.ripple_current_min must be non-negative or None, "
@@ -807,8 +804,11 @@ def select_capacitor(
         ),
     }
     return CapacitorSelection(
-        chosen=winner, constraints=c, tiebreaker=tiebreaker,
-        margins=margins, alternatives_considered=len(passing),
+        chosen=winner,
+        constraints=c,
+        tiebreaker=tiebreaker,
+        margins=margins,
+        alternatives_considered=len(passing),
     )
 
 
@@ -836,7 +836,7 @@ class Controller:
     fsw_max_khz: float
     integrated_fet: bool
     integrated_driver: bool
-    vref: float | None        # feedbackReferenceVoltage (volts), if known
+    vref: float | None  # feedbackReferenceVoltage (volts), if known
     datasheet_url: str
     raw_envelope: Mapping[str, Any]
 
@@ -868,7 +868,9 @@ class Controller:
             integrated_fet=bool(env.get("integratedFET", False)),
             integrated_driver=bool(env.get("integratedDriver", False)),
             vref=vref,
-            datasheet_url=env.get("datasheetUrl") if isinstance(env.get("datasheetUrl"), str) else "",
+            datasheet_url=env.get("datasheetUrl")
+            if isinstance(env.get("datasheetUrl"), str)
+            else "",
             raw_envelope=env,
         )
 
@@ -877,9 +879,9 @@ class Controller:
 class ControllerConstraints:
     """Controller selection constraints derived from the converter spec."""
 
-    topology: str            # normalized topology name (e.g. "buck")
-    vin_nom: float           # nominal input voltage (volts) — must be in range
-    fsw_khz: float           # switching frequency (kHz) — must be in range
+    topology: str  # normalized topology name (e.g. "buck")
+    vin_nom: float  # nominal input voltage (volts) — must be in range
+    fsw_khz: float  # switching frequency (kHz) — must be in range
     integrated_fet: bool | None  # True/False to require; None = don't care
 
 
@@ -914,7 +916,11 @@ def select_controller(
         if ctrl is None:
             rejection["unreadable_row"] += 1
             continue
-        if topo not in ctrl.topologies and "any" not in ctrl.topologies and "all" not in ctrl.topologies:
+        if (
+            topo not in ctrl.topologies
+            and "any" not in ctrl.topologies
+            and "all" not in ctrl.topologies
+        ):
             rejection["topology"] += 1
             continue
         if not (ctrl.vin_min <= c.vin_nom <= ctrl.vin_max):
@@ -949,7 +955,9 @@ def select_controller(
 
     winner = max(passing, key=_key)
     return ControllerSelection(
-        chosen=winner, constraints=c, alternatives_considered=len(passing),
+        chosen=winner,
+        constraints=c,
+        alternatives_considered=len(passing),
     )
 
 
@@ -968,9 +976,9 @@ def select_controller(
 class Resistor:
     mpn: str
     manufacturer: str
-    resistance: float        # electrical.resistance.nominal (ohms)
-    tolerance: float         # fractional (0.01 = 1%)
-    power_rating: float      # watts
+    resistance: float  # electrical.resistance.nominal (ohms)
+    tolerance: float  # fractional (0.01 = 1%)
+    power_rating: float  # watts
     case: str
     status: str
     raw_envelope: Mapping[str, Any]
@@ -1002,8 +1010,13 @@ class Resistor:
         case = part.get("case") if isinstance(part.get("case"), str) else ""
         status = mi.get("status") if isinstance(mi.get("status"), str) else "unknown"
         return cls(
-            mpn=mpn, manufacturer=manufacturer, resistance=float(r_nom),
-            tolerance=tol, power_rating=pw, case=case, status=status,
+            mpn=mpn,
+            manufacturer=manufacturer,
+            resistance=float(r_nom),
+            tolerance=tol,
+            power_rating=pw,
+            case=case,
+            status=status,
             raw_envelope=env,
         )
 
@@ -1011,7 +1024,7 @@ class Resistor:
 @dataclass(frozen=True, slots=True)
 class ResistorConstraints:
     target_ohms: float
-    max_tolerance: float = 0.01   # prefer ≤1% for feedback dividers
+    max_tolerance: float = 0.01  # prefer ≤1% for feedback dividers
     max_value_deviation: float = 0.05  # accept within ±5% of target
 
 
@@ -1019,7 +1032,7 @@ class ResistorConstraints:
 class ResistorSelection:
     chosen: Resistor
     constraints: ResistorConstraints
-    deviation: float              # signed (chosen - target) / target
+    deviation: float  # signed (chosen - target) / target
     alternatives_considered: int
 
 
@@ -1061,7 +1074,8 @@ def select_resistor(
     if best is None:
         raise SelectionError(c, rejection, total)
     return ResistorSelection(
-        chosen=best, constraints=c,
+        chosen=best,
+        constraints=c,
         deviation=(best.resistance - c.target_ohms) / c.target_ohms,
         alternatives_considered=considered,
     )

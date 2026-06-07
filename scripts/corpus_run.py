@@ -28,13 +28,14 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import subprocess
-import os
 import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 REGRESSION_DIR = ROOT / "tests" / "regression" / "decomposer"
@@ -103,15 +104,17 @@ def _extract_module_literal(tree: ast.AST, target_name: str) -> Any:
     return None
 
 
-_NO_TRIM_TOPOLOGIES = frozenset({
-    # MKF semantics: these topologies expect N+1 output rails (1
-    # primary + N secondary) for N turns ratios. The fixture ships
-    # both rails; the generic "trim outputs to len(turns_ratios)"
-    # below would drop the primary and PyMKF would then throw
-    # 'requires at least 2 output voltages (primary + secondary)'.
-    "isolated_buck",
-    "isolated_buck_boost",
-})
+_NO_TRIM_TOPOLOGIES = frozenset(
+    {
+        # MKF semantics: these topologies expect N+1 output rails (1
+        # primary + N secondary) for N turns ratios. The fixture ships
+        # both rails; the generic "trim outputs to len(turns_ratios)"
+        # below would drop the primary and PyMKF would then throw
+        # 'requires at least 2 output voltages (primary + secondary)'.
+        "isolated_buck",
+        "isolated_buck_boost",
+    }
+)
 
 
 def _extract_spec(test_path: Path, topology: str | None = None) -> dict | None:
@@ -223,7 +226,9 @@ def _run_one(topology: str, spec: dict, timeout_s: float = 600.0) -> CorpusRow:
     spec = _enrich_for_realism(spec)
     row = CorpusRow(topology=topology, status="CRASH")
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=f".{topology}.spec.json", delete=False,
+        mode="w",
+        suffix=f".{topology}.spec.json",
+        delete=False,
     ) as f:
         json.dump(spec, f)
         spec_path = f.name
@@ -231,11 +236,18 @@ def _run_one(topology: str, spec: dict, timeout_s: float = 600.0) -> CorpusRow:
     try:
         proc = subprocess.run(
             [
-                sys.executable, "-X", "faulthandler",
-                "-m", "heaviside.cli", "design", topology,
-                "--spec", spec_path,
+                sys.executable,
+                "-X",
+                "faulthandler",
+                "-m",
+                "heaviside.cli",
+                "design",
+                topology,
+                "--spec",
+                spec_path,
                 "--realism",
-                "--out", out_path,
+                "--out",
+                out_path,
             ],
             capture_output=True,
             timeout=timeout_s,
@@ -314,19 +326,27 @@ def main() -> int:
             continue
         test_path = REGRESSION_DIR / f"{stem}.py"
         if not test_path.exists():
-            rows.append(CorpusRow(topology=topology, status="NO_SPEC",
-                                  error=f"{test_path} missing"))
+            rows.append(
+                CorpusRow(topology=topology, status="NO_SPEC", error=f"{test_path} missing")
+            )
             continue
         spec = _extract_spec(test_path, topology=topology)
         if spec is None:
-            rows.append(CorpusRow(topology=topology, status="NO_SPEC",
-                                  error=f"no SPEC dict literal in {test_path.name}"))
+            rows.append(
+                CorpusRow(
+                    topology=topology,
+                    status="NO_SPEC",
+                    error=f"no SPEC dict literal in {test_path.name}",
+                )
+            )
             continue
         print(f"[corpus] running {topology}...", file=sys.stderr, flush=True)
         row = _run_one(topology, spec)
-        line = (f"  {topology:<28} → {row.status:<11} "
-                f"pass={row.passes:>2} fail={row.fails:>2} "
-                f"unavail={row.unavailable:>2} n/a={row.not_applicable:>2}")
+        line = (
+            f"  {topology:<28} → {row.status:<11} "
+            f"pass={row.passes:>2} fail={row.fails:>2} "
+            f"unavail={row.unavailable:>2} n/a={row.not_applicable:>2}"
+        )
         if row.failing_checks:
             line += f"   fail: {','.join(row.failing_checks)}"
         if row.error:

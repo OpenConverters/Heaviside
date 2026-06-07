@@ -43,11 +43,10 @@ from heaviside.librarian import safe_access as _sa
 from heaviside.librarian.fetcher.base import FetcherError
 from heaviside.librarian.tas import add_component
 
-
 __all__ = [
     "STAGING_DIR",
-    "StagingError",
     "StagedRecord",
+    "StagingError",
     "apply_staged",
     "list_staged",
     "stage_fetch",
@@ -55,10 +54,7 @@ __all__ = [
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-STAGING_DIR: Path = Path(
-    os.environ.get("HEAVISIDE_STAGING_DIR")
-    or (_REPO_ROOT / "staging")
-)
+STAGING_DIR: Path = Path(os.environ.get("HEAVISIDE_STAGING_DIR") or (_REPO_ROOT / "staging"))
 
 _KNOWN_SOURCES = {"digikey", "mouser", "datasheet", "manual"}
 
@@ -85,13 +81,10 @@ class StagedRecord:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise StagingError(
-                f"{path}: invalid JSON: {exc.msg} (line {exc.lineno})"
-            ) from exc
+            raise StagingError(f"{path}: invalid JSON: {exc.msg} (line {exc.lineno})") from exc
         if not isinstance(payload, dict):
             raise StagingError(
-                f"{path}: top-level JSON must be an object, got "
-                f"{type(payload).__name__}"
+                f"{path}: top-level JSON must be an object, got {type(payload).__name__}"
             )
         try:
             category = payload["category"]
@@ -105,8 +98,7 @@ class StagedRecord:
             ) from exc
         if not isinstance(component, dict):
             raise StagingError(
-                f"{path}: 'component' must be an object, got "
-                f"{type(component).__name__}"
+                f"{path}: 'component' must be an object, got {type(component).__name__}"
             )
         return cls(
             path=path,
@@ -168,13 +160,9 @@ def stage_fetch(
         The path the staging record was written to.
     """
     if category not in _sa.CATEGORIES:
-        raise StagingError(
-            f"unknown category {category!r}.  Known: {sorted(_sa.CATEGORIES)}"
-        )
+        raise StagingError(f"unknown category {category!r}.  Known: {sorted(_sa.CATEGORIES)}")
     if source not in _KNOWN_SOURCES:
-        raise StagingError(
-            f"unknown source {source!r}.  Known: {sorted(_KNOWN_SOURCES)}"
-        )
+        raise StagingError(f"unknown source {source!r}.  Known: {sorted(_KNOWN_SOURCES)}")
     if not isinstance(mpn, str) or not mpn.strip():
         raise StagingError(f"mpn must be a non-empty string, got {mpn!r}")
     if not isinstance(component, dict) or not component:
@@ -262,9 +250,7 @@ def list_staged(
     """Return every pending staging record (excluding ``applied/`` archives)."""
     root = staging_root if staging_root is not None else STAGING_DIR
     if category is not None and category not in _sa.CATEGORIES:
-        raise StagingError(
-            f"unknown category {category!r}.  Known: {sorted(_sa.CATEGORIES)}"
-        )
+        raise StagingError(f"unknown category {category!r}.  Known: {sorted(_sa.CATEGORIES)}")
     if not root.exists():
         return []
 

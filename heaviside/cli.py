@@ -104,9 +104,15 @@ def _resolve_bridge_mode(bridge_mode: str, topology: str) -> str:
 def design(
     topology: str = typer.Argument(..., help="Canonical topology name (e.g. 'buck', 'dab')."),
     spec: Path = typer.Option(..., "--spec", "-s", help="JSON file with MAS converter spec."),
-    out: Path | None = typer.Option(None, "--out", "-o", help="Write populated TAS to FILE (default: stdout)."),
-    turns: str | None = typer.Option(None, "--turns", help="Comma-separated turns ratios; overrides spec."),
-    lm: float | None = typer.Option(None, "--lm", help="Magnetizing inductance in henries; overrides spec."),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Write populated TAS to FILE (default: stdout)."
+    ),
+    turns: str | None = typer.Option(
+        None, "--turns", help="Comma-separated turns ratios; overrides spec."
+    ),
+    lm: float | None = typer.Option(
+        None, "--lm", help="Magnetizing inductance in henries; overrides spec."
+    ),
     bridge_mode: str = typer.Option(
         "auto",
         "--bridge-mode",
@@ -145,9 +151,9 @@ def design(
     # Lazy imports so that ``heaviside version`` / ``heaviside topologies``
     # do not pay for PyOpenMagnetics' large native module load.
     from heaviside import bridge as _bridge
+    from heaviside.bridge import BridgeError
     from heaviside.decomposer import decompose_from_spec
     from heaviside.decomposer.api import DecomposerError
-    from heaviside.bridge import BridgeError
     from heaviside.spec.validate_topology import (
         SpecValidationError,
         validate_spec_for_topology,
@@ -187,12 +193,15 @@ def design(
     else:
         try:
             components = _bridge.design_converter_components(
-                topology, spec_json, max_results=1, use_ngspice=False,
+                topology,
+                spec_json,
+                max_results=1,
+                use_ngspice=False,
             )
         except BridgeError as exc:
             typer.echo(f"error: bridge design failed: {exc}", err=True)
             raise typer.Exit(code=4) from None
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             typer.echo(
                 f"error: component design failed ({type(exc).__name__}): {exc}",
                 err=True,
@@ -211,10 +220,13 @@ def design(
     # For ACF the main magnetic is the output choke; the deck's Lpri
     # must be the transformer Lm from the original spec.
     lm_for_deck = magnetizing_inductance
-    if (topology == "active_clamp_forward"
-            and components is not None
-            and isinstance(orig_lm, (int, float)) and orig_lm > 0
-            and orig_lm > 5 * magnetizing_inductance):
+    if (
+        topology == "active_clamp_forward"
+        and components is not None
+        and isinstance(orig_lm, (int, float))
+        and orig_lm > 0
+        and orig_lm > 5 * magnetizing_inductance
+    ):
         lm_for_deck = float(orig_lm)
 
     try:
@@ -241,6 +253,7 @@ def design(
                 assemble_bom_from_tas,
             )
             from heaviside.pipeline.stress import StressDerivationError
+
             try:
                 assemble_bom_from_tas(tas, topology=topology, spec=spec_json)
             except SelectionError as exc:
@@ -260,7 +273,7 @@ def design(
         except BridgeError as exc:
             typer.echo(f"error: bridge attach failed: {exc}", err=True)
             raise typer.Exit(code=4) from None
-        except Exception as exc:  # noqa: BLE001 — surface PyOM errors verbatim
+        except Exception as exc:
             typer.echo(
                 f"error: component design failed ({type(exc).__name__}): {exc}",
                 err=True,
@@ -319,14 +332,14 @@ def design(
             vouts = first_op.get("outputVoltages")
             vout_target = (
                 float(vouts[0])
-                if isinstance(vouts, list) and vouts
-                and isinstance(vouts[0], (int, float))
+                if isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))
                 else None
             )
             if vout_target is not None:
                 try:
                     sim_result = simulate_closed_loop(
-                        netlist, vout_target=vout_target,
+                        netlist,
+                        vout_target=vout_target,
                     )
                     is_closed_loop = True
                 except SimError as exc:
@@ -350,6 +363,7 @@ def design(
         # analyst (realism gate keeps no_negative_losses + thermal_limit
         # UNAVAILABLE for those, which is the honest failure mode).
         from heaviside.pipeline.analyst import AnalystError, run_analyst
+
         try:
             run_analyst(topology, tas_for_gate, spec_json)
         except AnalystError as exc:
@@ -371,7 +385,9 @@ def design(
                     err=True,
                 )
             elif c.status.value in ("fail", "unavailable"):
-                typer.echo(f"  [{c.status.value}] {c.name}: {c.detail or ''}".rstrip(": "), err=True)
+                typer.echo(
+                    f"  [{c.status.value}] {c.name}: {c.detail or ''}".rstrip(": "), err=True
+                )
         if report.verdict is not RealismVerdict.PASS:
             raise typer.Exit(code=6)
 
@@ -440,10 +456,14 @@ def validate(
 @app.command()
 def auto_design(
     spec: Path = typer.Argument(..., help="Converter spec JSON file."),
-    n_candidates: int = typer.Option(3, "--candidates", "-n", help="Fast-Pareto candidates per topology."),
+    n_candidates: int = typer.Option(
+        3, "--candidates", "-n", help="Fast-Pareto candidates per topology."
+    ),
     pick_criteria: str = typer.Option("lowest_losses", "--criteria", help="Pareto pick criteria."),
     out: Path | None = typer.Option(None, "--out", help="Write best outcome TAS to this path."),
-    report_path: Path | None = typer.Option(None, "--report", help="Write HTML report for best outcome."),
+    report_path: Path | None = typer.Option(
+        None, "--report", help="Write HTML report for best outcome."
+    ),
 ) -> None:
     """Full auto-design: topology selection → magnetic pick → simulate → realism gate.
 
@@ -458,7 +478,8 @@ def auto_design(
 
     spec_json = _load_spec(spec)
 
-    selector_fn = lambda s: (feasible_topology_names(s), "static screen (no LLM)")
+    def selector_fn(s):
+        return (feasible_topology_names(s), "static screen (no LLM)")
 
     try:
         stage1, stage2, outcomes = full_design(
@@ -478,8 +499,7 @@ def auto_design(
         err=True,
     )
     typer.echo(
-        f"stage2: {len(stage2.picks)} magnetic picks, "
-        f"{len(stage2.failures)} failures",
+        f"stage2: {len(stage2.picks)} magnetic picks, {len(stage2.failures)} failures",
         err=True,
     )
 
@@ -513,6 +533,7 @@ def auto_design(
             typer.echo(f"wrote {out}", err=True)
         if report_path:
             from heaviside.report import render_html
+
             html = render_html(best)
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(html)
@@ -532,10 +553,13 @@ def serve(
     """Start Heaviside as a server (REST API or MCP)."""
     if mcp:
         import asyncio
+
         from heaviside.mcp_server import main as mcp_main
+
         asyncio.run(mcp_main())
     else:
         import uvicorn
+
         uvicorn.run(
             "heaviside.api:app",
             host=host,
@@ -550,13 +574,18 @@ def lessons(
     category: str | None = typer.Option(None, "--category", "-c", help="Filter by category."),
     severity: str | None = typer.Option(None, "--severity", "-s", help="Filter by severity."),
     max_age: int | None = typer.Option(None, "--max-age", help="Max age in days."),
-    suggestions_only: bool = typer.Option(False, "--suggestions", help="Show only lessons with suggestions."),
+    suggestions_only: bool = typer.Option(
+        False, "--suggestions", help="Show only lessons with suggestions."
+    ),
 ) -> None:
     """Query the teacher's lesson store."""
     from heaviside.pipeline.teacher import load_lessons, summarize_lessons
 
     all_lessons = load_lessons(
-        topology=topology, category=category, severity=severity, max_age_days=max_age,
+        topology=topology,
+        category=category,
+        severity=severity,
+        max_age_days=max_age,
     )
     if suggestions_only:
         all_lessons = [l for l in all_lessons if l.suggestion]
@@ -602,6 +631,7 @@ def reverse_engineer(
 
     if out:
         import json as _json
+
         payload = {
             "reference": outcome.reference,
             "passed": outcome.passed,
@@ -636,7 +666,10 @@ def crossref(
         bom_data = bom_data.get("bom", bom_data.get("components", []))
 
     outcome = run_crossref_pipeline(
-        bom_data, manufacturer, circuit_context=context, verbose=verbose,
+        bom_data,
+        manufacturer,
+        circuit_context=context,
+        verbose=verbose,
     )
 
     typer.echo(f"Crossref: {'PASSED' if outcome.passed else 'FAILED'}", err=True)
@@ -656,8 +689,11 @@ def crossref(
 
     for c in outcome.components:
         status_mark = {
-            "exact": "+", "recommended": "~", "partial": "?",
-            "no_substitute": "X", "keep_original": "=",
+            "exact": "+",
+            "recommended": "~",
+            "partial": "?",
+            "no_substitute": "X",
+            "keep_original": "=",
         }.get(c.status.value, "?")
         sub = c.substitute_mpn or "-"
         typer.echo(f"  [{status_mark}] {c.ref_des:8s} {c.original_mpn:20s} → {sub}")
@@ -696,16 +732,21 @@ app.add_typer(librarian_app, name="librarian")
 def search(
     mpn: str = typer.Argument(..., help="Manufacturer part number to look up."),
     category: str = typer.Option(
-        None, "--category", "-c",
+        None,
+        "--category",
+        "-c",
         help="TAS category (mosfets, diodes, capacitors, resistors, magnetics, igbts). "
-             "Auto-detected from distributor data if omitted.",
+        "Auto-detected from distributor data if omitted.",
     ),
     apply: bool = typer.Option(
-        False, "--apply",
+        False,
+        "--apply",
         help="Append to TAS/data/<category>.ndjson after validation.",
     ),
     distributor: str = typer.Option(
-        "digikey", "--distributor", "-d",
+        "digikey",
+        "--distributor",
+        "-d",
         help="Distributor API to query (digikey or mouser).",
     ),
 ) -> None:
@@ -723,7 +764,6 @@ def search(
 
     try:
         if distributor == "digikey":
-            from heaviside.librarian.fetcher.digikey import DigiKeyClient
             from heaviside.librarian.fetcher.convert import (
                 convert_digikey_to_tas_capacitor,
                 convert_digikey_to_tas_diode,
@@ -731,6 +771,8 @@ def search(
                 convert_digikey_to_tas_mosfet,
                 convert_digikey_to_tas_resistor,
             )
+            from heaviside.librarian.fetcher.digikey import DigiKeyClient
+
             with DigiKeyClient() as client:
                 product = client.get_product(mpn)
             converters = {
@@ -741,7 +783,6 @@ def search(
                 "resistors": convert_digikey_to_tas_resistor,
             }
         elif distributor == "mouser":
-            from heaviside.librarian.fetcher.mouser import MouserClient
             from heaviside.librarian.fetcher.convert import (
                 convert_mouser_to_tas_capacitor,
                 convert_mouser_to_tas_diode,
@@ -749,6 +790,8 @@ def search(
                 convert_mouser_to_tas_mosfet,
                 convert_mouser_to_tas_resistor,
             )
+            from heaviside.librarian.fetcher.mouser import MouserClient
+
             with MouserClient() as client:
                 product = client.get_product(mpn)
             converters = {
@@ -767,11 +810,11 @@ def search(
 
     if category is None:
         from heaviside.librarian.fetcher.convert import detect_category
+
         category = detect_category(product, distributor)
         if category is None:
             typer.echo(
-                f"error: could not auto-detect category for {mpn!r}. "
-                "Use --category to specify.",
+                f"error: could not auto-detect category for {mpn!r}. Use --category to specify.",
                 err=True,
             )
             raise typer.Exit(code=1)
@@ -809,10 +852,11 @@ def audit(
     category: str = typer.Argument(
         None,
         help="Category to audit (mosfets, diodes, capacitors, resistors, magnetics, igbts). "
-             "Omit to audit all.",
+        "Omit to audit all.",
     ),
     as_json: bool = typer.Option(
-        False, "--json",
+        False,
+        "--json",
         help="Emit the report as JSON.",
     ),
 ) -> None:
@@ -828,7 +872,6 @@ def audit(
       2 — tooling error
     """
     from heaviside.librarian.auditor import (
-        AUDITABLE_CATEGORIES,
         CategoryAudit,
         audit_all,
         audit_category,
@@ -850,7 +893,7 @@ def audit(
         typer.echo(f"error: audit failed: {exc}", err=True)
         raise typer.Exit(code=2) from None
 
-    for cat, r in results.items():
+    for _cat, r in results.items():
         total_pass += r.passed
         total_count += r.total
         if r.failures:
@@ -879,9 +922,7 @@ def audit(
             pct = round(100 * r.passed / r.total, 1) if r.total else 0
             n_fail = len(r.failures)
             status = "PASS" if n_fail == 0 else "FAIL"
-            typer.echo(
-                f"  {cat:20s} {status:4s}  {r.passed:>6d}/{r.total:<6d}  ({pct}%)"
-            )
+            typer.echo(f"  {cat:20s} {status:4s}  {r.passed:>6d}/{r.total:<6d}  ({pct}%)")
             if r.critical_field_misses:
                 top = sorted(r.critical_field_misses.items(), key=lambda x: -x[1])[:3]
                 fields = ", ".join(f"{f}({n})" for f, n in top)

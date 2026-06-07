@@ -28,9 +28,7 @@ def test_csv_messy_headers_canonicalised():
 
 def test_csv_semicolon_delimiter_sniffed():
     bom = parse_bom_file(b"MPN;Manufacturer;Type\nABC123;TDK;capacitor\n", "x.csv")
-    assert bom == [
-        {"original_mpn": "ABC123", "manufacturer": "TDK", "component_type": "capacitor"}
-    ]
+    assert bom == [{"original_mpn": "ABC123", "manufacturer": "TDK", "component_type": "capacitor"}]
 
 
 def test_csv_tab_delimiter():

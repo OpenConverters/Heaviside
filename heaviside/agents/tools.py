@@ -40,11 +40,23 @@ from heaviside.librarian import (
     AUDITABLE_CATEGORIES,
     CATEGORIES,
     SCHEMA_MAP,
+)
+from heaviside.librarian import (
     add_component as _add_component,
+)
+from heaviside.librarian import (
     audit_all as _audit_all,
+)
+from heaviside.librarian import (
     audit_category as _audit_category,
+)
+from heaviside.librarian import (
     audit_component as _audit_component,
+)
+from heaviside.librarian import (
     component_exists as _component_exists,
+)
+from heaviside.librarian import (
     validate_component as _validate_component,
 )
 
@@ -52,7 +64,6 @@ __all__ = [
     "AGENT_TOOLS",
     "RAW_FUNCTIONS",
     "TOOL_REGISTRY",
-    "resolve_tools",
     "add_component",
     "audit_all",
     "audit_category",
@@ -60,6 +71,7 @@ __all__ = [
     "component_exists",
     "list_categories",
     "read_knowledge",
+    "resolve_tools",
     "validate_component",
 ]
 
@@ -115,9 +127,7 @@ def _validate_component_impl(category: str, component_json: str) -> str:
     try:
         component = json.loads(component_json)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"validate_component: not valid JSON: {exc.msg}"
-        ) from exc
+        raise ValueError(f"validate_component: not valid JSON: {exc.msg}") from exc
     _validate_component(category, component)
     return "valid"
 
@@ -169,9 +179,7 @@ def _audit_component_impl(category: str, component_json: str) -> dict[str, Any]:
     try:
         component = json.loads(component_json)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"audit_component: not valid JSON: {exc.msg}"
-        ) from exc
+        raise ValueError(f"audit_component: not valid JSON: {exc.msg}") from exc
     result = _audit_component(component, category)
     return _serialize_component_audit(result)
 
@@ -200,7 +208,9 @@ def _audit_category_impl(
         ``corrupt_lines``.
     """
     report = _audit_category(
-        category, sample=sample, on_corruption=on_corruption,
+        category,
+        sample=sample,
+        on_corruption=on_corruption,
     )
     return _serialize_category_audit(report)
 
@@ -270,9 +280,7 @@ def _serialize_category_audit(report: Any, *, failure_cap: int = 50) -> dict[str
         "pass_pct": round(pct, 2),
         "critical_field_misses": dict(report.critical_field_misses),
         "required_field_misses": dict(report.required_field_misses),
-        "failures": [
-            _serialize_component_audit(f) for f in report.failures[:failure_cap]
-        ],
+        "failures": [_serialize_component_audit(f) for f in report.failures[:failure_cap]],
         "failures_truncated": max(0, len(report.failures) - failure_cap),
         "corrupt_lines": [_serialize_corrupt_line(c) for c in report.corrupt_lines],
     }
@@ -284,7 +292,9 @@ def _serialize_category_audit(report: Any, *, failure_cap: int = 50) -> dict[str
 
 
 def _get_pareto_magnetics_impl(
-    topology: str, spec_json: str, n_candidates: int = 5,
+    topology: str,
+    spec_json: str,
+    n_candidates: int = 5,
 ) -> str:
     """Return a Pareto front of fast-mode magnetic candidates for a converter spec.
 
@@ -392,7 +402,6 @@ def resolve_tools(tool_names: list[str]) -> list[Any]:
     missing = [n for n in tool_names if n not in TOOL_REGISTRY]
     if missing:
         raise KeyError(
-            f"resolve_tools: unknown tool name(s) {missing!r}.  "
-            f"Registered: {sorted(TOOL_REGISTRY)}"
+            f"resolve_tools: unknown tool name(s) {missing!r}.  Registered: {sorted(TOOL_REGISTRY)}"
         )
     return [TOOL_REGISTRY[n] for n in tool_names]

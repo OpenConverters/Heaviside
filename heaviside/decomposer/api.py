@@ -37,30 +37,34 @@ def _import_pyom() -> Any:
 
     # Prefer the vendor build (has bridge_simulation_mode) over the PyPI
     # wheel. The vendor .so lives at a known path relative to this repo.
-    import importlib, importlib.util, sys
+    import importlib
+    import importlib.util
     from pathlib import Path
 
     vendor_so = (
         Path(__file__).resolve().parents[2]
-        / "vendor" / "PyOpenMagnetics" / "build"
+        / "vendor"
+        / "PyOpenMagnetics"
+        / "build"
         / "cp312-cp312-linux_x86_64"
         / "PyOpenMagnetics.cpython-312-x86_64-linux-gnu.so"
     )
     if vendor_so.exists():
         spec = importlib.util.spec_from_file_location(
-            "PyOpenMagnetics", str(vendor_so),
+            "PyOpenMagnetics",
+            str(vendor_so),
         )
         if spec and spec.loader:
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
             _ext = mod
-            doc = (mod.generate_ngspice_circuit.__doc__ or "")
+            doc = mod.generate_ngspice_circuit.__doc__ or ""
             _HAS_SPICE_CONFIG = "spice_config" in doc
             return _ext
 
     from PyOpenMagnetics import PyOpenMagnetics as _ext
 
-    doc = (_ext.generate_ngspice_circuit.__doc__ or "")
+    doc = _ext.generate_ngspice_circuit.__doc__ or ""
     if "bridge_simulation_mode" not in doc:
         raise DecomposerError(
             "PyOpenMagnetics.generate_ngspice_circuit lacks the "
@@ -101,6 +105,7 @@ def _patch_spice_defaults(netlist: str, cfg: dict[str, Any]) -> str:
     Used when the PyOM binding lacks the spice_config parameter.
     """
     import re
+
     snub_r = cfg.get("snubR", 10_000.0)
     snub_c = cfg.get("snubC", 100e-12)
     diode_is = cfg.get("diodeIS", 1e-12)
@@ -109,24 +114,28 @@ def _patch_spice_defaults(netlist: str, cfg: dict[str, Any]) -> str:
     netlist = re.sub(
         r"^(Rsnub_\w+\s+\S+\s+\S+\s+)[\d.eE+\-]+",
         rf"\g<1>{snub_r:.6f}",
-        netlist, flags=re.MULTILINE,
+        netlist,
+        flags=re.MULTILINE,
     )
     netlist = re.sub(
         r"^(Csnub_\w+\s+\S+\s+\S+\s+)[\d.eE+\-]+",
         rf"\g<1>{snub_c:.6e}",
-        netlist, flags=re.MULTILINE,
+        netlist,
+        flags=re.MULTILINE,
     )
     netlist = re.sub(
         r"(\.model\s+DIDEAL\s+D\(IS=)[\d.eE+\-]+(\s+RS=)[\d.eE+\-]+",
         rf"\g<1>{diode_is:.6e}\g<2>{diode_rs:.6e}",
-        netlist, flags=re.IGNORECASE,
+        netlist,
+        flags=re.IGNORECASE,
     )
     # Add realistic RON and reduced VH to SW models
     sw_ron = cfg.get("switchRON", 0.05)
     netlist = re.sub(
         r"(\.model\s+SW\d+\s+SW\s+)VT=[\d.]+\s+VH=[\d.]+",
         rf"\1VT=2.500000 VH=0.100000 RON={sw_ron:.6f}",
-        netlist, flags=re.IGNORECASE,
+        netlist,
+        flags=re.IGNORECASE,
     )
     return netlist
 
@@ -198,9 +207,7 @@ def generate_netlist(
             f"expected dict for topology {topology!r}"
         )
     if "error" in result:
-        raise DecomposerError(
-            f"PyOpenMagnetics rejected {topology!r}: {result['error']}"
-        )
+        raise DecomposerError(f"PyOpenMagnetics rejected {topology!r}: {result['error']}")
     netlist = result.get("netlist")
     if not isinstance(netlist, str):
         raise DecomposerError(

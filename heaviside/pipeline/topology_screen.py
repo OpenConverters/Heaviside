@@ -20,6 +20,7 @@ isolation requirement, output count).
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from heaviside.topologies.registry import TOPOLOGIES, TopologyEntry
@@ -42,14 +43,14 @@ class TopologyScreenError(ValueError):
 #   "step_either" = Vout can be < or > Vin (cuk, sepic, zeta, 4sbb, flyback,
 #                                            iso-buck-boost, AHB, LLC, etc.)
 _STEP_DIRECTION_BY_FAMILY: dict[str, str] = {
-    "non_isolated": "step_either",        # most non-iso are buck-boost class;
-                                          # buck/boost themselves get overridden below
+    "non_isolated": "step_either",  # most non-iso are buck-boost class;
+    # buck/boost themselves get overridden below
     "isolated_single_switch": "step_either",  # flyback / fwd / iso-buck-boost
-    "isolated_two_switch": "step_either",     # two-switch fwd, AHB
-    "isolated_push_pull": "step_either",      # push-pull / weinberg
-    "isolated_bridge": "step_either",         # PSFB / PSHB / DAB
-    "resonant": "step_either",            # LLC / CLLC / etc.
-    "ac_dc": "step_either",               # Vienna / PFC have AC input
+    "isolated_two_switch": "step_either",  # two-switch fwd, AHB
+    "isolated_push_pull": "step_either",  # push-pull / weinberg
+    "isolated_bridge": "step_either",  # PSFB / PSHB / DAB
+    "resonant": "step_either",  # LLC / CLLC / etc.
+    "ac_dc": "step_either",  # Vienna / PFC have AC input
 }
 
 # Per-topology overrides for step direction (where the family default is wrong).
@@ -60,7 +61,7 @@ _STEP_DIRECTION_OVERRIDES: dict[str, str] = {
     "single_switch_forward": "step_down",
     "two_switch_forward": "step_down",
     "active_clamp_forward": "step_down",
-    "push_pull": "step_down",          # Vout(reflected) < Vin·N for typical n
+    "push_pull": "step_down",  # Vout(reflected) < Vin·N for typical n
     "weinberg": "step_down",
     "phase_shifted_full_bridge": "step_down",
     "phase_shifted_half_bridge": "step_down",
@@ -69,18 +70,22 @@ _STEP_DIRECTION_OVERRIDES: dict[str, str] = {
 
 # AC-input topologies — these need a line-frequency or RMS input, not a
 # DC ``inputVoltage`` envelope. The CLI's normal DC spec doesn't fit them.
-_AC_INPUT_TOPOLOGIES: frozenset[str] = frozenset({
-    "vienna",
-    "power_factor_correction",
-})
+_AC_INPUT_TOPOLOGIES: frozenset[str] = frozenset(
+    {
+        "vienna",
+        "power_factor_correction",
+    }
+)
 
 # Topologies whose spec contract is so specialised that the screen
 # refuses to evaluate them — caller must include them explicitly.
-_REQUIRES_EXPLICIT_OPT_IN: frozenset[str] = frozenset({
-    "common_mode_choke",
-    "differential_mode_choke",
-    "current_transformer",
-})
+_REQUIRES_EXPLICIT_OPT_IN: frozenset[str] = frozenset(
+    {
+        "common_mode_choke",
+        "differential_mode_choke",
+        "current_transformer",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +126,7 @@ def _resolve_vout(spec: Mapping[str, Any]) -> float:
     """Return the first operating point's first output voltage."""
     ops = spec.get("operatingPoints")
     if not isinstance(ops, list) or not ops:
-        raise TopologyScreenError(
-            "spec.operatingPoints: missing or empty"
-        )
+        raise TopologyScreenError("spec.operatingPoints: missing or empty")
     op = ops[0]
     if not isinstance(op, Mapping):
         raise TopologyScreenError(
@@ -131,9 +134,7 @@ def _resolve_vout(spec: Mapping[str, Any]) -> float:
         )
     vouts = op.get("outputVoltages")
     if not isinstance(vouts, list) or not vouts:
-        raise TopologyScreenError(
-            "spec.operatingPoints[0].outputVoltages: missing or empty"
-        )
+        raise TopologyScreenError("spec.operatingPoints[0].outputVoltages: missing or empty")
     vout = vouts[0]
     if isinstance(vout, Mapping):
         for key in ("nominal", "minimum", "maximum"):
@@ -185,7 +186,8 @@ def _is_topology_feasible(
         return False  # AC topology needs AC spec; DC topology needs DC spec
 
     step_dir = _STEP_DIRECTION_OVERRIDES.get(
-        entry.name, _STEP_DIRECTION_BY_FAMILY.get(entry.family, "step_either"),
+        entry.name,
+        _STEP_DIRECTION_BY_FAMILY.get(entry.family, "step_either"),
     )
 
     # Step direction must be compatible across the WHOLE Vin range.
@@ -200,10 +202,7 @@ def _is_topology_feasible(
     # Multi-output: only isolated topologies with declared secondaries
     # can fan out. Buck/boost/cuk/sepic/zeta are single-output (cuk's
     # second inductor is the output inductor, not a second output).
-    if n_outputs > 1 and entry.family == "non_isolated":
-        return False
-
-    return True
+    return not (n_outputs > 1 and entry.family == "non_isolated")
 
 
 # ---------------------------------------------------------------------------
@@ -222,11 +221,13 @@ def feasible_topologies(spec: Mapping[str, Any]) -> list[TopologyEntry]:
     vout = _resolve_vout(spec)
     n_outs = _n_outputs(spec)
     is_ac_input = isinstance(spec.get("lineToLineVoltage"), Mapping) or isinstance(
-        spec.get("lineVoltage"), Mapping,
+        spec.get("lineVoltage"),
+        Mapping,
     )
 
     return [
-        t for t in TOPOLOGIES
+        t
+        for t in TOPOLOGIES
         if _is_topology_feasible(
             t,
             vin_min=vin_min,
@@ -246,9 +247,6 @@ def feasible_topology_names(spec: Mapping[str, Any]) -> list[str]:
 # ---------------------------------------------------------------------------
 # Cross-validation between static + LLM topology screens
 # ---------------------------------------------------------------------------
-
-
-from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,6 +273,7 @@ class TopologyReconciliation:
         Surface in caller logs / agent reports so prompts / static
         rules can be audited.
     """
+
     chosen: tuple[str, ...]
     static_only: tuple[str, ...]
     agent_only: tuple[str, ...]

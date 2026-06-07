@@ -37,8 +37,8 @@ Strict-mode contract
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
 
 from heaviside.librarian.datasheet.base import (
     DatasheetParseError,
@@ -47,11 +47,9 @@ from heaviside.librarian.datasheet.base import (
 )
 from heaviside.librarian.datasheet.patterns import (
     CATEGORY_PATTERNS,
-    PARAM_UNITS,
     REQUIRED_BY_CATEGORY,
 )
 from heaviside.librarian.fetcher.convert import parse_si_value
-
 
 __all__ = [
     "ELECTRICAL_SECTION_HEADERS",
@@ -136,7 +134,7 @@ def extract_tables(pdf_path: Path | str) -> list[Table]:
         The PDF is unreadable, encrypted, or contains zero tables.
     """
     try:
-        import pdfplumber  # noqa: PLC0415 — lazy import
+        import pdfplumber
     except ImportError as exc:
         raise MissingDependencyError("pdfplumber") from exc
 
@@ -158,8 +156,7 @@ def extract_tables(pdf_path: Path | str) -> list[Table]:
 
     if not tables:
         raise DatasheetParseError(
-            f"no tables extracted from {path!r}; "
-            f"PDF may be image-only or encrypted",
+            f"no tables extracted from {path!r}; PDF may be image-only or encrypted",
         )
     return tables
 
@@ -229,8 +226,7 @@ def match_param_name(cell_text: str, category: str) -> str | None:
     patterns = CATEGORY_PATTERNS.get(category)
     if patterns is None:
         raise ValueError(
-            f"unknown category {category!r}; expected one of "
-            f"{sorted(CATEGORY_PATTERNS)}"
+            f"unknown category {category!r}; expected one of {sorted(CATEGORY_PATTERNS)}"
         )
     if not cell_text:
         return None
@@ -278,7 +274,6 @@ def pick_value_from_row(row: Sequence[str | None], param_key: str) -> float:
     cells = list(row)
     if len(cells) < 2:
         raise ValueError("row has fewer than 2 cells; no value column")
-    unit_hint = PARAM_UNITS.get(param_key, "")
     skip_next_symbol = True
     for cell in cells[1:]:
         if cell is None:
@@ -364,12 +359,9 @@ def extract_params(
     """
     if category not in CATEGORY_PATTERNS:
         raise ValueError(
-            f"unknown category {category!r}; expected one of "
-            f"{sorted(CATEGORY_PATTERNS)}"
+            f"unknown category {category!r}; expected one of {sorted(CATEGORY_PATTERNS)}"
         )
-    selected = (
-        filter_electrical_tables(tables) if require_section else list(tables)
-    )
+    selected = filter_electrical_tables(tables) if require_section else list(tables)
     if require_section and not selected:
         raise DatasheetParseError(
             "no Electrical / Static / Dynamic / Switching Characteristics "
@@ -421,7 +413,9 @@ def extract_required_params(
     inspect the returned dict.
     """
     params = extract_params(
-        tables, category=category, require_section=require_section,
+        tables,
+        category=category,
+        require_section=require_section,
     )
     required = REQUIRED_BY_CATEGORY[category]
     missing = required - set(params)
@@ -458,14 +452,11 @@ def _looks_like_merged_section_banner(cell: str) -> bool:
 # to annotate which fields the extractor consumed as "values" — not
 # part of the public extraction API.
 def _row_has_numeric(row: Sequence[str | None]) -> bool:
-    for cell in row[1:]:
-        if cell and _NUMERIC_PREFIX_RE.match(str(cell).strip()):
-            return True
-    return False
+    return any(cell and _NUMERIC_PREFIX_RE.match(str(cell).strip()) for cell in row[1:])
 
 
 _ = _row_has_numeric  # retained for future :mod:`reader` callers
 
 
 # Backwards-compat alias for the type hint
-__annotations__["Table"] = Table  # noqa: F821
+__annotations__["Table"] = Table

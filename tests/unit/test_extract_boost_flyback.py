@@ -12,58 +12,56 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
-
+from tests.unit._real_mas import isat_of, real_magnetic
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
+#
+# These extractors delegate Isat entirely to
+# ``PyOpenMagnetics.calculate_saturation_current`` and RAISE if PyOM
+# rejects the MAS — the analytical ``B_sat·N·A_e/L`` fallback was deleted
+# (magnetics math lives in MKF; see ~/.claude/CLAUDE.md). The old
+# synthetic minimal-MAS shapes that PyOM rejects are replaced here with
+# COMPLETE, PyOM-evaluable magnetics built by :func:`real_magnetic`
+# (real core + material + air gap + winding list). Isat ground truth in
+# the assertions comes from PyOM via :func:`isat_of`, never a formula.
 
 
-def _basic_mas(*, windings: list[dict] | None = None) -> dict:
-    """Minimal MAS shape sufficient for any single-magnetic extractor."""
-    if windings is None:
-        windings = [
-            {"name": "Primary", "numberTurns": 20, "numberParallels": 1,
-             "isolationSide": "primary"},
-        ]
-    return {
-        "core": {
-            "processedDescription": {
-                "effectiveParameters": {
-                    "effectiveArea": 8.0327e-5,
-                    "effectiveLength": 0.0909,
-                    "effectiveVolume": 7.3e-6,
-                },
-            },
-            "functionalDescription": {
-                "material": {
-                    "saturation": [
-                        {"magneticField": 393.0, "magneticFluxDensity": 0.4,
-                         "temperature": 100.0},
-                        {"magneticField": 392.0, "magneticFluxDensity": 0.473,
-                         "temperature": 25.0},
-                    ],
-                },
-            },
-        },
-        "coil": {"functionalDescription": windings},
-    }
+def _boost_inductor_mas() -> dict:
+    """Full, PyOM-evaluable L1 magnetic for the boost stage.
+
+    Single primary winding, N = 20 (preserving the original fixture's
+    turns count), gapped (~1 mm) as an energy-storage inductor must be.
+    """
+    return real_magnetic(
+        shape="ETD 29/16/10",
+        material="3C95",
+        gap_mm=1.0,
+        windings=[{"name": "Primary", "turns": 20, "side": "primary"}],
+    )
 
 
 def _single_magnetic_tas(name: str, mas: dict) -> dict:
-    return {"topology": {
-        "stages": [{
-            "name": "power_stage",
-            "role": "switchingCell",
-            "circuit": {"components": [
-                {"name": "Q1", "data": "placeholder"},
-                {"name": "D1", "data": "placeholder"},
-                {"name": name, "category": "magnetic", "mas": mas},
-                {"name": "C_out", "data": "placeholder"},
-            ]},
-        }],
-        "interStageCircuit": [],
-    }}
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "power_stage",
+                    "role": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "data": "placeholder"},
+                            {"name": "D1", "data": "placeholder"},
+                            {"name": name, "category": "magnetic", "mas": mas},
+                            {"name": "C_out", "data": "placeholder"},
+                        ]
+                    },
+                }
+            ],
+            "interStageCircuit": [],
+        }
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -77,17 +75,19 @@ def _boost_spec() -> dict:
         "desiredInductance": 47e-6,
         "currentRippleRatio": 0.4,
         "efficiency": 0.95,
-        "operatingPoints": [{
-            "outputVoltages": [48.0],
-            "outputCurrents": [2.0],
-            "switchingFrequency": 250_000.0,
-            "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [48.0],
+                "outputCurrents": [2.0],
+                "switchingFrequency": 250_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
     }
 
 
 def _boost_tas() -> dict:
-    return _single_magnetic_tas("L1", _basic_mas())
+    return _single_magnetic_tas("L1", _boost_inductor_mas())
 
 
 class TestBoostMath:
@@ -119,16 +119,17 @@ class TestBoostMath:
         out = enrich_tas_for_realism(_boost_tas(), topology="boost", spec=_boost_spec())
         l1 = out["topology"]["stages"][0]["circuit"]["components"][2]
         # I_L_avg_max = 2.0 · 48 / 18 = 5.333…
-        assert l1["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(
-            2.0 * 48.0 / 18.0, rel=1e-6
-        )
+        assert l1["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(2.0 * 48.0 / 18.0, rel=1e-6)
 
-    def test_isat_closed_form(self):
+    def test_isat_is_pyom_ground_truth(self):
         out = enrich_tas_for_realism(_boost_tas(), topology="boost", spec=_boost_spec())
         l1 = out["topology"]["stages"][0]["circuit"]["components"][2]
-        # Isat = 0.4 · 20 · 8.0327e-5 / 47e-6
-        expected = 0.4 * 20 * 8.0327e-5 / 47e-6
-        assert l1["isat"] == pytest.approx(expected, rel=1e-4)
+        # Ground truth = MKF: the stamped Isat must equal PyOM's saturation
+        # current for the L1 magnetic at the op-point ambient (25 °C),
+        # NOT an analytical B_sat·N·A_e/L formula.
+        expected = isat_of(_boost_inductor_mas(), temperature_c=25.0)
+        assert l1["isat"] == pytest.approx(expected, rel=1e-3)
+        assert "PyOM" in l1["isat_provenance"]["method"]
 
     def test_end_to_end_realism_passes(self):
         enriched = enrich_tas_for_realism(_boost_tas(), topology="boost", spec=_boost_spec())
@@ -137,12 +138,24 @@ class TestBoostMath:
         passed = {c.name for c in r.checks if c.status is CheckStatus.PASS}
         assert {"duty_cycle_bounds", "inductor_isat_margin"}.issubset(passed)
 
-    def test_provenance_recomputes_isat(self):
+    def test_provenance_records_source(self):
+        """Provenance must record the real harvest inputs (primary turns,
+        the achieved effective area, the requested inductance, and a
+        physically plausible conservative B_sat) AND the isat itself must
+        be PyOM's ground truth — NOT an analytical B_sat·N·A_e/L recompute
+        (that formula is forbidden even as a test cross-check)."""
         out = enrich_tas_for_realism(_boost_tas(), topology="boost", spec=_boost_spec())
         l1 = out["topology"]["stages"][0]["circuit"]["components"][2]
         p = l1["isat_provenance"]
-        recomputed = p["b_sat_T"] * p["n_turns"] * p["effective_area_m2"] / p["inductance_H"]
-        assert recomputed == pytest.approx(l1["isat"], rel=1e-4)
+        mas = _boost_inductor_mas()
+        assert p["n_turns"] == 20
+        assert p["inductance_H"] == pytest.approx(47e-6)
+        assert p["effective_area_m2"] == pytest.approx(
+            mas["core"]["processedDescription"]["effectiveParameters"]["effectiveArea"]
+        )
+        assert 0.2 < p["b_sat_T"] < 0.6
+        # isat is PyOM ground truth, not the analytical formula.
+        assert l1["isat"] == pytest.approx(isat_of(mas, temperature_c=25.0), rel=1e-3)
 
 
 class TestBoostFailureModes:
@@ -175,22 +188,33 @@ def _flyback_spec() -> dict:
         "inputVoltage": {"minimum": 85.0, "maximum": 265.0, "nominal": 230.0},
         "desiredMagnetizingInductance": 1e-3,
         "efficiency": 0.85,
-        "operatingPoints": [{
-            "outputVoltages": [12.0],
-            "outputCurrents": [2.0],
-            "switchingFrequency": 100_000.0,
-            "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [12.0],
+                "outputCurrents": [2.0],
+                "switchingFrequency": 100_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
     }
 
 
 def _flyback_mas() -> dict:
-    return _basic_mas(windings=[
-        {"name": "Primary",   "numberTurns": 60, "numberParallels": 1,
-         "isolationSide": "primary"},
-        {"name": "Secondary", "numberTurns": 6,  "numberParallels": 1,
-         "isolationSide": "secondary"},
-    ])
+    """Full, PyOM-evaluable T1 magnetic for the flyback stage.
+
+    Coupled inductor / transformer with primary N=60 + secondary N=6
+    (turns ratio 10, preserving the original fixture), gapped (~1 mm) for
+    flyback energy storage.
+    """
+    return real_magnetic(
+        shape="ETD 29/16/10",
+        material="3C95",
+        gap_mm=1.0,
+        windings=[
+            {"name": "Primary", "turns": 60, "side": "primary"},
+            {"name": "Secondary", "turns": 6, "side": "secondary"},
+        ],
+    )
 
 
 def _flyback_tas() -> dict:
@@ -222,9 +246,15 @@ class TestFlybackMath:
     def test_isat_uses_primary_turns_and_lm(self):
         out = enrich_tas_for_realism(_flyback_tas(), topology="flyback", spec=_flyback_spec())
         t1 = out["topology"]["stages"][0]["circuit"]["components"][2]
-        # Isat = 0.4 · 60 · 8.0327e-5 / 1e-3
-        expected = 0.4 * 60 * 8.0327e-5 / 1e-3
-        assert t1["isat"] == pytest.approx(expected, rel=1e-4)
+        # Ground truth = MKF: the stamped Isat must equal PyOM's saturation
+        # current for the T1 magnetic at the op-point ambient (25 °C), NOT
+        # an analytical formula. The provenance records the PRIMARY turns
+        # (60) and the magnetizing inductance (1 mH) as the harvest source.
+        expected = isat_of(_flyback_mas(), temperature_c=25.0)
+        assert t1["isat"] == pytest.approx(expected, rel=1e-3)
+        assert "PyOM" in t1["isat_provenance"]["method"]
+        assert t1["isat_provenance"]["n_turns"] == 60
+        assert t1["isat_provenance"]["inductance_H"] == pytest.approx(1e-3)
 
     def test_end_to_end_realism_passes(self):
         enriched = enrich_tas_for_realism(_flyback_tas(), topology="flyback", spec=_flyback_spec())
@@ -282,17 +312,23 @@ class TestFlybackFailureModes:
     def test_single_winding_transformer_throws(self):
         tas = _flyback_tas()
         # Strip secondary
-        tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"][
-            "coil"]["functionalDescription"] = [
-                {"name": "Primary", "numberTurns": 60, "numberParallels": 1,
-                 "isolationSide": "primary"},
+        tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"]["coil"][
+            "functionalDescription"
+        ] = [
+            {
+                "name": "Primary",
+                "numberTurns": 60,
+                "numberParallels": 1,
+                "isolationSide": "primary",
+            },
         ]
         with pytest.raises(EnrichmentError, match="primary \\+ secondary"):
             enrich_tas_for_realism(tas, topology="flyback", spec=_flyback_spec())
 
     def test_zero_secondary_turns_throws(self):
         tas = _flyback_tas()
-        tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"][
-            "coil"]["functionalDescription"][1]["numberTurns"] = 0
+        tas["topology"]["stages"][0]["circuit"]["components"][2]["mas"]["coil"][
+            "functionalDescription"
+        ][1]["numberTurns"] = 0
         with pytest.raises(EnrichmentError, match="secondary numberTurns"):
             enrich_tas_for_realism(tas, topology="flyback", spec=_flyback_spec())

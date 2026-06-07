@@ -156,13 +156,17 @@ def _summarise(outcomes: dict[str, list[str]]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--category", required=True, choices=sorted(CATEGORIES))
     src = ap.add_mutually_exclusive_group()
     src.add_argument("--mpns", help="comma-separated MPN list")
     src.add_argument("--mpns-file", help="path to newline-separated MPN list (# comments allowed)")
     ap.add_argument("--dry-run", action="store_true", help="stage only; do not apply to TAS")
-    ap.add_argument("--audit-only", action="store_true", help="report baseline + final audit only; no fetch")
+    ap.add_argument(
+        "--audit-only", action="store_true", help="report baseline + final audit only; no fetch"
+    )
     args = ap.parse_args(argv)
 
     # Baseline audit (always runs).
@@ -182,7 +186,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"librarian_run: credentials missing — {exc}") from exc
 
     outcomes: dict[str, list[str]] = {
-        "applied": [], "staged": [], "skipped_existing": [], "miss": [], "error": [],
+        "applied": [],
+        "staged": [],
+        "skipped_existing": [],
+        "miss": [],
+        "error": [],
     }
 
     started = time.time()
@@ -190,8 +198,10 @@ def main(argv: list[str] | None = None) -> int:
         for mpn in mpns:
             try:
                 outcome, detail = _process_mpn(
-                    mpn, category=args.category,
-                    mouser=mouser, digikey=digikey,
+                    mpn,
+                    category=args.category,
+                    mouser=mouser,
+                    digikey=digikey,
                     dry_run=args.dry_run,
                 )
             except DistributorError as exc:
@@ -212,8 +222,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\n--- Post audit ({args.category}) ---")
     post = audit_category(args.category, on_corruption="report")
     delta = post.pass_rate_pct - baseline.pass_rate_pct
-    print(f"  pass: {post.passed}/{post.total} = {post.pass_rate_pct:.2f}% "
-          f"(Δ {delta:+.2f}pp; {post.total - baseline.total:+d} components)")
+    print(
+        f"  pass: {post.passed}/{post.total} = {post.pass_rate_pct:.2f}% "
+        f"(Δ {delta:+.2f}pp; {post.total - baseline.total:+d} components)"
+    )
 
     # Non-zero exit if anything errored OR the pass rate fell.
     if outcomes["error"] or delta < -0.5:

@@ -10,9 +10,14 @@ For each design:
 
 Usage: python scripts/run_triangle.py <design-name>
 """
+
 from __future__ import annotations
 
-import json, logging, os, sys, time
+import json
+import logging
+import os
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +49,7 @@ def _extract_inductance_henries(comp: dict) -> float | None:
 
 def extract_designer_bom(tas: dict, spec: dict | None = None) -> list[dict[str, Any]]:
     """Build a CR-format BOM from the designer's TAS power stage."""
-    from heaviside.pipeline.realism import _iter_components, _categorise
+    from heaviside.pipeline.realism import _categorise, _iter_components
 
     spec_L = None
     if isinstance(spec, dict):
@@ -68,34 +73,40 @@ def extract_designer_bom(tas: dict, spec: dict | None = None) -> list[dict[str, 
         if cat == "magnetic":
             L = _extract_inductance_henries(comp) or spec_L
             if L:
-                value = f"{L*1e6:.2f}uH"
+                value = f"{L * 1e6:.2f}uH"
         elif cat == "capacitor":
             c = comp.get("capacitance")
             if isinstance(c, (int, float)) and c > 0:
-                value = f"{c*1e6:.2f}uF" if c >= 1e-6 else f"{c*1e9:.1f}nF"
+                value = f"{c * 1e6:.2f}uF" if c >= 1e-6 else f"{c * 1e9:.1f}nF"
             v = comp.get("v_rated")
             if isinstance(v, (int, float)) and v > 0:
                 rated_voltage = f"{v:.0f}V"
-        bom.append({
-            "ref_des": ref,
-            "category": cat,
-            "mpn": mpn,
-            "manufacturer": mfr,
-            "value": value,
-            "rated_voltage": rated_voltage,
-        })
+        bom.append(
+            {
+                "ref_des": ref,
+                "category": cat,
+                "mpn": mpn,
+                "manufacturer": mfr,
+                "value": value,
+                "rated_voltage": rated_voltage,
+            }
+        )
     return bom
 
 
 def run_one(name: str) -> dict[str, Any]:
+    from heaviside.agents.llm_call import get_token_usage, reset_token_usage
     from heaviside.pipeline.cre import CREState
     from heaviside.pipeline.cre_pipeline import (
-        _stage0_extract_pdf, _stage1_competitor, _stage2_reverse_engineer,
-        _stage2_5_verify_mpns, _stage2_65_extract_rdson, _stage2_7_extract_claims,
+        _stage0_extract_pdf,
+        _stage1_competitor,
+        _stage2_5_verify_mpns,
+        _stage2_7_extract_claims,
+        _stage2_65_extract_rdson,
+        _stage2_reverse_engineer,
     )
-    from heaviside.pipeline.full_design import full_design
     from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
-    from heaviside.agents.llm_call import reset_token_usage, get_token_usage
+    from heaviside.pipeline.full_design import full_design
 
     reset_token_usage()
     t0 = time.time()
@@ -120,16 +131,20 @@ def run_one(name: str) -> dict[str, Any]:
 
     # 3. Extract designer BOM
     designer_bom = extract_designer_bom(best.tas, spec_dict)
-    addressable = [c for c in designer_bom if c["category"] in ("magnetic", "capacitor", "resistor")]
+    addressable = [
+        c for c in designer_bom if c["category"] in ("magnetic", "capacitor", "resistor")
+    ]
 
     # 4. Cross-reference the designed BOM to Würth
     cr_outcome = run_crossref_pipeline(
-        designer_bom, "Würth Elektronik",
+        designer_bom,
+        "Würth Elektronik",
         circuit_context=f"Designed {best.pick.topology.name} from {name}",
     )
     n_total = len(cr_outcome.components)
-    n_found = sum(1 for c in cr_outcome.components
-                  if c.status.value in ("recommended", "exact", "partial"))
+    n_found = sum(
+        1 for c in cr_outcome.components if c.status.value in ("recommended", "exact", "partial")
+    )
 
     elapsed = time.time() - t0
     usage = get_token_usage()

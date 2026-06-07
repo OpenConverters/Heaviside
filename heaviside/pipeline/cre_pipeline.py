@@ -21,6 +21,7 @@ Launch:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections.abc import Mapping
@@ -75,9 +76,9 @@ def _stage0_extract_pdf(state: CREState) -> CREState:
         return state
     try:
         from heaviside.pipeline.pdf_extract import extract_pdf_text
+
         state.pdf_text = extract_pdf_text(state.pdf_path)
-        logger.info("CRE stage 0: extracted %d chars from %s",
-                     len(state.pdf_text), state.pdf_path)
+        logger.info("CRE stage 0: extracted %d chars from %s", len(state.pdf_text), state.pdf_path)
     except Exception as exc:
         state.diagnostics.append(f"PDF extraction failed: {exc}")
         logger.warning("CRE stage 0: PDF extraction failed: %s", exc)
@@ -91,6 +92,7 @@ def _stage0_extract_pdf(state: CREState) -> CREState:
 
 def _canonical_topology_names() -> list[str]:
     from heaviside.topologies import TOPOLOGIES
+
     return sorted(t.name for t in TOPOLOGIES)
 
 
@@ -103,6 +105,7 @@ def _resolve_canonical_topology(raw: str) -> str:
        static screen will still attempt a feasibility match).
     """
     from heaviside.pipeline.cre_testbench import _normalize_topology
+
     if not raw:
         return raw
     canonical = set(_canonical_topology_names())
@@ -122,18 +125,18 @@ def _stage1_competitor(state: CREState) -> CREState:
     # PDF context); the result is still validated/normalized below.
     _canon = _canonical_topology_names()
     user_msg += (
-        "For the \"topology\" field, choose the SINGLE closest match from "
+        'For the "topology" field, choose the SINGLE closest match from '
         f"this canonical list (use these exact strings):\n{', '.join(_canon)}\n"
         "Disambiguation rules:\n"
         "- A NON-ISOLATED half-bridge/full-bridge step-DOWN power stage "
         "(two switches + output inductor, no transformer, e.g. a GaN POL or "
-        "sync-buck eval board) is \"buck\".\n"
+        'sync-buck eval board) is "buck".\n'
         "- Only use isolated names (asymmetric_half_bridge, "
         "phase_shifted_full_bridge, llc, flyback, *_forward, push_pull, dual_"
         "active_bridge, etc.) when the design has a TRANSFORMER / galvanic "
         "isolation (set isolation_required=true and give turns_ratio).\n"
-        "- \"synchronous\", \"polyphase\", \"multiphase\", \"interleaved\" buck "
-        "are all \"buck\".\n\n"
+        '- "synchronous", "polyphase", "multiphase", "interleaved" buck '
+        'are all "buck".\n\n'
     )
     if state.pdf_text:
         user_msg += f"REFERENCE DESIGN PDF CONTENT:\n\n{state.pdf_text[:100_000]}"
@@ -147,6 +150,7 @@ def _stage1_competitor(state: CREState) -> CREState:
         return state
 
     specs = data.get("specs", {})
+
     def _f(val: Any, default: float = 0.0) -> float:
         if val is None:
             return default
@@ -167,8 +171,7 @@ def _stage1_competitor(state: CREState) -> CREState:
         raw_topology = specs.get("topology", "unknown")
         resolved_topology = _resolve_canonical_topology(raw_topology)
         if resolved_topology != raw_topology:
-            logger.info("CRE stage 1: topology %r → canonical %r",
-                         raw_topology, resolved_topology)
+            logger.info("CRE stage 1: topology %r → canonical %r", raw_topology, resolved_topology)
         ref = ReferenceSpec(
             topology=resolved_topology,
             vin_min=vin_min,
@@ -201,8 +204,11 @@ def _stage1_competitor(state: CREState) -> CREState:
     except (KeyError, TypeError, ValueError) as exc:
         state.diagnostics.append(f"spec extraction failed: {exc}")
 
-    logger.info("CRE stage 1: extracted spec for %s (%s)",
-                 state.reference, state.ref_spec.topology if state.ref_spec else "?")
+    logger.info(
+        "CRE stage 1: extracted spec for %s (%s)",
+        state.reference,
+        state.ref_spec.topology if state.ref_spec else "?",
+    )
     return state
 
 
@@ -216,7 +222,9 @@ def _stage2_reverse_engineer(state: CREState) -> CREState:
     user_msg = f"Reference design: {state.reference}\n"
     if state.ref_spec:
         user_msg += f"Topology: {state.ref_spec.topology}\n"
-        user_msg += f"Specs: {state.ref_spec.vout}V / {state.ref_spec.iout}A / {state.ref_spec.pout}W\n\n"
+        user_msg += (
+            f"Specs: {state.ref_spec.vout}V / {state.ref_spec.iout}A / {state.ref_spec.pout}W\n\n"
+        )
     if state.pdf_text:
         user_msg += f"REFERENCE DESIGN PDF CONTENT:\n\n{state.pdf_text[:100_000]}"
 
@@ -244,12 +252,15 @@ def _stage2_reverse_engineer(state: CREState) -> CREState:
         else:
             expanded.append(comp)
     if len(expanded) > len(state.ref_bom):
-        logger.info("CRE stage 2: expanded %d groups → %d individual components",
-                     len(state.ref_bom), len(expanded))
+        logger.info(
+            "CRE stage 2: expanded %d groups → %d individual components",
+            len(state.ref_bom),
+            len(expanded),
+        )
         state.ref_bom = expanded
     if not state.ref_spec and "specs" in data:
         specs = data["specs"]
-        try:
+        with contextlib.suppress(KeyError, TypeError, ValueError):
             state.ref_spec = ReferenceSpec(
                 topology=data.get("topology", specs.get("topology", "unknown")),
                 vin_min=float(specs.get("vin_min", 0)),
@@ -263,8 +274,6 @@ def _stage2_reverse_engineer(state: CREState) -> CREState:
                 isolation_required=bool(specs.get("isolation_required", False)),
                 turns_ratio=_float_or_none(specs.get("turns_ratio")),
             )
-        except (KeyError, TypeError, ValueError):
-            pass
 
     logger.info("CRE stage 2: extracted %d BOM components", len(state.ref_bom))
     return state
@@ -284,8 +293,12 @@ def _stage2_5_verify_mpns(state: CREState) -> CREState:
         return state
 
     _CAT_MAP = {
-        "mosfet": "mosfets", "diode": "diodes", "capacitor": "capacitors",
-        "magnetic": "magnetics", "inductor": "magnetics", "resistor": "resistors",
+        "mosfet": "mosfets",
+        "diode": "diodes",
+        "capacitor": "capacitors",
+        "magnetic": "magnetics",
+        "inductor": "magnetics",
+        "resistor": "resistors",
     }
     found = 0
     for comp in state.ref_bom:
@@ -318,13 +331,14 @@ def _fetch_missing_magnetics(state: CREState) -> None:
         from heaviside.librarian.fetcher.auth import load_credentials
         from heaviside.librarian.fetcher.convert import convert_digikey_to_tas_magnetic
         from heaviside.librarian.fetcher.digikey import DigiKeyClient
-        from heaviside.librarian.tas import add_component, component_exists
+        from heaviside.librarian.tas import add_component
     except ImportError as exc:
         logger.debug("librarian not available for magnetic fetch: %s", exc)
         return
 
     missing_magnetics = [
-        comp for comp in state.ref_bom
+        comp
+        for comp in state.ref_bom
         if comp.get("role", "") in ("mainInductor", "boostInductor", "buckInductor")
         and comp.get("mpn")
         and not comp.get("in_tas", False)
@@ -353,9 +367,7 @@ def _fetch_missing_magnetics(state: CREState) -> None:
                 comp["in_tas"] = True
                 logger.info("CRE stage 2.6: fetched and persisted inductor %s to TAS", mpn)
             except Exception as exc:
-                state.diagnostics.append(
-                    f"failed to fetch inductor {mpn} from Digi-Key: {exc}"
-                )
+                state.diagnostics.append(f"failed to fetch inductor {mpn} from Digi-Key: {exc}")
                 logger.warning("CRE stage 2.6: inductor %s fetch failed: %s", mpn, exc)
 
 
@@ -390,22 +402,20 @@ def _stage3_design(state: CREState) -> CREState:
         return static, "CRE: static screen"
 
     try:
-        stage1, stage2, outcomes = full_design(
+        _stage1, _stage2, outcomes = full_design(
             spec_dict,
             n_candidates_per_topology=3,
             parallel=False,
             selector_fn=selector_fn,
         )
         best = next(
-            (o for o in outcomes
-             if o.verdict_dict and o.verdict_dict["verdict"] == "pass"),
+            (o for o in outcomes if o.verdict_dict and o.verdict_dict["verdict"] == "pass"),
             outcomes[0] if outcomes else None,
         )
         state.design_outcome = best
         if best and best.verdict_dict:
             state.passed = best.verdict_dict["verdict"] == "pass"
-        logger.info("CRE stage 3: design %s",
-                     "PASSED" if state.passed else "FAILED/INCOMPLETE")
+        logger.info("CRE stage 3: design %s", "PASSED" if state.passed else "FAILED/INCOMPLETE")
     except FullDesignError as exc:
         state.diagnostics.append(f"design pipeline failed: {exc}")
 
@@ -448,11 +458,9 @@ def _stage4_review(
             verdict = verdict_data.get("verdict", "").upper()
             if verdict in ("APPROVED", "PROCEED"):
                 state.passed = state.passed and True
-                logger.info("CRE stage 4: review %s (attempt %d)",
-                             verdict, attempt + 1)
+                logger.info("CRE stage 4: review %s (attempt %d)", verdict, attempt + 1)
                 break
-            logger.info("CRE stage 4: review %s (attempt %d), retrying",
-                         verdict, attempt + 1)
+            logger.info("CRE stage 4: review %s (attempt %d), retrying", verdict, attempt + 1)
         except LLMCallError as exc:
             state.diagnostics.append(f"review attempt {attempt + 1} failed: {exc}")
             break
@@ -487,6 +495,7 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
     try:
         from heaviside.librarian.fetcher.auth import load_credentials
         from heaviside.librarian.fetcher.digikey import DigiKeyClient
+
         creds = load_credentials(require_digikey=True)
         with DigiKeyClient(creds.digikey) as client:
             # Try exact MPN first, then search with base part number
@@ -496,6 +505,7 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
             except Exception:
                 # Strip package suffix and search (e.g. MP1653FGTF → MP1653F)
                 import re as _re
+
                 base_mpn = _re.sub(r"[A-Z]{2,3}(-[A-Z0-9]+)?$", "", ic_mpn)
                 if base_mpn and base_mpn != ic_mpn:
                     results = client.search(base_mpn, limit=3)
@@ -503,7 +513,9 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
                         ds = p.get("PrimaryDatasheet", "")
                         if ds:
                             datasheet_url = ds
-                            logger.info("CRE stage 2.65: found datasheet via search for %s", base_mpn)
+                            logger.info(
+                                "CRE stage 2.65: found datasheet via search for %s", base_mpn
+                            )
                             break
     except Exception as exc:
         logger.debug("CRE stage 2.65: Digi-Key lookup for %s failed: %s", ic_mpn, exc)
@@ -515,6 +527,7 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
     # Scan eval board PDF text for embedded datasheet URLs
     if state.pdf_text:
         import re as _re2
+
         for pu in _re2.findall(r"https?://[^\s\"<>]+\.pdf", state.pdf_text):
             if pu not in urls_to_try:
                 urls_to_try.append(pu)
@@ -523,21 +536,31 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
     # Mouser CDN: /datasheet/2/{mfr_id}/{mpn}-{doc_id}.pdf
     # Common manufacturer IDs: 277=MPS, 609=ADI/LTC, 196=TI, 345=Infineon
     _MOUSER_MFR_IDS = {
-        "monolithic power": "277", "mps": "277",
-        "analog devices": "609", "linear technology": "609",
-        "texas instruments": "196", "ti": "196",
-        "infineon": "345", "infineon technologies": "345",
-        "onsemi": "308", "on semiconductor": "308",
-        "microchip": "579", "renesas": "814",
-        "stmicroelectronics": "389", "st": "389",
-        "maxim": "700", "maxim integrated": "700",
+        "monolithic power": "277",
+        "mps": "277",
+        "analog devices": "609",
+        "linear technology": "609",
+        "texas instruments": "196",
+        "ti": "196",
+        "infineon": "345",
+        "infineon technologies": "345",
+        "onsemi": "308",
+        "on semiconductor": "308",
+        "microchip": "579",
+        "renesas": "814",
+        "stmicroelectronics": "389",
+        "st": "389",
+        "maxim": "700",
+        "maxim integrated": "700",
     }
     # Get manufacturer name from the Digi-Key search result
     import re as _re2
+
     base_mpn = _re2.sub(r"[A-Z]{2,3}(-[A-Z0-9]+)?$", "", ic_mpn)
     try:
         from heaviside.librarian.fetcher.auth import load_credentials as _lc2
         from heaviside.librarian.fetcher.digikey import DigiKeyClient as _DKC2
+
         _c2 = _lc2(require_digikey=True)
         with _DKC2(_c2.digikey) as _cl2:
             _sr = _cl2.search(base_mpn or ic_mpn, limit=1)
@@ -546,10 +569,7 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
                 search_mpn = _p.get("ManufacturerPartNumber", "")
                 for mfr_key, mfr_id in _MOUSER_MFR_IDS.items():
                     if mfr_key in mfr_name:
-                        mouser_url = (
-                            f"https://www.mouser.com/datasheet/2/{mfr_id}/"
-                            f"{search_mpn}.pdf"
-                        )
+                        mouser_url = f"https://www.mouser.com/datasheet/2/{mfr_id}/{search_mpn}.pdf"
                         urls_to_try.append(mouser_url)
                         break
     except Exception:
@@ -560,30 +580,35 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
             continue
         try:
             import httpx
+
             resp = httpx.get(
-                url, timeout=30.0, follow_redirects=True,
+                url,
+                timeout=30.0,
+                follow_redirects=True,
                 headers={"User-Agent": "Mozilla/5.0"},
             )
             ct = resp.headers.get("content-type", "")
-            if resp.status_code == 200 and (
-                "pdf" in ct or len(resp.content) > 50_000
-            ):
+            if resp.status_code == 200 and ("pdf" in ct or len(resp.content) > 50_000):
                 import tempfile
+
                 from heaviside.pipeline.pdf_extract import extract_pdf_text
+
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
                     f.write(resp.content)
                     tmp_path = f.name
-                from pathlib import Path
                 import os
+                from pathlib import Path
+
                 try:
                     ic_datasheet_text = extract_pdf_text(Path(tmp_path))
                 finally:
                     os.unlink(tmp_path)
                 if ic_datasheet_text:
                     logger.info(
-                        "CRE stage 2.65: downloaded IC datasheet for %s "
-                        "(%d chars) from %s",
-                        ic_mpn, len(ic_datasheet_text), url[:60],
+                        "CRE stage 2.65: downloaded IC datasheet for %s (%d chars) from %s",
+                        ic_mpn,
+                        len(ic_datasheet_text),
+                        url[:60],
                     )
                     break
         except Exception as exc:
@@ -592,24 +617,31 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
     # Last resort: web search for a direct PDF link
     if not ic_datasheet_text:
         import re as _re3
+
         base_search = _re3.sub(r"[A-Z]{2,3}(-[A-Z0-9]+)?$", "", ic_mpn) or ic_mpn
         try:
-            import httpx as _httpx2
             import urllib.parse as _up
+
+            import httpx as _httpx2
+
             ddg_resp = _httpx2.get(
                 "https://html.duckduckgo.com/html/",
                 params={"q": f"{base_search} datasheet pdf"},
                 headers={"User-Agent": "Mozilla/5.0"},
-                timeout=15, follow_redirects=True,
+                timeout=15,
+                follow_redirects=True,
             )
             if ddg_resp.status_code == 200:
                 import re as _re4
+
                 for uddg in _re4.findall(r"uddg=([^&\"]+)", ddg_resp.text):
                     decoded = _up.unquote(uddg)
                     if decoded.endswith(".pdf") and decoded not in urls_to_try:
                         urls_to_try.append(decoded)
-                logger.info("CRE stage 2.65: web search found %d PDF URLs",
-                             sum(1 for u in urls_to_try if u.endswith(".pdf")))
+                logger.info(
+                    "CRE stage 2.65: web search found %d PDF URLs",
+                    sum(1 for u in urls_to_try if u.endswith(".pdf")),
+                )
         except Exception as exc:
             logger.debug("CRE stage 2.65: web search failed: %s", exc)
 
@@ -619,21 +651,25 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
                 continue
             try:
                 import httpx
+
                 resp = httpx.get(
-                    url, timeout=30.0, follow_redirects=True,
+                    url,
+                    timeout=30.0,
+                    follow_redirects=True,
                     headers={"User-Agent": "Mozilla/5.0"},
                 )
                 ct = resp.headers.get("content-type", "")
-                if resp.status_code == 200 and (
-                    "pdf" in ct or len(resp.content) > 50_000
-                ):
+                if resp.status_code == 200 and ("pdf" in ct or len(resp.content) > 50_000):
                     import tempfile
+
                     from heaviside.pipeline.pdf_extract import extract_pdf_text
+
                     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
                         f.write(resp.content)
                         tmp_path = f.name
-                    from pathlib import Path
                     import os
+                    from pathlib import Path
+
                     try:
                         ic_datasheet_text = extract_pdf_text(Path(tmp_path))
                     finally:
@@ -641,7 +677,9 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
                     if ic_datasheet_text:
                         logger.info(
                             "CRE stage 2.65: downloaded IC datasheet via web search "
-                            "(%d chars) from %s", len(ic_datasheet_text), url[:60],
+                            "(%d chars) from %s",
+                            len(ic_datasheet_text),
+                            url[:60],
                         )
             except Exception:
                 pass
@@ -662,8 +700,8 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
             f"Extract ONLY the internal MOSFET Rds(on) specifications from this "
             f"IC datasheet for {ic_mpn}. Look in the Electrical Characteristics "
             f"table for RDS(ON) high-side and low-side values.\n\n"
-            f"Reply with JSON: {{\"specs\": {{\"rdson_hs_mohm\": <value>, "
-            f"\"rdson_ls_mohm\": <value>}}}}\n\n"
+            f'Reply with JSON: {{"specs": {{"rdson_hs_mohm": <value>, '
+            f'"rdson_ls_mohm": <value>}}}}\n\n'
             f"IC DATASHEET TEXT:\n\n{ic_datasheet_text[:80_000]}",
             max_tokens=2048,
             max_retries=1,
@@ -679,17 +717,27 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
     if rdson_hs:
         old = state.ref_spec
         state.ref_spec = ReferenceSpec(
-            topology=old.topology, vin_min=old.vin_min, vin_nom=old.vin_nom,
-            vin_max=old.vin_max, vout=old.vout, iout=old.iout, pout=old.pout,
-            fsw=old.fsw, efficiency_target=old.efficiency_target,
+            topology=old.topology,
+            vin_min=old.vin_min,
+            vin_nom=old.vin_nom,
+            vin_max=old.vin_max,
+            vout=old.vout,
+            iout=old.iout,
+            pout=old.pout,
+            fsw=old.fsw,
+            efficiency_target=old.efficiency_target,
             isolation_required=old.isolation_required,
             turns_ratio=old.turns_ratio,
-            rdson_hs=rdson_hs, rdson_ls=rdson_ls or rdson_hs,
+            rdson_hs=rdson_hs,
+            rdson_ls=rdson_ls or rdson_hs,
             extra=old.extra,
         )
-        logger.info("CRE stage 2.65: extracted Rds_on from %s datasheet: "
-                     "HS=%.1fmΩ LS=%.1fmΩ",
-                     ic_mpn, rdson_hs, rdson_ls or rdson_hs)
+        logger.info(
+            "CRE stage 2.65: extracted Rds_on from %s datasheet: HS=%.1fmΩ LS=%.1fmΩ",
+            ic_mpn,
+            rdson_hs,
+            rdson_ls or rdson_hs,
+        )
 
     return state
 
@@ -759,25 +807,39 @@ def _stage2_7_extract_claims(state: CREState) -> CREState:
     if rdson_hs and state.ref_spec and not state.ref_spec.rdson_hs:
         old = state.ref_spec
         state.ref_spec = ReferenceSpec(
-            topology=old.topology, vin_min=old.vin_min, vin_nom=old.vin_nom,
-            vin_max=old.vin_max, vout=old.vout, iout=old.iout, pout=old.pout,
-            fsw=old.fsw, efficiency_target=old.efficiency_target,
+            topology=old.topology,
+            vin_min=old.vin_min,
+            vin_nom=old.vin_nom,
+            vin_max=old.vin_max,
+            vout=old.vout,
+            iout=old.iout,
+            pout=old.pout,
+            fsw=old.fsw,
+            efficiency_target=old.efficiency_target,
             isolation_required=old.isolation_required,
             turns_ratio=old.turns_ratio,
-            rdson_hs=rdson_hs, rdson_ls=rdson_ls or rdson_hs,
+            rdson_hs=rdson_hs,
+            rdson_ls=rdson_ls or rdson_hs,
             extra=old.extra,
         )
-        logger.info("CRE stage 2.7: extracted Rds_on from PDF: HS=%.1fmΩ LS=%.1fmΩ",
-                     rdson_hs, rdson_ls or rdson_hs)
+        logger.info(
+            "CRE stage 2.7: extracted Rds_on from PDF: HS=%.1fmΩ LS=%.1fmΩ",
+            rdson_hs,
+            rdson_ls or rdson_hs,
+        )
 
-    logger.info("CRE stage 2.7: extracted %d efficiency points, ripple=%s mV",
-                 len(eff_dict), state.ref_claims.vout_ripple_mv)
+    logger.info(
+        "CRE stage 2.7: extracted %d efficiency points, ripple=%s mV",
+        len(eff_dict),
+        state.ref_claims.vout_ripple_mv,
+    )
     return state
 
 
 def _stage2_8_testbench(state: CREState) -> CREState:
     """Run the virtual test bench: rebuild and simulate the reference converter."""
     from heaviside.pipeline.cre_testbench import run_testbench
+
     return run_testbench(state)
 
 
@@ -808,9 +870,7 @@ def run_cre_pipeline(
     state = _stage4_review(state)
 
     outcome = CREOutcome.from_state(state)
-    logger.info("CRE pipeline %s: %s",
-                 "PASSED" if outcome.passed else "FAILED",
-                 reference)
+    logger.info("CRE pipeline %s: %s", "PASSED" if outcome.passed else "FAILED", reference)
     return outcome
 
 

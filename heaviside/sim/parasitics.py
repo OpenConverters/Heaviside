@@ -17,7 +17,6 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # SW model: inject RON from selected MOSFET Rds_on
 # ---------------------------------------------------------------------------
@@ -37,6 +36,7 @@ _RON_PARAM_RE = re.compile(r"\bRON\s*=\s*[\d.eE+-]+", re.IGNORECASE)
 
 def _inject_mosfet_ron(deck: str, rds_on: float) -> str:
     """Add or replace RON=<rds_on> on every SW model line."""
+
     def _replace(m: re.Match[str]) -> str:
         prefix = m.group(1)
         rest = m.group(2)
@@ -45,6 +45,7 @@ def _inject_mosfet_ron(deck: str, rds_on: float) -> str:
         else:
             rest = rest.rstrip() + f" RON={rds_on:.6e}"
         return prefix + rest
+
     return _SW_MODEL_RE.sub(_replace, deck)
 
 
@@ -82,6 +83,7 @@ def _inject_diode_rs(deck: str, vf: float, if_avg: float) -> str:
         else:
             params = params.rstrip() + f" RS={rs:.6e}"
         return prefix + params + ")"
+
     return _DIDEAL_MODEL_RE.sub(_replace, deck)
 
 
@@ -185,8 +187,7 @@ def inject_parasitics(
             elif cat == "diode" and vf is None:
                 v = comp.get("vf_typ")
                 i = comp.get("if_avg_stress")
-                if (isinstance(v, (int, float)) and v > 0
-                        and isinstance(i, (int, float)) and i > 0):
+                if isinstance(v, (int, float)) and v > 0 and isinstance(i, (int, float)) and i > 0:
                     vf = float(v)
                     if_avg = float(i)
             elif cat == "capacitor" and esr is None:

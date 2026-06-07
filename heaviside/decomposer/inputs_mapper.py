@@ -56,8 +56,7 @@ def _infer_input_type(spec: Mapping[str, Any]) -> str:
     if isinstance(explicit, str):
         if explicit not in ("dc", "acSinglePhase", "acThreePhase"):
             raise InputsMappingError(
-                f"spec.inputType must be 'dc' | 'acSinglePhase' | "
-                f"'acThreePhase', got {explicit!r}"
+                f"spec.inputType must be 'dc' | 'acSinglePhase' | 'acThreePhase', got {explicit!r}"
             )
         return explicit
     return "acSinglePhase" if any(k in spec for k in _AC_SIGNAL_KEYS) else "dc"
@@ -118,22 +117,17 @@ def _build_output_requirements(
     explicit names.
     """
     if not output_voltages:
-        raise InputsMappingError(
-            "operating points must list at least one output voltage"
-        )
+        raise InputsMappingError("operating points must list at least one output voltage")
     if names is not None and len(names) != len(output_voltages):
         raise InputsMappingError(
-            f"output name count ({len(names)}) does not match output count "
-            f"({len(output_voltages)})"
+            f"output name count ({len(names)}) does not match output count ({len(output_voltages)})"
         )
     out: list[dict[str, Any]] = []
     for i, v in enumerate(output_voltages):
         try:
             v_f = float(v)
         except (TypeError, ValueError) as e:
-            raise InputsMappingError(
-                f"output voltage at index {i} is not numeric: {v!r}"
-            ) from e
+            raise InputsMappingError(f"output voltage at index {i} is not numeric: {v!r}") from e
         out.append(
             {
                 "name": names[i] if names is not None else f"out{i}",
@@ -152,9 +146,7 @@ def _build_operating_point(
     output_names: Sequence[str],
 ) -> dict[str, Any]:
     if "ambientTemperature" not in op:
-        raise InputsMappingError(
-            f"operatingPoints[{op_index}] missing ambientTemperature"
-        )
+        raise InputsMappingError(f"operatingPoints[{op_index}] missing ambientTemperature")
     voltages = op.get("outputVoltages")
     currents = op.get("outputCurrents")
     if not isinstance(voltages, list) or not voltages:
@@ -173,7 +165,7 @@ def _build_operating_point(
         )
 
     op_outputs: list[dict[str, Any]] = []
-    for i, (v, current) in enumerate(zip(voltages, currents)):
+    for i, (v, current) in enumerate(zip(voltages, currents, strict=False)):
         try:
             v_f = float(v)
             i_f = float(current)
@@ -184,8 +176,7 @@ def _build_operating_point(
             ) from e
         if i_f <= 0:
             raise InputsMappingError(
-                f"operatingPoints[{op_index}].outputCurrents[{i}] must be > 0 "
-                f"(got {i_f})"
+                f"operatingPoints[{op_index}].outputCurrents[{i}] must be > 0 (got {i_f})"
             )
         op_outputs.append(
             {
@@ -232,9 +223,7 @@ def build_tas_inputs(
         On any missing or malformed required field.
     """
     if not isinstance(spec, Mapping):
-        raise InputsMappingError(
-            f"spec must be a mapping, got {type(spec).__name__}"
-        )
+        raise InputsMappingError(f"spec must be a mapping, got {type(spec).__name__}")
 
     if "efficiency" not in spec:
         raise InputsMappingError("spec.efficiency is required by TAS schema")
@@ -245,9 +234,7 @@ def build_tas_inputs(
             f"spec.efficiency must be numeric, got {spec['efficiency']!r}"
         ) from e
     if not (0.0 < efficiency <= 1.0):
-        raise InputsMappingError(
-            f"spec.efficiency must be in (0, 1], got {efficiency}"
-        )
+        raise InputsMappingError(f"spec.efficiency must be in (0, 1], got {efficiency}")
 
     if "inputVoltage" not in spec:
         raise InputsMappingError("spec.inputVoltage is required by TAS schema")
@@ -285,24 +272,22 @@ def build_tas_inputs(
     if input_type != "dc":
         line_freq = spec.get("lineFrequency")
         if line_freq is None:
-            raise InputsMappingError(
-                f"inputType={input_type!r} requires spec.lineFrequency"
-            )
+            raise InputsMappingError(f"inputType={input_type!r} requires spec.lineFrequency")
         design_requirements["lineFrequency"] = (
-            line_freq
-            if isinstance(line_freq, Mapping)
-            else {"nominal": float(line_freq)}
+            line_freq if isinstance(line_freq, Mapping) else {"nominal": float(line_freq)}
         )
 
     # Pass-through optional spec fields that map 1:1 onto designRequirements.
-    for key in ("powerFactorMinimum", "holdUpTimeMinimum", "isolationVoltage",
-                "bidirectional"):
+    for key in ("powerFactorMinimum", "holdUpTimeMinimum", "isolationVoltage", "bidirectional"):
         if key in spec:
             design_requirements[key] = spec[key]
 
     operating_points = [
         _build_operating_point(
-            op, op_index=i, spec_iv=input_voltage, output_names=output_name_list,
+            op,
+            op_index=i,
+            spec_iv=input_voltage,
+            output_names=output_name_list,
         )
         for i, op in enumerate(raw_ops)
     ]

@@ -29,7 +29,7 @@ for MPN lookups instead of ``proteus.catalogue.index``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from heaviside.pipeline.value_parse import parse_si_value
 
@@ -38,12 +38,20 @@ from heaviside.pipeline.value_parse import parse_si_value
 # ---------------------------------------------------------------------------
 
 _SMD_SIZES = [
-    "0201", "0402", "0603", "0805", "1206", "1210",
-    "1812", "2010", "2512", "2920",
+    "0201",
+    "0402",
+    "0603",
+    "0805",
+    "1206",
+    "1210",
+    "1812",
+    "2010",
+    "2512",
+    "2920",
 ]
 
 
-def _smd_idx(pkg: str) -> Optional[int]:
+def _smd_idx(pkg: str) -> int | None:
     """Return the position of *pkg* in the standard EIA SMD ordering."""
     if not pkg:
         return None
@@ -77,7 +85,7 @@ def _classify_footprint(src_pkg: str, sub_pkg: str) -> str:
     return "two_or_more_down"
 
 
-def _value_delta_pct(orig: Optional[float], sub: Optional[float]) -> Optional[float]:
+def _value_delta_pct(orig: float | None, sub: float | None) -> float | None:
     """Signed percentage delta between original and substitute values."""
     if orig is None or sub is None or orig == 0:
         return None
@@ -92,7 +100,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TAS_DATA_DEFAULT = _REPO_ROOT / "TAS" / "data"
 
 
-def _lookup_mpn(mpn: str, tas_data_dir: Path | None = None) -> Optional[dict[str, Any]]:
+def _lookup_mpn(mpn: str, tas_data_dir: Path | None = None) -> dict[str, Any] | None:
     """Find the raw TAS envelope for *mpn* across all category NDJSON files.
 
     Returns the first matching envelope dict, or ``None``.  This is a
@@ -111,8 +119,7 @@ def _lookup_mpn(mpn: str, tas_data_dir: Path | None = None) -> Optional[dict[str
         try:
             for _lineno, env in iter_envelopes(ndjson_file):
                 # Walk common TAS envelope shapes to find the MPN.
-                for top_key in ("capacitor", "semiconductor", "resistor",
-                                "magnetics", "magnetic"):
+                for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
                     sub = env.get(top_key)
                     if not isinstance(sub, dict):
                         continue
@@ -131,8 +138,7 @@ def _lookup_mpn(mpn: str, tas_data_dir: Path | None = None) -> Optional[dict[str
 
 def _extract_electrical(env: dict[str, Any]) -> dict[str, Any]:
     """Drill into a TAS envelope and return the ``electrical`` sub-dict."""
-    for top_key in ("capacitor", "semiconductor", "resistor",
-                    "magnetics", "magnetic"):
+    for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
         sub = env.get(top_key)
         if not isinstance(sub, dict):
             continue
@@ -149,8 +155,7 @@ def _extract_electrical(env: dict[str, Any]) -> dict[str, Any]:
 
 def _extract_part(env: dict[str, Any]) -> dict[str, Any]:
     """Drill into a TAS envelope and return the ``part`` sub-dict."""
-    for top_key in ("capacitor", "semiconductor", "resistor",
-                    "magnetics", "magnetic"):
+    for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
         sub = env.get(top_key)
         if not isinstance(sub, dict):
             continue
@@ -165,7 +170,7 @@ def _extract_part(env: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _coerce_float(v: Any) -> Optional[float]:
+def _coerce_float(v: Any) -> float | None:
     if v is None:
         return None
     if isinstance(v, (int, float)):
@@ -180,10 +185,11 @@ def _coerce_float(v: Any) -> Optional[float]:
 # Score computation
 # ---------------------------------------------------------------------------
 
+
 def compute_match_score(
     comp: dict,
     src_row: dict,
-    sub_envelope: Optional[dict[str, Any]],
+    sub_envelope: dict[str, Any] | None,
     stress: Any | None = None,
 ) -> dict:
     """Build a structured match_score for one crossref row.
@@ -218,7 +224,7 @@ def compute_match_score(
 
     # --- Primary value comparison ---
     ctype = (comp.get("type") or src_row.get("type") or "").lower()
-    sub_val: Optional[float] = None
+    sub_val: float | None = None
     if "cap" in ctype:
         v = elec.get("capacitance")
         sub_val = (v.get("nominal") if isinstance(v, dict) else v) if v is not None else None
@@ -237,9 +243,7 @@ def compute_match_score(
     score["value_pct_delta"] = _value_delta_pct(src_val, sub_val)
 
     # --- Voltage comparison ---
-    sub_volt = _coerce_float(
-        elec.get("ratedVoltage") or elec.get("vdsMax") or elec.get("vrrm")
-    )
+    sub_volt = _coerce_float(elec.get("ratedVoltage") or elec.get("vdsMax") or elec.get("vrrm"))
     if src_volt is not None and sub_volt is not None and src_volt > 0:
         if abs(sub_volt - src_volt) / src_volt < 0.02:
             score["voltage"] = "match"
@@ -274,9 +278,14 @@ def compute_match_score(
     overall *= voltage_w.get(score["voltage"], 0.85)
 
     fp_w = {
-        "identical": 1.0, "one_size_up": 0.95, "one_size_down": 0.95,
-        "two_or_more_up": 0.7, "two_or_more_down": 0.7,
-        "different_class": 0.5, "different_mount": 0.2, "unknown": 0.85,
+        "identical": 1.0,
+        "one_size_up": 0.95,
+        "one_size_down": 0.95,
+        "two_or_more_up": 0.7,
+        "two_or_more_down": 0.7,
+        "different_class": 0.5,
+        "different_mount": 0.2,
+        "unknown": 0.85,
     }
     overall *= fp_w.get(score["footprint"], 0.85)
 
@@ -310,10 +319,7 @@ def annotate_match_scores(
     tas_data_dir: Path | None = None,
 ) -> None:
     """Mutate *crossref_components* in place: add ``match_score`` to each row."""
-    src_by_first = {
-        str(s.get("ref_des", "")).split(",")[0].strip(): s
-        for s in (source_bom or [])
-    }
+    src_by_first = {str(s.get("ref_des", "")).split(",")[0].strip(): s for s in (source_bom or [])}
     for c in crossref_components:
         ref = str(c.get("ref_des", "")).split(",")[0].strip()
         src = src_by_first.get(ref) or {}

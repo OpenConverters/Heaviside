@@ -34,7 +34,6 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 
-
 CORPUS_PATH = Path(__file__).resolve().parents[3] / "TAS" / "data" / "converters.ndjson"
 GOLDEN_PATH = Path(__file__).resolve().parent / "golden_baseline.json"
 
@@ -133,15 +132,16 @@ def _spec_from_entry(entry: dict) -> dict | None:
         if vout is not None:
             op = ops[0] if ops else {}
             op_outs = op.get("outputs", []) if isinstance(op, dict) else []
-            power = (op_outs[0].get("power") if op_outs and isinstance(op_outs[0], dict)
-                     else None)
+            power = op_outs[0].get("power") if op_outs and isinstance(op_outs[0], dict) else None
             iout = (power / vout) if isinstance(power, (int, float)) and vout > 0 else 1.0
             fsw_nom = (dr.get("switchingFrequency") or {}).get("nominal", 100_000.0)
-            spec["operatingPoints"] = [{
-                "outputVoltages": [vout],
-                "outputCurrents": [iout],
-                "switchingFrequency": fsw_nom,
-            }]
+            spec["operatingPoints"] = [
+                {
+                    "outputVoltages": [vout],
+                    "outputCurrents": [iout],
+                    "switchingFrequency": fsw_nom,
+                }
+            ]
     return spec
 
 

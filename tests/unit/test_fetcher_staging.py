@@ -32,7 +32,6 @@ from heaviside.librarian.fetcher.staging import (
     stage_fetch,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -72,7 +71,9 @@ def _valid_mosfet(mpn: str = "TEST-MOSFET-001") -> dict[str, Any]:
                             "onResistance": 0.025,
                             "continuousDrainCurrent": 30,
                             "gateThresholdVoltage": {
-                                "minimum": 2.0, "nominal": 3.0, "maximum": 4.0,
+                                "minimum": 2.0,
+                                "nominal": 3.0,
+                                "maximum": 4.0,
                             },
                             "outputCapacitance": 250e-12,
                             "totalGateCharge": 80e-9,
@@ -113,7 +114,11 @@ def test_stage_fetch_writes_expected_envelope(tmp_path: Path) -> None:
 def test_stage_fetch_persists_raw_response_when_supplied() -> None:
     raw = {"DigiKeyPartNumber": "abc", "Manufacturer": {"Value": "X"}}
     target = stage_fetch(
-        "mosfets", "MPN-A", _valid_mosfet("MPN-A"), source="digikey", raw_response=raw,
+        "mosfets",
+        "MPN-A",
+        _valid_mosfet("MPN-A"),
+        source="digikey",
+        raw_response=raw,
     )
     payload = json.loads(target.read_text(encoding="utf-8"))
     assert payload["raw_response"] == raw
@@ -121,7 +126,10 @@ def test_stage_fetch_persists_raw_response_when_supplied() -> None:
 
 def test_stage_fetch_sanitises_awkward_mpn() -> None:
     target = stage_fetch(
-        "mosfets", "IRF/B007+ABC", _valid_mosfet("IRF/B007+ABC"), source="mouser",
+        "mosfets",
+        "IRF/B007+ABC",
+        _valid_mosfet("IRF/B007+ABC"),
+        source="mouser",
     )
     # Slashes and plus signs are unsafe; underscore-replaced.
     assert target.name == "mouser-IRF_B007_ABC.json"
@@ -232,7 +240,10 @@ def test_staged_record_component_wrong_type_raises(tmp_path: Path) -> None:
 
 def test_apply_staged_writes_to_tas_and_archives() -> None:
     target = stage_fetch(
-        "mosfets", "TEST-MOSFET-001", _valid_mosfet(), source="digikey",
+        "mosfets",
+        "TEST-MOSFET-001",
+        _valid_mosfet(),
+        source="digikey",
     )
     result = apply_staged(target)
 
@@ -255,7 +266,10 @@ def test_apply_staged_writes_to_tas_and_archives() -> None:
 
 def test_apply_staged_archive_false_leaves_file_in_place() -> None:
     target = stage_fetch(
-        "mosfets", "MPN-Z", _valid_mosfet("MPN-Z"), source="digikey",
+        "mosfets",
+        "MPN-Z",
+        _valid_mosfet("MPN-Z"),
+        source="digikey",
     )
     result = apply_staged(target, archive=False)
     assert target.exists()

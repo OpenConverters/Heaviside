@@ -33,7 +33,6 @@ from heaviside.librarian.fetcher.base import (
     RateLimitError,
 )
 
-
 __all__ = [
     "MOUSER_API_BASE",
     "MouserClient",
@@ -84,9 +83,7 @@ class MouserClient:
     ) -> dict[str, Any]:
         """Keyword search; returns the raw JSON envelope."""
         if not keywords or not isinstance(keywords, str):
-            raise ValueError(
-                f"search requires a non-empty keyword string, got {keywords!r}"
-            )
+            raise ValueError(f"search requires a non-empty keyword string, got {keywords!r}")
         body = {
             "SearchByKeywordRequest": {
                 "keyword": keywords,
@@ -120,8 +117,7 @@ class MouserClient:
         results = payload.get("SearchResults") or {}
         if not isinstance(results, dict):
             raise MalformedResponseError(
-                f"Mouser search returned non-object 'SearchResults': "
-                f"{type(results).__name__}"
+                f"Mouser search returned non-object 'SearchResults': {type(results).__name__}"
             )
         parts = results.get("Parts") or []
         if not isinstance(parts, list):
@@ -146,9 +142,7 @@ class MouserClient:
             raise RateLimitError(
                 "mouser",
                 response.text,
-                retry_after_seconds=_parse_retry_after(
-                    response.headers.get("Retry-After")
-                ),
+                retry_after_seconds=_parse_retry_after(response.headers.get("Retry-After")),
             )
         # Mouser sends rate-limit errors as HTTP 403 with a
         # "TooManyRequests" code in the body (Code: MaxCallPerMinute /
@@ -159,9 +153,7 @@ class MouserClient:
             raise RateLimitError(
                 "mouser",
                 response.text,
-                retry_after_seconds=_parse_retry_after(
-                    response.headers.get("Retry-After")
-                ),
+                retry_after_seconds=_parse_retry_after(response.headers.get("Retry-After")),
             )
         if response.status_code >= 400:
             raise DistributorError("mouser", response.status_code, response.text)
@@ -174,8 +166,7 @@ class MouserClient:
             ) from exc
         if not isinstance(payload, dict):
             raise MalformedResponseError(
-                f"Mouser {context} returned non-object JSON: "
-                f"{type(payload).__name__}"
+                f"Mouser {context} returned non-object JSON: {type(payload).__name__}"
             )
         # Mouser surfaces application errors in a 200 body — promote them.
         errors = payload.get("Errors")
@@ -184,9 +175,7 @@ class MouserClient:
                 "mouser",
                 response.status_code,
                 response.text,
-                message=(
-                    f"Mouser {context} returned application errors: {errors!r}"
-                ),
+                message=(f"Mouser {context} returned application errors: {errors!r}"),
             )
         return payload
 

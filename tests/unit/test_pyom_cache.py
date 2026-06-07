@@ -19,7 +19,6 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -48,7 +47,6 @@ def _reset_module_state(monkeypatch, tmp_path):
 
 
 class TestConfiguration:
-
     def test_cache_dir_honours_env_override(self, monkeypatch, tmp_path):
         target = tmp_path / "custom"
         monkeypatch.setenv("HEAVISIDE_PYOM_CACHE_DIR", str(target))
@@ -81,7 +79,6 @@ class TestConfiguration:
 
 
 class TestCanonicalise:
-
     def test_dict_keys_sorted_recursively(self):
         a = cache._canonicalise({"b": 1, "a": {"y": 2, "x": 1}})
         b = cache._canonicalise({"a": {"x": 1, "y": 2}, "b": 1})
@@ -111,7 +108,6 @@ class TestCanonicalise:
 
 
 class TestCacheKey:
-
     def test_same_args_same_key(self):
         k1 = cache._cache_key("f", ("a", {"x": 1, "y": 2}))
         k2 = cache._cache_key("f", ("a", {"y": 2, "x": 1}))
@@ -140,7 +136,6 @@ class TestCacheKey:
 
 
 class TestCachedCall:
-
     def test_miss_invokes_thunk_then_hit_does_not(self, tmp_path):
         calls = {"n": 0}
 
@@ -162,7 +157,7 @@ class TestCachedCall:
 
         cache.cached_call("f", ("a",), call=thunk)
         cache.cached_call("f", ("b",), call=thunk)
-        cache.cached_call("f", ("a",), call=thunk)   # hit
+        cache.cached_call("f", ("a",), call=thunk)  # hit
         assert calls["n"] == 2
 
     def test_passthrough_when_disabled(self, monkeypatch):
@@ -184,9 +179,7 @@ class TestCachedCall:
         assert list(tmp_path.iterdir()) == []
 
     def test_writes_canonicalised_json(self, tmp_path):
-        result = cache.cached_call(
-            "f", ("a",), call=lambda: {"b": 2, "a": 1}
-        )
+        result = cache.cached_call("f", ("a",), call=lambda: {"b": 2, "a": 1})
         # Return value is already canonical (key-sorted).
         assert list(result.keys()) == ["a", "b"]
         # Find the single produced file.
@@ -243,19 +236,21 @@ class TestCachedCall:
 
 
 class TestFingerprint:
-
     def test_missing_pyom_throws(self, monkeypatch):
         # Undo the autouse stub so we exercise the real path.
-        monkeypatch.setattr(cache, "pyom_fingerprint",
-                            cache.__dict__["pyom_fingerprint"].__wrapped__
-                            if hasattr(cache.pyom_fingerprint, "__wrapped__")
-                            else _real_pyom_fingerprint())
+        monkeypatch.setattr(
+            cache,
+            "pyom_fingerprint",
+            cache.__dict__["pyom_fingerprint"].__wrapped__
+            if hasattr(cache.pyom_fingerprint, "__wrapped__")
+            else _real_pyom_fingerprint(),
+        )
         # Force ImportError by hiding PyOpenMagnetics from sys.modules
         # and from the import system.
         import sys
+
         monkeypatch.setitem(sys.modules, "PyOpenMagnetics", None)
-        monkeypatch.setattr(cache, "_FINGERPRINT_CACHE", None,
-                            raising=False)
+        monkeypatch.setattr(cache, "_FINGERPRINT_CACHE", None, raising=False)
         with pytest.raises(cache.PyomCacheError, match="not importable"):
             cache.pyom_fingerprint()
 
@@ -269,5 +264,6 @@ def _real_pyom_fingerprint():
     reload is the cleanest dodge.
     """
     import importlib
+
     fresh = importlib.reload(cache)
     return fresh.pyom_fingerprint

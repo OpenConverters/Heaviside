@@ -11,8 +11,8 @@ from __future__ import annotations
 import pytest
 
 from heaviside.agents.magnetic_picker import (
-    MagneticPickerError,
     PARETO_CRITERIA,
+    MagneticPickerError,
     pareto_summary,
     pick_best_pareto,
 )
@@ -20,8 +20,14 @@ from heaviside.bridge import MagneticDesign
 
 
 def _design(
-    *, scoring: float, shape: str, material: str, n_turns: int,
-    a_e: float, v_e: float, has_gap: bool = True,
+    *,
+    scoring: float,
+    shape: str,
+    material: str,
+    n_turns: int,
+    a_e: float,
+    v_e: float,
+    has_gap: bool = True,
 ) -> MagneticDesign:
     """Hand-build a MagneticDesign whose MAS has only the fields the
     Pareto picker / summary reads. Minimal — tests should not be
@@ -56,10 +62,16 @@ def _design(
 
 def test_pareto_summary_extracts_shape_material_turns_volume() -> None:
     designs = [
-        _design(scoring=7.5, shape="EP 17", material="3F36",
-                n_turns=15, a_e=3.4e-5, v_e=9.8e-7),
-        _design(scoring=8.5, shape="T 13/7", material="Edge 125",
-                n_turns=16, a_e=2.0e-5, v_e=5.5e-7, has_gap=False),
+        _design(scoring=7.5, shape="EP 17", material="3F36", n_turns=15, a_e=3.4e-5, v_e=9.8e-7),
+        _design(
+            scoring=8.5,
+            shape="T 13/7",
+            material="Edge 125",
+            n_turns=16,
+            a_e=2.0e-5,
+            v_e=5.5e-7,
+            has_gap=False,
+        ),
     ]
     rows = pareto_summary(designs)
     assert len(rows) == 2
@@ -89,36 +101,33 @@ def test_pareto_summary_tolerates_missing_fields() -> None:
 
 def test_pick_lowest_losses_returns_index_of_lowest_scoring() -> None:
     designs = [
-        _design(scoring=9.0, shape="A", material="X", n_turns=10,
-                a_e=1e-5, v_e=1e-7),
-        _design(scoring=7.0, shape="B", material="Y", n_turns=12,
-                a_e=2e-5, v_e=2e-7),
-        _design(scoring=8.0, shape="C", material="Z", n_turns=14,
-                a_e=3e-5, v_e=3e-7),
+        _design(scoring=9.0, shape="A", material="X", n_turns=10, a_e=1e-5, v_e=1e-7),
+        _design(scoring=7.0, shape="B", material="Y", n_turns=12, a_e=2e-5, v_e=2e-7),
+        _design(scoring=8.0, shape="C", material="Z", n_turns=14, a_e=3e-5, v_e=3e-7),
     ]
     assert pick_best_pareto(designs, criteria="lowest_losses") == 1
 
 
 def test_pick_smallest_volume_returns_index_of_smallest_v_e() -> None:
     designs = [
-        _design(scoring=1.0, shape="big", material="X", n_turns=10,
-                a_e=1e-5, v_e=9e-7),
-        _design(scoring=2.0, shape="small", material="Y", n_turns=10,
-                a_e=1e-5, v_e=1e-7),
-        _design(scoring=3.0, shape="medium", material="Z", n_turns=10,
-                a_e=1e-5, v_e=5e-7),
+        _design(scoring=1.0, shape="big", material="X", n_turns=10, a_e=1e-5, v_e=9e-7),
+        _design(scoring=2.0, shape="small", material="Y", n_turns=10, a_e=1e-5, v_e=1e-7),
+        _design(scoring=3.0, shape="medium", material="Z", n_turns=10, a_e=1e-5, v_e=5e-7),
     ]
     assert pick_best_pareto(designs, criteria="smallest_volume") == 1
 
 
 def test_pick_highest_isat_headroom_returns_index_of_max_NxAe() -> None:
     designs = [
-        _design(scoring=1.0, shape="A", material="X", n_turns=10,
-                a_e=1e-5, v_e=1e-7),  # NxAe = 1e-4
-        _design(scoring=2.0, shape="B", material="Y", n_turns=20,
-                a_e=2e-5, v_e=1e-7),  # NxAe = 4e-4  ← winner
-        _design(scoring=3.0, shape="C", material="Z", n_turns=15,
-                a_e=1.5e-5, v_e=1e-7),  # NxAe = 2.25e-4
+        _design(
+            scoring=1.0, shape="A", material="X", n_turns=10, a_e=1e-5, v_e=1e-7
+        ),  # NxAe = 1e-4
+        _design(
+            scoring=2.0, shape="B", material="Y", n_turns=20, a_e=2e-5, v_e=1e-7
+        ),  # NxAe = 4e-4  ← winner
+        _design(
+            scoring=3.0, shape="C", material="Z", n_turns=15, a_e=1.5e-5, v_e=1e-7
+        ),  # NxAe = 2.25e-4
     ]
     assert pick_best_pareto(designs, criteria="highest_isat_headroom") == 1
 
@@ -129,8 +138,7 @@ def test_pick_empty_designs_raises() -> None:
 
 
 def test_pick_unknown_criteria_raises() -> None:
-    designs = [_design(scoring=1.0, shape="A", material="X",
-                       n_turns=10, a_e=1e-5, v_e=1e-7)]
+    designs = [_design(scoring=1.0, shape="A", material="X", n_turns=10, a_e=1e-5, v_e=1e-7)]
     with pytest.raises(MagneticPickerError, match="unknown criteria"):
         pick_best_pareto(designs, criteria="cheapest")
 
@@ -139,5 +147,7 @@ def test_pareto_criteria_constant_lists_all_supported_options() -> None:
     """If you add a new criteria branch, add it to PARETO_CRITERIA too —
     the picker validates against this tuple before dispatching."""
     assert PARETO_CRITERIA == (
-        "lowest_losses", "smallest_volume", "highest_isat_headroom",
+        "lowest_losses",
+        "smallest_volume",
+        "highest_isat_headroom",
     )

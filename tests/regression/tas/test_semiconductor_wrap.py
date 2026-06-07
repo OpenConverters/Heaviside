@@ -36,8 +36,8 @@ so the librarian agent has actionable input rather than a bare
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
@@ -49,8 +49,8 @@ _DATA_DIR = _REPO_ROOT / "TAS" / "data"
 # Expected (category, inner-key) per ndjson file.
 _SAS_FILES: tuple[tuple[str, str], ...] = (
     ("mosfets.ndjson", "mosfet"),
-    ("diodes.ndjson",  "diode"),
-    ("igbts.ndjson",   "igbt"),
+    ("diodes.ndjson", "diode"),
+    ("igbts.ndjson", "igbt"),
 )
 
 
@@ -81,7 +81,9 @@ def _row_label(row: dict, inner_key: str) -> str:
     """Best-effort MPN extraction for diagnostic output.  Looks in
     both wrapped and flat shapes."""
     candidates = [
-        row.get("semiconductor", {}).get(inner_key, {}) if isinstance(row.get("semiconductor"), dict) else {},
+        row.get("semiconductor", {}).get(inner_key, {})
+        if isinstance(row.get("semiconductor"), dict)
+        else {},
         row.get(inner_key, {}) if isinstance(row.get(inner_key), dict) else {},
     ]
     for cand in candidates:
@@ -98,8 +100,9 @@ def _row_label(row: dict, inner_key: str) -> str:
 
 def _classify(row: dict, inner_key: str) -> str:
     """Return one of: 'wrapped', 'flat', 'other'."""
-    if isinstance(row.get("semiconductor"), dict) and \
-       isinstance(row["semiconductor"].get(inner_key), dict):
+    if isinstance(row.get("semiconductor"), dict) and isinstance(
+        row["semiconductor"].get(inner_key), dict
+    ):
         return "wrapped"
     if isinstance(row.get(inner_key), dict):
         return "flat"
@@ -132,8 +135,7 @@ def test_every_row_uses_semiconductor_envelope(
     """
     path = _DATA_DIR / filename
     assert path.exists(), (
-        f"{filename}: missing from TAS/data/ — librarian regression "
-        "or stale checkout"
+        f"{filename}: missing from TAS/data/ — librarian regression or stale checkout"
     )
 
     counts = {"wrapped": 0, "flat": 0, "other": 0}
@@ -221,6 +223,5 @@ def test_inner_key_matches_file_category(repo_layout_check) -> None:
     if offenders:
         pytest.fail(
             "Cross-category SAS leakage detected — importer bug, "
-            "do NOT hand-edit, invoke component-librarian:\n  " +
-            "\n  ".join(offenders)
+            "do NOT hand-edit, invoke component-librarian:\n  " + "\n  ".join(offenders)
         )

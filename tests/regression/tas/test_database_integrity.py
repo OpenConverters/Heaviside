@@ -31,8 +31,8 @@ referred to the `component-librarian` agent for repair.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
@@ -78,15 +78,15 @@ _ROW_COUNT_TOLERANCE = 0.10
 # adds wrappers, this dict must be updated in the same commit that
 # migrates the data.
 _ENVELOPE_KEY: dict[str, str | tuple[str, ...] | None] = {
-    "capacitors.ndjson":   "capacitor",
-    "connectors.ndjson":   None,
-    "controllers.ndjson":  None,
-    "converters.ndjson":   None,   # converters use inputs/topology at root
-    "diodes.ndjson":       "semiconductor",
-    "igbts.ndjson":        "semiconductor",
-    "magnetics.ndjson":    "magnetic",
-    "mosfets.ndjson":      "semiconductor",
-    "resistors.ndjson":    "resistor",
+    "capacitors.ndjson": "capacitor",
+    "connectors.ndjson": None,
+    "controllers.ndjson": None,
+    "converters.ndjson": None,  # converters use inputs/topology at root
+    "diodes.ndjson": "semiconductor",
+    "igbts.ndjson": "semiconductor",
+    "magnetics.ndjson": "magnetic",
+    "mosfets.ndjson": "semiconductor",
+    "resistors.ndjson": "resistor",
 }
 
 # Lines that indicate an unresolved git merge conflict — must never
@@ -117,8 +117,7 @@ def _mark_known_drift(filename: str, known_set: set[str], reason: str):
 
 def _iter_lines(path: Path) -> Iterator[tuple[int, str]]:
     with path.open("r", encoding="utf-8") as fh:
-        for i, raw in enumerate(fh, start=1):
-            yield i, raw
+        yield from enumerate(fh, start=1)
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +166,7 @@ def test_no_merge_conflict_markers(filename: str) -> None:
             break
     assert not offenders, (
         f"TAS/data/{filename} contains git merge-conflict markers — "
-        f"must be repaired by component-librarian.  First offenders:\n  "
-        + "\n  ".join(offenders)
+        f"must be repaired by component-librarian.  First offenders:\n  " + "\n  ".join(offenders)
     )
 
 
@@ -191,10 +189,7 @@ def test_every_line_parses_as_json(filename: str) -> None:
             bad.append(f"L{lineno}: {exc.msg}")
             if len(bad) >= 5:
                 break
-    assert not bad, (
-        f"TAS/data/{filename} has malformed JSON lines:\n  "
-        + "\n  ".join(bad)
-    )
+    assert not bad, f"TAS/data/{filename} has malformed JSON lines:\n  " + "\n  ".join(bad)
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +205,8 @@ def test_row_count_within_baseline_band(filename: str) -> None:
     grows or shrinks."""
     path = _DATA_DIR / filename
     actual = sum(
-        1 for _, raw in _iter_lines(path)
+        1
+        for _, raw in _iter_lines(path)
         if raw.strip() and not any(raw.lstrip().startswith(m) for m in _CONFLICT_MARKERS)
     )
     baseline = _ROW_COUNT_BASELINE[filename]
@@ -262,7 +258,7 @@ def test_envelope_key_present_in_spot_check(filename: str) -> None:
     """
     path = _DATA_DIR / filename
     expected = _ENVELOPE_KEY[filename]
-    assert isinstance(expected, str)   # parametrise guarantees non-None
+    assert isinstance(expected, str)  # parametrise guarantees non-None
     rows_checked = 0
     offenders: list[str] = []
     for lineno, raw in _iter_lines(path):
@@ -277,16 +273,14 @@ def test_envelope_key_present_in_spot_check(filename: str) -> None:
             offenders.append(f"L{lineno}: top-level is not a JSON object")
         elif expected not in obj:
             offenders.append(
-                f"L{lineno}: missing outer key {expected!r}, keys = "
-                f"{sorted(obj.keys())[:5]}"
+                f"L{lineno}: missing outer key {expected!r}, keys = {sorted(obj.keys())[:5]}"
             )
         rows_checked += 1
         if rows_checked >= _SPOT_CHECK_ROWS:
             break
     assert not offenders, (
         f"TAS/data/{filename} envelope drift (spot-check of first "
-        f"{_SPOT_CHECK_ROWS} rows).  First offenders:\n  "
-        + "\n  ".join(offenders[:5])
+        f"{_SPOT_CHECK_ROWS} rows).  First offenders:\n  " + "\n  ".join(offenders[:5])
     )
 
 
@@ -329,12 +323,7 @@ def test_converters_have_inputs_and_topology() -> None:
             continue
         missing = [k for k in ("inputs", "topology") if k not in obj]
         if missing:
-            bad.append(
-                f"L{lineno} name={name!r}: missing root keys {missing}"
-            )
+            bad.append(f"L{lineno} name={name!r}: missing root keys {missing}")
         if len(bad) >= 5:
             break
-    assert not bad, (
-        "converters.ndjson entries missing required root keys:\n  "
-        + "\n  ".join(bad)
-    )
+    assert not bad, "converters.ndjson entries missing required root keys:\n  " + "\n  ".join(bad)

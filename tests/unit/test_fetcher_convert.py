@@ -37,7 +37,6 @@ from heaviside.librarian.fetcher.convert import (
     parse_si_value,
 )
 
-
 # ---------------------------------------------------------------------------
 # parse_si_value
 # ---------------------------------------------------------------------------
@@ -170,16 +169,21 @@ def test_digikey_distributor_block_populated() -> None:
     ],
 )
 def test_digikey_technology_resolution(
-    mpn_hint: str, description: str, expected: str,
+    mpn_hint: str,
+    description: str,
+    expected: str,
 ) -> None:
     payload = _wolfspeed_digikey_payload(
         ManufacturerPartNumber=mpn_hint,
         Description={"ProductDescription": description},
     )
     envelope = convert_digikey_to_tas_mosfet(payload)
-    assert envelope["semiconductor"]["mosfet"]["manufacturerInfo"]["datasheetInfo"]["part"][
-        "technology"
-    ] == expected
+    assert (
+        envelope["semiconductor"]["mosfet"]["manufacturerInfo"]["datasheetInfo"]["part"][
+            "technology"
+        ]
+        == expected
+    )
 
 
 def _drop_param(payload: dict[str, Any], name: str) -> dict[str, Any]:
@@ -205,7 +209,8 @@ def _drop_param(payload: dict[str, Any], name: str) -> dict[str, Any]:
     ],
 )
 def test_digikey_missing_required_param_raises(
-    param_to_drop: str, expected_field: str,
+    param_to_drop: str,
+    expected_field: str,
 ) -> None:
     payload = _drop_param(_wolfspeed_digikey_payload(), param_to_drop)
     with pytest.raises(IncompleteSourceError) as excinfo:
@@ -308,7 +313,8 @@ def test_mouser_thin_payload_raises_incomplete() -> None:
     """A real-world Mouser row often lacks at least one electrical field."""
     payload = _mouser_payload()
     payload["ProductAttributes"] = [
-        p for p in payload["ProductAttributes"]
+        p
+        for p in payload["ProductAttributes"]
         if p["AttributeName"] != "Output Capacitance (Coss) @ Vds, Vgs"
     ]
     with pytest.raises(IncompleteSourceError) as excinfo:
@@ -394,15 +400,17 @@ def test_digikey_diode_happy_path_validates() -> None:
     ],
 )
 def test_digikey_diode_subtype_resolution(
-    description: str, expected_subtype: str,
+    description: str,
+    expected_subtype: str,
 ) -> None:
     payload = _wolfspeed_diode_digikey(
         Description={"ProductDescription": description},
     )
     env = convert_digikey_to_tas_diode(payload)
-    assert env["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"][
-        "part"
-    ]["subType"] == expected_subtype
+    assert (
+        env["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"]["part"]["subType"]
+        == expected_subtype
+    )
 
 
 @pytest.mark.parametrize(
@@ -415,12 +423,11 @@ def test_digikey_diode_subtype_resolution(
     ],
 )
 def test_digikey_diode_missing_required_param_raises(
-    param_to_drop: str, expected_field: str,
+    param_to_drop: str,
+    expected_field: str,
 ) -> None:
     payload = _wolfspeed_diode_digikey()
-    payload["Parameters"] = [
-        p for p in payload["Parameters"] if p["Parameter"] != param_to_drop
-    ]
+    payload["Parameters"] = [p for p in payload["Parameters"] if p["Parameter"] != param_to_drop]
     with pytest.raises(IncompleteSourceError) as excinfo:
         convert_digikey_to_tas_diode(payload)
     assert excinfo.value.missing_field == expected_field
@@ -459,7 +466,8 @@ def test_mouser_diode_happy_path_validates() -> None:
 def test_mouser_diode_thin_payload_raises() -> None:
     payload = _wolfspeed_diode_mouser()
     payload["ProductAttributes"] = [
-        p for p in payload["ProductAttributes"]
+        p
+        for p in payload["ProductAttributes"]
         if p["AttributeName"] != "Reverse Recovery Charge (Qrr) (Typ)"
     ]
     with pytest.raises(IncompleteSourceError) as excinfo:
@@ -525,12 +533,11 @@ def test_digikey_igbt_happy_path_validates() -> None:
     ],
 )
 def test_digikey_igbt_missing_required_param_raises(
-    param_to_drop: str, expected_field: str,
+    param_to_drop: str,
+    expected_field: str,
 ) -> None:
     payload = _infineon_igbt_digikey()
-    payload["Parameters"] = [
-        p for p in payload["Parameters"] if p["Parameter"] != param_to_drop
-    ]
+    payload["Parameters"] = [p for p in payload["Parameters"] if p["Parameter"] != param_to_drop]
     with pytest.raises(IncompleteSourceError) as excinfo:
         convert_digikey_to_tas_igbt(payload)
     assert excinfo.value.missing_field == expected_field
@@ -565,7 +572,10 @@ def test_mouser_igbt_happy_path_validates() -> None:
         "AvailabilityInStock": "30",
         "PriceBreaks": [{"Quantity": 1, "Price": "$12.00", "Currency": "USD"}],
         "ProductAttributes": [
-            {"AttributeName": "Voltage - Collector Emitter Breakdown (Max)", "AttributeValue": "1200 V"},
+            {
+                "AttributeName": "Voltage - Collector Emitter Breakdown (Max)",
+                "AttributeValue": "1200 V",
+            },
             {"AttributeName": "Vce(on) (Max) @ Vge, Ic", "AttributeValue": "2.05 V"},
             {"AttributeName": "Current - Collector (Ic) @ 25°C", "AttributeValue": "40 A"},
         ],
@@ -627,16 +637,17 @@ def test_digikey_resistor_happy_path_validates() -> None:
     ],
 )
 def test_digikey_resistor_tolerance_parsing(
-    raw: str, expected_fraction: float,
+    raw: str,
+    expected_fraction: float,
 ) -> None:
     payload = _vishay_resistor_digikey()
     for p in payload["Parameters"]:
         if p["Parameter"] == "Tolerance":
             p["Value"] = raw
     envelope = convert_digikey_to_tas_resistor(payload)
-    assert envelope["resistor"]["manufacturerInfo"]["datasheetInfo"][
-        "electrical"
-    ]["tolerance"] == pytest.approx(expected_fraction)
+    assert envelope["resistor"]["manufacturerInfo"]["datasheetInfo"]["electrical"][
+        "tolerance"
+    ] == pytest.approx(expected_fraction)
 
 
 @pytest.mark.parametrize(
@@ -652,16 +663,18 @@ def test_digikey_resistor_tolerance_parsing(
     ],
 )
 def test_digikey_resistor_technology_mapping(
-    composition: str, expected_enum: str,
+    composition: str,
+    expected_enum: str,
 ) -> None:
     payload = _vishay_resistor_digikey()
     for p in payload["Parameters"]:
         if p["Parameter"] == "Composition":
             p["Value"] = composition
     envelope = convert_digikey_to_tas_resistor(payload)
-    assert envelope["resistor"]["manufacturerInfo"]["datasheetInfo"][
-        "part"
-    ]["technology"] == expected_enum
+    assert (
+        envelope["resistor"]["manufacturerInfo"]["datasheetInfo"]["part"]["technology"]
+        == expected_enum
+    )
 
 
 @pytest.mark.parametrize(
@@ -675,12 +688,11 @@ def test_digikey_resistor_technology_mapping(
     ],
 )
 def test_digikey_resistor_missing_required_param_raises(
-    param_to_drop: str, expected_field: str,
+    param_to_drop: str,
+    expected_field: str,
 ) -> None:
     payload = _vishay_resistor_digikey()
-    payload["Parameters"] = [
-        p for p in payload["Parameters"] if p["Parameter"] != param_to_drop
-    ]
+    payload["Parameters"] = [p for p in payload["Parameters"] if p["Parameter"] != param_to_drop]
     with pytest.raises(IncompleteSourceError) as excinfo:
         convert_digikey_to_tas_resistor(payload)
     assert excinfo.value.missing_field == expected_field
@@ -793,7 +805,8 @@ def test_digikey_capacitor_happy_path_validates() -> None:
     ],
 )
 def test_digikey_capacitor_technology_mapping(
-    family: str, expected_tech: str,
+    family: str,
+    expected_tech: str,
 ) -> None:
     payload = _murata_capacitor_digikey()
     for p in payload["Parameters"]:
@@ -803,15 +816,18 @@ def test_digikey_capacitor_technology_mapping(
     # mounting so the shape resolver doesn't trip while we test only
     # the technology mapping.
     if expected_tech in {
-        "AluminumElectrolytic", "AluminumPolymer", "Supercapacitor",
+        "AluminumElectrolytic",
+        "AluminumPolymer",
+        "Supercapacitor",
     }:
         for p in payload["Parameters"]:
             if p["Parameter"] == "Mounting Type":
                 p["Value"] = "Through Hole"
     envelope = convert_digikey_to_tas_capacitor(payload)
-    assert envelope["capacitor"]["manufacturerInfo"]["datasheetInfo"][
-        "part"
-    ]["technology"] == expected_tech
+    assert (
+        envelope["capacitor"]["manufacturerInfo"]["datasheetInfo"]["part"]["technology"]
+        == expected_tech
+    )
 
 
 @pytest.mark.parametrize(
@@ -828,12 +844,11 @@ def test_digikey_capacitor_technology_mapping(
     ],
 )
 def test_digikey_capacitor_missing_required_param_raises(
-    param_to_drop: str, expected_field: str,
+    param_to_drop: str,
+    expected_field: str,
 ) -> None:
     payload = _murata_capacitor_digikey()
-    payload["Parameters"] = [
-        p for p in payload["Parameters"] if p["Parameter"] != param_to_drop
-    ]
+    payload["Parameters"] = [p for p in payload["Parameters"] if p["Parameter"] != param_to_drop]
     with pytest.raises(IncompleteSourceError) as excinfo:
         convert_digikey_to_tas_capacitor(payload)
     assert excinfo.value.missing_field == expected_field

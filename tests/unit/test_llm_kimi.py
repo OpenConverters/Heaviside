@@ -23,7 +23,6 @@ from heaviside.llm.kimi import (
     load_kimi_credentials,
 )
 
-
 # ---------------------------------------------------------------------------
 # load_kimi_credentials
 # ---------------------------------------------------------------------------
@@ -53,35 +52,43 @@ def test_load_credentials_raises_on_blank_key() -> None:
 
 
 def test_load_credentials_intl_shorthand() -> None:
-    creds = load_kimi_credentials(env={
-        "MOONSHOT_API_KEY": "sk-1",
-        "MOONSHOT_BASE_URL": "intl",
-    })
+    creds = load_kimi_credentials(
+        env={
+            "MOONSHOT_API_KEY": "sk-1",
+            "MOONSHOT_BASE_URL": "intl",
+        }
+    )
     assert creds.base_url == MOONSHOT_BASE_URL_INTL
 
 
 def test_load_credentials_cn_shorthand() -> None:
-    creds = load_kimi_credentials(env={
-        "MOONSHOT_API_KEY": "sk-1",
-        "MOONSHOT_BASE_URL": "cn",
-    })
+    creds = load_kimi_credentials(
+        env={
+            "MOONSHOT_API_KEY": "sk-1",
+            "MOONSHOT_BASE_URL": "cn",
+        }
+    )
     assert creds.base_url == MOONSHOT_BASE_URL_CN
 
 
 def test_load_credentials_explicit_https_url() -> None:
-    creds = load_kimi_credentials(env={
-        "MOONSHOT_API_KEY": "sk-1",
-        "MOONSHOT_BASE_URL": "https://my.proxy/moonshot/v1",
-    })
+    creds = load_kimi_credentials(
+        env={
+            "MOONSHOT_API_KEY": "sk-1",
+            "MOONSHOT_BASE_URL": "https://my.proxy/moonshot/v1",
+        }
+    )
     assert creds.base_url == "https://my.proxy/moonshot/v1"
 
 
 def test_load_credentials_rejects_unknown_base_url_shorthand() -> None:
     with pytest.raises(KimiCredentialError, match="MOONSHOT_BASE_URL"):
-        load_kimi_credentials(env={
-            "MOONSHOT_API_KEY": "sk-1",
-            "MOONSHOT_BASE_URL": "europe",
-        })
+        load_kimi_credentials(
+            env={
+                "MOONSHOT_API_KEY": "sk-1",
+                "MOONSHOT_BASE_URL": "europe",
+            }
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -15,10 +15,9 @@ from __future__ import annotations
 
 from heaviside.librarian.fetcher.base import FetcherError, IncompleteSourceError
 
-
 __all__ = [
-    "DatasheetError",
     "DatasheetDownloadError",
+    "DatasheetError",
     "DatasheetParseError",
     "IncompleteDatasheetError",
     "MissingDependencyError",
@@ -88,7 +87,10 @@ class IncompleteDatasheetError(IncompleteSourceError):
         detail: str | None = None,
     ) -> None:
         super().__init__(
-            "datasheet", mpn, missing_field, detail=detail,
+            "datasheet",
+            mpn,
+            missing_field,
+            detail=detail,
         )
 
 
@@ -103,8 +105,7 @@ class MissingDependencyError(DatasheetError):
 
     def __init__(self, package: str, *, message: str | None = None) -> None:
         text = message or (
-            f"required package {package!r} is not installed; "
-            f"install with `pip install {package}`"
+            f"required package {package!r} is not installed; install with `pip install {package}`"
         )
         super().__init__(text)
         self.package = package

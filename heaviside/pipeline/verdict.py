@@ -25,12 +25,8 @@ import re
 # Pre-compiled patterns
 # ---------------------------------------------------------------------------
 
-_VERDICT_TAG_OPEN_RE = re.compile(
-    r"<verdict>\s*(APPROVED|REJECTED|PROCEED|BLOCK)", re.IGNORECASE
-)
-_VERDICT_TAG_CLOSE_RE = re.compile(
-    r"(APPROVED|REJECTED|PROCEED|BLOCK)\s*</verdict>", re.IGNORECASE
-)
+_VERDICT_TAG_OPEN_RE = re.compile(r"<verdict>\s*(APPROVED|REJECTED|PROCEED|BLOCK)", re.IGNORECASE)
+_VERDICT_TAG_CLOSE_RE = re.compile(r"(APPROVED|REJECTED|PROCEED|BLOCK)\s*</verdict>", re.IGNORECASE)
 _KW_DESIGN_APPROVED_RE = re.compile(r"\bDESIGN\s+APPROVED\b", re.IGNORECASE)
 _KW_DESIGN_REJECTED_RE = re.compile(r"\bDESIGN\s+REJECTED\b", re.IGNORECASE)
 _KW_PROCEED_RE = re.compile(r"\bPROCEED\b", re.IGNORECASE)
