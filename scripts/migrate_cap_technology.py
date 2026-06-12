@@ -91,6 +91,7 @@ CAS_ENUM = {
     "film-polyphenylene-sulfide",
     "film-paper",
     "mica",
+    "thin-film-silicon",
     "supercapacitor-edlc",
     "supercapacitor-hybrid",
     "vacuum",

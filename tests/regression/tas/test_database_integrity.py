@@ -67,14 +67,17 @@ _ACTIVE_FILES: tuple[str, ...] = (
 # must update this baseline in the same reviewed commit (forcing the
 # diff to surface in code review) rather than silently sliding it.
 _ROW_COUNT_BASELINE: dict[str, int] = {
-    "capacitors.ndjson": 111_562,
+    # 2026-06-13 campaign: +669 Vishay HV ceramic restores (false-positive
+    # quarantines), -30 fabricated MACOM MID12X diodes quarantined, -2 TI
+    # gate drivers moved to mosfets.quarantine_misfiled_drivers.ndjson.
+    "capacitors.ndjson": 112_231,
     "connectors.ndjson": 14,
     "controllers.ndjson": 1_667,
     "converters.ndjson": 47,
-    "diodes.ndjson": 3_219,
+    "diodes.ndjson": 3_189,
     "igbts.ndjson": 2_075,
     "magnetics.ndjson": 50_556,
-    "mosfets.ndjson": 6_680,
+    "mosfets.ndjson": 6_678,
     "resistors.ndjson": 117_472,
 }
 _ROW_COUNT_TOLERANCE = 0.10

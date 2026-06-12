@@ -271,15 +271,17 @@
       "source": "Nippon Chemi-Con film numbering: F + series + voltage + cap (archived CAT.E1003N: http://web.archive.org/web/20120523222239/http://www.chemi-con.co.jp/e/catalog/pdf/fi-e/fi-all-e1003n-111201.pdf, series codes 'DADC, DLDA, DFDD'), so FDADC251V103 = series DADC, 250 Vdc, 0.01 uF. Dielectric: archived NCC series table http://web.archive.org/web/20090530022253/http://www.chemi-con.co.jp/e/catalog/pdf/fi-e/fi-sepa-e/fi-seriestable-e-080829.pdf ('DADC - High frequency use, metallized polypropylene film. For general use, 250 to 630 Vdc, 0.01 to 4.7 uF')",
       "confidence": "verified",
       "rows": 1
+    },
+    {
+      "manufacturer": "KYOCERA AVX",
+      "mpn_regex": "^(0201|0402|0603|0805|1111)[0-9A-Z][JK][0-9R]{3}[A-Z]B[SW]TR(\\\\500)?$",
+      "technology": "thin-film-silicon",
+      "source": "Accu-P series, https://datasheets.kyocera-avx.com/Accu-P.pdf ('Thin-Film RF/Microwave Capacitor Technology - Accu-P Series'; dielectric verbatim 'silicon dioxide and silicon oxynitride' thin film on alumina) and https://www.kyocera-avx.com/products/rfmicrowave/accu-p-series/. NOT ceramic-class-1: AVX explicitly contrasts the technology with ceramic capacitors, the 0+/-60ppm/C grade falls outside the C0G window, and Digi-Key (category 66 'Thin Film Capacitors') and Mouser ('Silicon RF Capacitors / Thin Film') both taxonomize thin-film separately from MLCC. CAS enum value thin-film-silicon added 2026-06-12 after this research (formerly unresolved-by-enum-mismatch). Regex validated against all 56 TAS rows, 0 false positives over the full capacitors file.",
+      "confidence": "verified",
+      "rows": 56
     }
   ],
   "unresolved": [
-    {
-      "manufacturer": "KYOCERA AVX",
-      "series": "Accu-P thin-film (0201/0402 + voltage code + J/K + pF code + BSTR/BWTR, e.g. 02013J0R1BBSTR, 0402ZK330FBSTR)",
-      "rows": 56,
-      "reason": "Series identity confirmed via https://datasheets.kyocera-avx.com/Accu-P.pdf ('Thin-Film RF/Microwave Capacitor Technology - Accu-P Series'). Dielectric is verbatim 'silicon dioxide and silicon oxynitride' thin film on alumina; AVX explicitly contrasts it with ceramic capacitors and nowhere states NP0/C0G/Class 1. The CAS enum has no thin-film value -> unresolved-by-enum-mismatch, not guessed as ceramic-class-1."
-    },
     {
       "manufacturer": "Panasonic",
       "series": "ECH-F (ECH-F4223M50S, ECH-F4473M63S)",

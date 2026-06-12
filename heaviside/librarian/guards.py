@@ -150,7 +150,7 @@ BAD_DATASHEET_URL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "example.com placeholder URL (synthetic-row junk class)",
     ),
     (
-        re.compile(r"vishay\.com/en/search", re.IGNORECASE),
+        re.compile(r"vishay\.com/(en/)?search", re.IGNORECASE),
         "vishay.com search-page URL — real Vishay datasheets live under "
         "vishay.com/docs/",
     ),

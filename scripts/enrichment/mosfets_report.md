@@ -154,3 +154,74 @@ gate. Not data errors.
   ("GaN output capacitance" row), 28 symlink 404s.
 - Working artifacts for the next pass: /tmp/mosfet_ds/ (queue.tsv, auto_parse.py, vishay_map*.tsv,
   vishay/, ti/, *.txt caches; PDFs were deleted — /tmp filled up).
+
+---
+
+## Session 3 (2026-06-13): Qg batch campaign — Vishay + Infineon + TI
+
+### Summary
+
+| action | count |
+|---|---|
+| Vishay Qg patches generated | 1,147 |
+| Infineon Qg patches generated | 342 |
+| TI Qg patches generated | 1 (LMS1225) |
+| Total new Qg patches applied | 1,490 |
+| Rows changed in mosfets.ndjson | 1,490 |
+| schema_invalid before session 3 | 2,946 |
+| schema_invalid after session 3 | 2,179 |
+| Misfiled gate drivers quarantined | 2 (UCC27511, UCC27321 → mosfets.quarantine_misfiled_drivers.ndjson) |
+
+### Qg parser details
+
+- **Vishay**: `pdftotext -layout` mode used. Two strategies:
+  1. Summary page "Qg typ. (nC) at VGS = X V  value" — takes RIGHTMOST number after "(nC)" to avoid grabbing the voltage condition.
+  2. Electrical table: Qg row identified by `\bQg\b` (standalone), values extracted from rightmost column area (pos 80+ for same line, pos 95+ for continuation lines).
+  - Dual-channel parts (P+N or dual N-Ch die) detected and skipped: 33.
+  - Empty PDFs: 108. Not found: 4. No PDF: 122.
+
+- **Infineon**: Both "Total gate charge" (older format) and "Gate charge total" (newer CoolSiC format) detected.
+  - IPC bare die parts (IPC302N10N3 etc.) don't include Qg in datasheet per design — 21 parts.
+  - Empty PDFs: 15. Not found total: 21.
+
+- **TI**: Only LMS1225 patched (45 nC from family datasheet).
+  - All CSD86/87/88 series are **dual-MOSFET power blocks** (half-bridge "NexFET" pairs) — skipped as ambiguous.
+  - LMG3x10/3x22/3x26/2100 GaN FETs: no accessible TI datasheet PDF (404 at `ti.com/lit/ds/symlink/`).
+  - 2N7002L: datasheet has no Qg specification (small-signal device).
+
+### IPB045N12N3 Qg status
+
+The orchestrator task designated this as highest priority (activates C_boot in buck BOM). **Not patched.**
+- Infineon product page (`/cms/en/product/mosfet/IPB045N12N3`) returns 404.
+- All known CDN URL variants tried (paths `/24/49/`, `/28/60/`, etc.) — all 404.
+- Part appears discontinued with no accessible datasheet. Cannot patch without a datasheet source.
+- Ron=6.5 mΩ is confirmed from existing TAS data.
+
+### Quarantined gate drivers
+
+Created `TAS/data/mosfets.quarantine_misfiled_drivers.ndjson` with 2 confirmed TI pure gate drivers:
+- **UCC27511**: TI low-side gate driver (single-channel, high-speed)
+- **UCC27321**: TI low-side gate driver (single 9-A high-speed)
+
+The originally reported "~45 misfiled drivers" was an approximation. After systematic analysis:
+- LMG* (LMG3410, LMG3422, LMG3424, LMG3526, LMG3522, LMG3600, etc.) — TI GaN-FET power stages with integrated drivers, carry VDS/ID/Ron specs → **mosfets** (kept).
+- LMS1225 — "MOSFET with Integrated Driver" → **mosfets** (kept).
+- UCC27511, UCC27321 — pure gate driver ICs with no VDS/Ron specs → **quarantined**.
+
+Script: `scripts/quarantine_mosfet_drivers_20260613.py`
+
+### Remaining gaps after session 3 (mosfets.ndjson, 6,678 rows)
+
+| field | missing | notes |
+|---|---|---|
+| totalGateCharge (Qg) | 355 | Vishay 267 (empty/dual/no-PDF) · Infineon 46 (bare die/garbled) · TI 33 (dual pkg/GaN no-DS) · others 9 |
+| outputCapacitance (Coss) | 1,315 | unchanged from session 2 |
+| gateThresholdVoltage (Vth) | 1,564 | unchanged from session 2 |
+| onResistance (Ron) | 748 | unchanged |
+| continuousDrainCurrent (ID) | 434 | unchanged |
+| drainSourceVoltage (VDS) | 281 | unchanged |
+
+### Patch files
+
+- `scripts/enrichment/mosfets_patch.ndjson` — master patch file (5,697 lines = session 1+2+3)
+- `scripts/enrichment/mosfets_patch_20260613b.ndjson` — session-3 batch (1,489 lines, Vishay + Infineon Qg)
