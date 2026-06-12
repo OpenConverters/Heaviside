@@ -87,6 +87,17 @@ def _diode_junk(row: dict) -> str | None:
     return None
 
 
+def _igbt_junk(row: dict) -> str | None:
+    body = row.get("semiconductor", row).get("igbt", row.get("igbt", row))
+    series = (
+        body.get("manufacturerInfo", {}).get("datasheetInfo", {}).get("part", {}).get("series")
+        or ""
+    )
+    if SYNTH_SERIES.match(series):
+        return f"synthetic series taxonomy ({series.split('_')[0]}_*)"
+    return None
+
+
 def _cap_junk(row: dict) -> str | None:
     body = row.get("capacitor", row)
     mi = body.get("manufacturerInfo", {})
@@ -118,6 +129,7 @@ def _converter_junk(row: dict) -> str | None:
 
 def main() -> int:
     _move("diodes", "diodes.quarantine_synthetic.ndjson", _diode_junk)
+    _move("igbts", "igbts.quarantine_synthetic.ndjson", _igbt_junk)
     _move("capacitors", "capacitors.quarantine_stubs.ndjson", _cap_junk)
     _move("magnetics", "magnetics.quarantine_stubs.ndjson", _magnetic_junk)
     _move("converters", "converters.quarantine_telemetry.ndjson", _converter_junk)

@@ -71,9 +71,9 @@ _ROW_COUNT_BASELINE: dict[str, int] = {
     "connectors.ndjson": 14,
     "controllers.ndjson": 1_667,
     "converters.ndjson": 47,
-    "diodes.ndjson": 2_978,
-    "igbts.ndjson": 3_587,
-    "magnetics.ndjson": 50_552,
+    "diodes.ndjson": 3_219,
+    "igbts.ndjson": 2_075,
+    "magnetics.ndjson": 50_556,
     "mosfets.ndjson": 6_712,
     "resistors.ndjson": 117_472,
 }
@@ -113,7 +113,7 @@ _KNOWN_DRIFT_ENVELOPE: set[str] = set()
 # 'Si_600V' / 'Si_1200V' / 'SiC_1200V' / 'SiC_1700V', fabricated MPNs
 # like 'InSi0642N038TO-247001').  Pinned as strict xfail: the day the
 # librarian quarantines them this XPASSes and forces marker removal.
-_KNOWN_DRIFT_SYNTHETIC: set[str] = {"igbts.ndjson"}
+_KNOWN_DRIFT_SYNTHETIC: set[str] = set()
 
 
 def _mark_known_drift(filename: str, known_set: set[str], reason: str):
