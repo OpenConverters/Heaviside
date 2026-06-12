@@ -99,6 +99,8 @@ class Migrator:
     def __init__(self) -> None:
         self.tantalum = _load("tantalum.json")
         self.film = _load("film.json")["rules"]
+        # Vishay Draloric ceramic RF power caps mis-tagged 'Film Capacitor'
+        self.draloric = _load("draloric_rf_ceramic.json")["rules"]
         self.ceramic = _load("ceramic_codes.json")["rules"]
         self.misc = _load("misc_buckets.json")["rules"]
         self.mapped: Counter[str] = Counter()
@@ -136,10 +138,21 @@ class Migrator:
             return rule["technology"], rule.get("dielectric_code")
         return None
 
-    def classify(self, mfr: str, tech: str | None, series: str, mpn: str) -> tuple[str, str | None] | None:
+    def classify(
+        self,
+        mfr: str,
+        tech: str | None,
+        series: str,
+        mpn: str,
+        dielectric_code: str | None = None,
+    ) -> tuple[str, str | None] | None:
         if tech in DIRECT:
             return DIRECT[tech]
         if tech in CERAMIC_BUCKETS:
+            # An already-present dielectricCode (datasheet-sourced, e.g.
+            # promoted from temperatureCharacteristic) is authoritative.
+            if dielectric_code and dielectric_code.upper() in EIA_SUBSTRING:
+                return EIA_SUBSTRING[dielectric_code.upper()], None
             hit = self._ceramic_class(mfr, mpn)
             if hit:
                 return hit
@@ -150,7 +163,11 @@ class Migrator:
                 return entry["technology"], None
             return None
         if tech == "Film Capacitor":
-            return self._series_rules(self.film, mfr, series, mpn)
+            hit = self._series_rules(self.film, mfr, series, mpn)
+            if hit:
+                return hit
+            # mis-tagged Vishay Draloric ceramic RF power / HV caps
+            return self._series_rules(self.draloric, mfr, series, mpn)
         if tech in MISC_BUCKETS:
             hit = self._series_rules(self.misc, mfr, series, mpn)
             if hit:
@@ -174,7 +191,7 @@ class Migrator:
             series = part.get("series") or ""
             mpn = part.get("partNumber") or ""
 
-            hit = self.classify(mfr, tech, series, mpn)
+            hit = self.classify(mfr, tech, series, mpn, part.get("dielectricCode"))
             if hit is None:
                 self.unmapped[(tech, mfr, series or mpn[:14])] += 1
                 out_lines.append(raw)

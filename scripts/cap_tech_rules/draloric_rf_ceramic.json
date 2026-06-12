@@ -1,0 +1,110 @@
+{
+  "_comment": "Vishay Draloric Ceramic RF Power / HV capacitors mis-tagged as 'Film Capacitor' in TAS (3148 rows). Researched 2026-06-12 against current Vishay datasheets (SAP part numbers matched literally) plus the Vishay Draloric 'Ceramic RF Power and HV Capacitors' catalog (2002, mirror: https://w5rkl.com/wp-content/uploads/2015/02/VISHAY-Ceramic-RF-Power-and-HV-Capacitors-INTERACTIVE.pdf) and the selector guide SG2169 (https://www.vishay.com/docs/49119/_sg2169-2004-ceramic_rf_power_capacitors.pdf). Key facts: the 2-letter code after the size digits is a RATED-VOLTAGE code, not a dielectric code (doc 22082: WE=11kVp, WF=12, WH=13, WJ=14, BJ=15, WL=16). The only Class 2 members of the whole Draloric RF program are the PS plate caps at 2-4 kVp (doc 22084, codes VT/BB/BD, Y5U/R3500) and the TOS barrel caps (docs 22086/22129, mixed Class 1+2, modern SAP prefixes BS/BF - NOT present in TAS). Everything else is Class 1 (R7/R16/R42/R85/R230/N3300/C0G...). Rules are ordered: the PS Class 2 rule must precede the generic PS rule.",
+  "rules": [
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^PS00(20|30|40|55)(VT|BB|BD)",
+      "technology": "ceramic-class-2",
+      "dielectric_code": "Y5U",
+      "source": "https://www.vishay.com/docs/22084/ps20ps30ps40ps55c2.pdf ('RF Power Plate Capacitors with Contoured Rim, Class 2 Ceramic', Ceramic Dielectric: Y5U (R3500); SAP table lists exactly the VT/BB/BD voltage-coded part numbers, e.g. PS0020VT10273BL1, PS0055BB27373BL1, PS0055BD10373BL1)",
+      "confidence": "verified",
+      "rows": 22
+    },
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^PS00(20|30|40|55)(BE|VZ)",
+      "technology": "ceramic-class-1",
+      "source": "https://www.vishay.com/docs/22081/ps20ps30ps40ps55c1.pdf ('RF Power Plate Capacitors with Contoured Rim, Class 1 Ceramic'; SAP table lists only BE/VZ voltage-coded part numbers, e.g. PS0020BE100##BG1, PS0030VZ121##BJ1 - disjoint from the Class 2 doc's VT/BB/BD codes)",
+      "confidence": "verified",
+      "rows": 422
+    },
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^P[ACDE]0(070|100|140|200)[A-Z]{2}",
+      "technology": "ceramic-class-1",
+      "source": "https://www.vishay.com/docs/22082/pd70pe100pe140pe200.pdf ('RF Power Plate Capacitors With Contoured Rim, Class 1 Ceramic', R7/R16/R42/R85/R230; SAP part numbers match literally, e.g. PD0070WE801##BJ1). PA/PC/PE terminal-style variants documented in the Draloric catalog p.16 (PA/PC/PD/PE 70-200, 'Plate Capacitors with Contoured Rim - Class 1 Ceramic', old doc 22082) and SG2169 selector guide ('PA, PC, PD, PE ... Class 1')",
+      "confidence": "verified",
+      "rows": 822
+    },
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^PEF220",
+      "technology": "ceramic-class-1",
+      "source": "https://www.vishay.com/docs/22083/pef220.pdf ('RF Power Plate Capacitors for Higher Voltages, Class 1 Ceramic'; SAP prefixes PEF220BJ/WF/WH/WJ/WL/WM/WN/WP all present in data)",
+      "confidence": "verified",
+      "rows": 64
+    },
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^PEZ140",
+      "technology": "ceramic-class-1",
+      "source": "https://www.vishay.com/docs/22139/fpzpez.pdf ('FPZ 140, PEZ 140 - RF Power Plate Capacitors for Higher Voltages, Class 1 Ceramic'; SAP prefixes PEZ140BJ/BQ/WV match data)",
+      "confidence": "verified",
+      "rows": 14
+    },
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^(PEF155|PDF220|PDZ100|PZ0(180|200|210)|PAZ057)",
+      "technology": "ceramic-class-1",
+      "source": "Inferred from the manufacturer's complete plate-capacitor program: SG2169 (https://www.vishay.com/docs/49119/_sg2169-2004-ceramic_rf_power_capacitors.pdf) and the Draloric catalog list every RF plate family as Class 1 except PS Class 2, which is limited to 2-4 kVp (doc 22084). These obsolete SAP variants are 12-16 kVp plate parts of the documented Class 1 families (PEF155WL302..BK1 mirrors PE0140WL302##BK1 = R230 16 kVp 3 nF in doc 22082; PDF220 sits inside the PEF220 envelope of doc 22083; PDZ100 belongs to the FPZ/PEZ silicone-protected family of doc 22139). No Class 2 plate part exists above 4 kVp.",
+      "confidence": "inferred",
+      "rows": 22
+    },
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^T[ABCDE]0(20030|20050|20080|30055|30090|45090|45120|45150)",
+      "technology": "ceramic-class-1",
+      "source": "https://www.vishay.com/docs/22093/td020030-td020050-td020080.pdf, https://www.vishay.com/docs/22094/td030090.pdf, https://www.vishay.com/docs/22095/td045090-td045120-td045150.pdf (all 'RF Power Pot Capacitors ..., Class 1 Ceramic'; TD SAP numbers incl. voltage codes BF/BP/VY/BH/WC/WE/WF/WH/WJ match data). TA/TB/TC/TE mounting variants documented in the Draloric catalog pp.68-76 ('T. 020030...085120', all 'Class 1 ceramic dielectric', old docs 22111/22093-22097) and SG2169 ('T. 20/30/45/50/85 ... Class 1')",
+      "confidence": "verified",
+      "rows": 1122
+    },
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^T[AD]Z30(055|090)",
+      "technology": "ceramic-class-1",
+      "source": "Inferred: higher-voltage (Z) variants of the T. 030090 pot family (https://www.vishay.com/docs/22094/td030090.pdf, Class 1; data voltage code BH and 10 kVp rating match TD030090BH...). SG2169 lists every Draloric pot family - T., TDZ, TDFZ - as Class 1; no Class 2 pot capacitor exists in the program.",
+      "confidence": "inferred",
+      "rows": 18
+    },
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^R[ABCE]01(2020|2085|6040|6050|6070)",
+      "technology": "ceramic-class-1",
+      "source": "https://www.vishay.com/docs/22110/ra012085ra012020.pdf, https://www.vishay.com/docs/22109/ra016040ra016070.pdf (both 'RF Power Tubular Capacitors with Mounting Tags, Class 1 Ceramic'). RB/RC/RE tag variants documented in the Draloric catalog pp.58-62 (RA/RB/RC/RE 012085/012020/016040/016070, 'Class 1 ceramic dielectric', old docs 22110/22109/22116) and SG2169 ('R. 12, R. 16, R. 20 ... Class 1'). RB016050 (2 rows) is an undocumented length variant inside the R. 16 Class 1 family.",
+      "confidence": "verified",
+      "rows": 466
+    },
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^(WX|WF)(09|11|12|13|16)[0-9]{4}",
+      "technology": "ceramic-class-1",
+      "source": "https://www.vishay.com/docs/22131/twx-twxf.pdf ('Water Cooled RF Power Pot Capacitors, External Cooling System', Ceramic class 1, R85; SAP part numbers WX.../WF... for TWX/TWXF, e.g. WX095162WJ..., WF135285WP... match data literally)",
+      "confidence": "verified",
+      "rows": 118
+    },
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^WI(05|08|10|14)[0-9]{4}",
+      "technology": "ceramic-class-1",
+      "source": "https://www.vishay.com/docs/22132/twxfz140.pdf (TWXFZ 140266/140316/140376, Ceramic Class 1 R85, SAP WI140266WJ... etc.), https://www.vishay.com/docs/22147/twxfz106266.pdf (TWXFZ 106266, Class 1, WI106266), https://www.vishay.com/docs/22166/twif085260.pdf (TWIF 085260, Class 1, WI085260). Remaining WI sizes (050100/085175/085215/140286) are TWIF/TWXFZ size variants; SG2169 lists all internally cooled watercooled families (TWXFZ, TWIF) as Class 1 (R42/R85).",
+      "confidence": "verified",
+      "rows": 36
+    },
+    {
+      "manufacturer": "Vishay",
+      "mpn_regex": "^(WE|WZ)(09|10|11|12|13|14|16)[0-9]{4}",
+      "technology": "ceramic-class-1",
+      "source": "Inferred: obsolete SAP variants of the watercooled pot family - WE sizes 095162/110250/135285 and WZ sizes 110258/125178/135285/140376 map onto the TWX(F)/TWXFZ model sizes of https://www.vishay.com/docs/22131/twx-twxf.pdf and https://www.vishay.com/docs/22132/twxfz140.pdf and the Draloric catalog pp.88-98. Every watercooled family (TWX, TWXF, TWXFZ, TWIF) is Class 1 per SG2169 and all four current datasheets; no Class 2 watercooled part exists.",
+      "confidence": "inferred",
+      "rows": 14
+    }
+  ],
+  "unresolved": [
+    {
+      "manufacturer": "Vishay",
+      "series": "TOC050/TOC055 (TOC050VZ10133AL1 etc.)",
+      "rows": 8,
+      "reason": "Prefix 'TOC' not found in any Vishay datasheet, the Draloric catalog, SG2169, or distributor databases (DigiKey/Mouser/findchips/oemstrade all empty). The only TO* family (TOS/TOF barrel, docs 22085/22086/22129) is the one MIXED Class 1 + Class 2 family in the program, uses sizes 016010/020016/025016/030033 (not 050/055) and modern SAP prefixes BS/BF. Cannot rule out Class 2 - left unchanged rather than guessed."
+    }
+  ]
+}
