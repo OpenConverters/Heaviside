@@ -94,11 +94,13 @@ def test_q1_conduction_loss_matches_hand_calc() -> None:
 
 
 def test_q1_switching_loss_matches_hand_calc() -> None:
-    """P_Q1_sw = Vin * Iout * Qg * fsw / Ig
-    = 48 * 5 * 30e-9 * 200000 / 1.0 = 1.44 W"""
+    """P_Q1_sw = 0.5 * Vin * Iout * (Qg / Ig) * fsw
+    = 0.5 * 48 * 5 * 30e-9 / 1.0 * 200000 = 0.72 W.
+    The 0.5 is the triangular V-I overlap factor (E_sw = ½·V·I·t_sw per
+    switching transition, t_sw = Qg/Ig)."""
     tas = _buck_tas_with_picked_components()
     budget = compute_buck_loss_budget(tas, _BUCK_SPEC)
-    assert budget["Q1_switching"] == pytest.approx(1.44, rel=1e-6)
+    assert budget["Q1_switching"] == pytest.approx(0.72, rel=1e-6)
 
 
 def test_d1_conduction_loss_matches_hand_calc() -> None:
@@ -155,12 +157,13 @@ def test_loss_budget_throws_on_missing_spec_fields() -> None:
 
 
 def test_tj_is_ambient_plus_loss_times_rth() -> None:
-    """Q1 has loss = 0.03125 + 1.44 = 1.47125 W, Rth_ja = 40.
-    Tj = 25 + 1.47125 * 40 = 83.85 °C."""
+    """Q1 has loss = 0.03125 + 0.72 = 0.75125 W, Rth_ja = 40.
+    Tj = 25 + 0.75125 * 40 = 55.05 °C. (Q1_switching carries the 0.5
+    triangular-overlap factor — see test_q1_switching_loss_matches_hand_calc.)"""
     tas = _buck_tas_with_picked_components()
     run_buck_analyst(tas, _BUCK_SPEC)
     q1 = tas["topology"]["stages"][0]["circuit"]["components"][0]
-    expected_loss = 0.03125 + 1.44
+    expected_loss = 0.03125 + 0.72
     expected_tj = 25.0 + expected_loss * 40.0
     assert q1["tj"] == pytest.approx(expected_tj, rel=1e-3)
     assert q1["tj_provenance"]["t_ambient_c"] == 25.0

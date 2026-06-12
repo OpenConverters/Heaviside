@@ -931,12 +931,13 @@ def convert_digikey_to_tas_diode(
     """Convert a Digi-Key Product v3 payload into a TAS
     ``{"semiconductor": {"diode": {...}}}`` envelope.
 
-    Strict-mode: any of the four schema-required electrical fields
-    (reverseVoltage, forwardVoltage, forwardCurrent, reverseRecoveryCharge)
-    being absent raises :class:`IncompleteSourceError`.  Reverse-recovery
-    charge in particular is rarely populated by Digi-Key — those rows
-    must be enriched by the ``component-librarian`` agent from the
-    linked datasheet before re-submission.
+    Strict-mode on the REQUIRED electrical fields (reverseVoltage,
+    forwardCurrent): either absent raises :class:`IncompleteSourceError`.
+    ``forwardVoltage`` and ``reverseRecoveryCharge`` are OPTIONAL at fetch
+    time — Digi-Key rarely populates Qrr, and Schottky parts have
+    negligible reverse recovery — so when absent they are OMITTED (never
+    defaulted) and the ``component-librarian`` agent enriches them from the
+    linked datasheet before the part is used in a design.
     """
     source = "digikey"
     mpn = _mpn_or_raise(source, product)

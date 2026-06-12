@@ -416,10 +416,14 @@ def test_digikey_diode_subtype_resolution(
 @pytest.mark.parametrize(
     "param_to_drop,expected_field",
     [
+        # Only the schema-required electrical fields raise on absence.
+        # forwardVoltage and reverseRecoveryCharge are OPTIONAL at fetch
+        # time (the distributor payload often omits them — Schottky have
+        # negligible Qrr; the component-librarian enriches the rest from
+        # the datasheet later). Their absence is covered by the positive
+        # test below, NOT here.
         ("Voltage - DC Reverse (Vr) (Max)", "electrical.reverseVoltage"),
-        ("Voltage - Forward (Vf) (Max) @ If", "electrical.forwardVoltage"),
         ("Current - Average Rectified (Io)", "electrical.forwardCurrent"),
-        ("Reverse Recovery Charge (Qrr) (Typ)", "electrical.reverseRecoveryCharge"),
     ],
 )
 def test_digikey_diode_missing_required_param_raises(
@@ -432,6 +436,29 @@ def test_digikey_diode_missing_required_param_raises(
         convert_digikey_to_tas_diode(payload)
     assert excinfo.value.missing_field == expected_field
     assert excinfo.value.source == "digikey"
+
+
+@pytest.mark.parametrize(
+    "param_to_drop,absent_field",
+    [
+        ("Voltage - Forward (Vf) (Max) @ If", "forwardVoltage"),
+        ("Reverse Recovery Charge (Qrr) (Typ)", "reverseRecoveryCharge"),
+    ],
+)
+def test_digikey_diode_optional_param_omitted_not_defaulted(
+    param_to_drop: str,
+    absent_field: str,
+) -> None:
+    """An optional electrical field absent from the payload must be
+    OMITTED from the converted envelope — never fabricated with a default
+    (no-fallback rule)."""
+    payload = _wolfspeed_diode_digikey()
+    payload["Parameters"] = [p for p in payload["Parameters"] if p["Parameter"] != param_to_drop]
+    envelope = convert_digikey_to_tas_diode(payload)
+    electrical = envelope["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"][
+        "electrical"
+    ]
+    assert absent_field not in electrical
 
 
 def _wolfspeed_diode_mouser(**overrides: Any) -> dict[str, Any]:
@@ -464,15 +491,33 @@ def test_mouser_diode_happy_path_validates() -> None:
 
 
 def test_mouser_diode_thin_payload_raises() -> None:
+    """A required electrical field (reverseVoltage) absent from a thin
+    Mouser payload must raise."""
+    payload = _wolfspeed_diode_mouser()
+    payload["ProductAttributes"] = [
+        p
+        for p in payload["ProductAttributes"]
+        if p["AttributeName"] != "Voltage - DC Reverse (Vr) (Max)"
+    ]
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_mouser_to_tas_diode(payload)
+    assert excinfo.value.missing_field == "electrical.reverseVoltage"
+
+
+def test_mouser_diode_optional_qrr_omitted_not_defaulted() -> None:
+    """Mouser payload lacking the optional Qrr converts successfully with
+    reverseRecoveryCharge omitted — not fabricated."""
     payload = _wolfspeed_diode_mouser()
     payload["ProductAttributes"] = [
         p
         for p in payload["ProductAttributes"]
         if p["AttributeName"] != "Reverse Recovery Charge (Qrr) (Typ)"
     ]
-    with pytest.raises(IncompleteSourceError) as excinfo:
-        convert_mouser_to_tas_diode(payload)
-    assert excinfo.value.missing_field == "electrical.reverseRecoveryCharge"
+    envelope = convert_mouser_to_tas_diode(payload)
+    electrical = envelope["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"][
+        "electrical"
+    ]
+    assert "reverseRecoveryCharge" not in electrical
 
 
 # ===========================================================================
@@ -833,10 +878,11 @@ def test_digikey_capacitor_technology_mapping(
 @pytest.mark.parametrize(
     "param_to_drop,expected_field",
     [
+        # esr and rippleCurrent are OPTIONAL (MLCCs commonly omit them in
+        # distributor data; not every cap chemistry specs them the same
+        # way). Their absence is covered by the positive test below.
         ("Capacitance", "electrical.capacitance"),
         ("Voltage - Rated", "electrical.ratedVoltage"),
-        ("ESR (Equivalent Series Resistance)", "electrical.esr"),
-        ("Ripple Current @ Low Frequency", "electrical.rippleCurrent"),
         ("Package / Case", "datasheetInfo.part.case"),
         ("Family", "datasheetInfo.part.technology"),
         ("Series", "datasheetInfo.part.series"),
@@ -852,6 +898,26 @@ def test_digikey_capacitor_missing_required_param_raises(
     with pytest.raises(IncompleteSourceError) as excinfo:
         convert_digikey_to_tas_capacitor(payload)
     assert excinfo.value.missing_field == expected_field
+
+
+@pytest.mark.parametrize(
+    "param_to_drop,absent_field",
+    [
+        ("ESR (Equivalent Series Resistance)", "esr"),
+        ("Ripple Current @ Low Frequency", "rippleCurrent"),
+    ],
+)
+def test_digikey_capacitor_optional_param_omitted_not_defaulted(
+    param_to_drop: str,
+    absent_field: str,
+) -> None:
+    """An optional capacitor electrical field absent from the payload is
+    OMITTED from the envelope, never fabricated (no-fallback rule)."""
+    payload = _murata_capacitor_digikey()
+    payload["Parameters"] = [p for p in payload["Parameters"] if p["Parameter"] != param_to_drop]
+    envelope = convert_digikey_to_tas_capacitor(payload)
+    electrical = envelope["capacitor"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    assert absent_field not in electrical
 
 
 def test_digikey_capacitor_unrecognised_assembly_raises() -> None:

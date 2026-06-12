@@ -145,7 +145,7 @@ def test_design_magnetics_returns_sorted_designs(monkeypatch: pytest.MonkeyPatch
     assert name == "buck"
     assert spec == {"any": "spec"}
     assert n == 3
-    assert mode == "available cores"
+    assert mode == "standard cores"
     assert ngs is False
     assert w is None
 
@@ -595,7 +595,7 @@ def test_design_extra_magnetic_returns_sorted(
     )
     designs = bridge.design_extra_magnetic(spec, max_results=3)
     assert [d.scoring for d in designs] == [4.0, 2.5, 1.0]
-    assert fake.advised_calls[0][2] == "available cores"
+    assert fake.advised_calls[0][2] == "standard cores"
 
 
 def test_design_extra_magnetic_engine_error_raises(
