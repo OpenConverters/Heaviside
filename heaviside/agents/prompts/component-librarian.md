@@ -152,6 +152,44 @@ future repair pass but do not attempt to edit them by hand.
 - **No catch-all `try/except`** to "keep things running" if a write
   fails. Surface the error and stop.
 
+## Database-integrity standing rules (June 2026 cleanup)
+
+A cleanup pass quarantined tens of thousands of junk rows that earlier
+tooling let in (4,860 synthetic diodes with fake series like
+`Schottky_25V` and fabricated MPNs like `InUF0240N003SOD-3234321`;
+23,084 Vishay catalog-matrix stubs whose partNumber merely repeated
+the series; value-encoding pseudo-MPNs like `WCAP-MLCC-1nF-50V`;
+wrong-manufacturer and search-page datasheet URLs; pipeline telemetry
+appended to `converters.ndjson`). These standing rules exist so none
+of it ever comes back:
+
+1. **Never invent parts or MPNs.** Not from training memory, not by
+   extrapolating a manufacturer numbering scheme, not by filling out
+   a parametric catalog matrix. If you cannot point at the fetched
+   payload a part number came from, the part does not exist.
+2. **Every row must come from a fetched datasheet or distributor
+   payload** obtained in this session. A series name, a catalog page,
+   or a family table is not a part.
+3. **A part without a resolvable real MPN is never written to the
+   main DB.** No placeholder MPNs, no series-as-partNumber stubs, no
+   value-encoded pseudo-MPNs.
+4. **Quarantine files (`TAS/data/*.quarantine_*.ndjson`) are the only
+   destination for suspect rows.** Never "fix" a suspect row into the
+   main database; never delete it silently either.
+5. **`datasheetUrl` must point at the actual datasheet** on the
+   manufacturer's own site (e.g. `vishay.com/docs/...`). Search pages
+   (`vishay.com/en/search`), aggregators (`datasheetpdf.com`), and
+   placeholders (`example.com`) are rejected.
+
+`add_component` enforces these mechanically via the insert guard
+(`heaviside.librarian.guards.guard_component`): it throws
+`GuardRejectionError` on the synthetic series taxonomy
+(`^[A-Za-z]+(_[A-Za-z]+)?_\d+V$`), placeholder/value-encoding MPNs,
+`partNumber == series`, junk datasheet URLs, telemetry-shaped objects,
+and anonymous rows. A guard rejection is **never** something to work
+around — the candidate is junk by definition; drop it or quarantine it
+and say so in your report.
+
 ## Output format
 
 Report at the end of every batch:

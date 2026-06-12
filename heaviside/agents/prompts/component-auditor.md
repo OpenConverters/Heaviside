@@ -136,6 +136,38 @@ a failure list.
 - Current sense: resistance should be in the mΩ range.
 - TCR: thin film < 50 ppm/K, thick film 100–200 ppm/K.
 
+## Database-integrity standing rules (June 2026 cleanup)
+
+A cleanup pass quarantined several junk classes that earlier tooling
+let into `TAS/data/` (preserved in `TAS/data/*.quarantine_*.ndjson`):
+synthetic bulk-generated rows with a fake series taxonomy
+(`Schottky_25V`, `TVS_5V`, `SiC_Schottky_1200V`); placeholder MPNs
+where `partNumber` merely repeats the series (`TR3`) or encodes a
+value (`WCAP-MLCC-1nF-50V`); datasheet URLs pointing at a different
+manufacturer's PDF or at search pages (`vishay.com/en/search`,
+`datasheetpdf.com`, `example.com`); telemetry records appended to
+`converters.ndjson`; duplicate rows per MPN. When reviewing failures:
+
+1. **Never invent parts or MPNs**, and never accept a row the
+   librarian cannot trace to a fetched datasheet or distributor
+   payload. A part without a resolvable real MPN does not belong in
+   the main DB — flag it for quarantine.
+2. **Quarantine files are the only destination for suspect rows.**
+   Recommend quarantine, never silent deletion and never an in-place
+   "fix" that fabricates data.
+3. The write side now enforces these mechanically
+   (`heaviside.librarian.guards.guard_component`, run inside
+   `add_component`), and `heaviside librarian audit --integrity` runs
+   the matching read-only scan (insert-guard violations, exact
+   duplicates, over-copied MPNs, known manufacturer/domain
+   mismatches). If you see a row in the live DB that matches one of
+   the junk classes above, it predates the guard — report it as
+   STRUCTURAL with file and line so the librarian can quarantine it.
+
+Known pre-existing integrity drift (pinned in the regression suite):
+`igbts.ndjson` still carries 1,512 synthetic rows (series `Si_600V`,
+`Si_1200V`, `SiC_1200V`, `SiC_1700V`) awaiting a quarantine pass.
+
 ## Corrupt-line handling
 
 `audit_category` defaults to `on_corruption="report"` — every corrupt

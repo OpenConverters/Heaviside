@@ -72,6 +72,7 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 from heaviside.librarian import safe_access as _sa
+from heaviside.librarian.guards import guard_component
 from heaviside.librarian.safe_access import (
     LibrarianError,
     safe_append,
@@ -561,7 +562,13 @@ def add_component(category: str, component: dict[str, Any]) -> None:
     Steps:
 
     1. Whitelist + schema-availability gate (via :func:`load_validator`).
-    2. :func:`validate_component` — throws :class:`ValidationError`.
+    2. :func:`heaviside.librarian.guards.guard_component` — insert-time
+       integrity guard (synthetic series taxonomy, placeholder /
+       value-encoding MPNs, partNumber == series stubs, junk datasheet
+       URLs, telemetry-shaped objects) **plus** schema validation via
+       :func:`validate_component`.  Throws
+       :class:`heaviside.librarian.guards.GuardRejectionError` /
+       :class:`ValidationError`.
     3. :func:`component_exists` — throws
        :class:`DuplicateComponentError` if the MPN is already present.
     4. :func:`safe_append` — atomic line write under the category lock.
@@ -572,14 +579,14 @@ def add_component(category: str, component: dict[str, Any]) -> None:
     Raises
     ------
     UnknownCategoryError, SchemaNotFoundError, ValidationError,
-    DuplicateComponentError, LibrarianError
+    GuardRejectionError, DuplicateComponentError, LibrarianError
     """
     if not isinstance(component, dict):
         raise LibrarianError(
             f"add_component: component must be a dict, got {type(component).__name__}"
         )
 
-    validate_component(category, component)
+    guard_component(category, component)
 
     mpn = _extract_mpn(component)
     if mpn == "UNKNOWN":

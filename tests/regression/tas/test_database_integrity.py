@@ -31,10 +31,17 @@ referred to the `component-librarian` agent for repair.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+from heaviside.librarian.guards import (
+    PLACEHOLDER_MPN_PATTERNS,
+    SYNTHETIC_SERIES_RE,
+    TELEMETRY_SHAPE_KEYS,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DATA_DIR = _REPO_ROOT / "TAS" / "data"
@@ -99,6 +106,14 @@ _CONFLICT_MARKERS = ("<<<<<<<", "=======", ">>>>>>>")
 # be removed in the same commit that lands the repair.
 _KNOWN_DRIFT_CONFLICT: set[str] = set()
 _KNOWN_DRIFT_ENVELOPE: set[str] = set()
+
+# June 2026 cleanup quarantined the synthetic diodes
+# (diodes.quarantine_synthetic.ndjson) but igbts.ndjson still carries
+# 1,512 bulk-generated rows with the same fake taxonomy (series
+# 'Si_600V' / 'Si_1200V' / 'SiC_1200V' / 'SiC_1700V', fabricated MPNs
+# like 'InSi0642N038TO-247001').  Pinned as strict xfail: the day the
+# librarian quarantines them this XPASSes and forces marker removal.
+_KNOWN_DRIFT_SYNTHETIC: set[str] = {"igbts.ndjson"}
 
 
 def _mark_known_drift(filename: str, known_set: set[str], reason: str):
@@ -288,6 +303,152 @@ def test_envelope_key_present_in_spot_check(filename: str) -> None:
 # 4. converters.ndjson structural shape — every populated entry must
 #    carry the inputs/topology pair the realism gate consumes.
 # ---------------------------------------------------------------------------
+
+
+def _fail_msg(filename: str, label: str, offenders: list[str]) -> str:
+    return (
+        f"TAS/data/{filename}: {label} — quarantined-style junk is back; "
+        "refer to the component-librarian for quarantine (do not edit "
+        f"NDJSON by hand).  First offenders:\n  " + "\n  ".join(offenders[:10])
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5. Quarantined junk classes must not return (June 2026 cleanup).
+#    Pattern tables are shared with the insert-time guard
+#    (heaviside.librarian.guards) so the CI gate and the writer can
+#    never drift apart.
+# ---------------------------------------------------------------------------
+
+
+# Raw-line extractors: avoid full json.loads on the 100 MB files.
+_SERIES_OR_FAMILY_RE = re.compile(r'"(?:series|family)"\s*:\s*"([^"\\]*)"')
+_PARTNUMBER_RE = re.compile(r'"partNumber"\s*:\s*"([^"\\]*)"')
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        _mark_known_drift(
+            f,
+            _KNOWN_DRIFT_SYNTHETIC,
+            "igbts.ndjson still carries 1,512 synthetic bulk-generated "
+            "rows (series Si_600V/Si_1200V/SiC_1200V/SiC_1700V) — "
+            "awaiting component-librarian quarantine pass, mirroring "
+            "diodes.quarantine_synthetic.ndjson.",
+        )
+        for f in _ACTIVE_FILES
+    ],
+)
+def test_no_synthetic_series_taxonomy(filename: str) -> None:
+    """Junk class 1: bulk-generated rows with a fake series taxonomy
+    ('Schottky_25V', 'TVS_5V', 'SiC_Schottky_1200V', ...).  4,860 such
+    diodes were quarantined to diodes.quarantine_synthetic.ndjson —
+    none may ever reappear in an active file."""
+    path = _DATA_DIR / filename
+    offenders: list[str] = []
+    for lineno, raw in _iter_lines(path):
+        for value in _SERIES_OR_FAMILY_RE.findall(raw):
+            if SYNTHETIC_SERIES_RE.match(value):
+                offenders.append(f"L{lineno}: series/family {value!r}")
+                break
+        if len(offenders) >= 10:
+            break
+    assert not offenders, _fail_msg(filename, "synthetic series taxonomy", offenders)
+
+
+@pytest.mark.parametrize("filename", _ACTIVE_FILES)
+def test_no_placeholder_mpn_patterns(filename: str) -> None:
+    """Junk class 2: value-encoding pseudo-MPNs ('WCAP-MLCC-1nF-50V',
+    'WCAP-ATH-10uF-...').  Patterns come from the insert guard's
+    reviewable table; they are hyphen-token-bounded so legitimate MPNs
+    with embedded 'NF' runs (STP40NF03L, CL05B102KB5NFNC, CM100DU-24NF)
+    do not trip them."""
+    path = _DATA_DIR / filename
+    offenders: list[str] = []
+    for lineno, raw in _iter_lines(path):
+        for pn in _PARTNUMBER_RE.findall(raw):
+            if any(pattern.search(pn) for pattern, _reason in PLACEHOLDER_MPN_PATTERNS):
+                offenders.append(f"L{lineno}: partNumber {pn!r}")
+                break
+        if len(offenders) >= 10:
+            break
+    assert not offenders, _fail_msg(filename, "placeholder/value-encoding MPNs", offenders)
+
+
+# partNumber == series is checked only on the files whose quarantined
+# junk class had that signature (23,084 Vishay capacitor catalog-matrix
+# stubs; magnetics stubs) and which are clean today.  Semiconductor and
+# resistor files legitimately mirror the MPN into `series` for
+# single-part series (BAT54, SQ1421EDH, 86k+ legacy resistor imports),
+# so a global check would not distinguish junk from history.  The
+# insert-time guard (heaviside.librarian.guards) DOES reject
+# partNumber == series on every NEW write.
+_PN_EQ_SERIES_FILES: tuple[str, ...] = ("capacitors.ndjson", "magnetics.ndjson")
+
+
+@pytest.mark.parametrize("filename", _PN_EQ_SERIES_FILES)
+def test_no_partnumber_equals_series(filename: str) -> None:
+    """Junk class 2: catalog-matrix stubs whose partNumber merely
+    repeats the series name (Vishay 'TR3' et al.)."""
+    path = _DATA_DIR / filename
+    offenders: list[str] = []
+    for lineno, raw in _iter_lines(path):
+        s = raw.strip()
+        if not s:
+            continue
+        try:
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            continue  # surfaced by the parse test
+        for part in _walk_part_dicts(obj):
+            pn = part.get("partNumber")
+            series = part.get("series")
+            if (
+                isinstance(pn, str)
+                and pn.strip()
+                and isinstance(series, str)
+                and pn == series
+            ):
+                offenders.append(f"L{lineno}: partNumber == series == {pn!r}")
+                break
+        if len(offenders) >= 10:
+            break
+    assert not offenders, _fail_msg(filename, "partNumber == series stubs", offenders)
+
+
+def _walk_part_dicts(obj: object) -> Iterator[dict]:
+    if isinstance(obj, dict):
+        if "partNumber" in obj:
+            yield obj
+        for value in obj.values():
+            yield from _walk_part_dicts(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from _walk_part_dicts(item)
+
+
+def test_no_telemetry_rows_in_converters() -> None:
+    """Junk class 5: pipeline-telemetry records ({'id','status','tas',...})
+    appended to converters.ndjson.  Quarantined to
+    converters.quarantine_telemetry.ndjson — none may return."""
+    path = _DATA_DIR / "converters.ndjson"
+    offenders: list[str] = []
+    for lineno, raw in _iter_lines(path):
+        s = raw.strip()
+        if not s:
+            continue
+        try:
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and TELEMETRY_SHAPE_KEYS.issubset(obj.keys()):
+            offenders.append(f"L{lineno}: keys {sorted(obj.keys())[:6]}")
+        if len(offenders) >= 10:
+            break
+    assert not offenders, _fail_msg(
+        "converters.ndjson", "telemetry-shaped rows", offenders
+    )
 
 
 def test_converters_have_inputs_and_topology() -> None:

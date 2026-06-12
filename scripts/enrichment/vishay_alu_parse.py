@@ -5,12 +5,15 @@ and emit enrichment patch lines for MPNs present in TAS/data/capacitors.ndjson.
 Per-series config defines the numeric-column layout between the case-size
 ('D x L') tokens and the ordering-code suffix tokens (\\d{5}E3).
 """
-import json, re, random, sys, collections
+import json
+import random
+import re
 
 DS_DIR = "/tmp/vishay_ds"
 TAS = "/home/alf/OpenConverters/Heaviside/TAS/data/capacitors.ndjson"
 OUT = "/home/alf/OpenConverters/Heaviside/scripts/enrichment/capacitors_patch.ndjson"
-URLS = dict(line.split() for line in open("/tmp/vishay_urls.txt"))
+with open("/tmp/vishay_urls.txt") as _urls_fh:
+    URLS = dict(line.split() for line in _urls_fh)
 
 # Config fields:
 #  series: TAS series string
@@ -212,11 +215,13 @@ NUM = re.compile(r"^\d+(\.\d+)?$")
 
 def parse_doc(doc):
     cfg = CFG[doc]
-    suffix_re = re.compile(r"^\d{%d}E3$" % cfg.get("suffix_len", 5))
+    suffix_re = re.compile(rf"^\d{{{cfg.get('suffix_len', 5)}}}E3$")
     rows = []          # (mpn, ir_A, esr_Ohm_or_None, case, raw_line, subcfg)
     rejected = []
     prefix = cfg.get("fixed_prefix")
-    for raw in open(f"{DS_DIR}/{doc}.txt", errors="ignore"):
+    with open(f"{DS_DIR}/{doc}.txt", errors="ignore") as fh:
+        lines = fh.readlines()
+    for raw in lines:
         if "fixed_prefix" not in cfg:
             m = PREFIX.search(raw)
             if m:
@@ -256,11 +261,11 @@ def parse_doc(doc):
             rejected.append("NO PREFIX: " + raw.rstrip())
             continue
         suffixes = [t for t in after[si:] if suffix_re.match(t)]
-        ii, isc, ifreq, icond = subcfg["ir"]
+        ii, isc, _ifreq, _icond = subcfg["ir"]
         ir_A = float(nums[ii]) * isc
         esr = None
         if subcfg["esr"]:
-            ei, esc, efreq, elabel, is_z = subcfg["esr"]
+            ei, esc, _efreq, _elabel, _is_z = subcfg["esr"]
             esr = float(nums[ei]) * esc
         for s in suffixes:
             rows.append((prefix + s, ir_A, esr, case, raw.rstrip(), subcfg, s))
@@ -270,22 +275,23 @@ def parse_doc(doc):
 def main():
     # TAS index: which Vishay MAL2/other MPNs exist and what they're missing
     tas = {}
-    for line in open(TAS):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            c = json.loads(line)["capacitor"]
-        except Exception:
-            continue
-        mi = c.get("manufacturerInfo", {})
-        dsi = mi.get("datasheetInfo", {})
-        pn = dsi.get("part", {}).get("partNumber")
-        el = dsi.get("electrical", {})
-        if pn:
-            tas[pn] = (el.get("esr") is not None, el.get("rippleCurrent") is not None)
+    with open(TAS) as tas_fh:
+        for line in tas_fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                c = json.loads(line)["capacitor"]
+            except Exception:
+                continue
+            mi = c.get("manufacturerInfo", {})
+            dsi = mi.get("datasheetInfo", {})
+            pn = dsi.get("part", {}).get("partNumber")
+            el = dsi.get("electrical", {})
+            if pn:
+                tas[pn] = (el.get("esr") is not None, el.get("rippleCurrent") is not None)
 
-    out = open(OUT, "a")
+    out = open(OUT, "a")  # noqa: SIM115 — closed explicitly after the doc loop
     stats = {}
     samples_for_verify = {}
     seen = set()
@@ -305,7 +311,7 @@ def main():
             if has_esr and has_rc:
                 continue
             seen.add(mpn)
-            ii, isc, ifreq, icond = subcfg["ir"]
+            _ii, _isc, ifreq, icond = subcfg["ir"]
             st = {
                 "manufacturerInfo.datasheetInfo.electrical.rippleCurrent": round(ir_A, 6),
                 "manufacturerInfo.datasheetInfo.electrical.rippleCurrentFrequency": ifreq,
@@ -314,7 +320,7 @@ def main():
                   f"Information' table, row with ordering-code suffix {sfx} "
                   f"(case {case}): rated ripple current {ir_A:g} A RMS at {icond}")
             if esr is not None and subcfg["esr"]:
-                ei, esc, efreq, elabel, is_z = subcfg["esr"]
+                _ei, _esc, efreq, elabel, is_z = subcfg["esr"]
                 st["manufacturerInfo.datasheetInfo.electrical.esr"] = round(esr, 6)
                 st["manufacturerInfo.datasheetInfo.electrical.esrFrequency"] = efreq
                 ev += f"; {elabel} = {esr:g} Ohm"
@@ -338,8 +344,8 @@ def main():
         print(f"{doc:>6} {s:<18} {a:>9} {b:>7} {c:>8} {r:>9}")
         tot += c
     print("TOTAL patched:", tot)
-    json.dump({d: v for d, v in samples_for_verify.items()},
-              open("/tmp/verify_samples.json", "w"), indent=1)
+    with open("/tmp/verify_samples.json", "w") as verify_fh:
+        json.dump(dict(samples_for_verify.items()), verify_fh, indent=1)
 
 
 if __name__ == "__main__":

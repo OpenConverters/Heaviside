@@ -416,7 +416,10 @@ class TestAddComponent:
         with tas._VALIDATOR_LOCK:
             tas._VALIDATOR_CACHE["mosfets"] = _AcceptAll()
         try:
-            with pytest.raises(tas.LibrarianError, match="no extractable"):
+            # The insert guard (heaviside.librarian.guards) now rejects
+            # anonymous rows before add_component's own MPN extraction;
+            # GuardRejectionError is a LibrarianError subclass.
+            with pytest.raises(tas.LibrarianError, match="no non-empty partNumber"):
                 tas.add_component("mosfets", {"semiconductor": {"mosfet": {}}})
         finally:
             tas._clear_validator_cache()

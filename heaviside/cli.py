@@ -859,6 +859,26 @@ def audit(
         "--json",
         help="Emit the report as JSON.",
     ),
+    integrity: bool = typer.Option(
+        False,
+        "--integrity",
+        help="Run the offline integrity scan instead of the field audit: "
+        "rows that would fail the insert guard (synthetic series, "
+        "placeholder MPNs, junk datasheet URLs, telemetry shapes), "
+        "exact-duplicate payloads, same-MPN groups over --max-mpn-copies, "
+        "and datasheet URLs pointing at a different known manufacturer.",
+    ),
+    max_mpn_copies: int = typer.Option(
+        1,
+        "--max-mpn-copies",
+        help="(--integrity) Flag MPNs with more rows than this.",
+    ),
+    check_schema: bool = typer.Option(
+        False,
+        "--check-schema",
+        help="(--integrity) Also run full JSON-schema validation per row "
+        "(slow on the 100k+-row files).",
+    ),
 ) -> None:
     """Audit TAS/data for pipeline-critical fields.
 
@@ -866,9 +886,12 @@ def audit(
     Vth, Qg, Qrr, etc.) without modifying any data. The output shows
     pass rate and top failure reasons per category.
 
+    With --integrity, runs the read-only database-integrity scan
+    (heaviside.librarian.guards.integrity_scan) instead.
+
     Exit codes:
-      0 — all categories at 100%
-      1 — at least one category has failures
+      0 — all categories at 100% (or integrity-clean)
+      1 — at least one category has failures / integrity findings
       2 — tooling error
     """
     from heaviside.librarian.auditor import (
@@ -876,6 +899,15 @@ def audit(
         audit_all,
         audit_category,
     )
+
+    if integrity:
+        _run_integrity_audit(
+            category,
+            as_json=as_json,
+            max_mpn_copies=max_mpn_copies,
+            check_schema=check_schema,
+        )
+        return
 
     categories_to_run = [category] if category else None
     results: dict[str, CategoryAudit] = {}
@@ -932,6 +964,94 @@ def audit(
             typer.echo(f"  {'overall':20s}       {total_pass:>6d}/{total_count:<6d}  ({pct}%)")
 
     raise typer.Exit(code=0 if not any_fail else 1)
+
+
+def _run_integrity_audit(
+    category: str | None,
+    *,
+    as_json: bool,
+    max_mpn_copies: int,
+    check_schema: bool,
+) -> None:
+    """Run the read-only integrity scan and render it (see `audit --integrity`)."""
+    from heaviside.librarian.guards import IntegrityReport, integrity_scan
+    from heaviside.librarian.safe_access import CATEGORIES, TAS_DATA_DIR
+
+    if category:
+        categories = [category]
+    else:
+        # Every whitelisted category with a live NDJSON, except the
+        # quarantine bin itself (it is *expected* to hold junk).
+        categories = sorted(
+            cat
+            for cat in CATEGORIES
+            if cat != "quarantine" and (TAS_DATA_DIR / f"{cat}.ndjson").exists()
+        )
+
+    reports: dict[str, IntegrityReport] = {}
+    try:
+        for cat in categories:
+            reports[cat] = integrity_scan(
+                cat,
+                max_mpn_copies=max_mpn_copies,
+                check_schema=check_schema,
+            )
+    except Exception as exc:
+        typer.echo(f"error: integrity scan failed: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+    any_findings = any(not r.clean for r in reports.values())
+
+    if as_json:
+        payload: dict[str, object] = {}
+        for cat, r in reports.items():
+            payload[cat] = {
+                "total": r.total,
+                "guard_failures": [
+                    {"line": f.line, "mpn": f.mpn, "reasons": f.reasons}
+                    for f in r.guard_failures[:50]
+                ],
+                "guard_failure_count": len(r.guard_failures),
+                "exact_duplicate_groups": len(r.exact_duplicates),
+                "exact_duplicate_rows": sum(len(v) for v in r.exact_duplicates.values()),
+                "mpn_over_limit": dict(
+                    sorted(r.mpn_over_limit.items(), key=lambda x: -x[1])[:50]
+                ),
+                "mpn_over_limit_count": len(r.mpn_over_limit),
+                "domain_mismatches": [
+                    {"line": f.line, "mpn": f.mpn, "reasons": f.reasons}
+                    for f in r.domain_mismatches[:50]
+                ],
+                "domain_mismatch_count": len(r.domain_mismatches),
+            }
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        for cat, r in reports.items():
+            status = "CLEAN" if r.clean else "FINDINGS"
+            typer.echo(f"  {cat:20s} {status:8s}  rows={r.total}")
+            if r.guard_failures:
+                typer.echo(f"    guard failures: {len(r.guard_failures)}")
+                for f in r.guard_failures[:5]:
+                    typer.echo(f"      L{f.line} {f.mpn}: {f.reasons[0]}")
+            if r.exact_duplicates:
+                dup_rows = sum(len(v) for v in r.exact_duplicates.values())
+                typer.echo(
+                    f"    exact-duplicate payloads: {len(r.exact_duplicates)} "
+                    f"groups / {dup_rows} rows"
+                )
+            if r.mpn_over_limit:
+                top = sorted(r.mpn_over_limit.items(), key=lambda x: -x[1])[:5]
+                shown = ", ".join(f"{m}({n})" for m, n in top)
+                typer.echo(
+                    f"    MPNs with >{max_mpn_copies} copies: "
+                    f"{len(r.mpn_over_limit)}  (top: {shown})"
+                )
+            if r.domain_mismatches:
+                typer.echo(f"    manufacturer/domain mismatches: {len(r.domain_mismatches)}")
+                for f in r.domain_mismatches[:5]:
+                    typer.echo(f"      L{f.line} {f.mpn}: {f.reasons[0]}")
+
+    raise typer.Exit(code=0 if not any_findings else 1)
 
 
 if __name__ == "__main__":
