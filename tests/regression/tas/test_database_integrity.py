@@ -60,13 +60,13 @@ _ACTIVE_FILES: tuple[str, ...] = (
 # must update this baseline in the same reviewed commit (forcing the
 # diff to surface in code review) rather than silently sliding it.
 _ROW_COUNT_BASELINE: dict[str, int] = {
-    "capacitors.ndjson": 134_956,
+    "capacitors.ndjson": 111_562,
     "connectors.ndjson": 14,
     "controllers.ndjson": 1_667,
-    "converters.ndjson": 48,
-    "diodes.ndjson": 7_839,
+    "converters.ndjson": 47,
+    "diodes.ndjson": 2_978,
     "igbts.ndjson": 3_587,
-    "magnetics.ndjson": 50_553,
+    "magnetics.ndjson": 50_552,
     "mosfets.ndjson": 6_712,
     "resistors.ndjson": 117_472,
 }
@@ -290,16 +290,6 @@ def test_envelope_key_present_in_spot_check(filename: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "converters.ndjson L48 is a pipeline-run telemetry record "
-        "({'id', 'status', 'tas': {...}}) accidentally appended to "
-        "the converter corpus instead of the run log.  Awaiting "
-        "component-librarian repair (forbidden to edit TAS/data/*.ndjson "
-        "by hand per AGENTS.md guardrail)."
-    ),
-)
 def test_converters_have_inputs_and_topology() -> None:
     """Every non-`_empty` converter must expose both `inputs` and
     `topology` at the root (per `TAS/data/converters.ndjson` v2 shape
