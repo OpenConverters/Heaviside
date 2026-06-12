@@ -559,6 +559,10 @@ def assemble_bom_from_tas(
     # Synthesize auxiliary BOM components MKF's power-stage deck omits.
     _add_input_capacitor(tas, topology=topology, spec=spec)
     _add_feedback_divider(tas, topology=topology, spec=spec)
+    _add_bootstrap_capacitor(tas, topology=topology, spec=spec)
+    _add_vcc_bypass_capacitor(tas, spec=spec)
+    _add_soft_start_capacitor(tas, spec=spec)
+    _add_current_sense_resistor(tas, spec=spec, i_peak=stresses.id_stress)
 
     return tas
 
@@ -669,6 +673,347 @@ def _humanize_ohms(r: float) -> str:
     if r >= 1e3:
         return f"{r / 1e3:.2f}k"
     return f"{r:.1f}"
+
+
+# ---------------------------------------------------------------------------
+# Auxiliary gate-drive / housekeeping BOM synthesis
+# ---------------------------------------------------------------------------
+#
+# Design-rule constants (engineering choices, like _DEFAULT_VIN_RIPPLE_FRACTION
+# above — NOT component data; component data always comes from TAS/datasheets):
+
+# Bootstrap droop budget: the high-side supply may sag this much while
+# delivering one gate charge (standard app-note budget, e.g. TI SLVA882).
+_BOOTSTRAP_DROOP_BUDGET_V: float = 0.1
+# Margin over the bare Qg/ΔV minimum so repetitive switching and boot-diode
+# leakage don't eat the budget.
+_BOOTSTRAP_SIZING_MARGIN: float = 10.0
+# Soft-start ramp target when the spec doesn't state one.
+_SOFT_START_RAMP_S: float = 5e-3
+
+
+def _stamped_controller_data(tas: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the stamped U1 controller row (the TAS controllers.ndjson
+    record placed in ``comp['data']``), or None if no controller is
+    stamped yet."""
+    for stage in tas.get("topology", {}).get("stages", []):
+        for comp in stage.get("circuit", {}).get("components", []):
+            if not isinstance(comp, dict):
+                continue
+            data = comp.get("data")
+            if isinstance(data, dict) and (
+                data.get("type") == "controller" or "topologies" in data
+            ):
+                return data
+    return None
+
+
+def _picked_fet_total_gate_charge(tas: dict[str, Any]) -> float | None:
+    """Worst-case (largest) totalGateCharge across picked FETs, in C.
+
+    Reads the stamped SAS envelopes; returns None when no picked FET
+    carries the datasheet value — we never substitute a typical Qg.
+    """
+    worst: float | None = None
+    for stage in tas.get("topology", {}).get("stages", []):
+        for comp in stage.get("circuit", {}).get("components", []):
+            if not isinstance(comp, dict) or not isinstance(comp.get("data"), dict):
+                continue
+            mosfet = comp["data"].get("semiconductor", {}).get("mosfet")
+            if not isinstance(mosfet, dict):
+                continue
+            qg = (
+                mosfet.get("manufacturerInfo", {})
+                .get("datasheetInfo", {})
+                .get("electrical", {})
+                .get("totalGateCharge")
+            )
+            if isinstance(qg, (int, float)) and qg > 0:
+                worst = qg if worst is None else max(worst, float(qg))
+    return worst
+
+
+def _append_to_control_stage(tas: dict[str, Any], comp: dict[str, Any]) -> bool:
+    """Append a synthesized component to the control stage (the stage
+    carrying ``drives``); falls back to the first stage with a circuit."""
+    stages = tas.get("topology", {}).get("stages", [])
+    for stage in stages:
+        circuit = stage.get("circuit")
+        if "drives" in stage and isinstance(circuit, dict) and isinstance(
+            circuit.get("components"), list
+        ):
+            circuit["components"].append(comp)
+            return True
+    for stage in stages:
+        circuit = stage.get("circuit")
+        if isinstance(circuit, dict) and isinstance(circuit.get("components"), list):
+            circuit["components"].append(comp)
+            return True
+    return False
+
+
+def _add_bootstrap_capacitor(
+    tas: dict[str, Any],
+    *,
+    topology: str,
+    spec: Mapping[str, Any],
+) -> bool:
+    """Synthesize the high-side bootstrap capacitor (C_boot).
+
+    Fires for buck-family converters whose stamped controller drives an
+    external high-side N-FET from an integrated driver. Sized from the
+    PICKED FET's datasheet total gate charge:
+
+        C_boot = margin · Qg / ΔV_droop
+
+    Voltage rating: from the controller's ``gateDriveVoltage`` when the
+    catalog carries it; otherwise the conservative Vin_max bound is used
+    and recorded in the provenance (over-rating is a documented margin
+    choice — under-rating or a guessed drive voltage would be a lie).
+    """
+    if "buck" not in topology.lower() or _has_component(tas, "C_boot"):
+        return False
+    ctrl = _stamped_controller_data(tas)
+    if ctrl is None:
+        return False
+    if ctrl.get("integratedFET") is True or ctrl.get("integratedDriver") is not True:
+        return False  # monolithic part (no external FET) or external driver IC
+
+    qg = _picked_fet_total_gate_charge(tas)
+    if qg is None:
+        tas.setdefault("diagnostics", []).append(
+            "bootstrap capacitor not sized: picked FET carries no "
+            "totalGateCharge in TAS (needs datasheet enrichment)"
+        )
+        return False
+
+    target_c = _BOOTSTRAP_SIZING_MARGIN * qg / _BOOTSTRAP_DROOP_BUDGET_V
+
+    vdrv = ctrl.get("gateDriveVoltage")
+    if isinstance(vdrv, (int, float)) and vdrv > 0:
+        v_working = float(vdrv)
+        v_basis = "controller gateDriveVoltage"
+    else:
+        vin = spec.get("inputVoltage") or {}
+        vin_max = vin.get("maximum") if isinstance(vin, Mapping) else None
+        if not (isinstance(vin_max, (int, float)) and vin_max > 0):
+            return False
+        v_working = float(vin_max)
+        v_basis = "conservative Vin_max bound (controller gateDriveVoltage absent)"
+
+    stresses = ComponentStresses(
+        vds_stress=None,
+        id_stress=None,
+        vr_stress=None,
+        if_avg_stress=None,
+        v_working=v_working,
+        i_ripple=0.0,  # boot cap carries gate-charge pulses, not bulk ripple
+    )
+    try:
+        sel = select_capacitor(
+            _capacitor_constraints_from_stress(stresses, target_capacitance=target_c),
+            tiebreaker=CapacitorTiebreaker.LOWEST_ESR,
+        )
+    except SelectionError:
+        tas.setdefault("diagnostics", []).append(
+            f"bootstrap capacitor not sized: no TAS capacitor near "
+            f"{target_c:.2e} F rated for {v_working:.0f} V"
+        )
+        return False
+
+    comp: dict[str, Any] = {
+        "name": "C_boot",
+        "data": "TAS/data/capacitors.ndjson?placeholder=C_boot",
+    }
+    _stamp_capacitor(comp, sel, stress_v=v_working, stress_ripple=0.0)
+    comp["selection_provenance"].update(
+        {
+            "sizing": "C_boot = margin*Qg/dV",
+            "qg_worst_c": qg,
+            "droop_budget_v": _BOOTSTRAP_DROOP_BUDGET_V,
+            "margin": _BOOTSTRAP_SIZING_MARGIN,
+            "v_working_basis": v_basis,
+        }
+    )
+    return _append_to_control_stage(tas, comp)
+
+
+def _add_vcc_bypass_capacitor(tas: dict[str, Any], *, spec: Mapping[str, Any]) -> bool:
+    """Synthesize the controller VCC/bias bypass capacitor (C_vcc).
+
+    Strictly data-gated: fires only when the stamped controller row
+    carries ``vccBypassCapacitance`` (the datasheet-recommended value,
+    populated by librarian enrichment) — bypass values are a datasheet
+    recommendation, not something we may invent.
+    """
+    if _has_component(tas, "C_vcc"):
+        return False
+    ctrl = _stamped_controller_data(tas)
+    if ctrl is None:
+        return False
+    c_rec = ctrl.get("vccBypassCapacitance")
+    if not (isinstance(c_rec, (int, float)) and c_rec > 0):
+        tas.setdefault("diagnostics", []).append(
+            "VCC bypass capacitor not sized: controller row lacks "
+            "vccBypassCapacitance (needs datasheet extraction)"
+        )
+        return False
+    vin = spec.get("inputVoltage") or {}
+    vin_max = vin.get("maximum") if isinstance(vin, Mapping) else None
+    vcc = ctrl.get("vccVoltage")
+    if isinstance(vcc, (int, float)) and vcc > 0:
+        v_working = float(vcc)
+    elif isinstance(vin_max, (int, float)) and vin_max > 0:
+        v_working = float(vin_max)  # conservative bound, recorded below
+    else:
+        return False
+
+    stresses = ComponentStresses(
+        vds_stress=None,
+        id_stress=None,
+        vr_stress=None,
+        if_avg_stress=None,
+        v_working=v_working,
+        i_ripple=0.0,
+    )
+    try:
+        sel = select_capacitor(
+            _capacitor_constraints_from_stress(stresses, target_capacitance=float(c_rec)),
+            tiebreaker=CapacitorTiebreaker.LOWEST_ESR,
+        )
+    except SelectionError:
+        tas.setdefault("diagnostics", []).append(
+            f"VCC bypass capacitor not sized: no TAS capacitor near {c_rec:.2e} F"
+        )
+        return False
+    comp: dict[str, Any] = {
+        "name": "C_vcc",
+        "data": "TAS/data/capacitors.ndjson?placeholder=C_vcc",
+    }
+    _stamp_capacitor(comp, sel, stress_v=v_working, stress_ripple=0.0)
+    comp["selection_provenance"]["sizing"] = "datasheet vccBypassCapacitance"
+    return _append_to_control_stage(tas, comp)
+
+
+def _add_soft_start_capacitor(tas: dict[str, Any], *, spec: Mapping[str, Any]) -> bool:
+    """Synthesize the soft-start capacitor (C_ss).
+
+    Data-gated on the controller's ``softStartCurrent`` (the SS-pin
+    charging current from the datasheet) and its feedback reference:
+
+        C_ss = I_ss · t_ss / Vref
+
+    t_ss comes from ``spec['softStartTime']`` when present, else the
+    design-rule default ramp.
+    """
+    if _has_component(tas, "C_ss"):
+        return False
+    ctrl = _stamped_controller_data(tas)
+    if ctrl is None:
+        return False
+    i_ss = ctrl.get("softStartCurrent")
+    vref = _controller_vref(tas)
+    if not (isinstance(i_ss, (int, float)) and i_ss > 0) or vref is None:
+        tas.setdefault("diagnostics", []).append(
+            "soft-start capacitor not sized: controller row lacks "
+            "softStartCurrent and/or feedbackReferenceVoltage "
+            "(needs datasheet extraction)"
+        )
+        return False
+    t_ss = spec.get("softStartTime")
+    if not (isinstance(t_ss, (int, float)) and t_ss > 0):
+        t_ss = _SOFT_START_RAMP_S
+    target_c = float(i_ss) * float(t_ss) / vref
+
+    v_working = max(2.0 * vref, 6.3)  # SS pin swings ~Vref; smallest std rating
+    stresses = ComponentStresses(
+        vds_stress=None,
+        id_stress=None,
+        vr_stress=None,
+        if_avg_stress=None,
+        v_working=v_working,
+        i_ripple=0.0,
+    )
+    try:
+        sel = select_capacitor(
+            _capacitor_constraints_from_stress(stresses, target_capacitance=target_c),
+            tiebreaker=CapacitorTiebreaker.LOWEST_ESR,
+        )
+    except SelectionError:
+        tas.setdefault("diagnostics", []).append(
+            f"soft-start capacitor not sized: no TAS capacitor near {target_c:.2e} F"
+        )
+        return False
+    comp: dict[str, Any] = {
+        "name": "C_ss",
+        "data": "TAS/data/capacitors.ndjson?placeholder=C_ss",
+    }
+    _stamp_capacitor(comp, sel, stress_v=v_working, stress_ripple=0.0)
+    comp["selection_provenance"].update(
+        {
+            "sizing": "C_ss = Iss*tss/Vref",
+            "soft_start_current_a": float(i_ss),
+            "soft_start_time_s": float(t_ss),
+            "vref": vref,
+        }
+    )
+    return _append_to_control_stage(tas, comp)
+
+
+def _add_current_sense_resistor(
+    tas: dict[str, Any],
+    *,
+    spec: Mapping[str, Any],
+    i_peak: float | None,
+) -> bool:
+    """Synthesize the cycle-by-cycle current-sense resistor (R_sense).
+
+    Data-gated on the controller's ``currentSenseThresholdVoltage``
+    (many controllers sense Rds(on) instead and need no R_sense — those
+    rows simply lack the field and nothing is added):
+
+        R_sense = V_cs(th) / I_peak
+    """
+    if _has_component(tas, "R_sense"):
+        return False
+    ctrl = _stamped_controller_data(tas)
+    if ctrl is None:
+        return False
+    v_cs = ctrl.get("currentSenseThresholdVoltage")
+    if not (isinstance(v_cs, (int, float)) and v_cs > 0):
+        return False  # Rds(on)-sensing controller: no sense resistor by design
+    if not (isinstance(i_peak, (int, float)) and i_peak > 0):
+        tas.setdefault("diagnostics", []).append(
+            "current-sense resistor not sized: peak current stress unavailable"
+        )
+        return False
+    target_r = float(v_cs) / float(i_peak)
+    try:
+        sel = select_resistor(ResistorConstraints(target_ohms=target_r))
+    except SelectionError:
+        tas.setdefault("diagnostics", []).append(
+            f"current-sense resistor not sized: no TAS resistor near {target_r:.4f} Ω"
+        )
+        return False
+    comp: dict[str, Any] = {
+        "name": "R_sense",
+        "data": sel.chosen.raw_envelope,
+        "mpn": sel.chosen.mpn,
+        "manufacturer": sel.chosen.manufacturer,
+        "value": _humanize_ohms(sel.chosen.resistance),
+        "selection_provenance": {
+            "category": "resistor",
+            "mpn": sel.chosen.mpn,
+            "manufacturer": sel.chosen.manufacturer,
+            "sizing": "R_sense = Vcs_th/I_peak",
+            "target_ohms": target_r,
+            "chosen_ohms": sel.chosen.resistance,
+            "deviation": sel.deviation,
+            "v_cs_threshold": float(v_cs),
+            "i_peak": float(i_peak),
+        },
+    }
+    return _append_to_control_stage(tas, comp)
 
 
 def _select_controller_for_tas(
