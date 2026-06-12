@@ -248,10 +248,25 @@ def test_digikey_missing_mpn_raises() -> None:
     assert excinfo.value.missing_field == "ManufacturerPartNumber"
 
 
-def test_digikey_non_active_product_marks_discontinued() -> None:
+def test_digikey_lifecycle_status_maps_onto_sas_enum() -> None:
+    """ProductStatus maps onto the SAS enum (production/nrnd/obsolete/preview).
+
+    The old converter emitted "discontinued" — a value outside the SAS
+    enum, so every non-Active part failed schema validation at insert.
+    Distributor-only statuses ("Discontinued at DigiKey") say nothing
+    about the manufacturer lifecycle, so status is omitted, not guessed.
+    """
     payload = _wolfspeed_digikey_payload(ProductStatus="Obsolete")
     envelope = convert_digikey_to_tas_mosfet(payload)
-    assert envelope["semiconductor"]["mosfet"]["manufacturerInfo"]["status"] == "discontinued"
+    assert envelope["semiconductor"]["mosfet"]["manufacturerInfo"]["status"] == "obsolete"
+
+    payload = _wolfspeed_digikey_payload(ProductStatus="Not For New Designs")
+    envelope = convert_digikey_to_tas_mosfet(payload)
+    assert envelope["semiconductor"]["mosfet"]["manufacturerInfo"]["status"] == "nrnd"
+
+    payload = _wolfspeed_digikey_payload(ProductStatus="Discontinued at DigiKey")
+    envelope = convert_digikey_to_tas_mosfet(payload)
+    assert "status" not in envelope["semiconductor"]["mosfet"]["manufacturerInfo"]
 
 
 def test_digikey_alternate_param_label_accepted() -> None:

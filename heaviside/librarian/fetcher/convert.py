@@ -441,8 +441,7 @@ def convert_digikey_to_tas_mosfet(
     if case:
         part["case"] = case
 
-    status_field = product.get("ProductStatus")
-    status = "production" if status_field in (None, "Active") else "discontinued"
+    status = _digikey_lifecycle_status(product)
 
     datasheet_url = product.get("PrimaryDatasheet") or ""
 
@@ -463,7 +462,7 @@ def convert_digikey_to_tas_mosfet(
                 "manufacturerInfo": {
                     "name": manufacturer,
                     "reference": mpn,
-                    "status": status,
+                    **({"status": status} if status is not None else {}),
                     "datasheetUrl": datasheet_url,
                     "datasheetInfo": {
                         "part": part,
@@ -696,12 +695,46 @@ def _extract_mouser_attrs(product: dict[str, Any]) -> dict[str, str]:
     return attrs
 
 
+def _digikey_lifecycle_status(product: dict[str, Any]) -> str | None:
+    """Map Digi-Key ``ProductStatus`` onto the SAS manufacturerInfo.status
+    enum (``production``/``nrnd``/``obsolete``/``preview``).
+
+    The previous mapping emitted ``"discontinued"`` for every non-Active
+    part — a value that is NOT in the SAS enum, so every such row failed
+    schema validation.  Distributor-only statuses ("Discontinued at
+    DigiKey", "Last Time Buy" stock states) say nothing reliable about the
+    *manufacturer's* lifecycle, so they map to ``None`` and the optional
+    ``status`` field is omitted rather than invented.
+    """
+    raw = product.get("ProductStatus")
+    if raw is None or raw == "Active":
+        return "production"
+    if raw == "Not For New Designs":
+        return "nrnd"
+    if raw == "Obsolete":
+        return "obsolete"
+    # Unknown / distributor-specific status — omit, never guess.
+    return None
+
+
 def _digikey_description(product: dict[str, Any]) -> str:
     block = product.get("Description") or {}
     if isinstance(block, dict):
-        return block.get("ProductDescription") or ""
-    if isinstance(block, str):
+        desc = block.get("ProductDescription")
+        if desc:
+            return desc
+    elif isinstance(block, str) and block:
         return block
+    # Digi-Key Product Information v3 *search* payloads put the
+    # description at the top level ("ProductDescription" /
+    # "DetailedDescription"), not under a "Description" object.  The
+    # subType/technology resolvers depend on this string, so falling
+    # through to "" would silently misclassify every part as
+    # subType="standard" / technology="Si".
+    for key in ("ProductDescription", "DetailedDescription"):
+        val = product.get(key)
+        if isinstance(val, str) and val:
+            return val
     return ""
 
 
@@ -877,7 +910,7 @@ def _build_diode_envelope(
     params: dict[str, str],
     distributor_block: dict[str, Any],
     datasheet_url: str,
-    status: str,
+    status: str | None,
 ) -> dict[str, Any]:
     _DIODE_OPTIONAL = {"forwardVoltage", "reverseRecoveryCharge"}
     electrical: dict[str, Any] = {}
@@ -894,8 +927,20 @@ def _build_diode_envelope(
                 field=field,
                 candidates=candidates,
             )
-    technology = _resolve_semi_technology(description, mpn)
-    subtype = _resolve_diode_subtype(description)
+    # Digi-Key publishes an explicit "Technology" parameter for diodes
+    # ("SiC (Silicon Carbide) Schottky" / "Schottky" / "Standard").  It is
+    # authoritative where present — the v3 search descriptions abbreviate
+    # ("DIODE SIL CARB 1200V") and defeat the description-based resolver.
+    tech_param = (params.get("Technology") or "").upper()
+    if "SILICON CARBIDE" in tech_param or "SIC" in tech_param:
+        subtype = "sicSchottky"
+        technology = "SiC"
+    elif "SCHOTTKY" in tech_param:
+        subtype = "schottky"
+        technology = _resolve_semi_technology(description, mpn)
+    else:
+        subtype = _resolve_diode_subtype(description)
+        technology = _resolve_semi_technology(description, mpn)
     case = params.get("Supplier Device Package") or params.get("Package / Case")
     part: dict[str, Any] = {
         "partNumber": mpn,
@@ -910,7 +955,7 @@ def _build_diode_envelope(
                 "manufacturerInfo": {
                     "name": manufacturer,
                     "reference": mpn,
-                    "status": status,
+                    **({"status": status} if status is not None else {}),
                     "datasheetUrl": datasheet_url,
                     "datasheetInfo": {
                         "part": part,
@@ -944,7 +989,7 @@ def convert_digikey_to_tas_diode(
     manufacturer = _digikey_manufacturer(source, mpn, product)
     params = _extract_digikey_params(source, mpn, product)
     description = _digikey_description(product)
-    status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
+    status = _digikey_lifecycle_status(product)
     return _build_diode_envelope(
         source=source,
         mpn=mpn,
@@ -1009,7 +1054,7 @@ def _build_igbt_envelope(
     params: dict[str, str],
     distributor_block: dict[str, Any],
     datasheet_url: str,
-    status: str,
+    status: str | None,
 ) -> dict[str, Any]:
     _reject_igbt_module(source, mpn, description)
     electrical: dict[str, Any] = {}
@@ -1037,7 +1082,7 @@ def _build_igbt_envelope(
                 "manufacturerInfo": {
                     "name": manufacturer,
                     "reference": mpn,
-                    "status": status,
+                    **({"status": status} if status is not None else {}),
                     "datasheetUrl": datasheet_url,
                     "datasheetInfo": {
                         "part": part,
@@ -1068,7 +1113,7 @@ def convert_digikey_to_tas_igbt(
     manufacturer = _digikey_manufacturer(source, mpn, product)
     params = _extract_digikey_params(source, mpn, product)
     description = _digikey_description(product)
-    status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
+    status = _digikey_lifecycle_status(product)
     return _build_igbt_envelope(
         source=source,
         mpn=mpn,
@@ -1187,7 +1232,7 @@ def _build_resistor_envelope(
     params: dict[str, str],
     distributor_block: dict[str, Any],
     datasheet_url: str,
-    status: str,
+    status: str | None,
 ) -> dict[str, Any]:
     resistance = _extract_required_numeric(
         source=source,
@@ -1218,7 +1263,7 @@ def _build_resistor_envelope(
             "manufacturerInfo": {
                 "name": manufacturer,
                 "reference": mpn,
-                "status": status,
+                **({"status": status} if status is not None else {}),
                 "datasheetUrl": datasheet_url,
                 "datasheetInfo": {
                     "part": {
@@ -1260,7 +1305,7 @@ def convert_digikey_to_tas_resistor(
     mpn = _mpn_or_raise(source, product)
     manufacturer = _digikey_manufacturer(source, mpn, product)
     params = _extract_digikey_params(source, mpn, product)
-    status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
+    status = _digikey_lifecycle_status(product)
     return _build_resistor_envelope(
         source=source,
         mpn=mpn,
@@ -1492,7 +1537,7 @@ def _build_capacitor_envelope(
     params: dict[str, str],
     distributor_block: dict[str, Any],
     datasheet_url: str,
-    status: str,
+    status: str | None,
     description: str = "",
 ) -> dict[str, Any]:
     capacitance = _extract_required_numeric(
@@ -1545,7 +1590,7 @@ def _build_capacitor_envelope(
             "manufacturerInfo": {
                 "name": manufacturer,
                 "reference": mpn,
-                "status": status,
+                **({"status": status} if status is not None else {}),
                 "datasheetUrl": datasheet_url,
                 "datasheetInfo": {
                     "part": {
@@ -1597,7 +1642,7 @@ def convert_digikey_to_tas_capacitor(
     mpn = _mpn_or_raise(source, product)
     manufacturer = _digikey_manufacturer(source, mpn, product)
     params = _extract_digikey_params(source, mpn, product)
-    status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
+    status = _digikey_lifecycle_status(product)
     desc = product.get("Description") or {}
     description = desc.get("ProductDescription", "") if isinstance(desc, dict) else str(desc)
     return _build_capacitor_envelope(
@@ -1668,7 +1713,7 @@ def _build_magnetic_envelope(
     params: dict[str, str],
     distributor_block: dict[str, Any],
     datasheet_url: str,
-    status: str,
+    status: str | None,
     description: str = "",
 ) -> dict[str, Any]:
     """Build a TAS ``{"magnetic": {...}}`` envelope from parsed parameters."""
@@ -1730,7 +1775,7 @@ def _build_magnetic_envelope(
             "manufacturerInfo": {
                 "name": manufacturer,
                 "reference": mpn,
-                "status": status,
+                **({"status": status} if status is not None else {}),
                 "datasheetUrl": datasheet_url,
                 "datasheetInfo": {
                     "part": {
@@ -1761,7 +1806,7 @@ def convert_digikey_to_tas_magnetic(
     mpn = _mpn_or_raise(source, product)
     manufacturer = _digikey_manufacturer(source, mpn, product)
     params = _extract_digikey_params(source, mpn, product)
-    status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
+    status = _digikey_lifecycle_status(product)
     return _build_magnetic_envelope(
         source=source,
         mpn=mpn,
