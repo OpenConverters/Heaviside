@@ -823,7 +823,8 @@ def test_digikey_capacitor_happy_path_validates() -> None:
     envelope = convert_digikey_to_tas_capacitor(_murata_capacitor_digikey())
     cap = envelope["capacitor"]
     part = cap["manufacturerInfo"]["datasheetInfo"]["part"]
-    assert part["technology"] == "MLCC"
+    assert part["technology"] == "ceramic-class-2"
+    assert part["dielectricCode"] == "X7R"
     assert part["series"] == "GRM"
     assert part["case"] == "0805 (2012 Metric)"
     electrical = cap["manufacturerInfo"]["datasheetInfo"]["electrical"]
@@ -841,12 +842,14 @@ def test_digikey_capacitor_happy_path_validates() -> None:
 @pytest.mark.parametrize(
     "family,expected_tech",
     [
-        ("Ceramic Capacitors", "MLCC"),
-        ("Aluminum Electrolytic Capacitors", "AluminumElectrolytic"),
-        ("Aluminum Polymer Capacitors", "AluminumPolymer"),
-        ("Tantalum Capacitors", "Tantalum"),
-        ("Tantalum Polymer Capacitors", "TantalumPolymer"),
-        ("Film Capacitors", "Film"),
+        # The fixture's description carries "X7R", so the ceramic family
+        # resolves to class 2 with that dielectric code.
+        ("Ceramic Capacitors", "ceramic-class-2"),
+        ("Aluminum Electrolytic Capacitors", "aluminum-electrolytic-wet"),
+        ("Aluminum Polymer Capacitors", "aluminum-electrolytic-polymer"),
+        ("Tantalum Capacitors", "tantalum-mno2"),
+        ("Tantalum Polymer Capacitors", "tantalum-polymer"),
+        ("Film Capacitors", "film-polypropylene"),
     ],
 )
 def test_digikey_capacitor_technology_mapping(
@@ -857,14 +860,16 @@ def test_digikey_capacitor_technology_mapping(
     for p in payload["Parameters"]:
         if p["Parameter"] == "Family":
             p["Value"] = family
+    # Film chemistry comes from the Dielectric Material parameter —
+    # without it the converter refuses to pick a film-* value.
+    if expected_tech.startswith("film-"):
+        payload["Parameters"].append(
+            {"Parameter": "Dielectric Material", "Value": "Polypropylene (PP), Metallized"}
+        )
     # Aluminum/Tantalum bulk caps don't validate as SMT MLCCs — adjust
     # mounting so the shape resolver doesn't trip while we test only
     # the technology mapping.
-    if expected_tech in {
-        "AluminumElectrolytic",
-        "AluminumPolymer",
-        "Supercapacitor",
-    }:
+    if expected_tech.startswith(("aluminum-", "supercapacitor-")):
         for p in payload["Parameters"]:
             if p["Parameter"] == "Mounting Type":
                 p["Value"] = "Through Hole"

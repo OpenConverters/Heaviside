@@ -1294,11 +1294,42 @@ def convert_mouser_to_tas_resistor(product: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-# Map Digi-Key "Family.Value" (or free-text from the family/series
-# block) to a CAS capacitor technology string.  CAS does not enforce
-# an enum on technology — but Proteus polluted the field with values
-# like "ceramic", "tantalum", "alum", "AlumPolymer" — we standardise.
-def _resolve_capacitor_technology(source: str, mpn: str, family: str | None) -> str:
+# EIA/JIS temperature-characteristic code → CAS ceramic class. Y5V is
+# treated as class-2 and Y5U/Z5U as class-3 per the project convention
+# documented in scripts/cap_tech_rules/ceramic_codes.json.
+_CAP_EIA_CLASS: dict[str, str] = {
+    "C0G": "ceramic-class-1",
+    "NP0": "ceramic-class-1",
+    "U2J": "ceramic-class-1",
+    "X5R": "ceramic-class-2",
+    "X6S": "ceramic-class-2",
+    "X6T": "ceramic-class-2",
+    "X7R": "ceramic-class-2",
+    "X7S": "ceramic-class-2",
+    "X7T": "ceramic-class-2",
+    "X8R": "ceramic-class-2",
+    "X8L": "ceramic-class-2",
+    "Y5V": "ceramic-class-2",
+    "Y5U": "ceramic-class-3",
+    "Z5U": "ceramic-class-3",
+}
+
+
+# Map the distributor family/series text onto the CAS ``technology``
+# chemistry enum (closed since CAS baefd79).  Returns ``(technology,
+# dielectricCode | None)``.  For ceramics the EIA class is read from the
+# Temperature Coefficient / Dielectric parameter, the description, or
+# the MPN (manufacturers print the code literally); for film the
+# Dielectric Material parameter decides.  Anything we cannot resolve
+# from distributor-published facts raises — no chemistry guessing.
+def _resolve_capacitor_technology(
+    source: str,
+    mpn: str,
+    family: str | None,
+    *,
+    params: dict[str, str],
+    description: str = "",
+) -> tuple[str, str | None]:
     if not family:
         raise IncompleteSourceError(
             source,
@@ -1307,20 +1338,74 @@ def _resolve_capacitor_technology(source: str, mpn: str, family: str | None) -> 
             detail="distributor payload lacks Family/Series parameter",
         )
     blob = family.lower()
+
     if "ceramic" in blob or "mlcc" in blob:
-        return "MLCC"
-    if "aluminum polymer" in blob or "alum. polymer" in blob or "polymer alum" in blob:
-        return "AluminumPolymer"
-    if "aluminum" in blob or "aluminium" in blob or "electrolytic" in blob:
-        return "AluminumElectrolytic"
-    if "tantalum polymer" in blob:
-        return "TantalumPolymer"
-    if "tantalum" in blob:
-        return "Tantalum"
-    if "film" in blob:
-        return "Film"
+        haystacks = (
+            params.get("Temperature Coefficient") or "",
+            params.get("Dielectric Material") or "",
+            params.get("Dielectric") or "",
+            description,
+            mpn,
+        )
+        for text in haystacks:
+            upper = text.upper()
+            for code, cls in _CAP_EIA_CLASS.items():
+                if code in upper:
+                    return cls, code
+        raise IncompleteSourceError(
+            source,
+            mpn,
+            "datasheetInfo.part.technology",
+            detail=(
+                "ceramic capacitor without a resolvable EIA temperature "
+                "characteristic (checked Temperature Coefficient / "
+                "Dielectric parameters, description, and MPN) — cannot "
+                "assign ceramic-class-1/2/3 without it"
+            ),
+        )
+    if "hybrid" in blob and ("supercap" in blob or "edlc" in blob):
+        return "supercapacitor-hybrid", None
     if "supercap" in blob or "super cap" in blob or "edlc" in blob:
-        return "Supercapacitor"
+        return "supercapacitor-edlc", None
+    if "hybrid" in blob:
+        return "aluminum-hybrid-polymer", None
+    if "aluminum polymer" in blob or "alum. polymer" in blob or "polymer alum" in blob:
+        return "aluminum-electrolytic-polymer", None
+    if "aluminum" in blob or "aluminium" in blob or "electrolytic" in blob:
+        return "aluminum-electrolytic-wet", None
+    if "tantalum" in blob and "polymer" in blob:
+        return "tantalum-polymer", None
+    if "tantalum" in blob and "wet" in blob:
+        return "tantalum-wet", None
+    if "tantalum" in blob:
+        # Distributor "Tantalum Capacitors" families are the solid MnO2
+        # chemistry; wet and polymer parts live in separate families.
+        return "tantalum-mno2", None
+    if "niobium" in blob:
+        return "niobium-oxide", None
+    if "mica" in blob:
+        return "mica", None
+    if "film" in blob:
+        dielectric = (
+            params.get("Dielectric Material") or params.get("Dielectric") or ""
+        ).lower()
+        if "polypropylene" in dielectric:
+            return "film-polypropylene", None
+        if "polyester" in dielectric or "pet" in dielectric:
+            return "film-polyester", None
+        if "sulfide" in dielectric or "sulphide" in dielectric or "pps" in dielectric:
+            return "film-polyphenylene-sulfide", None
+        if "paper" in dielectric:
+            return "film-paper", None
+        raise IncompleteSourceError(
+            source,
+            mpn,
+            "datasheetInfo.part.technology",
+            detail=(
+                f"film capacitor without a resolvable Dielectric Material "
+                f"parameter (got {dielectric!r})"
+            ),
+        )
     raise IncompleteSourceError(
         source,
         mpn,
@@ -1368,13 +1453,13 @@ def _resolve_capacitor_shape_type(
     can't disambiguate from those two industry conventions raises —
     we refuse to guess at shape.
     """
-    if assembly == "SMT" and technology in {"MLCC", "Film", "Tantalum", "TantalumPolymer"}:
+    if assembly == "SMT" and (
+        technology.startswith(("ceramic-", "film-", "tantalum-")) or technology == "mica"
+    ):
         return "rectangular"
-    if assembly in {"THT", "Snap-In", "Screw Type"} and technology in {
-        "AluminumElectrolytic",
-        "AluminumPolymer",
-        "Supercapacitor",
-    }:
+    if assembly in {"THT", "Snap-In", "Screw Type"} and technology.startswith(
+        ("aluminum-", "supercapacitor-")
+    ):
         return "cylindrical"
     raise IncompleteSourceError(
         source,
@@ -1408,6 +1493,7 @@ def _build_capacitor_envelope(
     distributor_block: dict[str, Any],
     datasheet_url: str,
     status: str,
+    description: str = "",
 ) -> dict[str, Any]:
     capacitance = _extract_required_numeric(
         source=source,
@@ -1440,7 +1526,9 @@ def _build_capacitor_envelope(
             detail="no Package/Case parameter present",
         )
     family = params.get("Family") or params.get("Family.Value") or params.get("Capacitor Type")
-    technology = _resolve_capacitor_technology(source, mpn, family)
+    technology, dielectric_code = _resolve_capacitor_technology(
+        source, mpn, family, params=params, description=description
+    )
     series = params.get("Series")
     if not series:
         raise IncompleteSourceError(
@@ -1464,6 +1552,7 @@ def _build_capacitor_envelope(
                         "partNumber": mpn,
                         "series": series,
                         "technology": technology,
+                        **({"dielectricCode": dielectric_code} if dielectric_code else {}),
                         "case": case,
                     },
                     "electrical": {
@@ -1498,17 +1587,19 @@ def convert_digikey_to_tas_capacitor(
     """Convert a Digi-Key capacitor payload into a TAS ``{"capacitor": {...}}``
     envelope.
 
-    All four CAS-required electrical fields (capacitance, ratedVoltage,
-    esr, rippleCurrent) must be present in the distributor payload.
-    MLCCs in particular often lack ESR — those rows must be enriched
-    by the ``component-librarian`` agent from the vendor SPICE model
-    before reaching this converter.
+    CAS requires capacitance + ratedVoltage; esr and rippleCurrent are
+    optional at fetch time (MLCCs in particular often lack ESR — the
+    ``component-librarian`` agent enriches them from the vendor SPICE
+    model before the part is used in a design). The ``technology``
+    chemistry enum is resolved from distributor-published facts only.
     """
     source = "digikey"
     mpn = _mpn_or_raise(source, product)
     manufacturer = _digikey_manufacturer(source, mpn, product)
     params = _extract_digikey_params(source, mpn, product)
     status = "production" if product.get("ProductStatus") in (None, "Active") else "discontinued"
+    desc = product.get("Description") or {}
+    description = desc.get("ProductDescription", "") if isinstance(desc, dict) else str(desc)
     return _build_capacitor_envelope(
         source=source,
         mpn=mpn,
@@ -1517,6 +1608,7 @@ def convert_digikey_to_tas_capacitor(
         distributor_block=_digikey_distributor_block(source, mpn, product, distributor),
         datasheet_url=product.get("PrimaryDatasheet") or "",
         status=status,
+        description=description,
     )
 
 
@@ -1534,6 +1626,7 @@ def convert_mouser_to_tas_capacitor(product: dict[str, Any]) -> dict[str, Any]:
         distributor_block=_mouser_distributor_block(source, mpn, product),
         datasheet_url=product.get("DataSheetUrl") or "",
         status="production",
+        description=str(product.get("Description") or ""),
     )
 
 

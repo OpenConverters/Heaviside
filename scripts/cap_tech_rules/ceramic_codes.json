@@ -1,0 +1,74 @@
+{
+  "_comment": "Ceramic dielectric-code extraction rules for MPNs without a plain EIA substring. Researched 2026-06-12. Taiyo Yuden codes verified per-part on TY-COMPAS (ds.yuden.co.jp); TDK JB via TDK's MLCC temp-characteristics guide + DigiKey product highlight; TDK disc codes via DigiKey per-part attributes (product.tdk.com timed out); Murata via Cat.No.C02E numbering doc; KEMET/AVX via their dielectric datasheets. Project convention: Y5V/F -> ceramic-class-2 (flagged), Z5U/E -> ceramic-class-3.",
+  "rules": [
+    {
+      "manufacturer": "Taiyo Yuden",
+      "format": "new global PN (post-2022, 20 chars, e.g. MSASP063EB5475MFNA01); temperature code at chars 10-11",
+      "mpn_regex": "^M[SCABLM][A-Z]{2}[A-Z0-9]{5}(CG|CH|CJ|CK|UJ|UK|SL|RH|B5|B7|C6|C7|D7|SD)",
+      "code_map": {"CG": "ceramic-class-1", "CH": "ceramic-class-1", "CJ": "ceramic-class-1", "CK": "ceramic-class-1", "UJ": "ceramic-class-1", "UK": "ceramic-class-1", "SL": "ceramic-class-1", "RH": "ceramic-class-1", "B5": "ceramic-class-2", "B7": "ceramic-class-2", "C6": "ceramic-class-2", "C7": "ceramic-class-2", "D7": "ceramic-class-2", "SD": "ceramic-class-2"},
+      "dielectric_code_map": {"CG": "C0G", "CH": "CH", "CJ": "C0J", "CK": "C0K", "UJ": "U2J", "UK": "U2K", "SL": "SL", "RH": "R2H", "B5": "X5R", "B7": "X7R", "C6": "X6S", "C7": "X7S", "D7": "X7T", "SD": "SD"},
+      "source": "https://ds.yuden.co.jp/TYCOMPAS/or/detail?pn=MSASP063EB5475MFNA01&u=M (B5=X5R) + per-code TY-COMPAS lookups (CG/B7/C6/C7/D7); SD = CFCAP low-distortion series, class-2-grade limits per TY catalog mirror https://www.modelithics.com/models/Vendor/Taiyo_Yuden/UMK105.pdf",
+      "confidence": "verified",
+      "note": "MSAS is NOT a Mouser prefix — it is TY's new global numbering (M + market category S/C/A/B/M/L + series). Class-1 codes CH/CK confirmed in live TAS data at the same chars-10-11 slot as the TY-COMPAS-verified CG/B5 parts (sub-pF RF caps MSART042SCH0R2AWRA01, MCASL042SCK0R2AWNA01); CJ/UJ/UK/SL/RH carried from the TY catalog table (inferred, verify on first hit)."
+    },
+    {
+      "manufacturer": "Taiyo Yuden",
+      "format": "legacy PN (e.g. JMK212BC6476MG-T, TMK316AB7106KL): 2-letter temp code after the 3-digit size (skip at most one grade letter)",
+      "mpn_regex": "^[A-Z]MK\\d{3}[A-Z]?(CG|CH|CJ|CK|UJ|UK|SL|RH|SD|BJ|B7|C6|C7|D7|F)\\d",
+      "code_map": {"CG": "ceramic-class-1", "CH": "ceramic-class-1", "CJ": "ceramic-class-1", "CK": "ceramic-class-1", "UJ": "ceramic-class-1", "UK": "ceramic-class-1", "SL": "ceramic-class-1", "RH": "ceramic-class-1", "BJ": "ceramic-class-2", "B7": "ceramic-class-2", "C6": "ceramic-class-2", "C7": "ceramic-class-2", "D7": "ceramic-class-2", "SD": "ceramic-class-2", "F": "ceramic-class-2"},
+      "dielectric_code_map": {"CG": "C0G", "CH": "CH", "CJ": "C0J", "CK": "C0K", "UJ": "U2J", "UK": "U2K", "SL": "SL", "RH": "R2H", "BJ": "X5R", "B7": "X7R", "C6": "X6S", "C7": "X7S", "D7": "X7T", "SD": "SD", "F": "Y5V"},
+      "source": "TY catalog mirror https://www.modelithics.com/models/Vendor/Taiyo_Yuden/UMK105.pdf (full class-1 ppm table + class-2 table); TY-COMPAS legacy<->new equivalences",
+      "confidence": "verified",
+      "note": "FLAG: legacy 'F' = JIS F (+30/-80%) = EIA Y5V; mapped class-2 per project convention — review if class-3 preferred."
+    },
+    {
+      "manufacturer": "TDK",
+      "format": "C/CGA/CGB/CKC chip series: temp characteristic literally after series+size (C0402JB0G103K020BC -> JB)",
+      "mpn_regex": "^(C\\d{4}|CG[AB][A-Z0-9]{3}|CKC[A-Z0-9]{3})(C0G|NP0|CH|JB|X5R|X6S|X7R|X7S|X7T|X8R|X8L)",
+      "code_map": {"C0G": "ceramic-class-1", "NP0": "ceramic-class-1", "CH": "ceramic-class-1", "JB": "ceramic-class-2", "X5R": "ceramic-class-2", "X6S": "ceramic-class-2", "X7R": "ceramic-class-2", "X7S": "ceramic-class-2", "X7T": "ceramic-class-2", "X8R": "ceramic-class-2", "X8L": "ceramic-class-2"},
+      "dielectric_code_map": {"JB": "JB"},
+      "source": "TDK MLCC temp-characteristics guide (JB = JIS class-2 B, +/-10% -25..+85C); https://www.digikey.com/en/product-highlight/t/tdk/ch-jb-temp-coefficient-caps; canonical https://product.tdk.com/en/contact/faq/capacitors-0051.html",
+      "confidence": "verified"
+    },
+    {
+      "manufacturer": "TDK",
+      "format": "leaded disc CC/CD/CK/CS series: code after series+size(+Z)(-): CD10-E2GA152MYGS -> E; CC45SL3AD100JYGN -> SL",
+      "mpn_regex": "^C[CDKS]\\d{2}Z?-?(ZU|SL|B|E|F|R)[0-9]",
+      "code_map": {"B": "ceramic-class-2", "R": "ceramic-class-2", "SL": "ceramic-class-1", "E": "ceramic-class-3", "F": "ceramic-class-2", "ZU": "ceramic-class-3"},
+      "dielectric_code_map": {"B": "B", "R": "R", "SL": "SL", "E": "E", "F": "F", "ZU": "Z5U"},
+      "source": "DigiKey per-part TDK attributes (CS14-F2GA103MYNKA = F; CD10-E2GA152MYNS = E; CK45-B3AD101KYNNA = B; CS11ZU2GA472MYGKA = Z5U); TDK leaded-disc product guide leaddisc_product_guide_en.pdf",
+      "confidence": "verified",
+      "note": "FLAGS: E (JIS +20/-55%) -> class-3; ZU = Z5U -> class-3; F (JIS +30/-80%, Y5V-like) -> class-2 per convention but least stable — review."
+    },
+    {
+      "manufacturer": "Murata",
+      "format": "GRM/GRT/GCM etc: 2-char temp code at chars 7-8 (GRM155R71H221KA01D -> R7)",
+      "mpn_regex": "^(GRM|GRT|GCM|GCE|GCJ|GCG)[A-Z0-9]{3}(5C|2C|7U|1X|B1|B3|R1|R3|R6|R7|C7|C8|D7|E4|F1|F5)",
+      "code_map": {"5C": "ceramic-class-1", "2C": "ceramic-class-1", "7U": "ceramic-class-1", "1X": "ceramic-class-1", "B1": "ceramic-class-2", "B3": "ceramic-class-2", "R1": "ceramic-class-2", "R3": "ceramic-class-2", "R6": "ceramic-class-2", "R7": "ceramic-class-2", "C7": "ceramic-class-2", "C8": "ceramic-class-2", "D7": "ceramic-class-2", "E4": "ceramic-class-3", "F1": "ceramic-class-2", "F5": "ceramic-class-2"},
+      "dielectric_code_map": {"5C": "C0G", "2C": "CH", "7U": "U2J", "1X": "SL", "B1": "B", "B3": "B", "R1": "R", "R3": "R", "R6": "X5R", "R7": "X7R", "C7": "X7S", "C8": "X6S", "D7": "X7T", "E4": "Z5U", "F1": "F", "F5": "Y5V"},
+      "source": "Murata Cat.No.C02E numbering doc https://media.digikey.com/pdf/Data%20Sheets/Murata%20PDFs/Chip%20Monolithic%20Ceramic%20Caps%20Part%20Numbering.pdf; C7=X7S and C8=X6S verified per-part on DigiKey",
+      "confidence": "verified",
+      "note": "D7=X7T inferred (no sample); E4/F1/F5 flags as above."
+    },
+    {
+      "manufacturer": "KEMET",
+      "format": "SMD MLCC: dielectric letter after voltage code (C0603C102K3GACTU -> G)",
+      "mpn_regex": "^C\\d{4}[CHST]\\d{3}[A-Z][0-9A-Z]([GR])[A-Z]",
+      "code_map": {"G": "ceramic-class-1", "R": "ceramic-class-2"},
+      "dielectric_code_map": {"G": "C0G", "R": "X7R"},
+      "source": "https://content.kemet.com/datasheets/KEM_C1003_C0G_SMD.pdf; https://content.kemet.com/datasheets/KEM_C1023_X7R_AUTO_SMD.pdf",
+      "confidence": "verified",
+      "note": "Only G/R mapped (only ones in dataset). KEMET also uses P=X5R, H=X8R — extend only with the matching datasheet."
+    },
+    {
+      "manufacturer": "KYOCERA AVX",
+      "format": "standard SMD MLCC: dielectric letter at char 6 (06035A820JAT2A -> A)",
+      "mpn_regex": "^\\d{4}[0-9A-Z]([AC])\\d{3}[A-Z]",
+      "code_map": {"A": "ceramic-class-1", "C": "ceramic-class-2"},
+      "dielectric_code_map": {"A": "C0G", "C": "X7R"},
+      "source": "https://datasheets.kyocera-avx.com/C0GNP0-Dielectric.pdf; https://datasheets.kyocera-avx.com/X7RDielectric.pdf",
+      "confidence": "verified",
+      "note": "Only A/C mapped. AVX also uses D=X5R, F=Y5V, Z=Z5U — extend only with the matching datasheet."
+    }
+  ]
+}
