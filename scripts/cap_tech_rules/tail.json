@@ -1,0 +1,314 @@
+{
+  "_comment": "Tail of the technology migration: the last ~295 invalid rows (KEMET military/ER tantalum + Evox-Rifa-heritage film/paper + odd ceramics, Kyocera AVX families, misc residue). Researched 2026-06-12 against fetched manufacturer documents only (kemet.com/content.kemet.com, kyocera-avx.com/datasheets.kyocera-avx.com, industrial.panasonic.com, vishay.com, ds.yuden.co.jp, pim.murata.com, archived chemi-con.co.jp). Rules are consulted by migrate_cap_technology.py as a LAST-RESORT fallback for rows no other rules file covers, and only when part.technology is not already a CAS enum value. Y5V convention note: KEMET C731/C751 are verbatim Y5V per KEM_C1104; mapped to ceramic-class-2 following the project's existing Y5V convention (EIA_SUBSTRING in migrate_cap_technology.py), with the verbatim code stored in dielectricCode.",
+  "rules": [
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^T(490|491|493|494|495|496|498|499|502|510)",
+      "technology": "tantalum-mno2",
+      "source": "KEMET datasheets, each literally printing 'MnO2': https://content.kemet.com/datasheets/KEM_T2004_T490.pdf ('T490 Commercial Grade MnO2'), KEM_T2005_T491.pdf ('T491 Industrial Grade MnO2'), KEM_T2007_T493.pdf ('T493 High Reliability Alternative MnO2 (CWR11 Style)'), KEM_T2051_T494_AUTO.pdf ('Low ESR MnO2'), KEM_T2009_T495.pdf ('T495 Surge Robust MnO2'), KEM_T2010_T496.pdf ('T496 Fused MnO2'), KEM_T2053_T498_AUTO.pdf ('MnO2 150°C'), KEM_T2054_T499_AUTO.pdf ('MnO2 175°C'), KEM_T2075_T502.pdf ('T502 MnO2 230°C'), KEM_T2014_T510.pdf ('T510 Multiple Anode MnO2')",
+      "confidence": "verified",
+      "rows": 109
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^T(110|212)",
+      "technology": "tantalum-mno2",
+      "source": "https://content.kemet.com/datasheets/KEM_T2031_T110_AXIAL_T212.pdf ('Hermetically Sealed / T110 Axial MIL-PRF-39003 Polar Type'; 'T212 = Hermetically sealed axial military grade, MIL-PRF-39003 (CSR13 Style)'). MIL-PRF-39003 is 'CAPACITOR, FIXED, ELECTROLYTIC (SOLID ELECTROLYTE), TANTALUM' - hermetic but solid MnO2, not wet (wet slug is MIL-PRF-39006/CLR)",
+      "confidence": "verified",
+      "rows": 3
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^T32[23]",
+      "technology": "tantalum-mno2",
+      "source": "https://yageogroup.com/content/datasheet/asset/file/KEM_T2039_T322_AXIAL_T323 ('Axial Molded Polar Solid Tantalum'; '323 = Qualified under MIL-PRF-49137/1 and 5 (CX01/CX05 Style)'; 'CX = Capacitors, Solid Electrolyte, Tantalum')",
+      "confidence": "verified",
+      "rows": 4
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^T35[0-6]",
+      "technology": "tantalum-mno2",
+      "source": "https://content.kemet.com/datasheets/KEM_T2043_T35X.pdf ('T350, T351, T352, T353, T354, T355 & T356 UltraDip II Polar ... miniature, dipped, solid tantalum capacitors')",
+      "confidence": "verified",
+      "rows": 41
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^(T409|CWR09)",
+      "technology": "tantalum-mno2",
+      "source": "https://content.kemet.com/datasheets/KEM_T2001_T409.pdf ('T409 MIL-PRF-55365/4 (CWR09 Style)'; 'Solid tantalum capacitors are polar devices...'; contains the full CWR09 ordering scheme - KEMET's CWR09 parts are the T409 product)",
+      "confidence": "verified",
+      "rows": 17
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^CWR11",
+      "technology": "tantalum-mno2",
+      "source": "https://content.kemet.com/datasheets/KEM_T2006_T492.pdf ('T492 MIL-PRF-55365/8 (CWR11 Style)'; 'Solid tantalum capacitors are polar devices'; T491 sibling datasheet states MnO2)",
+      "confidence": "verified",
+      "rows": 17
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^PME271",
+      "technology": "film-paper",
+      "source": "https://content.kemet.com/datasheets/KEM_F3011_PME271M_X2_275.pdf and KEM_F3016_PME271Y_Y2_250.pdf ('constructed of multilayer metallized paper encapsulated and impregnated in self-extinguishing material'; PN legend 'P = Paper')",
+      "confidence": "verified",
+      "rows": 11
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^PME295",
+      "technology": "film-paper",
+      "source": "https://content.kemet.com/datasheets/KEM_F3064_PME295_Y1_440-480.pdf ('Metallized Impregnated Paper, Class Y1'; 'constructed of multilayer metallized paper encapsulated and impregnated...')",
+      "confidence": "verified",
+      "rows": 2
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^PHE850",
+      "technology": "film-polypropylene",
+      "source": "https://content.kemet.com/datasheets/F3294_PHE850.pdf ('EMI suppressor, class Y2, metallized polypropylene'; Construction: 'Winding of metallized polypropylene.')",
+      "confidence": "verified",
+      "rows": 2
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^C87[08]",
+      "technology": "film-polypropylene",
+      "source": "https://content.kemet.com/datasheets/KEM_F3063_C87.pdf ('The C87 capacitor is a polypropylene metallized film'; covers C870 420 VAC and C878 470 VAC)",
+      "confidence": "verified",
+      "rows": 6
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^F861",
+      "technology": "film-polypropylene",
+      "source": "https://content.kemet.com/datasheets/KEM_F3001_F861_X2_310.pdf ('The F861 Series is constructed of metallized polypropylene')",
+      "confidence": "verified",
+      "rows": 4
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^F872",
+      "technology": "film-polypropylene",
+      "source": "https://content.kemet.com/datasheets/kem_f3003_f872_x1_480.pdf ('The F872 Series is constructed of metallized polypropylene')",
+      "confidence": "verified",
+      "rows": 2
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^F881",
+      "technology": "film-polypropylene",
+      "source": "https://content.kemet.com/datasheets/kem_f3005_f881_y2_300.pdf ('The F881 Series is constructed of metallized polypropylene')",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^R463",
+      "technology": "film-polypropylene",
+      "source": "https://content.kemet.com/datasheets/KEM_F3095_R46_X2_310_110C.pdf ('The R46 series is constructed of metallized polypropylene'; 'Dielectric: Polypropylene film'; PN system confirms R463 = 310 VAC code and lists the R463R4470... stem)",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^46KF",
+      "technology": "film-polypropylene",
+      "source": "https://content.kemet.com/datasheets/KEM_F3093_R46_X2_275_110C.pdf (Table 1 lists KEMET PN '46KF3100(1)M1(3)' / Legacy PN 'R46KF3100(1)M1(3)' - the R46 X2 275 VAC series; 'The R46 series is constructed of metallized polypropylene'). Note: this MPN's K tolerance code appears discontinued in the current rev (only M listed), but the PN stem match is structurally unambiguous",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^C3\\d{2}C\\d{3}[JKMZ]5U",
+      "technology": "ceramic-class-3",
+      "dielectric_code": "Z5U",
+      "source": "https://content.kemet.com/datasheets/KEM_C1051_GOLDMAX_Z5U.pdf ('Goldmax, 300 Series, Conformally Coated, Z5U Dielectric'; ordering legend: Rated Voltage '5 = 50', Dielectric 'U = Z5U'; 'EIA characterizes Z5U dielectric as a Class III material'). C315C104M5U5TA = 50 V + Z5U",
+      "confidence": "verified",
+      "rows": 2
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^C7[35]1U",
+      "technology": "ceramic-class-2",
+      "dielectric_code": "Y5V",
+      "source": "https://content.kemet.com/datasheets/KEM_C1104_KJN.pdf (C700 safety disc, KJN type; exact parts C731U222MTVDDA7317 and C751U332MTVDBAWL25 appear in Table 1B under the Y5V dielectric block; legend 'W = Y5U, V = Y5V'; the 'U' in the MPN is the spec code 'U = Safety', not the dielectric). Verbatim dielectric Y5V -> ceramic-class-2 per the project's Y5V convention",
+      "confidence": "verified",
+      "rows": 2
+    },
+    {
+      "manufacturer": "KEMET",
+      "mpn_regex": "^FYD",
+      "technology": "supercapacitor-edlc",
+      "source": "https://content.kemet.com/datasheets/KEM_S6015_FY.pdf ('Supercapacitors, FY Series ... also known as Electric Double-Layer Capacitors (EDLCs)'; exact MPN FYD0H473ZF in ratings table: 0H = 5.5 VDC, 473 = 0.047 F, Z = -20/+80 %)",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "KYOCERA AVX",
+      "mpn_regex": "^F75[01]",
+      "technology": "tantalum-mno2",
+      "source": "https://www.kyocera-avx.com/products/tantalum/smd-tantalum-mno2/f75-series/ ('F75 Series Maximum CV Solid Tantalum Electrolytic Capacitors', listed under category 'SMD Tantalum MnO2'); https://datasheets.kyocera-avx.com/F72-F75.pdf (ratings table contains F750G228#RC, F751A477#RC, F750J687 literally)",
+      "confidence": "verified",
+      "rows": 3
+    },
+    {
+      "manufacturer": "KYOCERA AVX",
+      "mpn_regex": "^TPM",
+      "technology": "tantalum-mno2",
+      "source": "https://datasheets.kyocera-avx.com/TPM.pdf ('TPM Multianode / Tantalum Ultra Low ESR Capacitor'; how-to-order matches TPME337M016R0050 field-for-field); MnO2 vs polymer per https://www.kyocera-avx.com/products/tantalum/smd-tantalum-mno2/ which lists TPM under 'SMD Tantalum MnO2 - Low ESR'",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "KYOCERA AVX",
+      "mpn_regex": "^TWD",
+      "technology": "tantalum-wet",
+      "source": "https://datasheets.kyocera-avx.com/TWD.pdf ('The TWD series is an axial leaded wet electrolytic tantalum capacitor designed for DC (hold-up) and low frequency pulse applications.'; ratings table contains TWDE253*010 matching TWDE253M010SB0Z0700). NOT an EDLC despite the 'Wet Tantalum Super Capacitor' marketing subtitle",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "KYOCERA AVX",
+      "mpn_regex": "^SCC",
+      "technology": "supercapacitor-edlc",
+      "source": "https://www.kyocera-avx.com/products/supercapacitors/scc-series/ ('cylindrical electrochemical double-layer capacitors'); https://datasheets.kyocera-avx.com/AVX-SCC.pdf ('SCC Series High Capacitance Cylindrical SuperCapacitors')",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "KYOCERA AVX",
+      "mpn_regex": "^W2A4\\dA",
+      "technology": "ceramic-class-1",
+      "dielectric_code": "C0G",
+      "source": "https://datasheets.kyocera-avx.com/CapArray.pdf ('KYOCERA AVX capacitor arrays are available in X5R, X7R and NP0 (C0G) ceramic dielectrics'; how-to-order decode of W2A41A220KAT2A: W=RoHS, 2=0508, A=Array, 4=4 elements, 1=100V, A=NP0 dielectric; datasheet plots 'AVX Capacitor Array - W2A41A***K')",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "KYOCERA AVX",
+      "mpn_regex": "^CB0[123]8[BD]",
+      "technology": "film-polyphenylene-sulfide",
+      "source": "https://datasheets.kyocera-avx.com/cb-pps.pdf ('CB SERIES: PPS DIELECTRIC - LEAD FREE VERSION'; 'Film chip capacitor using a naked and stacked construction with metallized PolyPhenylene Sulfide film (PPS).'; ordering table contains CB028B0104 literally; PPS doc covers cases 018/028/038 with voltage codes B=16V/D=50V). The structure figure's 'PEN dielectric' label is a known AVX copy-paste artifact; title, description and product page all say PPS",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "KYOCERA AVX",
+      "mpn_regex": "^CB(042|052|162|172|182)G",
+      "technology": "film-polyester",
+      "source": "https://datasheets.kyocera-avx.com/cb-petht.pdf ('CB Series: PET-HT Dielectric - Lead Free Version'; 'Film chip capacitor using a naked and stacked construction with metallized High Temperature PET (polyethylene terephtalate).'; ordering table contains CB042G0104 literally under 250 Vdc)",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "Panasonic",
+      "mpn_regex": "^EEU-F[CR]",
+      "technology": "aluminum-electrolytic-wet",
+      "source": "https://industrial.panasonic.com/cdbs/www-data/pdf/RDF0000/ABA0000C1209.pdf ('Aluminum Electrolytic Capacitors FC-A series', lists EEUFC1C470); http://industrial.panasonic.com/ww/products/pt/aluminum-cap-lead/models/EEUFC1C470 ('Aluminum Electrolytic Capacitors (Radial Lead Type)'); https://na.industrial.panasonic.com/products/capacitors/aluminum-electrolytic-capacitors/lineup/aluminum-electrolytic-capacitors-radial-lead-type/series/83367 ('The EEU-FR Series Radial Leaded Aluminum Electrolytic Capacitors...'). Rows were mis-tagged 'Film Capacitor' in TAS",
+      "confidence": "verified",
+      "rows": 5
+    },
+    {
+      "manufacturer": "Panasonic Electronic Components",
+      "mpn_regex": "^\\d{1,2}TPS",
+      "technology": "tantalum-polymer",
+      "source": "https://industrial.panasonic.com/ww/products/pt/poscap ('Conductive Polymer Tantalum Solid Capacitors (POSCAP)': 'sintered Tantalum as an anode' and 'highly conductive polymer ... as a cathode system'); TPS series page https://na.industrial.panasonic.com/products/capacitors/polymer-capacitors/lineup/poscap-tantalum-polymer/series/135947",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "TDK*",
+      "mpn_regex": "^MKT1817",
+      "technology": "film-polyester",
+      "source": "https://www.vishay.com/docs/26032/mkt1817.pdf ('MKT1817 ... Vishay Roederstein ... Metallized Polyester Film Capacitors, MKT Radial Potted Types'). NOTE: TAS records the manufacturer as TDK/EPCOS, which is wrong - MKT1817 is a Vishay Roederstein (ex-ERO) series; TDK/EPCOS product search has no MKT1817. Rule matches the recorded manufacturer to fix the technology; the manufacturer field itself is out of scope",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "TAIYO YUDEN",
+      "mpn_regex": "^JMK212BC6",
+      "technology": "ceramic-class-2",
+      "dielectric_code": "X6S",
+      "source": "https://ds.yuden.co.jp/TYCOMPAS/or/detail?pn=MSASJ21GBC6476MTNA01&u=I ('Temperature Characteristic (EIA): X6S'; '(Previous Part Number : JMK212BC6476MG-T)') - Taiyo Yuden code C6 = X6S",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "TAIYO YUDEN",
+      "mpn_regex": "^HMK107C7",
+      "technology": "ceramic-class-2",
+      "dielectric_code": "X7S",
+      "source": "https://ds.yuden.co.jp/TYCOMPAS/or/detail?pn=MCASH168SC7224KTCA01&u=M ('Temperature Characteristic (EIA): X7S'; '(Previous Part Number : HMK107C7224KAHTE)') - Taiyo Yuden code C7 = X7S",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "Murata",
+      "mpn_regex": "^GRM21BZ71H",
+      "technology": "ceramic-class-2",
+      "dielectric_code": "X7R",
+      "source": "https://pim.murata.com/asset/pim4/ceramicCapacitorSMD/GRM21BZ71H475KE15-01A-EN_PDF_CERAMICCAPACITORSMD ('GRM21BZ71H475KE15_(2012M(0805), X7R(MURATA), 4.7uF, DC 50V)'; '(4) Temperature Characteristics [Z7] (Public STD Code: [X7R(MURATA)])'). Z7 is Murata's X7R-equivalent special characteristic - class-2",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "Murata",
+      "mpn_regex": "^GCM31CL81H",
+      "technology": "ceramic-class-2",
+      "dielectric_code": "X8L",
+      "source": "https://pim.murata.com/asset/pim4/ceramicCapacitorSMD/GCM31CL81H105KA55-01A-EN_PDF_CERAMICCAPACITORSMD ('GCM31CL81H105KA55_(3216M(1206), X8L(MURATA), 1uF, DC 50V)'; '(4) Temperature Characteristics [L8] (Public STD Code: [X8L(MURATA)])')",
+      "confidence": "verified",
+      "rows": 1
+    },
+    {
+      "manufacturer": "Chemi-Con",
+      "mpn_regex": "^FDADC",
+      "technology": "film-polypropylene",
+      "source": "Nippon Chemi-Con film numbering: F + series + voltage + cap (archived CAT.E1003N: http://web.archive.org/web/20120523222239/http://www.chemi-con.co.jp/e/catalog/pdf/fi-e/fi-all-e1003n-111201.pdf, series codes 'DADC, DLDA, DFDD'), so FDADC251V103 = series DADC, 250 Vdc, 0.01 uF. Dielectric: archived NCC series table http://web.archive.org/web/20090530022253/http://www.chemi-con.co.jp/e/catalog/pdf/fi-e/fi-sepa-e/fi-seriestable-e-080829.pdf ('DADC - High frequency use, metallized polypropylene film. For general use, 250 to 630 Vdc, 0.01 to 4.7 uF')",
+      "confidence": "verified",
+      "rows": 1
+    }
+  ],
+  "unresolved": [
+    {
+      "manufacturer": "KYOCERA AVX",
+      "series": "Accu-P thin-film (0201/0402 + voltage code + J/K + pF code + BSTR/BWTR, e.g. 02013J0R1BBSTR, 0402ZK330FBSTR)",
+      "rows": 56,
+      "reason": "Series identity confirmed via https://datasheets.kyocera-avx.com/Accu-P.pdf ('Thin-Film RF/Microwave Capacitor Technology - Accu-P Series'). Dielectric is verbatim 'silicon dioxide and silicon oxynitride' thin film on alumina; AVX explicitly contrasts it with ceramic capacitors and nowhere states NP0/C0G/Class 1. The CAS enum has no thin-film value -> unresolved-by-enum-mismatch, not guessed as ceramic-class-1."
+    },
+    {
+      "manufacturer": "Panasonic",
+      "series": "ECH-F (ECH-F4223M50S, ECH-F4473M63S)",
+      "rows": 2,
+      "reason": "No Panasonic-domain or archive.org-mirrored Panasonic document mentions ECHF/ECH-F (only ECH-U, the PPS SMD series). Wayback CDX over industrial.panasonic.com / ctlg.panasonic.com / maco.panasonic.co.jp returned no hits. Series appears discontinued pre-web; dielectric not inferred from the prefix."
+    },
+    {
+      "manufacturer": "TDK/EPCOS",
+      "series": "MKT1819 (MKT1819G100K)",
+      "rows": 1,
+      "reason": "No vishay.com/docs datasheet for MKT1819 exists now or in the Wayback index, Vishay part search returns 0 hits, and TDK/EPCOS has no such series. Sibling Vishay Roederstein MKT181x series are all metallized polyester, which strongly suggests polyester, but no manufacturer document covers MKT1819 specifically."
+    },
+    {
+      "manufacturer": "Nichicon",
+      "series": "MABA (MABA013680KHL)",
+      "rows": 1,
+      "reason": "MABA appears in no Nichicon-domain source (not in CAT.8100L/M film catalogs, document library, or part search). Only distributor data exists (DigiKey: 'Polypropylene (PP), Metallized Radial' motor-run line) - distributor pages are not acceptable sources."
+    },
+    {
+      "manufacturer": "WIMA",
+      "series": "FKM 2 (FKM2D011501A00JSSD)",
+      "rows": 1,
+      "reason": "Dielectric verified via archived wima.de (http://web.archive.org/web/20100807235013/http://www.wima.de/EN/fkm2.htm): 'Film and Foil Capacitors with Mixed Dielectric for Pulse Applications'; 'Dielectric: Mixed film'. Explicitly a MIXED film (neither pure polyester nor pure polypropylene) - no single value in the closed enum honestly fits."
+    },
+    {
+      "manufacturer": "Würth Elektronik",
+      "series": "8703040xxx31 SMD chips (870304010031, 870304020031, 870304050031, 870304100031)",
+      "rows": 4,
+      "reason": "The TAS datasheetUrl (we-online.com/katalog/en/datasheet/870304010031) is dead (404), the order codes appear nowhere in the current we-online.com catalog or PDF endpoints, and archive.org has no snapshot of the katalog page or PDF (wayback availability API empty). Electrically they look like discontinued SMD film chips (0.1-1 uF, 63-250 V, low ESR), but no manufacturer source could be fetched - left unresolved rather than guessed."
+    }
+  ]
+}

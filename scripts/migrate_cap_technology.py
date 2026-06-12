@@ -73,6 +73,29 @@ EIA_SUBSTRING: dict[str, str] = {
     "Z5U": "ceramic-class-3",
 }
 
+# CAS closed enum: rows already migrated carry one of these and are never
+# touched again (keeps the tail fallback idempotent and scoped to legacy tags).
+CAS_ENUM = {
+    "aluminum-electrolytic-wet",
+    "aluminum-electrolytic-polymer",
+    "aluminum-hybrid-polymer",
+    "tantalum-wet",
+    "tantalum-mno2",
+    "tantalum-polymer",
+    "niobium-oxide",
+    "ceramic-class-1",
+    "ceramic-class-2",
+    "ceramic-class-3",
+    "film-polypropylene",
+    "film-polyester",
+    "film-polyphenylene-sulfide",
+    "film-paper",
+    "mica",
+    "supercapacitor-edlc",
+    "supercapacitor-hybrid",
+    "vacuum",
+}
+
 CERAMIC_BUCKETS = {
     "MLCC",
     "MLCC (High-Q)",
@@ -103,6 +126,9 @@ class Migrator:
         self.draloric = _load("draloric_rf_ceramic.json")["rules"]
         self.ceramic = _load("ceramic_codes.json")["rules"]
         self.misc = _load("misc_buckets.json")["rules"]
+        # last-resort tail (KEMET military/ER tantalum, Evox-Rifa film/paper,
+        # Kyocera AVX families, misc residue) — see tail.json for sources
+        self.tail = _load("tail.json")["rules"]
         self.mapped: Counter[str] = Counter()
         self.unmapped: Counter[tuple[str | None, str, str]] = Counter()
 
@@ -139,6 +165,21 @@ class Migrator:
         return None
 
     def classify(
+        self,
+        mfr: str,
+        tech: str | None,
+        series: str,
+        mpn: str,
+        dielectric_code: str | None = None,
+    ) -> tuple[str, str | None] | None:
+        hit = self._classify(mfr, tech, series, mpn, dielectric_code)
+        if hit is None and tech not in CAS_ENUM:
+            # tail.json: last-resort, sourced per-family rules for the rows
+            # no other rules file covers (any legacy bucket)
+            hit = self._series_rules(self.tail, mfr, series, mpn)
+        return hit
+
+    def _classify(
         self,
         mfr: str,
         tech: str | None,
