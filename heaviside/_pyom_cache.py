@@ -142,6 +142,14 @@ def pyom_fingerprint() -> str:
             f"pyom_fingerprint: no PyOpenMagnetics.*.so found in {pkg_dir} "
             "— installation looks broken."
         )
+    # The decomposer executes the vendored build when present (see
+    # bridge._import_pyom_vendor), so its .so must be part of the cache
+    # key too — otherwise rebuilding the vendor extension would silently
+    # serve stale cached results.
+    from heaviside.bridge import _PYOM_VENDOR_SO
+
+    if _PYOM_VENDOR_SO.exists():
+        candidates.append(_PYOM_VENDOR_SO)
     # In practice exactly one .so ships per platform tag; hash all of
     # them in deterministic order if more appear so a multi-ABI install
     # still yields a stable key.

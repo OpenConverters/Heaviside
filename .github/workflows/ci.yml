@@ -54,6 +54,11 @@ jobs:
           source .venv/bin/activate
           python scripts/check_pydantic_cap.py
 
+      - name: PyOM gateway check
+        run: |
+          source .venv/bin/activate
+          python scripts/check_pyom_gateway.py
+
   unit-tests:
     runs-on: ubuntu-latest
     needs: lint-and-type

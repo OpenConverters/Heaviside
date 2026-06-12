@@ -95,9 +95,8 @@ def migrate(category: str) -> None:
                 del elec["reverseRecoveryCharge"]
                 stats["qrr_stripped"] += 1
 
-        if category in ("resistors", "diodes", "mosfets"):
-            if _move_distribution(body, where):
-                stats["distribution_moved"] += 1
+        if category in ("resistors", "diodes", "mosfets") and _move_distribution(body, where):
+            stats["distribution_moved"] += 1
 
         if category == "magnetics":
             elec = body.get("manufacturerInfo", {}).get("datasheetInfo", {}).get("electrical")

@@ -47,6 +47,7 @@ import re
 import time
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 from heaviside._pyom_cache import cached_call
@@ -112,9 +113,10 @@ class MagneticDesign:
 # -----------------------------------------------------------------------------
 
 
-# Realism-relevant PyOpenMagnetics global settings. Applied on first
-# import via :func:`_import_pyom`. These flip OFF-by-default knobs that
-# Heaviside relies on for accurate sim + selection:
+# Realism-relevant PyOpenMagnetics global settings. Applied (and
+# verified) by :func:`_apply_pyom_settings` on every module the gateway
+# hands out. These flip OFF-by-default knobs that Heaviside relies on
+# for accurate sim + selection:
 #
 #   * ``circuitSimulatorIncludeSaturation``: model the inductor's BH
 #     saturation in the ngspice deck (default OFF — Heaviside's realism
@@ -122,42 +124,117 @@ class MagneticDesign:
 #     reflect saturation for the operating-point sweep to be accurate).
 #   * ``circuitSimulatorIncludeMutualResistance``: model winding-to-
 #     winding resistive coupling (transformers, coupled inductors).
-#   * ``coreAdviserSaturationMargin``: multiplicative derating in
-#     MagneticFilterSaturation. Default in MKF is 1.0 (reject only when
-#     Bpeak > Bsat). Maniktala Ch.5 recommends ≥ 1.2 for ferrite designs
-#     to leave headroom for tolerance, temperature, and DC-bias swing.
-#     With 1.2 the CoreAdviser refuses to short-list any core whose
-#     Bpeak·1.2 exceeds Bsat — matching Heaviside's realism-gate
-#     ``inductor_isat_margin`` check so the picked main passes that
-#     check by construction.
+#
+# NOTE a ``coreAdviserSaturationMargin`` knob used to be listed here:
+# no MKF build ever exposed that key, so ``set_settings`` silently
+# dropped it and the documented Maniktala ≥1.2 saturation derating was
+# never in effect. Saturation headroom must instead be enforced by the
+# realism gate's ``inductor_isat_margin`` check / a real MKF
+# MagneticFilterSaturation knob (parked MKF C++ task). Do not re-add
+# keys here without the round-trip verification below proving they
+# exist.
 _HEAVISIDE_PYOM_SETTINGS: dict[str, Any] = {
     "circuitSimulatorIncludeSaturation": True,
     "circuitSimulatorIncludeMutualResistance": True,
-    "coreAdviserSaturationMargin": 1.5,
 }
 
+
+def _apply_pyom_settings(ext: Any) -> Any:
+    """Apply and verify :data:`_HEAVISIDE_PYOM_SETTINGS` on ``ext``.
+
+    Raises :class:`BridgeError` if the build does not expose one of the
+    keys or a value does not round-trip — a silently-dropped setting is
+    a wrong simulation, not a degraded one.
+    """
+    current = ext.get_settings()
+    missing = sorted(set(_HEAVISIDE_PYOM_SETTINGS) - set(current))
+    if missing:
+        raise BridgeError(
+            f"PyOpenMagnetics build lacks settings keys {missing}; "
+            f"_HEAVISIDE_PYOM_SETTINGS no longer matches the MKF build. "
+            f"Fix the build or the settings dict — do not drop knobs silently."
+        )
+    ext.set_settings(dict(_HEAVISIDE_PYOM_SETTINGS))
+    applied = ext.get_settings()
+    wrong = {
+        k: applied.get(k) for k, v in _HEAVISIDE_PYOM_SETTINGS.items() if applied.get(k) != v
+    }
+    if wrong:
+        raise BridgeError(
+            f"PyOpenMagnetics did not accept settings {wrong} "
+            f"(expected {_HEAVISIDE_PYOM_SETTINGS})."
+        )
+    return ext
+
+
 _pyom_settings_applied: bool = False
+_pyom_vendor_module: Any = None
+
+# The vendor build of the pybind11 extension (newer than the PyPI
+# wheel; carries generate_ngspice_circuit extras like
+# bridge_simulation_mode). Loaded as a SEPARATE native module from the
+# installed package, with its own C++ settings state — which is why
+# _apply_pyom_settings runs on both gateway paths.
+_PYOM_VENDOR_SO = (
+    Path(__file__).resolve().parent.parent
+    / "vendor"
+    / "PyOpenMagnetics"
+    / "build"
+    / "cp312-cp312-linux_x86_64"
+    / "PyOpenMagnetics.cpython-312-x86_64-linux-gnu.so"
+)
 
 
 def _import_pyom() -> Any:
-    """Lazy import of the PyOpenMagnetics extension (mirrors ``topologies.dispatch``).
+    """Gateway to the installed PyOpenMagnetics extension.
 
-    Also applies :data:`_HEAVISIDE_PYOM_SETTINGS` once on first call,
-    so every downstream caller sees a consistently-configured PyOM.
+    Every production access to PyOM goes through this function or
+    :func:`_import_pyom_vendor` (enforced by
+    ``scripts/check_pyom_gateway.py`` in CI), so every caller sees a
+    consistently-configured PyOM.
     """
     global _pyom_settings_applied
-    import contextlib
 
     from PyOpenMagnetics import PyOpenMagnetics as _ext
 
     if not _pyom_settings_applied:
-        # If a future PyOM build drops one of these keys, swallow it
-        # rather than crashing import — the realism gate is independent
-        # of these settings.
-        with contextlib.suppress(Exception):
-            _ext.set_settings(dict(_HEAVISIDE_PYOM_SETTINGS))
+        _apply_pyom_settings(_ext)
         _pyom_settings_applied = True
     return _ext
+
+
+def _import_pyom_vendor() -> Any:
+    """Gateway to the vendored PyOpenMagnetics build, if present.
+
+    Prefers the vendor ``.so`` (needed by the decomposer for
+    ``bridge_simulation_mode``); falls back to the installed extension.
+    Either way the module comes back with Heaviside settings applied —
+    the vendor ``.so`` is a distinct native module whose settings state
+    is independent of the installed one.
+    """
+    global _pyom_vendor_module
+
+    if _pyom_vendor_module is not None:
+        return _pyom_vendor_module
+
+    if _PYOM_VENDOR_SO.exists():
+        import importlib.util
+
+        # The module name must match the .so's PyInit_PyOpenMagnetics
+        # export; the module is deliberately NOT registered in
+        # sys.modules so it never shadows the installed package.
+        spec = importlib.util.spec_from_file_location(
+            "PyOpenMagnetics", str(_PYOM_VENDOR_SO)
+        )
+        if spec is None or spec.loader is None:
+            raise BridgeError(f"cannot build an import spec for {_PYOM_VENDOR_SO}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _pyom_vendor_module = _apply_pyom_settings(mod)
+        return _pyom_vendor_module
+
+    _pyom_vendor_module = _import_pyom()
+    return _pyom_vendor_module
 
 
 def design_magnetics(

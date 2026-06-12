@@ -33,37 +33,19 @@ _HAS_SPICE_CONFIG: bool = False
 
 
 def _import_pyom() -> Any:
+    """PyOM access via the bridge gateway (vendor build preferred).
+
+    ``heaviside.bridge._import_pyom_vendor`` loads the vendored ``.so``
+    when present (it carries ``bridge_simulation_mode``) and applies the
+    Heaviside settings to it — the vendor module has its own native
+    settings state, so the gateway parity matters for the emitted decks.
+    The capability check below stays here: it is a decomposer concern.
+    """
     global _HAS_SPICE_CONFIG
 
-    # Prefer the vendor build (has bridge_simulation_mode) over the PyPI
-    # wheel. The vendor .so lives at a known path relative to this repo.
-    import importlib
-    import importlib.util
-    from pathlib import Path
+    from heaviside.bridge import _import_pyom_vendor
 
-    vendor_so = (
-        Path(__file__).resolve().parents[2]
-        / "vendor"
-        / "PyOpenMagnetics"
-        / "build"
-        / "cp312-cp312-linux_x86_64"
-        / "PyOpenMagnetics.cpython-312-x86_64-linux-gnu.so"
-    )
-    if vendor_so.exists():
-        spec = importlib.util.spec_from_file_location(
-            "PyOpenMagnetics",
-            str(vendor_so),
-        )
-        if spec and spec.loader:
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            _ext = mod
-            doc = mod.generate_ngspice_circuit.__doc__ or ""
-            _HAS_SPICE_CONFIG = "spice_config" in doc
-            return _ext
-
-    from PyOpenMagnetics import PyOpenMagnetics as _ext
-
+    _ext = _import_pyom_vendor()
     doc = _ext.generate_ngspice_circuit.__doc__ or ""
     if "bridge_simulation_mode" not in doc:
         raise DecomposerError(

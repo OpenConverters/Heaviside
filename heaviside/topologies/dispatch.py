@@ -53,15 +53,16 @@ class TopologyDispatchError(RuntimeError):
 
 
 def _import_pyom() -> Any:
-    """Import the bound PyOpenMagnetics extension module.
+    """Import the bound PyOpenMagnetics extension via the bridge gateway.
 
-    PyOpenMagnetics ships as a package whose pybind11 extension is exposed at
-    ``PyOpenMagnetics.PyOpenMagnetics``. We do the import lazily so that
-    static analysis and `make types` work in environments without the wheel.
+    All production PyOM access flows through ``heaviside.bridge`` so the
+    Heaviside settings (saturation + mutual-resistance modelling) are
+    applied and verified exactly once. Imported lazily so that static
+    analysis and `make types` work in environments without the wheel.
     """
-    from PyOpenMagnetics import PyOpenMagnetics as _ext
+    from heaviside.bridge import _import_pyom as _gateway
 
-    return _ext
+    return _gateway()
 
 
 def design(

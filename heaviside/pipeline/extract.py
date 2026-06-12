@@ -227,8 +227,9 @@ def _compute_isat_authoritative(
             op = ops[0]
     if op is not None:
         try:
-            from PyOpenMagnetics import PyOpenMagnetics as _P
+            from heaviside.bridge import _import_pyom
 
+            _P = _import_pyom()
             isat = float(
                 _P.calculate_saturation_current_at_operating_point(
                     dict(mas.get("magnetic", mas)),
@@ -245,8 +246,9 @@ def _compute_isat_authoritative(
     # 2. Nameplate (no-OP) PyOM call.
     if method == "":
         try:
-            from PyOpenMagnetics import PyOpenMagnetics as _P
+            from heaviside.bridge import _import_pyom
 
+            _P = _import_pyom()
             isat = float(
                 _P.calculate_saturation_current(
                     dict(mas.get("magnetic", mas)) if "magnetic" in mas else dict(mas),
@@ -578,9 +580,9 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     isat_method = "PyOM.calculate_saturation_current"
     isat: float
     try:
-        from PyOpenMagnetics import PyOpenMagnetics as _P
+        from heaviside.bridge import _import_pyom
 
-        isat = float(_P.calculate_saturation_current(dict(mas), t_amb))
+        isat = float(_import_pyom().calculate_saturation_current(dict(mas), t_amb))
     except Exception as exc:
         raise EnrichmentError(
             f"buck inductor MAS: PyOM could not compute saturation current: "
