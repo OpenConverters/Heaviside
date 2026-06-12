@@ -79,8 +79,8 @@ def design(
         or a ``TopologyEntry`` from the registry.
     converter_json:
         The converter-shaped JSON dict to pass through. Validation against
-        the MAS schema is the caller's responsibility (Phase 1 ships
-        TypedDicts; Phase 2 wires schema validation).
+        the MAS schema is the caller's responsibility (the generated
+        classes in ``heaviside.types`` give a loud ``from_dict`` gate).
     use_ngspice:
         Forwarded to PyOpenMagnetics. Set to ``False`` for fast analytical
         runs that skip the ngspice subcircuit invocation.

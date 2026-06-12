@@ -4,7 +4,7 @@ help:
 	@echo "Heaviside developer targets:"
 	@echo "  make venv       Create .venv via uv"
 	@echo "  make install    Install heaviside + dev deps"
-	@echo "  make types         Regenerate TypedDicts from MAS/PEAS/SAS/CAS/RAS (requires npx)"
+	@echo "  make types         Regenerate schema classes from MAS/PEAS/SAS/CAS/RAS (requires quicktype)"
 	@echo "  make types-check   Verify schema submodules are present"
 	@echo "  make probe         Empirical PyOpenMagnetics topology probe → docs/probe-report.md"
 	@echo "  make gen-topologies  Regenerate heaviside/topologies/<name>.py from registry"
@@ -37,13 +37,13 @@ lint:
 	ruff check .
 	ruff format --check .
 
-type:
+type: types
 	mypy heaviside
 
-test:
+test: types
 	pytest
 
-test-unit:
+test-unit: types
 	pytest -m unit -n auto
 
 ci: lint type test-unit

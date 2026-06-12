@@ -138,7 +138,6 @@ disallow_any_generics = true
 no_implicit_reexport = true
 show_error_codes = true
 exclude = [
-  "heaviside/types/_generated/",
   "vendor/",
   "MAS/", "PEAS/", "SAS/", "CAS/", "RAS/", "TAS/",
   ".venv/",
@@ -147,6 +146,13 @@ exclude = [
 [[tool.mypy.overrides]]
 module = ["PyOpenMagnetics", "PyOpenMagnetics.*"]
 ignore_missing_imports = true
+
+# quicktype-generated schema classes: analysed (so imports into them
+# resolve with real types) but never held to strict-mode standards.
+[[tool.mypy.overrides]]
+module = ["heaviside.types._generated.*"]
+ignore_errors = true
+disallow_untyped_defs = false
 
 # ---------------------------------------------------------------------------
 # Pytest

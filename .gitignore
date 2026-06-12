@@ -31,10 +31,8 @@ htmlcov/
 .tox/
 .nox/
 
-# Generated type stubs
-heaviside/types/_generated/*.py
-!heaviside/types/_generated/__init__.py
-!heaviside/types/_generated/.gitkeep
+# Generated schema classes — never committed; regenerate with `make types`
+heaviside/types/_generated/
 
 # Editor / OS
 .vscode/

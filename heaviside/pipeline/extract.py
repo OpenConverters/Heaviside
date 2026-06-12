@@ -3120,10 +3120,47 @@ def enrich_tas_for_realism(
         raise EnrichmentError(f"spec: expected mapping, got {type(spec).__name__}")
 
     enriched = copy.deepcopy(dict(tas))
+    _validate_designed_magnetics(enriched)
     extractor = _EXTRACTORS.get(topology.lower())
     if extractor is not None:
         extractor(enriched, spec)
     return enriched
+
+
+def _validate_designed_magnetics(tas: dict[str, Any]) -> None:
+    """Loudly validate every attached magnetic against the MAS schema classes.
+
+    The design pipeline stamps MKF-emitted MAS onto ``component["data"]``
+    (``{inputs, magnetic, outputs}`` — see ``bridge._attach_one``). That
+    document is *our own* output and must conform to the MAS magnetic
+    schema; ``heaviside.types.Magnetic.from_dict`` (quicktype-generated
+    from ``MAS/schemas/magnetic.json``) asserts on any shape mismatch.
+    A failure here means MKF or the bridge emitted a non-conformant
+    magnetic — raise, never patch over (CLAUDE.md: no silent fallbacks).
+    """
+    from heaviside.types import Magnetic
+
+    stages = (tas.get("topology") or {}).get("stages") or []
+    for stage in stages:
+        components = ((stage or {}).get("circuit") or {}).get("components") or []
+        for comp in components:
+            if not isinstance(comp, dict):
+                continue
+            data = comp.get("data")
+            if not isinstance(data, dict):
+                continue
+            magnetic = data.get("magnetic")
+            if not isinstance(magnetic, dict):
+                continue
+            name = comp.get("name", "?")
+            try:
+                Magnetic.from_dict(magnetic)
+            except Exception as exc:
+                raise EnrichmentError(
+                    f"designed magnetic {name!r} does not conform to the MAS "
+                    f"magnetic schema ({type(exc).__name__}). MKF/bridge emitted "
+                    "a malformed document — fix the producer, do not relax the gate."
+                ) from exc
 
 
 __all__ = ("EnrichmentError", "enrich_tas_for_realism")

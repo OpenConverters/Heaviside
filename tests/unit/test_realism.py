@@ -356,13 +356,19 @@ class TestOrchestratorVerdict:
         assert len(ovr) == 1
         assert ovr[0].status is CheckStatus.PASS
 
-    def test_efficiency_percent_normalised(self):
+    def test_efficiency_percent_form_is_not_silently_normalised(self):
+        # The realism gate refuses to silently coerce a percent-form
+        # efficiency (92.5) into a ratio (0.925) — silent normalization is
+        # a forbidden fallback (no-coercion rule). An out-of-(0,1) value is
+        # surfaced as UNAVAILABLE (a sim-measurement bug to fix upstream),
+        # never normalized, passed, or invented; value stays None.
         tas = _buck_shaped_tas()
         tas["simulation_results"] = {"nominal": {"efficiency": 92.5}}  # percent form
         r = evaluate_tas(tas, topology="buck")
         eff = [c for c in r.checks if c.name == "efficiency_sanity"]
-        assert eff[0].status is CheckStatus.PASS
-        assert eff[0].value == pytest.approx(0.925)
+        assert eff[0].status is CheckStatus.UNAVAILABLE
+        assert eff[0].value is None
+        assert "ratio in (0,1)" in eff[0].detail
 
 
 # ---------------------------------------------------------------------------
@@ -398,11 +404,12 @@ class TestReportSerialisation:
 # ---------------------------------------------------------------------------
 
 
-def test_real_buck_output_is_honestly_incomplete(tmp_path):
-    """Today the pipeline emits magnetics-only enrichment; the gate must
-    say INCOMPLETE rather than PASS.  When the librarian / sim agents
-    land and start filling in stress / ratings / sim_results, this test
-    will start failing — at which point flip it to expect PASS.
+def test_real_buck_output_passes_the_realism_gate(tmp_path):
+    """The full design pipeline (selector + analyst + thermal stages) now
+    populates stress / ratings / loss data, so a real 48→12 V buck design
+    must earn a PASS verdict. (Historically this asserted INCOMPLETE while
+    the pipeline emitted magnetics-only enrichment — flipped per its own
+    instruction once the component agents landed.)
     """
     pytest.importorskip("PyOpenMagnetics")
     import json
@@ -414,7 +421,7 @@ def test_real_buck_output_is_honestly_incomplete(tmp_path):
     tas = json.loads(fp.read_text())
     spec = json.loads(Path("/tmp/buck_spec.json").read_text())
     r = evaluate_tas(tas, topology="buck", spec=spec)
-    assert r.verdict is RealismVerdict.INCOMPLETE
+    assert r.verdict is RealismVerdict.PASS
     # Every reported check must explain why it could not run.
     for c in r.checks:
         if c.status in (CheckStatus.UNAVAILABLE, CheckStatus.NOT_APPLICABLE):

@@ -1,8 +1,9 @@
 """User-facing design specification.
 
 This is **the** ``pydantic.BaseModel`` in ``heaviside.spec``. Every other
-typed data structure in Heaviside is a ``TypedDict`` derived from the MAS
-/ PEAS / SAS / CAS / RAS schemas (see ``heaviside/types/_generated/``).
+typed schema payload in Heaviside is a quicktype-generated class derived
+from the MAS / PEAS / SAS / CAS / RAS schemas (``heaviside.types``; the
+``_generated`` tree is produced by ``make types``, never committed).
 
 A ``DesignSpec`` is what the user (or the agent loop) hands to Heaviside.
 It is intentionally minimal — it does not encode topology-specific
@@ -63,7 +64,8 @@ class DesignSpec(BaseModel):
 
     This is the **only** BaseModel in ``heaviside.spec``. Every other typed
     payload — MAS topology inputs, CAS capacitor records, SAS MOSFET records,
-    RAS resistor records, MAS magnetic results — is a TypedDict.
+    RAS resistor records, MAS magnetic results — is a quicktype-generated
+    class from ``heaviside.types``.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

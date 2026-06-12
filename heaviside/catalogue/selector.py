@@ -55,10 +55,10 @@ class Mosfet:
 
     Generated dynamically by :meth:`from_envelope` from the canonical
     nested JSON shape (``semiconductor.mosfet.manufacturerInfo.
-    datasheetInfo.{electrical,part}``). Once Heaviside's typed
-    generation pipeline (``make types``) populates
-    ``heaviside/types/_generated/``, this dataclass is the conversion
-    target — the field set is intentionally narrow.
+    datasheetInfo.{electrical,part}``). The full schema classes live in
+    ``heaviside.types`` (quicktype, ``make types``); this dataclass stays
+    the selector's conversion target — the field set is intentionally
+    narrow.
     """
 
     mpn: str
