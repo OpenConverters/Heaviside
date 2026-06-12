@@ -87,6 +87,27 @@ def _diode_junk(row: dict) -> str | None:
     return None
 
 
+RATINGS_MPN = re.compile(r"\d+V[-_]\d+A$")
+# Fabricated "Infineon" family: IPB060N30-60A etc. — amp suffix always
+# equals the prefix digits, the N30/N60/N100 voltage classes don't exist
+# in OptiMOS naming, and every datasheetUrl points at a DIFFERENT part's
+# PDF (one at a Littelfuse IGBT). Nexperia BUK7535-55A-style suffixes are
+# REAL (voltage class + revision) and must not match.
+FAKE_IPB_MPN = re.compile(r"^IP[BPIA]\d+N\d+-\d+A$")
+
+
+def _mosfet_junk(row: dict) -> str | None:
+    body = row.get("semiconductor", row).get("mosfet", row.get("mosfet", row))
+    mi = body.get("manufacturerInfo", {})
+    part = mi.get("datasheetInfo", {}).get("part", {})
+    mpn = part.get("partNumber") or ""
+    if RATINGS_MPN.search(mpn):
+        return "ratings-encoded pseudo-MPN (fantasy-spec fabricated row)"
+    if FAKE_IPB_MPN.match(mpn) and mi.get("name") == "Infineon":
+        return "fabricated IPB*-NNA family (nonexistent naming, scavenged datasheet URLs)"
+    return None
+
+
 def _igbt_junk(row: dict) -> str | None:
     body = row.get("semiconductor", row).get("igbt", row.get("igbt", row))
     series = (
@@ -129,6 +150,7 @@ def _converter_junk(row: dict) -> str | None:
 
 def main() -> int:
     _move("diodes", "diodes.quarantine_synthetic.ndjson", _diode_junk)
+    _move("mosfets", "mosfets.quarantine_synthetic.ndjson", _mosfet_junk)
     _move("igbts", "igbts.quarantine_synthetic.ndjson", _igbt_junk)
     _move("capacitors", "capacitors.quarantine_stubs.ndjson", _cap_junk)
     _move("magnetics", "magnetics.quarantine_stubs.ndjson", _magnetic_junk)

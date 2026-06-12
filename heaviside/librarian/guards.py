@@ -132,6 +132,12 @@ PLACEHOLDER_MPN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "hyphen-delimited inductance token inside the partNumber — a "
         "value-encoding pseudo-MPN, not a manufacturer part number",
     ),
+    (
+        re.compile(r"\d+V[-_]\d+A$"),
+        "voltage-current ratings suffix inside the partNumber "
+        "(e.g. 'CSD18XX100V-100A') — a value-encoding pseudo-MPN; these "
+        "fabricated rows carry fantasy specs that win every Pareto pick",
+    ),
 )
 
 # Junk class 3 — datasheet URLs that cannot possibly be a datasheet.

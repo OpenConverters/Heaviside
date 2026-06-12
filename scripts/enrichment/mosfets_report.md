@@ -99,3 +99,58 @@ no typ is printed, negative values for P-channel parts as printed).
 Working artifacts (cached PDFs + extracted text): `/tmp/mosfet_ds/` (queue at
 `/tmp/mosfet_ds/queue.tsv`, ordered by shared-datasheet leverage; this session consumed lines
 1–429). Fetcher: `/tmp/mosfet_ds/fetch_extract.sh <start> <end>`.
+
+---
+
+## Session 2 (2026-06-12, continuation): mechanical pipeline over the full queue + Vishay + TI
+
+Patch grew 505 -> 4,208 lines (3,702 new (mpn,field)-deduped lines). All new values were
+machine-extracted from pdftotext of fetched manufacturer PDFs by `/tmp/mosfet_ds/auto_parse.py`,
+validated against the 505 human-extracted session-1 rows as ground truth
+(**2,963 overlapping field extractions, 0 disagreements**) before being trusted; the parser is
+conservative (exactly-one-match + plausibility range + unit required, else skip & log).
+
+### Values filled this session (per source)
+
+| source | Coss | Qg | Vth | other |
+|---|---|---|---|---|
+| Infineon direct PDFs (queue lines 1-2292) | 1,360 | 171 | 1,466 | |
+| Vishay (doc-id via `vishay.com/api/search-predictive/?searchChoice=part&query=<mpn>` -> `docs/{doc_no}/{p1001}.pdf`) | 1,600 | 553 | 931 | SQM40061EL `part.case`=TO-263 |
+| Texas Instruments (`ti.com/lit/ds/symlink/<mpn>.pdf` — works with plain curl + browser UA, contrary to session-1 note) | 7 | 0 | 98 | |
+| other (Wolfspeed/EPC re-emits) | 6 | 1 | 1 | |
+
+mosfets schema_invalid: **4,315 -> 2,965** (validate_tas). Tests: `tests/regression/tas` +
+`test_generated_types.py` = 81 passed.
+
+### Also fixed (separate one-off scripts, datasheet-sourced, tables embedded in the scripts)
+
+- `scripts/repair_mosfet_conflicts.py` — the 6 dual-datasheetInfo conflict rows (IPP60R190P6,
+  IPA60R190P6, IPP60R099P7, IPP60R080P7, IPP60R060P7, IPP60R280C6). IPP60R280C6's row was
+  contaminated with IPP60R280P7 data (wrong datasheetUrl too) — fully rebuilt from the real
+  IPx60R280C6 Rev 2.3 sheet.
+- `scripts/repair_mosfet_dictcaps.py` — all 61 dict-shaped capacitance fields ({"typical":x})
+  replaced with the datasheet numbers (the old dicts had Ciss==Coss scrape artifacts).
+
+### apply_patches conflicts (14, investigated, all benign — fill-only left them unchanged)
+
+Legacy IRF part numbers (IRF530N, IRF740, IRFB3307, IRFP250N, IRFP260N, IRFP460) exist as both
+Infineon-branded and Vishay-branded TAS rows sharing `part.partNumber`; each row keeps the values
+from its own manufacturer's datasheet, the cross-matched patch line is rejected by the fill-only
+gate. Not data errors.
+
+### Remaining gaps (counted after this session)
+
+- still missing: Coss 1,349 · Qg 1,847 · Vth 1,583 (schema also requires onResistance 743,
+  continuousDrainCurrent 429, drainSourceVoltage 276 on other rows — out of scope this session).
+- 129 unique Infineon PDFs are garbled (no ToUnicode; 2010-era CoolMOS C6/CFD, some BSC/IPC):
+  text extraction impossible, needs OCR or the PDF-rendering Read tool per file. Listed in
+  /tmp/auto_all2.log (`grep garbled`).
+- 25 Infineon queue URLs are dead (404 even on retry).
+- Vishay: 105 MPNs NORESOLVE in the search API (mostly discontinued IRF*/SiH* legacy), 74 resolved
+  doc-ids whose PDFs 404 under every filename variant, ~700 Qg cells genuinely ambiguous
+  (dual VGS=10/4.5 V rows or dual-die N+P packages — skipped on purpose), P-channel negative Vth
+  skipped by the plausibility gate.
+- TI: ~45 rows are gate drivers/misfiled (UCC*, LM*), 15 LMG GaN with only 7 Coss extractable
+  ("GaN output capacitance" row), 28 symlink 404s.
+- Working artifacts for the next pass: /tmp/mosfet_ds/ (queue.tsv, auto_parse.py, vishay_map*.tsv,
+  vishay/, ti/, *.txt caches; PDFs were deleted — /tmp filled up).
