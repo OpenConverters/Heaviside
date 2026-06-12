@@ -34,6 +34,9 @@ EXPECTED_TOOL_NAMES = {
     "audit_all",
     "read_knowledge",
     "get_pareto_magnetics",
+    "crossref_capacitor",
+    "crossref_resistor",
+    "crossref_magnetic",
 }
 
 
@@ -153,3 +156,58 @@ def test_component_exists_wrapper_delegates() -> None:
 
 def test_raw_functions_matches_registry_keys() -> None:
     assert set(RAW_FUNCTIONS) == set(TOOL_REGISTRY)
+
+
+def test_crossref_capacitor_filters_by_manufacturer_and_value(tmp_path, monkeypatch) -> None:
+    """The crossref tools query TAS NDJSON: manufacturer substring match,
+    optional value window, explicit truncation flag."""
+    import json as _json
+
+    def cap_row(mfr: str, mpn: str, farads: float) -> str:
+        return _json.dumps(
+            {
+                "capacitor": {
+                    "manufacturerInfo": {
+                        "name": mfr,
+                        "reference": mpn,
+                        "datasheetInfo": {
+                            "electrical": {
+                                "capacitance": {"nominal": farads},
+                                "ratedVoltage": 50.0,
+                            },
+                        },
+                    },
+                }
+            }
+        )
+
+    (tmp_path / "capacitors.ndjson").write_text(
+        "\n".join(
+            [
+                cap_row("Würth Elektronik", "WCAP-1", 22e-6),
+                cap_row("Würth Elektronik", "WCAP-2", 47e-6),
+                cap_row("Murata", "GRM-1", 22e-6),
+            ]
+        )
+        + "\n"
+    )
+    monkeypatch.setenv("HEAVISIDE_TAS_DATA_DIR", str(tmp_path))
+
+    out = _json.loads(
+        RAW_FUNCTIONS["crossref_capacitor"]("wurth", capacitance=22e-6, value_tolerance_pct=20.0)
+    )
+    assert out["total_matches"] == 1
+    assert out["candidates"][0]["mpn"] == "WCAP-1"
+    assert out["truncated"] is False
+
+    # No value filter -> both Würth rows, Murata still excluded.
+    out = _json.loads(RAW_FUNCTIONS["crossref_capacitor"]("wurth"))
+    assert {c["mpn"] for c in out["candidates"]} == {"WCAP-1", "WCAP-2"}
+
+
+def test_crossref_search_rejects_unknown_category(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HEAVISIDE_TAS_DATA_DIR", str(tmp_path))
+    from heaviside.agents.tools import _crossref_search_impl
+
+    with pytest.raises(ValueError, match="unknown category"):
+        _crossref_search_impl("flux_capacitor", "wurth")

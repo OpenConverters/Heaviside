@@ -1,8 +1,12 @@
-"""LLM-based topology selector using the OpenAI-compatible API.
+"""LLM-based topology selector.
 
-Reads the topology-selector prompt from ``agents/prompts/topology-selector.md``,
-sends the spec to the configured LLM (Moonshot/Kimi default, any OpenAI-compatible
-endpoint), and parses the JSON response.
+Runs the ``topology-selector`` agent prompt through the shared
+:func:`heaviside.agents.llm_call.call_agent` path (Moonshot/Kimi default,
+any OpenAI-compatible endpoint via ``HEAVISIDE_LLM_BASE_URL`` /
+``HEAVISIDE_LLM_MODEL``) and parses the JSON response. There is no
+separate HTTP client here — ``call_agent`` owns provider quirks
+(reasoning-model temperature, ``reasoning_content`` fallback, token
+accounting) for every agent.
 
 Falls back to the static screen if no API key is configured — this is the
 intentional "graceful degradation to deterministic" behaviour rather than a
@@ -13,24 +17,14 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-
-def _load_system_prompt() -> str:
-    """Read the topology-selector.md prompt, stripping YAML frontmatter."""
-    path = _PROMPTS_DIR / "topology-selector.md"
-    text = path.read_text()
-    if text.startswith("---"):
-        end = text.index("---", 3)
-        text = text[end + 3 :].strip()
-    return text
+class LLMUnavailableError(RuntimeError):
+    """Raised when the LLM topology selector can't be reached."""
 
 
 def topology_selector_llm(
@@ -38,7 +32,6 @@ def topology_selector_llm(
 ) -> tuple[list[str], str]:
     """Call the LLM topology selector.
 
-    Uses the OpenAI-compatible chat completions endpoint.
     Requires ``MOONSHOT_API_KEY`` (or ``OPENAI_API_KEY``) env var.
 
     Returns ``(viable_names, reasoning)`` — same shape as the static
@@ -46,55 +39,20 @@ def topology_selector_llm(
 
     Raises ``LLMUnavailableError`` if no API key is set or the call fails.
     """
-    api_key = os.environ.get("MOONSHOT_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise LLMUnavailableError("no MOONSHOT_API_KEY or OPENAI_API_KEY in environment")
-
-    base_url = os.environ.get(
-        "HEAVISIDE_LLM_BASE_URL",
-        "https://api.moonshot.cn/v1",
-    )
-    model = os.environ.get("HEAVISIDE_LLM_MODEL", "kimi-k2.5")
+    from heaviside.agents.llm_call import LLMCallError, call_agent
 
     try:
-        import httpx
-    except ImportError as exc:
-        raise LLMUnavailableError("httpx not installed") from exc
-
-    system_prompt = _load_system_prompt()
-    user_message = json.dumps(dict(spec), indent=2)
-
-    response = httpx.post(
-        f"{base_url}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 1024,
-        },
-        timeout=30.0,
-    )
-
-    if response.status_code != 200:
-        raise LLMUnavailableError(f"LLM API returned {response.status_code}: {response.text[:200]}")
-
-    data = response.json()
-    text = data["choices"][0]["message"]["content"]
+        raw = call_agent(
+            "topology-selector",
+            json.dumps(dict(spec), indent=2),
+            max_tokens=1024,
+        )
+    except LLMCallError as exc:
+        raise LLMUnavailableError(str(exc)) from exc
 
     from heaviside.pipeline.full_design import _parse_topology_selector_response
 
-    return _parse_topology_selector_response(text)
-
-
-class LLMUnavailableError(RuntimeError):
-    """Raised when the LLM topology selector can't be reached."""
+    return _parse_topology_selector_response(raw)
 
 
 def topology_selector_with_fallback(
@@ -107,7 +65,7 @@ def topology_selector_with_fallback(
     """
     try:
         return topology_selector_llm(spec)
-    except (LLMUnavailableError, Exception) as exc:
+    except Exception as exc:
         logger.warning(
             "LLM topology selector unavailable (%s) — using static screen",
             exc,

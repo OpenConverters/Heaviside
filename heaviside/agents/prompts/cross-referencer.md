@@ -1,6 +1,7 @@
 ---
 name: cross-referencer
 description: BOM cross-reference agent. Replaces components in a converter BOM with equivalents from a target manufacturer. Picks substitute MPNs ONLY from the _tas_candidates list provided per component.
+allowed_tools: []
 ---
 
 # Cross-Referencer — BOM Substitution Agent

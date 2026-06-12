@@ -61,11 +61,14 @@ def call_llm(
     temperature: float = 0.3,
     max_tokens: int = 4096,
     json_mode: bool = False,
+    model: str | None = None,
 ) -> str:
     """Send a chat completion request and return the assistant's text.
 
-    Raises ``LLMCallError`` if no API key is configured or the
-    request fails.
+    ``model`` overrides the ``HEAVISIDE_LLM_MODEL`` env / ``kimi-k2.5``
+    default (used by :func:`call_agent` to honour prompt-frontmatter
+    model pins). Raises ``LLMCallError`` if no API key is configured or
+    the request fails.
     """
     api_key = os.environ.get("MOONSHOT_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -75,7 +78,8 @@ def call_llm(
         "HEAVISIDE_LLM_BASE_URL",
         "https://api.moonshot.ai/v1",
     )
-    model = os.environ.get("HEAVISIDE_LLM_MODEL", "kimi-k2.5")
+    if model is None:
+        model = os.environ.get("HEAVISIDE_LLM_MODEL", "kimi-k2.5")
 
     try:
         import httpx
@@ -140,6 +144,82 @@ def call_llm(
     return content
 
 
+#: Agents whose verdicts gate the pipeline (Ray / Nicola / the CRE
+#: reviewer). Their model must pass the tier policy's review-role gate —
+#: an un-vetted model silently rubber-stamping designs is worse than a
+#: loud refusal.
+_REVIEW_ROLE_AGENTS: frozenset[str] = frozenset({"ray", "nicola", "reviewer"})
+
+
+def _resolve_model_id(definition: Any) -> str:
+    """Model precedence: env override > prompt frontmatter > project default."""
+    from heaviside.agents.factory import DEFAULT_MODEL
+
+    return os.environ.get("HEAVISIDE_LLM_MODEL") or definition.model or DEFAULT_MODEL
+
+
+def _run_strands_agent(
+    definition: Any,
+    user_message: str,
+    *,
+    model_id: str,
+    temperature: float,
+    max_tokens: int,
+    json_mode: bool,
+) -> str:
+    """Run a tool-using agent through Strands and return its final text.
+
+    The agent gets the tools its prompt declares in ``allowed_tools`` and
+    may take multiple tool-call turns before answering. Construction or
+    run failures surface as :class:`LLMCallError` (chained) so callers
+    keep a single failure type — there is no fallback to a tool-less
+    single-shot call.
+
+    Request params (``max_tokens`` / ``temperature`` / ``json_mode``) are
+    applied on the Kimi/Moonshot route via the model builder. Non-Kimi
+    model ids go to Strands' own provider routing, which manages its own
+    request defaults.
+    """
+    from heaviside.agents.factory import load_agent
+    from heaviside.llm import build_kimi_model, is_kimi_model
+
+    params: dict[str, Any] = {"max_tokens": max_tokens}
+    # Reasoning models (k2.5+) only accept temperature=1; omit it.
+    if "k2" not in model_id:
+        params["temperature"] = temperature
+    if json_mode:
+        params["response_format"] = {"type": "json_object"}
+
+    try:
+        if is_kimi_model(model_id):
+            agent = load_agent(
+                definition.name,
+                model=model_id,
+                kimi_model_builder=lambda *, model_id: build_kimi_model(
+                    model_id=model_id, params=params
+                ),
+            )
+        else:
+            agent = load_agent(definition.name, model=model_id)
+        result = agent(user_message)
+    except LLMCallError:
+        raise
+    except Exception as exc:
+        raise LLMCallError(f"strands agent {definition.name!r} failed: {exc}") from exc
+
+    # Token accounting (Strands accumulates across tool-call turns).
+    usage = getattr(getattr(result, "metrics", None), "accumulated_usage", None)
+    if isinstance(usage, dict):
+        _TOTAL_TOKENS["input"] += int(usage.get("inputTokens", 0))
+        _TOTAL_TOKENS["output"] += int(usage.get("outputTokens", 0))
+    _TOTAL_TOKENS["calls"] += 1
+
+    text = str(result).strip()
+    if not text:
+        raise LLMCallError(f"strands agent {definition.name!r} returned empty final text")
+    return text
+
+
 def call_agent(
     agent_name: str,
     user_message: str,
@@ -148,14 +228,56 @@ def call_agent(
     max_tokens: int = 4096,
     json_mode: bool = False,
 ) -> str:
-    """Load a named agent prompt and call the LLM with it."""
-    system_prompt = load_prompt(agent_name)
+    """Run a named agent prompt and return its final text.
+
+    The prompt's YAML frontmatter decides the execution path:
+
+    * ``allowed_tools`` non-empty → a Strands agent with those tools
+      wired in (multi-turn tool calling, model-agnostic provider
+      routing).
+    * ``allowed_tools: []`` → a single-shot :func:`call_llm` chat
+      completion (cheap; the agent works only from pre-fed context).
+
+    In both paths the model id resolves env override
+    (``HEAVISIDE_LLM_MODEL``) > frontmatter ``model:`` > project
+    default, and review-role agents (Ray, Nicola, reviewer) are refused
+    on models that fail :func:`heaviside.llm.is_review_role_allowed`.
+    """
+    from heaviside.agents.factory import AgentLoadError, load_agent_definition
+
+    try:
+        definition = load_agent_definition(agent_name)
+    except AgentLoadError as exc:
+        raise LLMCallError(f"agent prompt {agent_name!r} failed to load: {exc}") from exc
+
+    model_id = _resolve_model_id(definition)
+
+    if agent_name in _REVIEW_ROLE_AGENTS:
+        from heaviside.llm import is_review_role_allowed
+
+        if not is_review_role_allowed(model_id):
+            raise LLMCallError(
+                f"model {model_id!r} is not allowed in review role {agent_name!r} "
+                "(heaviside/llm/model_tiers.json review_roles_allowed)"
+            )
+
+    if definition.allowed_tools:
+        return _run_strands_agent(
+            definition,
+            user_message,
+            model_id=model_id,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
+
     return call_llm(
-        system_prompt,
+        definition.system_prompt,
         user_message,
         temperature=temperature,
         max_tokens=max_tokens,
         json_mode=json_mode,
+        model=model_id,
     )
 
 

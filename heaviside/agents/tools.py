@@ -69,6 +69,9 @@ __all__ = [
     "audit_category",
     "audit_component",
     "component_exists",
+    "crossref_capacitor",
+    "crossref_magnetic",
+    "crossref_resistor",
     "list_categories",
     "read_knowledge",
     "resolve_tools",
@@ -330,6 +333,183 @@ def _get_pareto_magnetics_impl(
 
 
 # ---------------------------------------------------------------------------
+# Cross-reference TAS queries (Otto's no-substitute challenges)
+# ---------------------------------------------------------------------------
+
+
+def _crossref_search_impl(
+    category: str,
+    target_manufacturer: str,
+    value: float | None = None,
+    value_tolerance_pct: float = 50.0,
+    max_results: int = 50,
+) -> str:
+    """Shared TAS query behind the per-category crossref tools.
+
+    Scans ``TAS/data/<category>.ndjson`` for parts from the target
+    manufacturer, optionally filtered to ``value`` ± ``value_tolerance_pct``
+    (candidates whose value cannot be read are kept — dropping them would
+    hide exactly the parts Otto exists to surface). Results are the same
+    per-category summaries the cross-referencer sees, sorted by value
+    proximity when a value is given. Truncation is reported explicitly.
+    """
+    import os
+    from pathlib import Path
+
+    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.pipeline.crossref_pipeline import (
+        _extract_manufacturer,
+        _extract_value,
+        _normalize_manufacturer,
+        _summarize_candidate,
+    )
+
+    category_files = {
+        "capacitor": "capacitors.ndjson",
+        "resistor": "resistors.ndjson",
+        "magnetic": "magnetics.ndjson",
+    }
+    if category not in category_files:
+        raise ValueError(
+            f"crossref search: unknown category {category!r}; known: {sorted(category_files)}"
+        )
+
+    tas_dir = Path(
+        os.environ.get(
+            "HEAVISIDE_TAS_DATA_DIR",
+            str(Path(__file__).resolve().parents[2] / "TAS" / "data"),
+        )
+    )
+    path = tas_dir / category_files[category]
+
+    target = _normalize_manufacturer(target_manufacturer)
+    matches: list[tuple[float | None, dict[str, Any]]] = []
+    for _lineno, env in iter_envelopes(path):
+        mfr = _extract_manufacturer(env, category)
+        if not mfr or target not in _normalize_manufacturer(mfr):
+            continue
+        cand_value = _extract_value(env, category)
+        if value is not None and cand_value is not None:
+            lo = value * (1.0 - value_tolerance_pct / 100.0)
+            hi = value * (1.0 + value_tolerance_pct / 100.0)
+            if not (lo <= cand_value <= hi):
+                continue
+        matches.append((cand_value, env))
+
+    if value is not None:
+        matches.sort(key=lambda m: abs(m[0] - value) if m[0] is not None else float("inf"))
+
+    n = max(1, min(int(max_results), 200))
+    summaries = [_summarize_candidate(env, category) for _v, env in matches[:n]]
+    return json.dumps(
+        {
+            "category": category,
+            "target_manufacturer": target_manufacturer,
+            "total_matches": len(matches),
+            "returned": len(summaries),
+            "truncated": len(matches) > n,
+            "candidates": summaries,
+        }
+    )
+
+
+def _crossref_capacitor_impl(
+    target_manufacturer: str,
+    capacitance: float | None = None,
+    value_tolerance_pct: float = 50.0,
+    max_results: int = 50,
+) -> str:
+    """Query TAS capacitors from a target manufacturer.
+
+    Args:
+        target_manufacturer: Manufacturer to search (substring match,
+            case/punctuation-insensitive — "Würth", "wurth elektronik"
+            and "WURTH" all hit the same rows).
+        capacitance: Optional centre capacitance in farads (SI). When
+            given, results are limited to ±``value_tolerance_pct`` and
+            sorted by proximity.
+        value_tolerance_pct: Half-width of the value window, percent.
+        max_results: Cap on returned candidates (truncation is flagged
+            in the response, never silent).
+
+    Returns:
+        JSON string with ``total_matches``, ``candidates`` (mpn,
+        capacitance, voltage, esr, package) and a ``truncated`` flag.
+    """
+    return _crossref_search_impl(
+        "capacitor",
+        target_manufacturer,
+        value=capacitance,
+        value_tolerance_pct=value_tolerance_pct,
+        max_results=max_results,
+    )
+
+
+def _crossref_resistor_impl(
+    target_manufacturer: str,
+    resistance: float | None = None,
+    value_tolerance_pct: float = 50.0,
+    max_results: int = 50,
+) -> str:
+    """Query TAS resistors from a target manufacturer.
+
+    Args:
+        target_manufacturer: Manufacturer to search (substring match,
+            case/punctuation-insensitive).
+        resistance: Optional centre resistance in ohms (SI). When given,
+            results are limited to ±``value_tolerance_pct`` and sorted
+            by proximity.
+        value_tolerance_pct: Half-width of the value window, percent.
+        max_results: Cap on returned candidates (truncation is flagged
+            in the response, never silent).
+
+    Returns:
+        JSON string with ``total_matches``, ``candidates`` (mpn,
+        resistance, tolerance, power_rating, package) and a
+        ``truncated`` flag.
+    """
+    return _crossref_search_impl(
+        "resistor",
+        target_manufacturer,
+        value=resistance,
+        value_tolerance_pct=value_tolerance_pct,
+        max_results=max_results,
+    )
+
+
+def _crossref_magnetic_impl(
+    target_manufacturer: str,
+    inductance: float | None = None,
+    value_tolerance_pct: float = 50.0,
+    max_results: int = 50,
+) -> str:
+    """Query TAS magnetics (inductors) from a target manufacturer.
+
+    Args:
+        target_manufacturer: Manufacturer to search (substring match,
+            case/punctuation-insensitive).
+        inductance: Optional centre inductance in henries (SI). When
+            given, results are limited to ±``value_tolerance_pct`` and
+            sorted by proximity.
+        value_tolerance_pct: Half-width of the value window, percent.
+        max_results: Cap on returned candidates (truncation is flagged
+            in the response, never silent).
+
+    Returns:
+        JSON string with ``total_matches``, ``candidates`` (mpn,
+        inductance, saturation_current, dcr, package) and a
+        ``truncated`` flag.
+    """
+    return _crossref_search_impl(
+        "magnetic",
+        target_manufacturer,
+        value=inductance,
+        value_tolerance_pct=value_tolerance_pct,
+        max_results=max_results,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Strands decoration (the agent-facing surface)
 # ---------------------------------------------------------------------------
 
@@ -343,6 +523,9 @@ audit_category = tool(_audit_category_impl, name="audit_category")
 audit_all = tool(_audit_all_impl, name="audit_all")
 read_knowledge = tool(_read_knowledge_impl, name="read_knowledge")
 get_pareto_magnetics = tool(_get_pareto_magnetics_impl, name="get_pareto_magnetics")
+crossref_capacitor = tool(_crossref_capacitor_impl, name="crossref_capacitor")
+crossref_resistor = tool(_crossref_resistor_impl, name="crossref_resistor")
+crossref_magnetic = tool(_crossref_magnetic_impl, name="crossref_magnetic")
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +546,9 @@ TOOL_REGISTRY: dict[str, Any] = {
     "audit_all": audit_all,
     "read_knowledge": read_knowledge,
     "get_pareto_magnetics": get_pareto_magnetics,
+    "crossref_capacitor": crossref_capacitor,
+    "crossref_resistor": crossref_resistor,
+    "crossref_magnetic": crossref_magnetic,
 }
 
 
@@ -379,6 +565,9 @@ RAW_FUNCTIONS: dict[str, Any] = {
     "audit_all": _audit_all_impl,
     "read_knowledge": _read_knowledge_impl,
     "get_pareto_magnetics": _get_pareto_magnetics_impl,
+    "crossref_capacitor": _crossref_capacitor_impl,
+    "crossref_resistor": _crossref_resistor_impl,
+    "crossref_magnetic": _crossref_magnetic_impl,
 }
 
 
