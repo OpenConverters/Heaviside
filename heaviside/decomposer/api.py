@@ -179,9 +179,18 @@ def generate_netlist(
     if _HAS_SPICE_CONFIG:
         args.append(cfg)
     result = pyom.generate_ngspice_circuit(*args)
-    # When the binding lacks spice_config, post-process the netlist to
-    # apply realistic defaults (MKF bakes in lossy snubber/diode values).
-    if not _HAS_SPICE_CONFIG and isinstance(result, dict) and "netlist" in result:
+    # Post-process the netlist to apply realistic snubber/diode/switch
+    # values. This runs UNCONDITIONALLY — even when the binding accepts
+    # spice_config natively — because MKF's native config is incomplete
+    # for the energy-storage topologies (buck/cuk/flyback/sepic/zeta):
+    # their switch model is emitted without a RON term (so RON falls back
+    # to ngspice's 1 Ω default), and the snubber damping resistor
+    # (snubDampR) is not exposed by the PyOM dict→struct mapping. The
+    # post-patch's regexes set RON, VH, snubber R (both the series and
+    # damping resistors) and the diode model from cfg, reproducing the
+    # canonical decks the goldens pin. Drop this once MKF emits swModelRON
+    # for those topologies and the binding maps snubDampR.
+    if isinstance(result, dict) and "netlist" in result:
         result["netlist"] = _patch_spice_defaults(result["netlist"], cfg)
     if not isinstance(result, dict):
         raise DecomposerError(

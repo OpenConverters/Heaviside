@@ -13,8 +13,8 @@ Cbus_hi vin_dc mid_point 1u IC=24.000000
 Cbus_lo mid_point 0 1u IC=24.000000
 Rbal_hi vin_dc mid_point 100k
 Rbal_lo mid_point 0 100k
-Vpwm_HI pwm_HI 0 PULSE(0 5.000000 0 1.000000e-08 1.000000e-08 2.250000e-06 5.000000e-06)
-Vpwm_LO pwm_LO 0 PULSE(0 5.000000 2.500000e-06 1.000000e-08 1.000000e-08 2.250000e-06 5.000000e-06)
+Vpwm_HI pwm_HI 0 PULSE(0 5.000000 0 1.000000e-08 1.000000e-08 1.500000e-06 5.000000e-06)
+Vpwm_LO pwm_LO 0 PULSE(0 5.000000 2.500000e-06 1.000000e-08 1.000000e-08 1.500000e-06 5.000000e-06)
 Vq1_sense vin_dc qhi_drain 0
 SHI qhi_drain sw_node pwm_HI 0 SW1
 DHI 0 sw_node DIDEAL
