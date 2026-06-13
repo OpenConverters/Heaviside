@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from heaviside.catalogue._reader import iter_envelopes
+from heaviside.librarian.guards import BAD_DATASHEET_URL_PATTERNS
 
 # Default location of TAS/data/. ``HEAVISIDE_TAS_DATA_DIR`` lets tests
 # point at fixtures (matches the convention used by
@@ -41,6 +42,28 @@ _DEFAULT_TAS_DATA_DIR: Final = _REPO_ROOT / "TAS" / "data"
 def _tas_data_dir() -> Path:
     env = os.environ.get("HEAVISIDE_TAS_DATA_DIR")
     return Path(env) if env else _DEFAULT_TAS_DATA_DIR
+
+
+def _datasheet_unusable(url: str) -> bool:
+    """True when a datasheetUrl is absent or a known-bad search /
+    aggregator / placeholder page (the same patterns the librarian
+    write-guard rejects). A part whose only datasheet link is dead can
+    neither be verified nor enriched, so the selector deprioritises it
+    rather than shipping a design around an undocumented part."""
+    if not url:
+        return True
+    return any(rx.search(url) for rx, _reason in BAD_DATASHEET_URL_PATTERNS)
+
+
+def _mosfet_evidence_incomplete(m: Mosfet) -> bool:
+    """A MOSFET the design cannot fully build or verify around: no
+    gate-charge datum (gate-drive and bootstrap-capacitor sizing are
+    impossible — this is exactly what leaves C_boot unsized) or no
+    usable datasheet. Used as the PRIMARY preference tier so a
+    documented, buildable part beats an otherwise-equal thin one. It is
+    never a hard reject: the legacy corpus has real enrichment gaps, so
+    emptying the pool would be worse than picking the best thin part."""
+    return m.qg_total <= 0 or _datasheet_unusable(m.datasheet_url)
 
 
 # ---------------------------------------------------------------------------
@@ -328,24 +351,30 @@ def select_mosfet(
     if not passing:
         raise SelectionError(c, rejection, total)
 
-    # Tier-2 preference: among parts that satisfy every hard
-    # constraint AND the primary tiebreaker, prefer ones with full
-    # datasheet metadata (Rth_ja + Tj_max) populated — without those
-    # the analyst stage can't compute Tj and the realism gate's
-    # thermal_limit check stays UNAVAILABLE. The tier is implemented
-    # via a tuple sort key: (no_thermal, primary) sorts thermal-rich
-    # parts FIRST, then within each thermal-tier by the primary metric.
+    # Preference tiers (applied before the primary metric, most
+    # important first):
+    #   1. evidence-complete — a buildable, documented part (Qg present,
+    #      datasheet usable). A thin/undocumented part (e.g. a
+    #      discontinued FET with a dead datasheet and no Qg) only wins if
+    #      nothing better satisfies the hard constraints.
+    #   2. thermal-rich — Rth_ja + Tj_max populated, so the analyst can
+    #      compute Tj and the realism gate's thermal_limit check runs.
+    # Implemented as a tuple sort key so each tier orders within the one
+    # above it, finally falling to the primary metric. Both tiers are
+    # soft (re-rank, never reject) — the legacy corpus has real gaps.
     def _no_thermal(m: Mosfet) -> bool:
         return m.rth_ja is None or m.tj_max is None
 
+    _ev = _mosfet_evidence_incomplete
+
     if tiebreaker is MosfetTiebreaker.LOWEST_RDS_ON:
-        winner = min(passing, key=lambda m: (_no_thermal(m), m.rds_on))
+        winner = min(passing, key=lambda m: (_ev(m), _no_thermal(m), m.rds_on))
     elif tiebreaker is MosfetTiebreaker.LOWEST_QG:
-        winner = min(passing, key=lambda m: (_no_thermal(m), m.qg_total))
+        winner = min(passing, key=lambda m: (_ev(m), _no_thermal(m), m.qg_total))
     elif tiebreaker is MosfetTiebreaker.HIGHEST_VDS_MARGIN:
-        winner = min(passing, key=lambda m: (_no_thermal(m), -m.vds_rated / c.vds_min))
+        winner = min(passing, key=lambda m: (_ev(m), _no_thermal(m), -m.vds_rated / c.vds_min))
     elif tiebreaker is MosfetTiebreaker.HIGHEST_ID_MARGIN:
-        winner = min(passing, key=lambda m: (_no_thermal(m), -m.id_continuous / c.id_min))
+        winner = min(passing, key=lambda m: (_ev(m), _no_thermal(m), -m.id_continuous / c.id_min))
     elif tiebreaker is MosfetTiebreaker.LOWEST_TOTAL_LOSS:
         if not all(
             isinstance(x, (int, float)) and x > 0
@@ -365,7 +394,7 @@ def select_mosfet(
             )
             return p_cond + p_sw
 
-        winner = min(passing, key=lambda m: (_no_thermal(m), _total_loss(m)))
+        winner = min(passing, key=lambda m: (_ev(m), _no_thermal(m), _total_loss(m)))
     else:  # pragma: no cover — enum is exhaustive
         raise ValueError(f"unhandled tiebreaker {tiebreaker!r}")
 

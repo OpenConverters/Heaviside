@@ -69,7 +69,9 @@ _ACTIVE_FILES: tuple[str, ...] = (
 _ROW_COUNT_BASELINE: dict[str, int] = {
     # 2026-06-13 campaign: +669 Vishay HV ceramic restores (false-positive
     # quarantines), -30 fabricated MACOM MID12X diodes quarantined, -2 TI
-    # gate drivers moved to mosfets.quarantine_misfiled_drivers.ndjson.
+    # gate drivers moved to mosfets.quarantine_misfiled_drivers.ndjson,
+    # -86,751 Vishay resistor catalog-matrix stubs (partNumber==series, 366
+    # bare series names, 0 resolved to real MPNs) → resistors.quarantine_stubs.
     "capacitors.ndjson": 112_231,
     "connectors.ndjson": 14,
     "controllers.ndjson": 1_667,
@@ -78,7 +80,7 @@ _ROW_COUNT_BASELINE: dict[str, int] = {
     "igbts.ndjson": 2_075,
     "magnetics.ndjson": 50_556,
     "mosfets.ndjson": 6_678,
-    "resistors.ndjson": 117_472,
+    "resistors.ndjson": 30_721,
 }
 _ROW_COUNT_TOLERANCE = 0.10
 
