@@ -1038,11 +1038,8 @@ def _stage4_adversarial_review(outcome: DesignOutcome) -> DesignOutcome:
     reviewer that runs and returns a negative verdict is a valid review (not a
     failure); that is recorded and surfaced, not raised.
     """
-    from heaviside.agents.llm_call import (
-        LLMCallError,
-        call_agent_json,
-        normalize_reviewer_verdict,
-    )
+    from heaviside.agents.llm_call import LLMCallError
+    from heaviside.stages.reviewer_panel import review as panel_review
 
     review_input = {
         "verdict": outcome.verdict_dict,
@@ -1052,36 +1049,26 @@ def _stage4_adversarial_review(outcome: DesignOutcome) -> DesignOutcome:
     if outcome.report:
         review_input["report"] = outcome.report[:10000]
 
-    import json
+    try:
+        panel = panel_review(
+            review_input,
+            scope=(
+                "POWER-STAGE AUTO-DESIGN — topology selection, magnetics sizing, "
+                "component selection/BOM, steady-state simulation, and realism "
+                "checks. Control loop, gate drive, protection, EMI filter, and PCB "
+                "layout are OUT OF SCOPE for this automated stage."
+            ),
+            title="CONVERTER DESIGN REVIEW",
+        )
+    except LLMCallError as exc:
+        raise FullDesignError(
+            f"Stage 4 adversarial review: a reviewer could not produce a valid "
+            f"verdict ({exc}). A design without its Ray+Nicola review is not a "
+            f"valid result — aborting (no silent fallback)."
+        ) from exc
 
-    review_verdicts: list[dict] = []
-    reviewer_log = ""
-
-    for reviewer_name in ("ray", "nicola"):
-        try:
-            verdict_data = call_agent_json(
-                reviewer_name,
-                "[SCOPE: POWER-STAGE AUTO-DESIGN — topology selection, magnetics "
-                "sizing, component selection/BOM, steady-state simulation, and "
-                "realism checks. Control loop, gate drive, protection, EMI filter, "
-                "and PCB layout are OUT OF SCOPE for this automated stage.]\n\n"
-                f"CONVERTER DESIGN REVIEW\n\n{json.dumps(review_input, indent=2)}",
-                max_tokens=8192,
-                max_retries=2,
-                json_mode=True,
-            )
-            verdict_data = normalize_reviewer_verdict(verdict_data, reviewer_name)
-        except LLMCallError as exc:
-            raise FullDesignError(
-                f"Stage 4 adversarial review: reviewer {reviewer_name!r} could "
-                f"not produce a valid verdict ({exc}). A design without its "
-                f"Ray+Nicola review is not a valid result — aborting (no silent "
-                f"fallback)."
-            ) from exc
-        verdict_data["reviewer"] = reviewer_name
-        review_verdicts.append(verdict_data)
-        reviewer_log += f"\n--- {reviewer_name.upper()} ---\n{json.dumps(verdict_data)}\n"
-        logger.info("Stage 4 (%s): %s", reviewer_name, verdict_data.get("verdict", "?"))
+    for v in panel.verdicts:
+        logger.info("Stage 4 (%s): %s", v.reviewer, v.verdict)
 
     return DesignOutcome(
         pick=outcome.pick,
@@ -1090,7 +1077,7 @@ def _stage4_adversarial_review(outcome: DesignOutcome) -> DesignOutcome:
         gatekeeper=outcome.gatekeeper,
         report=outcome.report,
         fsw_optimal=outcome.fsw_optimal,
-        diagnostics=(*outcome.diagnostics, f"ray+nicola: {len(review_verdicts)} reviews"),
+        diagnostics=(*outcome.diagnostics, f"ray+nicola: {len(panel.verdicts)} reviews"),
     )
 
 
