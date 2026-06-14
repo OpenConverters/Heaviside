@@ -7,8 +7,10 @@ schema bridge, decomposer, realism gate, or extractor dispatcher
 that silently drifts how the canonical corpus is interpreted will
 trip a single targeted test with a clear diff.
 
-The corpus today is 48 entries (47 designs + 1 intentionally-empty
-placeholder).  All entries use placeholder component URIs (no real
+The corpus today is 47 entries (all real designs).  An earlier
+intentionally-empty placeholder (entry 48) was removed by the
+user-ordered TAS quarantine cleanup ("quarantine synthetic and
+unusable rows").  All entries use placeholder component URIs (no real
 MAS attached), so the expected baseline verdict for every populated
 entry is :class:`RealismVerdict.INCOMPLETE` with every check reporting
 ``UNAVAILABLE`` — *that is the honest behaviour today*.  When the
@@ -185,12 +187,17 @@ def _build_current_snapshot() -> list[dict]:
 
 
 def test_corpus_size_matches_agents_rule_7():
-    """AGENTS.md rule 7 declares the corpus at 48 designs.  Catching
+    """AGENTS.md rule 7 declares the corpus at 47 designs.  Catching
     accidental adds / removes belongs in its own test so the diff
-    is obvious."""
+    is obvious.
+
+    Was 48 (47 designs + 1 intentionally-empty placeholder); the
+    placeholder was removed by the user-ordered TAS quarantine cleanup
+    (TAS submodule 78e3ab7 "quarantine synthetic and unusable rows"),
+    so the corpus is now 47 all-real designs."""
     n = len(_load_corpus())
-    assert n == 48, (
-        f"converter corpus has {n} entries — AGENTS.md rule 7 expects 48. "
+    assert n == 47, (
+        f"converter corpus has {n} entries — AGENTS.md rule 7 expects 47. "
         "If this is intentional, update both AGENTS.md and the golden file."
     )
 
@@ -231,7 +238,7 @@ def test_corpus_snapshot_matches_golden():
     )
 
 
-@pytest.mark.parametrize("idx", list(range(48)))
+@pytest.mark.parametrize("idx", list(range(47)))
 def test_entry_is_evaluable_or_explicitly_empty(idx):
     """Each populated entry must produce a valid RealismReport without
     raising; the one empty placeholder must remain explicitly skipped."""

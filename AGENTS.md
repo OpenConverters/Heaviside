@@ -97,7 +97,7 @@ Even from inside Heaviside agents. The `component-librarian` agent is the only w
 
 ### 7. Realism, regression, and unit tests on every PR
 
-CI gates: `ruff` + `mypy --strict` + unit tests + analytical regression against the 48 designs in `TAS/data/converters.ndjson` + PyOpenMagnetics build-from-source (cached by submodule SHA).
+CI gates: `ruff` + `mypy --strict` + unit tests + analytical regression against the 47 designs in `TAS/data/converters.ndjson` + PyOpenMagnetics build-from-source (cached by submodule SHA).
 
 ### 8. Model-agnostic LLM layer
 

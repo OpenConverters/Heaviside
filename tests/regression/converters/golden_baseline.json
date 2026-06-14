@@ -1475,13 +1475,5 @@
       "unavailable": 10
     },
     "verdict": "INCOMPLETE"
-  },
-  {
-    "check_statuses": {},
-    "fingerprint": [],
-    "index": 47,
-    "label": "_empty",
-    "summary": {},
-    "verdict": "SKIPPED_EMPTY"
   }
 ]
