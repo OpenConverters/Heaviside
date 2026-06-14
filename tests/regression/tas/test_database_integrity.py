@@ -72,7 +72,7 @@ _ROW_COUNT_BASELINE: dict[str, int] = {
     # gate drivers moved to mosfets.quarantine_misfiled_drivers.ndjson,
     # -86,751 Vishay resistor catalog-matrix stubs (partNumber==series, 366
     # bare series names, 0 resolved to real MPNs) → resistors.quarantine_stubs.
-    "capacitors.ndjson": 112_231,
+    "capacitors.ndjson": 112_242,
     "connectors.ndjson": 14,
     "controllers.ndjson": 1_667,
     "converters.ndjson": 47,
