@@ -63,3 +63,7 @@ knowledge/lessons.ndjson
 
 # webui build deps
 heaviside/webui/node_modules/
+
+# local-only Würth REDEXPERT MCP converter tooling (not committed)
+scripts/redexpert_client.py
+scripts/fetch_redexpert_wurth.py

@@ -78,7 +78,7 @@ _ROW_COUNT_BASELINE: dict[str, int] = {
     "converters.ndjson": 47,
     "diodes.ndjson": 3_189,
     "igbts.ndjson": 2_075,
-    "magnetics.ndjson": 50_556,
+    "magnetics.ndjson": 50_620,
     "mosfets.ndjson": 6_678,
     "resistors.ndjson": 30_721,
 }
