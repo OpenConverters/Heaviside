@@ -72,6 +72,9 @@ independently unit-tested stages**, the way `value_parse.py` already is.
 | mpn_verify | `mpn_verify.py` | `test_mpn_verify.py` (5) | — (pure) |
 | spice_sim | `spice_sim.py` | `test_spice_sim.py` (ngspice-gated) | `calibrate` fallback covered; real-LLM calibrate key-gated |
 | reviewer_panel | `reviewer_panel.py` | `test_reviewer_panel.py` aggregate (6) | `review` real Ray+Nicola, key-gated |
+| topology_id | `topology_id.py` | `test_topology_id.py` (feasible/resolve, 5) | `identify` selector, static fallback covered |
+| stress_extract | `stress_extract.py` | `test_stress_extract.py` (4) | — (pure) |
+| realism_gate | `realism_gate.py` | `test_realism_gate.py` (4) | `explain` advisory-only, never flips verdict |
 
 All LLM layers are bounded (select-among/calibrate-toward-validated) and
 never mocked: real-LLM paths run key-gated; the heavy full-PDF extraction
