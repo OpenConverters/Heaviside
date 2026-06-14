@@ -293,7 +293,6 @@ def design(
             EnrichmentError,
             RealismVerdict,
             enrich_tas_for_realism,
-            evaluate_tas,
         )
         from heaviside.sim import (
             SimError,
@@ -301,6 +300,7 @@ def design(
             simulate_steady_state,
             stamp_simulation_results,
         )
+        from heaviside.stages.realism_gate import evaluate as evaluate_tas
 
         try:
             tas_for_gate = enrich_tas_for_realism(tas, topology=topology, spec=spec_json)
@@ -474,7 +474,7 @@ def auto_design(
         FullDesignError,
         full_design,
     )
-    from heaviside.pipeline.topology_screen import feasible_topology_names
+    from heaviside.stages.topology_id import feasible as feasible_topology_names
 
     spec_json = _load_spec(spec)
 
