@@ -59,9 +59,13 @@ from heaviside.bridge import (
 )
 from heaviside.pipeline.topology_screen import (
     TopologyReconciliation,
-    feasible_topology_names,
     reconcile_topology_choices,
 )
+
+# Designer composes the reusable stages (Phase 2): topology feasibility and
+# the final realism verdict go through heaviside.stages, the single tested
+# interface. These are behaviour-identical aliases of the underlying engines.
+from heaviside.stages.topology_id import feasible as feasible_topology_names
 from heaviside.topologies.registry import TopologyEntry, get
 
 __all__ = [
@@ -550,7 +554,7 @@ def stage3_realize(
     from heaviside.catalogue import SelectionError, assemble_bom_from_tas
     from heaviside.decomposer import decompose_from_spec
     from heaviside.decomposer.api import DecomposerError
-    from heaviside.pipeline import enrich_tas_for_realism, evaluate_tas
+    from heaviside.pipeline import enrich_tas_for_realism
     from heaviside.pipeline.analyst import AnalystError, run_analyst
     from heaviside.sim import (
         SimError,
@@ -559,6 +563,7 @@ def stage3_realize(
         stamp_simulation_results,
     )
     from heaviside.sim.parasitics import inject_parasitics
+    from heaviside.stages.realism_gate import evaluate as evaluate_tas
 
     topology = pick.topology.name
     spec_dict = _augment_converter_spec(dict(spec), topology)
