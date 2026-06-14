@@ -83,3 +83,29 @@ def test_blank_refdes_dropped():
 def test_as_peas_category():
     assert BomComponent("C1", "capacitor").as_peas_category() == "capacitor"
     assert BomComponent("X1", "").as_peas_category() is None
+
+
+def test_llm_reverse_engineer_rows_normalize_to_peas():
+    """The reverse-engineer extractor emits TAS *plural* category names plus
+    role hints; the engine must normalize those to PEAS keys (regression for
+    the empty-category bug seen on EVAL-BUCK33)."""
+    rows = [
+        {"ref_des": "U1", "role": "controller", "mpn": "LT8640S",
+         "manufacturer": "Analog Devices", "value": "", "category": "controllers"},
+        {"ref_des": "L1", "role": "mainInductor", "mpn": "744325240",
+         "manufacturer": "Wurth Elektronik", "value": "2.4uH", "category": "magnetics"},
+        {"ref_des": "Cin", "role": "inputCapacitor", "mpn": "GRM31CR61H106KA",
+         "manufacturer": "Murata", "value": "10uF/50V", "category": "capacitors"},
+        {"ref_des": "R1", "role": "feedbackDivider", "mpn": "CRCW06031003F",
+         "manufacturer": "Vishay", "value": "100k", "category": "resistors"},
+        {"ref_des": "D1", "role": "freewheelDiode", "mpn": "PMEG6010CEH",
+         "manufacturer": "Nexperia", "value": "", "category": "diodes"},
+    ]
+    by_ref = {c.ref_des: c for c in extract_bom_from_rows(rows)}
+    assert by_ref["U1"].category == "controller"
+    assert by_ref["L1"].category == "magnetic"
+    assert by_ref["Cin"].category == "capacitor"
+    assert by_ref["R1"].category == "resistor"
+    assert by_ref["D1"].category == "semiconductor"
+    # none left unclassified
+    assert all(c.category in PEAS_CATEGORIES for c in by_ref.values())

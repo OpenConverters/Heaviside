@@ -63,6 +63,26 @@ independently unit-tested stages**, the way `value_parse.py` already is.
 ### Already modular (the precedent)
 `value_parse`, `pdf_extract`, `bridge` (PyOM gateway), partially `catalogue/selector`.
 
+## Build status (heaviside/stages/)
+
+| stage | module | engine tests | LLM-layer tests |
+|---|---|---|---|
+| bom_extract | `bom_extract.py` | `test_bom_extract.py` (6) | `test_bom_extract_llm.py` (real LLM, key-gated; small-excerpt in-suite + heavy full-PDF opt-in) |
+| component_match | `component_match.py` | `test_component_match.py` (5) | `select_candidate` fallback covered; real-LLM select key-gated |
+| mpn_verify | `mpn_verify.py` | `test_mpn_verify.py` (5) | — (pure) |
+| spice_sim | `spice_sim.py` | `test_spice_sim.py` (ngspice-gated) | `calibrate` fallback covered; real-LLM calibrate key-gated |
+| reviewer_panel | `reviewer_panel.py` | `test_reviewer_panel.py` aggregate (6) | `review` real Ray+Nicola, key-gated |
+
+All LLM layers are bounded (select-among/calibrate-toward-validated) and
+never mocked: real-LLM paths run key-gated; the heavy full-PDF extraction
+is opt-in (one kimi reasoning call on ~100k chars is minutes-scale). The
+fast in-suite real-LLM coverage uses small excerpts / single calls.
+
+**Phase 2 (not started):** repoint pipelines onto these stages and delete
+the inline copies (CRE `_stage0/_stage2/_stage4`, CR `_rank_candidates`
+duplication, designer selector/review). Each repoint keeps the existing
+suites green before the inline copy is removed.
+
 ## Sequencing
 1. Canonical PEAS-typed contracts (confirm `heaviside.types` coverage; thin views where needed).
 2. **bom_extract** (CSV/table deterministic + isolated LLM PDF adapter) + tests.

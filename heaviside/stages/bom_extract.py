@@ -28,17 +28,24 @@ from heaviside.pipeline.value_parse import parse_si_value
 # PEAS oneOf component keys (heaviside.types.Peas) — the canonical category set.
 PEAS_CATEGORIES = ("capacitor", "magnetic", "semiconductor", "resistor", "controller")
 
-# loose source words -> PEAS category
+# loose source words -> PEAS category. Includes the TAS *plural* category
+# names (capacitors/magnetics/diodes/...) the LLM extractor emits, so a
+# reverse-engineered BOM normalizes the same as a hand-written one.
 _CATEGORY_ALIASES: dict[str, str] = {
-    "capacitor": "capacitor", "cap": "capacitor", "mlcc": "capacitor",
-    "inductor": "magnetic", "magnetic": "magnetic", "choke": "magnetic",
+    "capacitor": "capacitor", "capacitors": "capacitor", "cap": "capacitor",
+    "mlcc": "capacitor",
+    "inductor": "magnetic", "inductors": "magnetic", "magnetic": "magnetic",
+    "magnetics": "magnetic", "choke": "magnetic", "transformer": "magnetic",
     "ferrite": "magnetic", "ferrite_bead": "magnetic", "ferrite bead": "magnetic",
-    "transformer": "magnetic", "bead": "magnetic",
-    "resistor": "resistor", "res": "resistor",
-    "mosfet": "semiconductor", "diode": "semiconductor", "transistor": "semiconductor",
-    "igbt": "semiconductor", "bjt": "semiconductor", "semiconductor": "semiconductor",
+    "bead": "magnetic",
+    "resistor": "resistor", "resistors": "resistor", "res": "resistor",
+    "mosfet": "semiconductor", "mosfets": "semiconductor",
+    "diode": "semiconductor", "diodes": "semiconductor",
+    "transistor": "semiconductor", "igbt": "semiconductor", "igbts": "semiconductor",
+    "bjt": "semiconductor", "semiconductor": "semiconductor",
     "fet": "semiconductor", "rectifier": "semiconductor", "tvs": "semiconductor",
-    "ic": "controller", "controller": "controller", "regulator": "controller",
+    "ic": "controller", "controller": "controller", "controllers": "controller",
+    "regulator": "controller",
 }
 
 # source column header (lowercased) -> canonical field
@@ -202,3 +209,40 @@ def extract_bom_from_csv(source: str | Path) -> list[BomComponent]:
     )
     reader = csv.DictReader(io.StringIO(text))
     return extract_bom_from_rows(reader)
+
+
+def extract_bom_from_pdf(
+    pdf_path: str | Path | None = None,
+    *,
+    reference: str | None = None,
+    pdf_text: str | None = None,
+) -> list[BomComponent]:
+    """LLM adapter: an unstructured datasheet / eval-board PDF -> the SAME
+    canonical BomComponents. Wraps the CRE reverse-engineer extraction
+    (the LLM boundary), then runs its raw rows through the deterministic
+    engine above — so normalization/field-drift/ref-expansion are shared
+    and tested once. Requires MOONSHOT_API_KEY in the environment.
+
+    Pass ``pdf_text`` to skip PDF text extraction (stage 0) and feed text
+    straight to the extractor — used both when the caller already has the
+    text and to keep the test fast on a small excerpt."""
+    from heaviside.pipeline.cre import CREState
+    from heaviside.pipeline.cre_pipeline import (
+        _stage0_extract_pdf,
+        _stage2_reverse_engineer,
+    )
+
+    if pdf_path is None and pdf_text is None:
+        raise ValueError("extract_bom_from_pdf: provide pdf_path or pdf_text")
+    ref = reference or (Path(pdf_path).stem if pdf_path else "bom")
+    if pdf_text is not None:
+        # text supplied -> bypass stage 0 (its extraction would overwrite it)
+        state = CREState(reference=ref, pdf_path=None)
+        state.pdf_text = pdf_text
+    else:
+        state = CREState(reference=ref, pdf_path=Path(pdf_path))
+        state = _stage0_extract_pdf(state)
+    # stage2 extracts the BOM from pdf_text; competitor analysis (stage1)
+    # is not needed for the parts list, so it's skipped here (one LLM call).
+    state = _stage2_reverse_engineer(state)
+    return extract_bom_from_rows(state.ref_bom)
