@@ -119,6 +119,53 @@ class TestPrefetchFindsWurthCandidates:
             f"{design.name}: 0 Würth resistor candidates for {len(res_refs)} resistors"
         )
 
+    def test_ceramic_caps_get_ceramic_candidates(self, design: Path) -> None:
+        """Regression guard for the supercap-vs-ceramic matching bug: when
+        the original capacitor is a ceramic MLCC, the prefetch candidates
+        the cross-referencer sees must be ceramic — NOT supercaps /
+        aluminium-electrolytics ranked in by raw capacitance proximity.
+        Deterministic (no LLM). Any change that lets wrong-technology
+        parts dominate a ceramic component's candidate list fails here.
+        """
+        from heaviside.pipeline.crossref import CrossRefState
+        from heaviside.pipeline.crossref_pipeline import (
+            _capacitor_technology_family,
+            _infer_source_cap_technology,
+            _stage1_prefetch,
+            _summarize_candidate,
+        )
+
+        bom = _load_bom(design)
+        state = CrossRefState(source_bom=bom, target_manufacturer="Wurth")
+        state = _stage1_prefetch(state)
+
+        checked = 0
+        for comp in bom:
+            if comp["component_type"] != "capacitor":
+                continue
+            if _infer_source_cap_technology(comp) != "ceramic":
+                continue  # only assert for caps we can confidently call ceramic
+            cands = state.candidates_by_ref.get(comp["ref_des"], [])
+            if not cands:
+                continue
+            checked += 1
+            fams = [
+                _capacitor_technology_family(
+                    _summarize_candidate(c, "capacitor").get("technology")
+                )
+                for c in cands[:20]
+            ]
+            wrong = [f for f in fams if f is not None and f != "ceramic"]
+            # the top-20 candidates for a ceramic original must be ceramic
+            # (unreadable-family candidates allowed; supercap/aluminium/etc. not)
+            assert not wrong, (
+                f"{design.name} {comp['ref_des']} ({comp.get('mpn')}): "
+                f"ceramic original but candidate families include {set(wrong)} "
+                f"— wrong-technology parts leaking into the match list"
+            )
+        if checked == 0:
+            pytest.skip("no ceramic-inferrable capacitors with candidates")
+
 
 class TestPreclassify:
     """Stage 2: components already from Würth should be detected."""

@@ -32,6 +32,15 @@ valuable output — it's manufacturer-independent.)
 - Other product families from the SAME target manufacturer that the
   original narrow query skipped.
 
+**ALWAYS pass `technology` to `crossref_capacitor`** — set it to the
+ORIGINAL part's chemistry family (e.g. "ceramic" / "X7R" /
+"ceramic-class-2" for an MLCC, "aluminum-electrolytic", "tantalum",
+"film"). Without it the query returns every capacitor near that value
+— supercaps, electrolytics, the lot — and you will wrongly conclude
+"no ceramic in TAS" when the ceramics are right there. Also pass
+`min_voltage` (the required working voltage) so under-rated parts are
+excluded. Widen `value_tolerance_pct` before you ever drop `technology`.
+
 **Step 3 — Verdict:**
 
 ```

@@ -351,6 +351,81 @@ SATURATION_MARGIN = 0.90
 CURRENT_DERATING_FACTOR = 1.25
 
 
+_EIA_DIELECTRIC_CODES = (
+    "C0G", "NP0", "U2J", "X7R", "X5R", "X6S", "X7S", "X8R", "X8L",
+    "Y5V", "Y5U", "Z5U",
+)
+# Manufacturer ceramic-MLCC series prefixes (the dielectric is positional
+# in these MPNs, not a literal substring, so a prefix map is how we tell a
+# Murata GRM / TDK CGA / Samsung CL etc. is a ceramic).
+_CERAMIC_MPN_PREFIXES = (
+    "GRM", "GCM", "GRT", "GJM", "GMD", "GA3", "GCJ", "GQM",  # Murata
+    "CGA", "CKG", "CGJ",  # TDK (+ bare C#### handled below)
+    "CL03", "CL05", "CL10", "CL21", "CL31", "CL32", "CL05", "CL", # Samsung
+    "AC0", "CC0", "CC1", "CC2",  # Yageo
+    "WCAP-CSGP", "WCAP-CSMH", "WCAP-CSSA", "WCAP-CSST",  # Würth
+    "C0402", "C0603", "C0805", "C1206",  # Kemet/generic
+)
+
+
+def _capacitor_technology_family(technology: str | None) -> str | None:
+    """Collapse a CAS technology string (or loose intent like 'ceramic' /
+    'X7R' / 'MLCC') to a chemistry FAMILY, so a crossref stays in-kind.
+    Returns None when nothing is given. This is what stops a ceramic
+    query from ranking 2.7V supercaps and aluminium-electrolytics
+    alongside the MLCCs."""
+    if not technology:
+        return None
+    t = technology.strip().lower()
+    if not t:
+        return None
+    if "thin-film" in t or "thin film" in t:
+        return "thin-film-silicon"
+    if "ceramic" in t or "mlcc" in t or any(
+        c.lower() in t for c in _EIA_DIELECTRIC_CODES):
+        return "ceramic"
+    if "tantal" in t:
+        return "tantalum"
+    if "niobium" in t:
+        return "niobium"
+    if "alum" in t or "electrolytic" in t or "polymer" in t or "hybrid" in t:
+        return "aluminum"
+    if any(k in t for k in ("film", "polyprop", "polyest", "paper", "pps",
+                            "polyphenylene", "mkt", "mkp")):
+        return "film"
+    if "supercap" in t or "edlc" in t or "super cap" in t:
+        return "supercapacitor"
+    if "mica" in t:
+        return "mica"
+    return t
+
+
+def _infer_source_cap_technology(comp: dict[str, Any]) -> str | None:
+    """Infer the ORIGINAL capacitor's chemistry family from the BOM row.
+    Uses an explicit dielectric/technology field if present, else an EIA
+    code or a known ceramic-MLCC series prefix in the part number. Returns
+    None when it cannot be determined confidently (no penalty is then
+    applied — we never guess a family)."""
+    for field in ("dielectric", "technology", "temperature_coefficient", "tempco"):
+        v = comp.get(field)
+        if v:
+            fam = _capacitor_technology_family(str(v))
+            if fam:
+                return fam
+    blob = " ".join(
+        str(comp.get(k, "")) for k in ("part", "mpn", "value", "description", "series")
+    ).upper()
+    if any(code in blob for code in _EIA_DIELECTRIC_CODES):
+        return "ceramic"
+    part = str(comp.get("part") or comp.get("mpn") or "").upper().strip()
+    if part.startswith(_CERAMIC_MPN_PREFIXES):
+        return "ceramic"
+    # bare TDK ceramic chip: C + 4 digits (C1608, C2012, C3216)
+    if len(part) >= 5 and part[0] == "C" and part[1:5].isdigit():
+        return "ceramic"
+    return None
+
+
 def _rank_candidates(
     comp: dict[str, Any],
     category: str,
@@ -391,12 +466,14 @@ def _rank_candidates(
 
     # For capacitors, also consider rated voltage from the BOM
     target_voltage: float | None = None
+    source_cap_family: str | None = None
     if category == "capacitor":
         from heaviside.pipeline.value_parse import parse_voltage
 
         v_str = str(comp.get("rated_voltage", comp.get("voltage", "")))
         if v_str:
             target_voltage = parse_voltage(v_str) if isinstance(v_str, str) else float(v_str)
+        source_cap_family = _infer_source_cap_technology(comp)
 
     scored: list[tuple[float, dict[str, Any]]] = []
     for cand in all_candidates:
@@ -509,7 +586,24 @@ def _rank_candidates(
             except (KeyError, TypeError, ValueError):
                 pass
 
-        score = val_dist + pkg_penalty + voltage_penalty + stress_penalty
+        # Technology penalty: when the original capacitor's chemistry
+        # family is known, push different-family candidates down so the
+        # top results stay in-kind (ceramic original -> ceramic subs, not
+        # supercaps / electrolytics). Same-family and unreadable-family
+        # candidates are not penalised.
+        tech_penalty = 0.0
+        if source_cap_family and category == "capacitor":
+            cand_fam = _capacitor_technology_family(
+                cand.get("capacitor", {})
+                .get("manufacturerInfo", {})
+                .get("datasheetInfo", {})
+                .get("part", {})
+                .get("technology")
+            )
+            if cand_fam is not None and cand_fam != source_cap_family:
+                tech_penalty = 6.0
+
+        score = val_dist + pkg_penalty + voltage_penalty + stress_penalty + tech_penalty
         scored.append((score, cand))
 
     scored.sort(key=lambda x: x[0])
@@ -693,12 +787,14 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             elec = mi["datasheetInfo"]["electrical"]
             cap = elec.get("capacitance")
             cap_val = cap.get("nominal") if isinstance(cap, dict) else cap
+            part = mi.get("datasheetInfo", {}).get("part", {})
             summary = {
-                "mpn": mi.get("reference", "?"),
+                "mpn": mi.get("reference") or part.get("partNumber", "?"),
                 "capacitance": cap_val,
                 "voltage": elec.get("ratedVoltage"),
+                "technology": part.get("technology"),
                 "esr": elec.get("esr"),
-                "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
+                "package": part.get("case", ""),
             }
         except (KeyError, TypeError):
             pass

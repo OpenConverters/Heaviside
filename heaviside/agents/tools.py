@@ -337,12 +337,44 @@ def _get_pareto_magnetics_impl(
 # ---------------------------------------------------------------------------
 
 
+def _capacitor_technology_family(technology: str | None) -> str | None:
+    """Collapse a CAS technology string to a chemistry FAMILY. Canonical
+    implementation lives in crossref_pipeline (shared with the prefetch
+    ranker); re-exported here for the crossref tools."""
+    from heaviside.pipeline.crossref_pipeline import (
+        _capacitor_technology_family as _impl,
+    )
+
+    return _impl(technology)
+
+
+def _extract_capacitor_technology(env: dict[str, Any]) -> str | None:
+    try:
+        return env["capacitor"]["manufacturerInfo"]["datasheetInfo"]["part"].get(
+            "technology"
+        )
+    except (KeyError, TypeError, AttributeError):
+        return None
+
+
+def _extract_capacitor_voltage(env: dict[str, Any]) -> float | None:
+    try:
+        v = env["capacitor"]["manufacturerInfo"]["datasheetInfo"]["electrical"].get(
+            "ratedVoltage"
+        )
+        return float(v) if isinstance(v, (int, float)) else None
+    except (KeyError, TypeError, AttributeError):
+        return None
+
+
 def _crossref_search_impl(
     category: str,
     target_manufacturer: str,
     value: float | None = None,
     value_tolerance_pct: float = 50.0,
     max_results: int = 50,
+    technology: str | None = None,
+    min_voltage: float | None = None,
 ) -> str:
     """Shared TAS query behind the per-category crossref tools.
 
@@ -394,6 +426,18 @@ def _crossref_search_impl(
             hi = value * (1.0 + value_tolerance_pct / 100.0)
             if not (lo <= cand_value <= hi):
                 continue
+        if technology is not None and category == "capacitor":
+            want = _capacitor_technology_family(technology)
+            cand_fam = _capacitor_technology_family(_extract_capacitor_technology(env))
+            # drop only readable, DIFFERENT-family candidates (e.g. supercap
+            # / electrolytic when a ceramic was asked for); keep same-family
+            # and unreadable ones so nothing real is hidden.
+            if want is not None and cand_fam is not None and cand_fam != want:
+                continue
+        if min_voltage is not None and category == "capacitor":
+            cand_v = _extract_capacitor_voltage(env)
+            if cand_v is not None and cand_v < min_voltage:
+                continue
         matches.append((cand_value, env))
 
     if value is not None:
@@ -418,6 +462,8 @@ def _crossref_capacitor_impl(
     capacitance: float | None = None,
     value_tolerance_pct: float = 50.0,
     max_results: int = 50,
+    technology: str | None = None,
+    min_voltage: float | None = None,
 ) -> str:
     """Query TAS capacitors from a target manufacturer.
 
@@ -431,6 +477,15 @@ def _crossref_capacitor_impl(
         value_tolerance_pct: Half-width of the value window, percent.
         max_results: Cap on returned candidates (truncation is flagged
             in the response, never silent).
+        technology: Optional chemistry family of the ORIGINAL part so the
+            search stays in-kind — pass the original's technology
+            ("ceramic"/"X7R"/"ceramic-class-2", "aluminum-electrolytic",
+            "tantalum", "film", ...). Candidates of a different, readable
+            family are dropped; same-family and unreadable ones are kept.
+            ALWAYS pass this when the original technology is known — it is
+            what prevents ceramic queries returning supercaps.
+        min_voltage: Optional minimum rated voltage (V). Candidates below
+            it are dropped (a substitute must meet the working voltage).
 
     Returns:
         JSON string with ``total_matches``, ``candidates`` (mpn,
@@ -442,6 +497,8 @@ def _crossref_capacitor_impl(
         value=capacitance,
         value_tolerance_pct=value_tolerance_pct,
         max_results=max_results,
+        technology=technology,
+        min_voltage=min_voltage,
     )
 
 
