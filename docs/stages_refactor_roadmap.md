@@ -81,10 +81,27 @@ never mocked: real-LLM paths run key-gated; the heavy full-PDF extraction
 is opt-in (one kimi reasoning call on ~100k chars is minutes-scale). The
 fast in-suite real-LLM coverage uses small excerpts / single calls.
 
-**Phase 2 (not started):** repoint pipelines onto these stages and delete
-the inline copies (CRE `_stage0/_stage2/_stage4`, CR `_rank_candidates`
-duplication, designer selector/review). Each repoint keeps the existing
-suites green before the inline copy is removed.
+**Phase 2 (done).** Investigation found the duplication was smaller than this
+roadmap assumed:
+
+- **Real dedup removed:** the inline Ray+Nicola loop in `full_design`
+  `_stage4_adversarial_review` → now `reviewer_panel.review()` (verified
+  against the real panel).
+- **Orchestrators now compose stages** (behaviour-identical aliases, call
+  sites unchanged): `full_design`, `cli`, and `cre_pipeline` route topology
+  feasibility through `topology_id.feasible` and the realism verdict through
+  `realism_gate.evaluate`.
+- **NOT unified (not actually duplication):** the designer `catalogue/selector`
+  (hard-constraint single pick) and CR `crossref_pipeline._rank_candidates`
+  (fuzzy ranked list for an LLM) are different operations — collapsing them
+  would break behaviour (CR keeps mosfet/diode split vs PEAS `semiconductor`;
+  CR bulk-prefetches one TAS scan vs per-call `find_candidates`). So
+  `component_match` stands as a new convenience surface, not a replacement.
+  Likewise `realism_gate` / `stress_extract` / `topology_id` / `mpn_verify`
+  wrap single-source primitives — no inline copy to delete.
+- **Deferred (would cycle):** repointing CRE `_resolve_canonical_topology`
+  needs the resolver moved into `topology_id` first; `assemble.py`/`bridge.py`
+  keep calling `pipeline.stress` directly (they're below the stage layer).
 
 ## Sequencing
 1. Canonical PEAS-typed contracts (confirm `heaviside.types` coverage; thin views where needed).
