@@ -23,7 +23,10 @@ from heaviside.decomposer import decompose_from_spec
 GOLDEN_DIR = Path(__file__).parent / "golden"
 TAS_GOLDEN = GOLDEN_DIR / "cllc_48to12_5A.tas.json"
 
-# 48 V primary bus → 12 V / 5 A secondary. n=1 (symmetric tank), fsw=150 kHz
+# 48 V primary bus → 12 V / 5 A secondary. n=4 (= Vin/Vout): a resonant CLLC
+# tank operates near unity gain, so the turns ratio MUST step the voltage
+# (n*Vout/Vin ≈ 1). n=1 here is physically infeasible (required tank gain 0.25)
+# and MKF now throws INVALID_DESIGN_REQUIREMENTS for it (see abt #1). fsw=150 kHz
 # at the resonant frequency. ``powerFlow`` lives inside the operating point
 # (root-level powerFlow is silently ignored by PyMKF for CLLC).
 SPEC: dict[str, object] = {
@@ -33,7 +36,7 @@ SPEC: dict[str, object] = {
     "maximumDutyCycle": 0.45,
     "efficiency": 0.95,
     "desiredInductance": 1e-3,
-    "desiredTurnsRatios": [1.0],
+    "desiredTurnsRatios": [4.0],
     "desiredMagnetizingInductance": 1e-3,
     "minSwitchingFrequency": 80_000.0,
     "maxSwitchingFrequency": 300_000.0,
@@ -48,7 +51,7 @@ SPEC: dict[str, object] = {
     ],
 }
 MAGNETIZING_INDUCTANCE = 1e-3
-TURNS_RATIOS = [1.0]
+TURNS_RATIOS = [4.0]  # n = Vin/Vout = 48/12 (see SPEC note); n=1 is infeasible
 
 
 def _maybe_update(path: Path, content: str) -> None:
