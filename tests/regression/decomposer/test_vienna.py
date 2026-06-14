@@ -28,6 +28,12 @@ TAS_GOLDEN = GOLDEN_DIR / "vienna_400ll_to_800dc.tas.json"
 SPEC: dict[str, object] = {
     "inputVoltage": {"nominal": 326.6, "minimum": 311.0, "maximum": 359.0},
     "lineToLineVoltage": {"minimum": 380.0, "nominal": 400.0, "maximum": 440.0},
+    # 50 Hz EU mains for the 400 V L-L 3-phase input. MKF requires
+    # lineFrequency + powerFactor for Vienna (no defaults substituted); a
+    # newer PyOM made them mandatory, so the spec must carry them explicitly.
+    # powerFactor ~= unity is the design target of a PFC rectifier.
+    "lineFrequency": 50.0,
+    "powerFactor": 0.99,
     "outputDcVoltage": 800.0,
     "switchingFrequency": 100_000.0,
     "currentRippleRatio": 0.4,
