@@ -388,7 +388,7 @@ def _stage3_design(state: CREState) -> CREState:
         return state
 
     from heaviside.pipeline.full_design import FullDesignError, full_design
-    from heaviside.pipeline.topology_screen import feasible_topology_names
+    from heaviside.stages.topology_id import feasible as feasible_topology_names
 
     spec_dict = state.ref_spec.to_heaviside_spec()
 
