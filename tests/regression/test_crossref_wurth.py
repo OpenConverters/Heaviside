@@ -166,6 +166,70 @@ class TestPrefetchFindsWurthCandidates:
         if checked == 0:
             pytest.skip("no ceramic-inferrable capacitors with candidates")
 
+    def test_prefetch_covers_proteus_addressable(self, design: Path) -> None:
+        """Vs-Proteus regression: our prefetch must surface an
+        IN-TECHNOLOGY Würth candidate for every component Proteus deemed
+        addressable (bom_wurth.json). Proteus left many of these
+        'NOT REPLACED' and failed all 10 designs — so covering its full
+        addressable set in-kind means we match-or-improve its crossref
+        reach. Deterministic (no LLM): guards the data + matching layer
+        the LLM substitution depends on.
+        """
+        from heaviside.pipeline.crossref import CrossRefState
+        from heaviside.pipeline.crossref_pipeline import (
+            _capacitor_technology_family,
+            _infer_source_cap_technology,
+            _stage1_prefetch,
+            _summarize_candidate,
+        )
+
+        raw = _load_wurth_bom(design)  # Proteus's Würth-addressable set
+        if not raw:
+            pytest.skip("Proteus bom_wurth.json empty or missing")
+        cat_map = {"capacitor": "capacitor", "inductor": "magnetic",
+                   "ferrite_bead": "magnetic", "resistor": "resistor"}
+        bom = [
+            {
+                "ref_des": c.get("ref_des", "?"),
+                "component_type": cat_map.get(c.get("type", ""), c.get("type", "")),
+                "mpn": c.get("part", ""),
+                "value": c.get("value", ""),
+                "rated_voltage": c.get("rated_voltage", ""),
+                "package": c.get("package", ""),
+            }
+            for c in raw
+        ]
+        addressable = [c for c in bom
+                       if c["component_type"] in ("capacitor", "resistor", "magnetic")]
+        if not addressable:
+            pytest.skip("no addressable passives in Proteus Würth BOM")
+
+        state = CrossRefState(source_bom=bom, target_manufacturer="Wurth")
+        state = _stage1_prefetch(state)
+
+        uncovered: list[str] = []
+        for c in addressable:
+            cands = state.candidates_by_ref.get(c["ref_des"], [])
+            if not cands:
+                uncovered.append(f"{c['ref_des']}({c.get('mpn')}): no candidates")
+                continue
+            if c["component_type"] == "capacitor":
+                fam = _infer_source_cap_technology(c)
+                if fam and not any(
+                    _capacitor_technology_family(
+                        _summarize_candidate(x, "capacitor").get("technology")
+                    ) == fam
+                    for x in cands[:20]
+                ):
+                    uncovered.append(
+                        f"{c['ref_des']}({c.get('mpn')}): {fam} original but no "
+                        f"in-family candidate in top-20"
+                    )
+        assert not uncovered, (
+            f"{design.name}: prefetch does NOT cover Proteus's addressable set "
+            f"in-technology — would regress vs Proteus on: {uncovered}"
+        )
+
 
 class TestPreclassify:
     """Stage 2: components already from Würth should be detected."""
