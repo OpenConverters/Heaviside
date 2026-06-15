@@ -202,7 +202,10 @@ def _llc_design_magnetics_is_safe() -> bool:
     rc = subprocess.run(
         [sys.executable, "-u", "-c", code],
         capture_output=True,
-        timeout=180,
+        # LLC magnetic design runs ~142s on the current PyOM (the MKF LLC
+        # steady-state multi-start, commit d941a271, is slower but correct);
+        # 180s tipped over under any machine load. 360s gives headroom.
+        timeout=360,
     )
     return rc.returncode == 0
 
