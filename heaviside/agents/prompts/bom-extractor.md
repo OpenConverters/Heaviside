@@ -35,9 +35,22 @@ on one line (e.g. `C1, C3, C59, C63` with QTY 4, or `R1-R4`).
    = the maker. **`value`** = the electrical value if shown (e.g. `10uF`,
    `49.9Ohm`, `65nH`). **`package`** = case/footprint if shown (e.g. `0402`,
    `SOT-23`). Leave a field `""` if the table does not give it — never invent.
-5. **`category`** = one of: `capacitor`, `resistor`, `inductor`,
+5. **`voltage`** = the rated/working voltage if the description gives one
+   (e.g. `10V`, `25V`, `50V`); `""` otherwise. **CRITICAL for matching** —
+   the description almost always states it (e.g. "Ceramic capacitor, 10μF,
+   **10V**, X5R") so pull it into this field, do not leave it only in the text.
+6. **`technology`** = the dielectric / chemistry / type, again from the
+   description: for capacitors the dielectric code (`X7R`, `X5R`, `X7S`,
+   `C0G`/`NP0`) or chemistry (`ceramic`, `aluminum`, `tantalum`, `film`); for
+   others the relevant type. **CRITICAL for matching** — a ceramic must not be
+   cross-referenced against a supercap, so always populate it when shown.
+7. **`category`** = one of: `capacitor`, `resistor`, `inductor`,
    `transformer`, `diode`, `mosfet`, `ic`, `led`, `connector`, `crystal`,
    `fuse`, `hardware`, `other`. Pick from the description.
+8. **Not-stuffed positions** (value `NS`, `DNP`, `DNI`, `DNF`, or "do not
+   populate") and **`0Ω` jumpers** are still real board positions — include
+   them, with `value` set to `NS`/`DNP` or `0Ohm` respectively so downstream
+   can tell them apart from populated, substitutable parts.
 
 ## Output Schema
 
@@ -52,9 +65,23 @@ Reply with a single fenced JSON block and NOTHING after it:
       "mpn": "08_087424a",
       "manufacturer": "Analog Devices",
       "value": "10uF",
+      "voltage": "10V",
+      "technology": "X5R",
       "package": "0402",
       "quantity": 4,
       "description": "Ceramic capacitor, 10uF, 10V, 20%, X5R, 0402"
+    },
+    {
+      "ref_des": "R3, R12",
+      "category": "resistor",
+      "mpn": "ERJ-3EKF8660V",
+      "manufacturer": "Panasonic",
+      "value": "866Ohm",
+      "voltage": "",
+      "technology": "thick film",
+      "package": "0603",
+      "quantity": 2,
+      "description": "Resistor SMD, 866Ω, 1%, 1/10W, 0603"
     },
     {
       "ref_des": "U1, U2",
@@ -62,6 +89,8 @@ Reply with a single fenced JSON block and NOTHING after it:
       "mpn": "LT7176RV#TRPBF",
       "manufacturer": "Analog Devices",
       "value": "",
+      "voltage": "",
+      "technology": "",
       "package": "",
       "quantity": 2,
       "description": "20A 16V step-down silent switcher with PSM"
