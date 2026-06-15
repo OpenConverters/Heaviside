@@ -443,6 +443,24 @@ def _infer_source_cap_technology(comp: dict[str, Any]) -> str | None:
     return None
 
 
+def _effective_saturation_current(cand_elec: dict[str, Any]) -> float | None:
+    """Saturation current for a magnetic candidate's electrical block.
+
+    ABT #6 stopgap (manufacturer-agnostic): many catalog magnetics that lack a
+    published saturation current are chokes/beads/transformers with no Isat by
+    design; for the few genuine inductors that still lack one, the rated current
+    is a usable lower-confidence current bound. So when a part has no
+    ``saturationCurrentPeak`` we fall back to ``ratedCurrent`` rather than
+    skipping the saturation check entirely. A real ``saturationCurrentPeak``
+    always wins. Remove once a real-Isat source lands — see memory
+    ``wurth-isat-redexpert-exhausted``.
+    """
+    isat = cand_elec.get("saturationCurrentPeak")
+    if isat is None:
+        isat = cand_elec.get("ratedCurrent")
+    return isat
+
+
 def _rank_candidates(
     comp: dict[str, Any],
     category: str,
@@ -554,10 +572,10 @@ def _rank_candidates(
                         .get("datasheetInfo", {})
                         .get("electrical", {})
                     )
-                    isat = cand_elec.get("saturationCurrentPeak")
+                    isat = _effective_saturation_current(cand_elec)
+                    i_rated = cand_elec.get("ratedCurrent")
                     if isat and stress.i_peak and float(isat) < stress.i_peak:
                         stress_penalty += 5.0
-                    i_rated = cand_elec.get("ratedCurrent")
                     if i_rated and stress.i_rms and float(i_rated) < stress.i_rms:
                         stress_penalty += 3.0
                 elif category == "mosfet":
