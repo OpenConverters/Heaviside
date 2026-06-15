@@ -218,31 +218,46 @@ def extract_bom_from_pdf(
     pdf_text: str | None = None,
 ) -> list[BomComponent]:
     """LLM adapter: an unstructured datasheet / eval-board PDF -> the SAME
-    canonical BomComponents. Wraps the CRE reverse-engineer extraction
-    (the LLM boundary), then runs its raw rows through the deterministic
-    engine above — so normalization/field-drift/ref-expansion are shared
-    and tested once. Requires MOONSHOT_API_KEY in the environment.
+    canonical BomComponents. The LLM boundary is the ``bom-extractor`` agent
+    (a COMPLETE BOM census — every line item, every reference designator),
+    then the raw rows go through the deterministic engine above so
+    normalization/field-drift/grouped-ref-expansion are shared and tested
+    once. Requires MOONSHOT_API_KEY in the environment.
 
-    Pass ``pdf_text`` to skip PDF text extraction (stage 0) and feed text
-    straight to the extractor — used both when the caller already has the
-    text and to keep the test fast on a small excerpt."""
-    from heaviside.pipeline.cre import CREState
-    from heaviside.pipeline.cre_pipeline import (
-        _stage0_extract_pdf,
-        _stage2_reverse_engineer,
-    )
+    Note the deliberate choice of agent: the CRE ``reverse-engineer`` agent
+    extracts only the *power-path* components (what the converter designer
+    needs), so it under-counts vs a full BOM. ``bom-extractor`` is scoped to
+    the full parts census, which is what "extract a BOM" means here.
 
+    Pass ``pdf_text`` to skip PDF text extraction and feed text straight to
+    the extractor (caller already has the text, or to keep a test fast on a
+    small excerpt)."""
     if pdf_path is None and pdf_text is None:
         raise ValueError("extract_bom_from_pdf: provide pdf_path or pdf_text")
     ref = reference or (Path(pdf_path).stem if pdf_path else "bom")
-    if pdf_text is not None:
-        # text supplied -> bypass stage 0 (its extraction would overwrite it)
-        state = CREState(reference=ref, pdf_path=None)
-        state.pdf_text = pdf_text
-    else:
-        state = CREState(reference=ref, pdf_path=Path(pdf_path))
-        state = _stage0_extract_pdf(state)
-    # stage2 extracts the BOM from pdf_text; competitor analysis (stage1)
-    # is not needed for the parts list, so it's skipped here (one LLM call).
-    state = _stage2_reverse_engineer(state)
-    return extract_bom_from_rows(state.ref_bom)
+    if pdf_text is None:
+        from heaviside.pipeline.pdf_extract import extract_pdf_text
+
+        pdf_text = extract_pdf_text(Path(pdf_path))
+    rows = _extract_full_bom_rows(pdf_text, ref)
+    return extract_bom_from_rows(rows)
+
+
+def _extract_full_bom_rows(pdf_text: str, reference: str) -> list[dict[str, Any]]:
+    """LLM boundary: full-BOM census via the ``bom-extractor`` agent. Returns
+    the raw row dicts with grouped ``ref_des`` preserved (e.g. "C1, C3, C59,
+    C63") for the deterministic engine to expand. JSON mode keeps the model
+    from rambling past the JSON (kimi appends prose otherwise)."""
+    from heaviside.agents.llm_call import call_agent_json
+
+    msg = (
+        f"Reference design: {reference}\n\n"
+        f"Extract the COMPLETE bill of materials from this PDF.\n\n"
+        f"PDF CONTENT:\n\n{pdf_text[:200_000]}"
+    )
+    # Full BOM + descriptions need output headroom; scale with input size.
+    max_tokens = min(8192 + len(pdf_text) // 2, 32768)
+    data = call_agent_json(
+        "bom-extractor", msg, max_tokens=max_tokens, max_retries=2, json_mode=True
+    )
+    return data.get("bom", []) or []
