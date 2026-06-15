@@ -1355,6 +1355,54 @@ def _isat_from_mas(
     return None
 
 
+def _candidate_inductance(cand: "MagneticDesign") -> float | None:
+    """The candidate's OWN authoritative magnetizing inductance — the L MKF
+    actually built it to — or None if it can't be harvested.
+
+    This is the truth for the ripple / worst-case-Ipeak the saturation margin
+    is checked against. It is preferred over ``spec.desiredInductance``: on the
+    designer path that key is a pre-design ripple-0.3 *seed* that MKF ignores
+    (verified — MKF derives its own L), so it can differ several-fold from the
+    L of the core being evaluated. Using the candidate's own L makes the
+    pre-filter Ipeak agree with the realism gate (which reads the harvested L
+    that ``full_design`` re-stamps post-design).
+    """
+    try:
+        L = _harvest_authoritative_inductance(cand.mas)
+    except Exception:
+        return None
+    return float(L) if isinstance(L, (int, float)) and L > 0 else None
+
+
+def _isat_margin_inputs(
+    entry: TopologyEntry, spec: Mapping[str, Any], cand: "MagneticDesign"
+) -> tuple[float | None, float | None]:
+    """``(Ipeak_worst, L_for_guard)`` for an isat-margin check on ``cand``.
+
+    Ipeak is computed from the candidate's OWN inductance (via
+    :func:`_candidate_inductance`); only when that can't be harvested do we
+    fall back to the spec's ``desiredInductance`` seed (preserving the prior
+    behaviour). Returns ``(None, None)`` when no Ipeak can be computed — the
+    caller then keeps MKF's top scorer rather than silently hiding the design.
+    """
+    ipeak_fn = _IPEAK_WORST.get(entry.name)
+    if ipeak_fn is None:
+        return None, None
+    L_cand = _candidate_inductance(cand)
+    if L_cand is not None:
+        spec_eff: Mapping[str, Any] = {**spec, "desiredInductance": L_cand}
+        L_guard: Any = L_cand
+    else:
+        spec_eff = spec
+        L_guard = spec.get("desiredInductance")
+    ipeak = ipeak_fn(spec_eff)
+    if not isinstance(ipeak, (int, float)) or ipeak <= 0:
+        return None, None
+    if not isinstance(L_guard, (int, float)) or L_guard <= 0:
+        return None, None
+    return float(ipeak), float(L_guard)
+
+
 def _select_main_by_isat_margin(
     candidates: Sequence[MagneticDesign],
     entry: TopologyEntry,
@@ -1387,21 +1435,21 @@ def _select_main_by_isat_margin(
         raise BridgeError("_select_main_by_isat_margin: empty candidate list")
     if min_isat_ratio <= 0:
         return candidates[0]
-    ipeak_fn = _IPEAK_WORST.get(entry.name)
-    if ipeak_fn is None:
+    if _IPEAK_WORST.get(entry.name) is None:
         return candidates[0]
-    ipeak = ipeak_fn(spec)
-    if ipeak is None or ipeak <= 0:
+    # If we can't compute Ipeak even for the top candidate (incomplete spec /
+    # unharvestable L), skip the filter and keep MKF's top scorer — matches the
+    # prior "ipeak is None -> candidates[0]" fallthrough (no silent hiding).
+    if _isat_margin_inputs(entry, spec, candidates[0])[0] is None:
         return candidates[0]
-    L = spec.get("desiredInductance")
-    if not isinstance(L, (int, float)) or L <= 0:
-        return candidates[0]
-    threshold = float(min_isat_ratio) * float(ipeak)
     for cand in candidates:
-        isat = _isat_from_mas(cand.magnetic, float(L))
+        ipeak, L = _isat_margin_inputs(entry, spec, cand)
+        if ipeak is None or L is None:
+            continue
+        isat = _isat_from_mas(cand.magnetic, L)
         if isat is None:
             continue
-        if isat >= threshold:
+        if isat >= float(min_isat_ratio) * ipeak:
             return cand
     return None if strict else candidates[0]
 
@@ -1451,20 +1499,20 @@ def select_fast_by_isat_margin(
     )
     if min_isat_ratio <= 0 or not candidates:
         return candidates
-    ipeak_fn = _IPEAK_WORST.get(entry.name)
-    if ipeak_fn is None:
+    if _IPEAK_WORST.get(entry.name) is None:
         return candidates
-    ipeak = ipeak_fn(spec)
-    if ipeak is None or ipeak <= 0:
+    # Can't compute Ipeak even for the top candidate (incomplete spec /
+    # unharvestable L) → skip the filter, keep MKF's top scorer (no silent hide).
+    if _isat_margin_inputs(entry, spec, candidates[0])[0] is None:
         return candidates
-    L = spec.get("desiredInductance")
-    if not isinstance(L, (int, float)) or L <= 0:
-        return candidates
-    threshold = float(min_isat_ratio) * float(ipeak)
 
     def _clears(c: MagneticDesign) -> bool:
-        isat = _isat_from_mas(c.magnetic, float(L))
-        return isat is not None and isat >= threshold
+        # Ipeak from THIS candidate's own inductance (not the spec seed).
+        ipeak, L = _isat_margin_inputs(entry, spec, c)
+        if ipeak is None or L is None:
+            return False
+        isat = _isat_from_mas(c.magnetic, L)
+        return isat is not None and isat >= float(min_isat_ratio) * ipeak
 
     clearing = [c for c in candidates if _clears(c)]
     if not clearing and n_candidates < widen_pool:
