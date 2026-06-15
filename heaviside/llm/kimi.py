@@ -257,14 +257,16 @@ def build_kimi_model(
                 "`pip install openai`"
             ) from exc
 
-    # Thinking control (matches Proteus). HEAVISIDE_KIMI_DISABLE_THINKING=1
-    # injects `thinking: {type: "disabled"}` via the OpenAI SDK extra_body
-    # escape hatch and forces temperature=0.6 (Moonshot K2.5 rejects other
-    # temps with thinking off). ~2-5x faster. Only wraps k2* (Moonshot) ids.
+    # Thinking control (matches Proteus). DEFAULT ON (disable thinking) — set
+    # HEAVISIDE_KIMI_DISABLE_THINKING=0 to re-enable Moonshot thinking. When
+    # disabled we inject `thinking: {type: "disabled"}` via the OpenAI SDK
+    # extra_body escape hatch and force temperature=0.6 (Moonshot K2.5 rejects
+    # other temps with thinking off). ~13x faster, ~17x fewer output tokens,
+    # equal quality on the CR sweep. Only wraps k2* (Moonshot) ids.
     import os as _os
 
     if (
-        _os.environ.get("HEAVISIDE_KIMI_DISABLE_THINKING", "0") == "1"
+        _os.environ.get("HEAVISIDE_KIMI_DISABLE_THINKING", "1") == "1"
         and "k2" in model_id.lower()
     ):
         _base = model_cls
