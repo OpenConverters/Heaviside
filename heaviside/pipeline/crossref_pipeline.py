@@ -1550,6 +1550,102 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
     return state
 
 
+def _to_volts(v: Any) -> float | None:
+    """Coerce a rated-voltage field ('10V' / '10' / 10.0) to volts."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    from heaviside.pipeline.value_parse import parse_voltage
+
+    try:
+        return parse_voltage(str(v))
+    except Exception:
+        return None
+
+
+def _best_inkind_candidate(
+    comp: dict[str, Any], cat: str, candidates: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Deterministic in-kind gate: the best prefetched candidate that PROVABLY
+    satisfies the cross-referencer's own substitution criteria (same chemistry
+    family + voltage >= original + value in range). Candidates are pre-ranked,
+    so the first that passes is the best. Returns a substitute row patch, or
+    None when no candidate qualifies (a genuine no_substitute)."""
+    from heaviside.pipeline.value_parse import parse_si_value
+
+    orig_vsi = comp.get("value_si")
+    if orig_vsi in (None, "") and comp.get("original_value"):
+        orig_vsi = parse_si_value(str(comp.get("original_value")))
+    orig_v = _to_volts(comp.get("rated_voltage") or comp.get("original_voltage"))
+    orig_fam = _capacitor_technology_family(comp.get("technology")) if cat == "capacitor" else None
+
+    for env in candidates:
+        cand_vsi = _extract_value(env, cat)
+        s = _summarize_candidate(env, cat)
+        cand_v = _to_volts(s.get("voltage"))
+        # voltage floor: if both known, candidate must meet the original rating
+        if orig_v is not None and cand_v is not None and cand_v < orig_v:
+            continue
+        # chemistry family must match for caps (stops ceramic<->tantalum<->alu drift)
+        if (cat == "capacitor" and orig_fam is not None
+                and _capacitor_technology_family(s.get("technology")) != orig_fam):
+            continue
+        # value window
+        if orig_vsi and cand_vsi:
+            if cat == "capacitor":
+                lo, hi, tight = 0.9 * orig_vsi, 3.0 * orig_vsi, 0.1
+            elif cat == "magnetic":
+                lo, hi, tight = 0.9 * orig_vsi, 1.5 * orig_vsi, 0.1
+            else:  # resistor
+                lo, hi, tight = 0.95 * orig_vsi, 1.05 * orig_vsi, 0.025
+            if not (lo <= cand_vsi <= hi):
+                continue
+            within_tight = abs(cand_vsi - orig_vsi) <= tight * orig_vsi
+        else:
+            within_tight = False
+        status = "recommended" if (within_tight and (orig_v is None or cand_v is not None)) else "partial"
+        return {
+            "substitute_pn": s.get("mpn"),
+            "substitute_value": s.get("value", ""),
+            "substitute_voltage": str(cand_v) if cand_v is not None else "",
+            "substitute_package": s.get("package", ""),
+            "status": status,
+        }
+    return None
+
+
+def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
+    """Deterministic floor under the two stochastic LLM stages (stage3 crossref
+    + stage6 otto): for any remaining no_substitute, if a prefetched candidate
+    PROVABLY meets the in-kind criteria, promote it. After this, no_substitute
+    means 'no qualifying candidate exists in TAS', not 'the LLM dropped it' —
+    removing the run-to-run variance (e.g. um3491's X7T caps)."""
+    by_ref = {c.get("ref_des", c.get("name", "?")): c for c in state.source_bom}
+    rescued = 0
+    for row in state.crossref_result:
+        if row.get("status") != "no_substitute":
+            continue
+        ref = row.get("ref_des")
+        cat = row.get("component_type", "")
+        cands = state.candidates_by_ref.get(ref, [])
+        if not cands:
+            continue
+        patch = _best_inkind_candidate(by_ref.get(ref, row), cat, cands)
+        if patch is None:
+            continue
+        row.update(patch)
+        prior = (row.get("notes") or "").strip()
+        row["notes"] = (
+            f"{prior} | deterministic in-kind rescue: {patch['substitute_pn']} meets "
+            "voltage/value/chemistry criteria (LLM stages dropped it)."
+        ).strip(" |")
+        rescued += 1
+    if rescued:
+        logger.info("CR stage 6.5: deterministically rescued %d no_substitute rows", rescued)
+    return state
+
+
 def run_crossref_pipeline(
     source_bom: list[dict[str, Any]],
     target_manufacturer: str,
@@ -1578,6 +1674,7 @@ def run_crossref_pipeline(
     state = _stage4_guardrails(state)
     state = _stage5_score(state)
     state = _stage6_otto(state)
+    state = _stage6_5_deterministic_rescue(state)
     state = _stage7_review(state)
 
     # Correction loop: if reviewer rejects, fix objected components and re-review
@@ -1594,6 +1691,7 @@ def run_crossref_pipeline(
         state = _stage4_guardrails(state)
         state = _stage5_score(state)
         state = _stage6_otto(state)
+        state = _stage6_5_deterministic_rescue(state)
         state = _stage7_review(state)
 
     # Stage 8: Learn from this run
