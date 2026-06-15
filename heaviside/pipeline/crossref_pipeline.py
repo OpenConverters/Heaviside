@@ -856,10 +856,23 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             elec = mi["datasheetInfo"]["electrical"]
             ind = elec.get("inductance")
             ind_val = ind.get("nominal") if isinstance(ind, dict) else ind
+            # Field is saturationCurrentPeak (not saturationCurrent); reading the
+            # wrong name made every candidate show null Isat to the reviewers.
+            # Use the shared effective-Isat helper (ABT #6 rated-current fallback)
+            # and tell the reviewer which basis the number came from.
+            real_isat = elec.get("saturationCurrentPeak")
+            isat = _effective_saturation_current(elec)
             summary = {
                 "mpn": mi.get("reference", "?"),
                 "inductance": ind_val,
-                "saturation_current": elec.get("saturationCurrent"),
+                "saturation_current": isat,
+                "saturation_current_basis": (
+                    "datasheet"
+                    if real_isat is not None
+                    else "rated_current_fallback"
+                    if isat is not None
+                    else "unavailable"
+                ),
                 "dcr": elec.get("dcResistance"),
                 "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
             }
