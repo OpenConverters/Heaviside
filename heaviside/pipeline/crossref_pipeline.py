@@ -352,7 +352,16 @@ CURRENT_DERATING_FACTOR = 1.25
 
 
 _EIA_DIELECTRIC_CODES = (
-    "C0G", "NP0", "U2J", "X7R", "X5R", "X6S", "X7S", "X8R", "X8L",
+    # Class I
+    "C0G", "NP0", "U2J",
+    # Class II/III — [X/Y/Z low-temp][4-8 high-temp][R/S/T/U/V tolerance]. All
+    # are ceramic; the T-tolerance variants (e.g. X7T = 125C, +22/-33%) were
+    # missing, so X7T caps fell out of the 'ceramic' family and got the
+    # cross-chemistry penalty vs Würth X7R candidates (the um3491 regression).
+    "X5R", "X5S", "X5T",
+    "X6R", "X6S", "X6T",
+    "X7R", "X7S", "X7T",
+    "X8R", "X8S", "X8L", "X8G", "X8M",
     "Y5V", "Y5U", "Z5U",
 )
 # Manufacturer ceramic-MLCC series prefixes (the dielectric is positional
