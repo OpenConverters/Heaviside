@@ -50,3 +50,13 @@ def test_non_ceramic_families_stay_distinct(tech: str, expected: str) -> None:
 def test_none_and_blank() -> None:
     assert fam(None) is None
     assert fam("   ") is None
+
+
+def test_codes_are_sourced_from_cas() -> None:
+    # The taxonomy is owned by CAS (CAS/data/eia_dielectric_codes.json), not
+    # hardcoded in crossref — the loader must read it and include X7T.
+    from heaviside.pipeline.crossref_pipeline import _eia_dielectric_codes
+
+    codes = _eia_dielectric_codes()
+    assert "X7T" in codes and "X7R" in codes and "C0G" in codes
+    assert len(codes) >= 20

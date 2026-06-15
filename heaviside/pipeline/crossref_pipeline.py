@@ -19,6 +19,7 @@ Launch:
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
@@ -351,19 +352,26 @@ SATURATION_MARGIN = 0.90
 CURRENT_DERATING_FACTOR = 1.25
 
 
-_EIA_DIELECTRIC_CODES = (
-    # Class I
-    "C0G", "NP0", "U2J",
-    # Class II/III — [X/Y/Z low-temp][4-8 high-temp][R/S/T/U/V tolerance]. All
-    # are ceramic; the T-tolerance variants (e.g. X7T = 125C, +22/-33%) were
-    # missing, so X7T caps fell out of the 'ceramic' family and got the
-    # cross-chemistry penalty vs Würth X7R candidates (the um3491 regression).
-    "X5R", "X5S", "X5T",
-    "X6R", "X6S", "X6T",
-    "X7R", "X7S", "X7T",
-    "X8R", "X8S", "X8L", "X8G", "X8M",
-    "Y5V", "Y5U", "Z5U",
-)
+@functools.lru_cache(maxsize=1)
+def _eia_dielectric_codes() -> tuple[str, ...]:
+    """EIA/MIL ceramic dielectric codes (C0G, X7R, X7T, …), uppercase.
+
+    Loaded from the CANONICAL CAS map (CAS/data/eia_dielectric_codes.json) —
+    CAS owns the dielectric taxonomy (its `technology` enum is the chemistry
+    family; this file maps each EIA code to a ceramic class). We do NOT hardcode
+    the list here; downstream chemistry-family logic stays in sync with CAS.
+    A missing/empty CAS map is a loud error (CLAUDE.md: no silent fallback)."""
+    path = Path(__file__).resolve().parents[2] / "CAS" / "data" / "eia_dielectric_codes.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            f"cannot load canonical CAS dielectric codes from {path}: {exc}"
+        ) from exc
+    codes = tuple((data.get("codeToTechnology") or {}).keys())
+    if not codes:
+        raise RuntimeError(f"CAS dielectric code map at {path} is empty")
+    return codes
 # Manufacturer ceramic-MLCC series prefixes (the dielectric is positional
 # in these MPNs, not a literal substring, so a prefix map is how we tell a
 # Murata GRM / TDK CGA / Samsung CL etc. is a ceramic).
@@ -391,7 +399,7 @@ def _capacitor_technology_family(technology: str | None) -> str | None:
     if "thin-film" in t or "thin film" in t:
         return "thin-film-silicon"
     if "ceramic" in t or "mlcc" in t or any(
-        c.lower() in t for c in _EIA_DIELECTRIC_CODES):
+        c.lower() in t for c in _eia_dielectric_codes()):
         return "ceramic"
     if "tantal" in t:
         return "tantalum"
@@ -424,7 +432,7 @@ def _infer_source_cap_technology(comp: dict[str, Any]) -> str | None:
     blob = " ".join(
         str(comp.get(k, "")) for k in ("part", "mpn", "value", "description", "series")
     ).upper()
-    if any(code in blob for code in _EIA_DIELECTRIC_CODES):
+    if any(code in blob for code in _eia_dielectric_codes()):
         return "ceramic"
     part = str(comp.get("part") or comp.get("mpn") or "").upper().strip()
     if part.startswith(_CERAMIC_MPN_PREFIXES):
