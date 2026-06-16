@@ -114,15 +114,20 @@ class TestBuckEnrichmentMath:
 
     def test_isat_matches_pyom_ground_truth(self):
         """Ground truth = MKF: the stamped Isat must equal PyOM's
-        saturation current for the real L1 magnetic at the op-point
-        ambient (25 °C), NOT an analytical B_sat·N·A_e/L formula. The
-        provenance still records the conservative material B_sat (a real
-        ferrite value in 0.2–0.6 T) and the harvested turns count."""
+        saturation current for the real L1 magnetic, evaluated at the
+        worst-case HOT junction (100 °C — ferrite B_sat falls with T), NOT
+        the 25 °C ambient and NOT an analytical B_sat·N·A_e/L formula. The
+        hot corner matches the frequency sweep's saturation gate
+        (bridge._isat_from_mas) so a swept-feasible core passes here; the
+        25 °C value (~45.7 A) over-stated Isat vs the hot 100 °C value
+        (~35.3 A) and let saturation-marginal cores through. Provenance still
+        records the conservative material B_sat (0.2–0.6 T) + turns count."""
         themas = _buck_mas()
         out = enrich_tas_for_realism(_buck_tas(), topology="buck", spec=_buck_spec())
         l1 = out["topology"]["stages"][0]["circuit"]["components"][2]
-        # ambientTemperature in _buck_spec()'s op-point is 25 °C.
-        expected = isat_of(themas, temperature_c=25.0)
+        # Isat now evaluated at the hot design corner (100 °C), not the
+        # op-point's 25 °C ambient — see extract._ISAT_DESIGN_TEMP_C.
+        expected = isat_of(themas, temperature_c=100.0)
         assert l1["isat"] == pytest.approx(expected, rel=1e-3)
         assert 0.2 < l1["isat_provenance"]["b_sat_T"] < 0.6
         assert l1["isat_provenance"]["n_turns"] == 9

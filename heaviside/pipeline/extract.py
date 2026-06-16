@@ -56,6 +56,13 @@ import copy
 from collections.abc import Callable, Mapping
 from typing import Any
 
+# Worst-case hot-junction temperature for the saturation check. Ferrite B_sat
+# falls with temperature, so Isat must be evaluated at the hot operating corner
+# — NOT the 25 °C ambient — matching the frequency sweep's saturation gate
+# (``bridge._isat_from_mas`` default). Using the ambient over-states Isat and
+# lets a saturation-marginal core pass the realism gate that the sweep rejected.
+_ISAT_DESIGN_TEMP_C: float = 100.0
+
 
 class EnrichmentError(Exception):
     """Raised when required spec / MAS fields for a topology extractor are
@@ -574,6 +581,14 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     # + Rth and re-query at that temperature.)
     op = _require(spec, ("operatingPoints",), "buck spec")[0]
     t_amb = float(op.get("ambientTemperature", 25.0))
+    # Evaluate Isat at the worst-case HOT junction (ferrite B_sat falls with T),
+    # NOT the 25 °C ambient. The ambient over-states Isat and let a
+    # saturation-marginal core PASS this gate while the frequency sweep (which
+    # checks at 100 °C via bridge._isat_from_mas) rejected it — the sweep/gate
+    # saturation disagreement. This matches the sweep + this function's own
+    # documented intent ("Isat at 100 °C by default"). max() keeps the hotter of
+    # the two for high-ambient (e.g. automotive 125 °C) specs.
+    t_isat = max(t_amb, _ISAT_DESIGN_TEMP_C)
     # Authoritative Isat from PyOM. No analytical fallback: if PyOM
     # rejects the MAS we raise rather than feed the realism gate a
     # fabricated B_sat·N·A_e/L scalar (magnetics math lives in MKF).
@@ -582,7 +597,7 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     try:
         from heaviside.bridge import _import_pyom
 
-        isat = float(_import_pyom().calculate_saturation_current(dict(mas), t_amb))
+        isat = float(_import_pyom().calculate_saturation_current(dict(mas), t_isat))
     except Exception as exc:
         raise EnrichmentError(
             f"buck inductor MAS: PyOM could not compute saturation current: "
@@ -605,7 +620,7 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched_comp["ipeak_worst"] = round(ipeak_worst, 6)
     enriched_comp["isat_provenance"] = {
         "method": isat_method,
-        "temperature_c": t_amb,
+        "temperature_c": t_isat,
         # ``b_sat_T`` is the conservative material B_sat (lowest across
         # the temperature curve), recorded for provenance only. The Isat
         # itself comes from PyOM, which uses this curve internally but
