@@ -436,8 +436,15 @@ class DesignOutcome:
 def stage3_realize(
     pick: TopologyPick,
     spec: Mapping[str, Any],
+    *,
+    pinned_main: "MagneticDesign | None" = None,
 ) -> DesignOutcome:
     """Take a Stage 2 TopologyPick and run it through the full pipeline.
+
+    ``pinned_main`` (closed-loop designer): the main magnetic the frequency
+    sweep already chose. When given, ``design_converter_components`` uses it
+    verbatim instead of re-designing the magnetic, so the real converter (BOM,
+    netlist, SPICE sim, realism) is built around exactly that magnetic.
 
     1. design_converter_components (slow-path magnetic + extras)
     2. decompose_from_spec → TAS + ideal netlist
@@ -485,6 +492,7 @@ def stage3_realize(
             spec_dict,
             max_results=1,
             use_ngspice=False,
+            pinned_main=pinned_main,
         )
     except (BridgeError, Exception) as exc:
         return DesignOutcome(

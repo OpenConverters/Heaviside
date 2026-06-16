@@ -246,6 +246,7 @@ def design_magnetics(
     use_ngspice: bool = False,
     weights: Mapping[str, float] | None = None,
     use_only_cores_in_stock: bool | None = None,
+    fast: bool = False,
 ) -> list[MagneticDesign]:
     """Design the magnetic component(s) for a converter spec.
 
@@ -331,15 +332,22 @@ def design_magnetics(
                     ("stock" if use_only_cores_in_stock else "allcores")
                     if use_only_cores_in_stock is not None
                     else None,
+                    # fast discriminator: omit (None) for the default slow path so
+                    # the legacy key is preserved; "fast" partitions fast results.
+                    "fast" if fast else None,
                 ),
+                # fast=False calls PyOM the legacy 6-arg way (backward-compatible
+                # with builds predating the `fast` param). fast=True requires the
+                # unified design_magnetics_from_converter(..., fast) — base⇄advanced
+                # by desiredInductance for the single-inductor family, fast advise.
                 call=lambda v=variant, s=_spec_arg, w=_weights_arg: (
                     pyom.design_magnetics_from_converter(
-                        v,
-                        s,
-                        int(max_results),
-                        str(core_mode),
-                        bool(use_ngspice),
-                        w,
+                        v, s, int(max_results), str(core_mode), bool(use_ngspice), w,
+                        bool(fast),
+                    )
+                    if fast
+                    else pyom.design_magnetics_from_converter(
+                        v, s, int(max_results), str(core_mode), bool(use_ngspice), w,
                     )
                 ),
             )
@@ -528,25 +536,28 @@ def design_magnetics_at_fsw(
     *,
     max_results: int = 5,
     core_mode: str = "standard cores",
+    fast: bool = True,
 ) -> list[MagneticDesign]:
     """Design the magnetic at a specific switching frequency, letting MKF
     re-derive the inductance for that frequency.
 
     This is the single seam the frequency sweep (master-plan stage C-hs)
     turns: it stamps ``fsw_hz`` onto every operating point of a copy of the
-    BASE converter spec and hands it to :func:`design_magnetics` (the SLOW
-    base path), where MKF derives L from the operating point +
+    BASE converter spec and hands it to :func:`design_magnetics` with
+    ``fast=True``, where MKF derives L from the operating point +
     ``currentRippleRatio`` (L ∝ 1/fsw). Heaviside never computes L itself —
     that keeps the sweep house-rule-clean (all magnetics math in MKF).
 
-    **Why the slow path (for now):** the fast path (:func:`design_magnetics_fast`
-    → ``process_converter``) hard-requires a pre-computed ``desiredInductance``
-    (verified 2026-06-16; abt #11 tracks the MKF gap). Using it would force
-    Heaviside to derive L per-fsw and inject it as a seed — the exact
-    magnetics-math-downstream violation B0c removed. When MKF #11 lands a
-    base-schema ``process_converter``, swap this one body to the fast base
-    path for a ~10× speedup with zero physics change; the sweep above this
-    seam is untouched.
+    **The unified fast base path (abt #11, fixed 2026-06-16):**
+    ``design_magnetics_from_converter`` gained a ``fast`` flag; for the
+    single-inductor family (buck/boost/cuk/sepic/zeta/4SBB) it picks
+    Base⇄Advanced by ``desiredInductance`` presence, so a BASE spec (no
+    ``desiredInductance``) is derived in MKF — slow (full sim) at ``fast=False``
+    or core-fast advise at ``fast=True`` (~12 s vs ~120 s). The sweep uses
+    ``fast=True`` to locate the basin; the master-plan re-rank of the bracketed
+    top-K runs the same seam at ``fast=False`` for the full-loss model. The
+    BASE-schema guard below stays load-bearing: an injected ``desiredInductance``
+    flips MKF to the Advanced branch, so it must never reach here.
 
     Raises
     ------
@@ -577,7 +588,7 @@ def design_magnetics_at_fsw(
         for op in ops
     ]
     return design_magnetics(
-        topology, spec_f, max_results=max_results, core_mode=core_mode
+        topology, spec_f, max_results=max_results, core_mode=core_mode, fast=fast
     )
 
 
@@ -1650,8 +1661,17 @@ def design_converter_components(
     min_isat_ratio: float = 1.2,
     candidate_pool_size: int = 1,
     fallback_pool_size: int = 50,
+    pinned_main: "MagneticDesign | None" = None,
 ) -> ConverterComponents:
     """End-to-end Phase A + Phase B for a converter spec.
+
+    ``pinned_main`` (master-plan closed loop): when supplied, the main magnetic
+    is NOT designed/picked here — the given :class:`MagneticDesign` is used
+    verbatim (it is the magnetic the frequency sweep already chose). All the
+    tier-1/2/3 picking + saturation post-filtering is skipped; only the extra
+    components are probed/designed against the pinned magnetic. This is how the
+    designer builds the real converter around the swept magnetic without MKF
+    re-selecting a different core.
 
     1. Design the main magnetic via :func:`design_magnetics`. Initial
        request asks for ``candidate_pool_size`` candidates (default 1).
@@ -1686,6 +1706,11 @@ def design_converter_components(
     scorer). Pass ``fallback_pool_size=0`` to disable just the retry.
     """
     entry = topology if isinstance(topology, TopologyEntry) else get(topology)
+
+    # Closed-loop path: build the converter around the magnetic the sweep chose,
+    # pinned — never re-pick a different core here.
+    if pinned_main is not None:
+        return _assemble_converter_components(entry, converter_spec, pinned_main)
 
     pool = max(int(max_results), int(candidate_pool_size))
     # Upstream crash safety: PyMKF SIGSEGVs when flyback is called with
@@ -1815,6 +1840,20 @@ def design_converter_components(
                         main = _cand
                         break
 
+    return _assemble_converter_components(entry, converter_spec, main)
+
+
+def _assemble_converter_components(
+    entry: TopologyEntry,
+    converter_spec: Mapping[str, Any],
+    main: MagneticDesign,
+) -> ConverterComponents:
+    """Probe + design the extra components around an already-chosen main
+    magnetic and package the :class:`ConverterComponents`.
+
+    Shared by :func:`design_converter_components` (which picks ``main`` itself)
+    and its ``pinned_main`` path (where the caller supplies the magnetic — e.g.
+    the one the frequency sweep chose, which must NOT be re-picked)."""
     mag_specs, cap_specs = extra_components(
         entry,
         converter_spec,

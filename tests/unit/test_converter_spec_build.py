@@ -94,10 +94,14 @@ def test_wrapper_delegates_identically():
 
 
 @pytest.mark.integration
-def test_mkf_ignores_injected_desired_inductance():
-    """VERIFIED 2026-06-16: on the BASE buck path MKF derives its own L and
-    ignores an injected desiredInductance. This guards the master-plan premise
-    that the designer already lets MKF choose L. Skipped if PyOM is unavailable."""
+def test_mkf_base_vs_advanced_by_desired_inductance():
+    """VERIFIED 2026-06-16 (unified `fast` param in design_magnetics_from_converter):
+    for the single-inductor family MKF picks Base vs Advanced by the PRESENCE of
+    ``desiredInductance`` — absent ⇒ MKF derives L from the operating point +
+    currentRippleRatio (Base); present ⇒ MKF honours it (Advanced). So injecting
+    a 4× L now CHANGES the design (it is no longer ignored). This is the contract
+    the designer relies on: the BASE-schema spec (no desiredInductance) lets the
+    sweep move L per fsw, while an explicit L pins it. Skipped if PyOM unavailable."""
     try:
         from heaviside import bridge
     except Exception as exc:  # pragma: no cover
@@ -107,17 +111,20 @@ def test_mkf_ignores_injected_desired_inductance():
         {**_buck_spec(), "efficiency": 0.92, "diodeVoltageDrop": 0.7}, "buck"
     )
     try:
-        a = bridge.design_magnetics("buck", base, max_results=1)
+        a = bridge.design_magnetics("buck", base, max_results=1)  # Base: MKF derives
     except Exception as exc:  # pragma: no cover
         pytest.skip(f"MKF unavailable in this env: {exc}")
     La = bridge._harvest_authoritative_inductance(a[0].mas)
 
     spec2 = {**base, "desiredInductance": La * 4, "desiredMagnetizingInductance": La * 4}
-    b = bridge.design_magnetics("buck", spec2, max_results=1)
+    b = bridge.design_magnetics("buck", spec2, max_results=1)  # Advanced: honoured
     Lb = bridge._harvest_authoritative_inductance(b[0].mas)
 
-    assert Lb == pytest.approx(La, rel=0.05), (
-        f"MKF should ignore injected desiredInductance: La={La:.3e} Lb={Lb:.3e}"
+    # the Advanced path tracks the injected 4×L (within core quantisation), and is
+    # unmistakably NOT the ~1× of the old "ignored" behaviour.
+    assert Lb > La * 2.5, f"injected desiredInductance must be honoured: La={La:.3e} Lb={Lb:.3e}"
+    assert Lb == pytest.approx(La * 4, rel=0.2), (
+        f"Advanced path should design near the injected 4×L: La={La:.3e} Lb={Lb:.3e}"
     )
 
 

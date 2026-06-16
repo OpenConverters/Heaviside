@@ -210,6 +210,17 @@ def _evaluate_fsw(
 
     p_sw = _switching_loss_w(vds_worst_v, id_worst_a, qg_env_c, fsw_hz)
 
+    # The worst-case peak current is evaluated AT this sweep frequency — for an
+    # L-derived ripple computer (buck) Ipeak depends on fsw, so the spec the
+    # ipeak/saturation check sees must carry fsw_hz on its operating points, not
+    # whatever (possibly absent) fsw the base spec had. design_magnetics_at_fsw
+    # already stamps fsw internally; mirror it for the ipeak computer.
+    spec_at_fsw = dict(spec)
+    spec_at_fsw["operatingPoints"] = [
+        {**op, "switchingFrequency": float(fsw_hz)} if isinstance(op, Mapping) else op
+        for op in (spec.get("operatingPoints") or [])
+    ]
+
     try:
         cands = bridge.design_magnetics_at_fsw(
             entry, spec, fsw_hz, max_results=int(max_candidates)
@@ -224,7 +235,7 @@ def _evaluate_fsw(
     skipped_unrankable = 0
     skipped_undermargin = 0
     for cand in cands:
-        ipeak, l_guard = bridge._isat_margin_inputs(entry, spec, cand)
+        ipeak, l_guard = bridge._isat_margin_inputs(entry, spec_at_fsw, cand)
         if ipeak is None or l_guard is None:
             skipped_unrankable += 1
             continue
