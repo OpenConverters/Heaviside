@@ -56,6 +56,43 @@ class ConverterDesign:
         return vd.get("verdict") if isinstance(vd, Mapping) else None
 
 
+def spice_config_from_bom(tas: Mapping[str, Any] | None) -> dict[str, float]:
+    """Build PyOM's ngspice ``spice_config`` knobs from the REAL selected parts,
+    so the converter is simulated with the actual FET / diode values — every
+    non-magnetic component configured from the BOM. The magnetic itself is never
+    a knob (it is the pinned, chosen design).
+
+    Knobs (MKF SpiceSimulationConfig): ``switchRON`` ← FET on-resistance,
+    ``diodeRS`` ← diode dynamic series resistance (from Vf/If when present).
+    snubR/snubC and diodeIS are left to the deck defaults unless the BOM carries
+    a real value — we never fabricate a diode model fit. Returns only the knobs
+    we can ground in a real datasheet number."""
+    cfg: dict[str, float] = {}
+    if not isinstance(tas, Mapping):
+        return cfg
+    topo = tas.get("topology")
+    stages = topo.get("stages") if isinstance(topo, Mapping) else None
+    if not isinstance(stages, list):
+        return cfg
+    for stage in stages:
+        circuit = stage.get("circuit") if isinstance(stage, Mapping) else None
+        comps = circuit.get("components") if isinstance(circuit, Mapping) else None
+        if not isinstance(comps, list):
+            continue
+        for c in comps:
+            if not isinstance(c, Mapping):
+                continue
+            # Main switch: real on-resistance drives switchRON (conduction loss).
+            rds = c.get("rds_on")
+            if "switchRON" not in cfg and isinstance(rds, (int, float)) and rds > 0:
+                cfg["switchRON"] = float(rds)
+            # Rectifier: a real dynamic resistance if the part carries one.
+            drs = c.get("rs_dynamic") or c.get("diode_rs")
+            if "diodeRS" not in cfg and isinstance(drs, (int, float)) and drs > 0:
+                cfg["diodeRS"] = float(drs)
+    return cfg
+
+
 def magnetic_waveforms(mas: Mapping[str, Any], *, max_points: int = 400) -> list[dict[str, Any]]:
     """Extract PyOM's ngspice excitation waveforms (primary-winding current +
     voltage per operating point) from the chosen magnetic's MAS, downsampled for
@@ -225,6 +262,20 @@ def design_converter(
         pick_reason=pick_reason, pick_criteria="frequency_sweep+suitability",
     )
     outcome = stage3_realize(pick, spec_at, pinned_main=md)
+    # Re-simulate with PyOM's ngspice knobs driven by the REAL selected parts
+    # (switchRON ← FET, diodeRS ← rectifier) — the BOM is only known after the
+    # first realize (decompose precedes selection), so configure-everything-but-
+    # the-magnetic happens on this second pass. Magnetic stays pinned. Guarded:
+    # if the configured pass fails, keep the first (no silent regression).
+    knobs = spice_config_from_bom(outcome.tas)
+    if knobs:
+        try:
+            tuned = stage3_realize(pick, spec_at, pinned_main=md, spice_config=knobs)
+            if tuned.tas is not None:
+                outcome = tuned
+                notes.append(f"sim configured from BOM: {knobs}")
+        except Exception as exc:  # keep the first realize
+            notes.append(f"BOM-configured re-sim skipped: {str(exc)[:120]}")
     outcome = replace(outcome, gatekeeper=stage3b_gatekeeper(outcome),
                       fsw_optimal=float(result.fsw_star_hz))
 

@@ -45,3 +45,25 @@ def test_empty_on_malformed():
     assert magnetic_waveforms({}) == []
     assert magnetic_waveforms({"inputs": {}}) == []
     assert magnetic_waveforms("nope") == []
+
+
+# --- spice_config_from_bom (real BOM -> PyOM ngspice knobs) ------------------
+
+def test_spice_config_from_bom_maps_real_parts():
+    from heaviside.pipeline.converter_designer import spice_config_from_bom
+    tas = {"topology": {"stages": [{"circuit": {"components": [
+        {"name": "Q1", "rds_on": 0.012, "qg_total": 1.3e-9},      # FET -> switchRON
+        {"name": "D1", "vf_typ": 0.45, "rs_dynamic": 0.03},        # diode -> diodeRS
+        {"name": "C_out", "esr": 0.005},                           # cap (no knob)
+    ]}}]}}
+    cfg = spice_config_from_bom(tas)
+    assert cfg["switchRON"] == 0.012
+    assert cfg["diodeRS"] == 0.03
+    # never a fabricated diode model fit / magnetic knob
+    assert "diodeIS" not in cfg and "snubR" not in cfg
+
+
+def test_spice_config_from_bom_empty_when_no_real_values():
+    from heaviside.pipeline.converter_designer import spice_config_from_bom
+    assert spice_config_from_bom({"topology": {"stages": []}}) == {}
+    assert spice_config_from_bom(None) == {}

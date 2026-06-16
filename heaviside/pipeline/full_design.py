@@ -438,6 +438,7 @@ def stage3_realize(
     spec: Mapping[str, Any],
     *,
     pinned_main: "MagneticDesign | None" = None,
+    spice_config: Mapping[str, Any] | None = None,
 ) -> DesignOutcome:
     """Take a Stage 2 TopologyPick and run it through the full pipeline.
 
@@ -525,6 +526,7 @@ def stage3_realize(
             turns_ratios=turns_ratios,
             magnetizing_inductance=magnetizing_inductance,
             bridge_simulation_mode=bridge_mode,
+            spice_config=dict(spice_config) if spice_config else None,
         )
     except DecomposerError as exc:
         return DesignOutcome(
