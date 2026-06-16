@@ -28,6 +28,35 @@ if TYPE_CHECKING:
     from heaviside.stages.topology_constraints import DesignConstraints
 
 
+def _seed_turns_ratio(spec: dict[str, Any], topology: str) -> None:
+    """Seed ``desiredTurnsRatios`` for an isolated/transformer topology when the
+    spec omits it (the Heaviside stress engine needs it; MKF re-derives its own
+    for the magnetic). Forward/bridge/push-pull: n = Vin_min·D_max/Vout;
+    flyback-family: n = Vin_min·D_max/(Vout·(1−D_max))."""
+    try:
+        from heaviside.topologies import get
+        fam = get(topology).family
+    except Exception:
+        return
+    if not fam.startswith("isolated"):
+        return  # non-isolated topologies have no turns ratio
+    iv = spec.get("inputVoltage") or {}
+    vmin = iv.get("minimum") or iv.get("nominal") if isinstance(iv, dict) else None
+    ops = spec.get("operatingPoints") or []
+    op = ops[0] if ops and isinstance(ops[0], dict) else {}
+    vouts = op.get("outputVoltages") or []
+    vout = vouts[0] if vouts and isinstance(vouts[0], (int, float)) else None
+    d_max = spec.get("maximumDutyCycle", 0.5)
+    if not (isinstance(vmin, (int, float)) and vmin > 0 and vout and vout > 0 and 0 < d_max < 1):
+        return
+    if "flyback" in topology:
+        n = float(vmin) * float(d_max) / (float(vout) * (1.0 - float(d_max)))
+    else:  # forward / bridge / push-pull
+        n = float(vmin) * float(d_max) / float(vout)
+    if n > 0:
+        spec["desiredTurnsRatios"] = [round(n, 4)]
+
+
 def build(
     spec: dict[str, Any],
     topology: str | None = None,
@@ -71,6 +100,17 @@ def build(
     if "inputVoltage" in spec and spec.get("operatingPoints"):
         spec.setdefault("diodeVoltageDrop", 0.7)
         spec.setdefault("efficiency", 0.9)
+
+    # Isolated/transformer topologies need a primary:secondary turns ratio. It
+    # is a DESIGN OUTPUT (MKF derives it on the base path), but Heaviside's
+    # analytical stress engine needs it as an input to size the switch/rectifier,
+    # so seed a sensible first-pass value when the user spec omits it. The ratio
+    # is picked so that at the worst case (Vin_min, duty ceiling) the secondary
+    # still reaches Vout: forward/bridge/push-pull n = Vin_min·D_max/Vout;
+    # flyback-family n = Vin_min·D_max/(Vout·(1−D_max)). Seed only — explicit
+    # caller turns ratios win, and MKF re-derives its own for the magnetic.
+    if topology and "desiredTurnsRatios" not in spec:
+        _seed_turns_ratio(spec, topology)
 
     # MKF's AsymmetricHalfBridge requires a per-operating-point ``dutyCycle``
     # (AhbOperatingPoint.from_json calls j.at("dutyCycle")). It is the
