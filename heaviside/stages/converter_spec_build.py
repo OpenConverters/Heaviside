@@ -61,6 +61,17 @@ def build(
     if constraints is not None:
         constraints.stamp(spec)
 
+    # Converter-level seeds MKF's base models read to derive L / duty / conduction
+    # mode (Buck::process_design_requirements reads diodeVoltageDrop for the duty
+    # calc; the loss/Pin balance reads efficiency). A minimal user spec (Vin +
+    # rails) carries neither, so seed them — the same values + rationale the CRE
+    # path uses (cre.py: Si rectifier ~0.7 V, 90% first-pass efficiency target).
+    # Design *seeds* (like maximumDutyCycle), refined once a real rectifier/loss
+    # budget exists — NOT a physics result. Explicit caller values win.
+    if "inputVoltage" in spec and spec.get("operatingPoints"):
+        spec.setdefault("diodeVoltageDrop", 0.7)
+        spec.setdefault("efficiency", 0.9)
+
     # MKF's AsymmetricHalfBridge requires a per-operating-point ``dutyCycle``
     # (AhbOperatingPoint.from_json calls j.at("dutyCycle")). It is the
     # *commanded* operating duty used for component sizing; MKF derives the
