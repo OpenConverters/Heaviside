@@ -104,6 +104,108 @@ def pareto_summary(designs: Sequence[MagneticDesign]) -> list[dict[str, Any]]:
     return [_candidate_summary(d, index=i) for i, d in enumerate(designs)]
 
 
+def _round(x: Any, n: int = 4) -> Any:
+    return round(float(x), n) if isinstance(x, (int, float)) else None
+
+
+def pareto_summary_from_sweep(result: Any) -> list[dict[str, Any]]:
+    """Summary table for the FREQUENCY-RESOLVED feasible front (master-plan B5).
+
+    Each row carries the base MAS metrics (shape/material/turns/volume) PLUS the
+    loss split and the chosen frequency the sweep resolved:
+    ``total_loss_w`` (worst-OP magnetic + switching), ``magnetic_loss_w``,
+    ``switching_loss_w``, ``fsw_hz``, and the saturation margin (``isat_a`` vs
+    ``ipeak_worst_a``) at ``inductance_uh``. The front is already ascending by
+    total loss, so ``index 0`` is the loss argmin at ``fsw*`` — the LLM only
+    moves off it for a *qualitative* reason (stock, manufacturability, exotic
+    part) and must justify the move.
+
+    ``result`` is a ``frequency_sweep.FrequencySweepResult`` (duck-typed: a
+    ``front`` of candidates + ``fsw_star_hz``)."""
+    fsw = float(result.fsw_star_hz)
+    rows: list[dict[str, Any]] = []
+    for i, cand in enumerate(result.front):
+        d = MagneticDesign(scoring=float(cand.scoring), mas=cand.mas, elapsed_s=0.0)
+        row = _candidate_summary(d, index=i)
+        row.update({
+            "total_loss_w": _round(cand.total_loss_w),
+            "magnetic_loss_w": _round(cand.magnetic_loss_w),
+            "switching_loss_w": _round(cand.switching_loss_w),
+            "fsw_hz": fsw,
+            "isat_a": _round(cand.isat_a, 3),
+            "ipeak_worst_a": _round(cand.ipeak_worst_a, 3),
+            "inductance_uh": _round(cand.inductance_h * 1e6, 3),
+        })
+        rows.append(row)
+    return rows
+
+
+def pick_best_from_sweep(result: Any) -> int:
+    """Deterministic pick over the frequency-resolved front: the total-loss
+    argmin (index 0, since the front is sorted ascending). The offline / no-key
+    / smoke path the LLM suitability pick layers on top of."""
+    if not getattr(result, "front", None):
+        raise MagneticPickerError("frequency sweep produced an empty feasible front")
+    return 0
+
+
+def pick_magnetic_from_sweep_llm(result: Any, spec: Mapping[str, Any]) -> dict[str, Any]:
+    """LLM suitability pick over the loss-annotated front (master-plan B5).
+
+    The deterministic argmin (``pick_best_from_sweep``) already chose the
+    loss-optimal cell; this layer lets the picker apply QUALITATIVE judgment —
+    stock, manufacturability, gapability, turn-count sanity — and pick a
+    *different* index ONLY with justification. It can never invent an index
+    outside the front. Falls back to the deterministic pick (index 0, source
+    ``deterministic``) when no API key is configured.
+
+    Returns ``{"index": int, "source": "llm"|"deterministic", "reason": str}``.
+    """
+    import os
+
+    front = getattr(result, "front", None)
+    if not front:
+        raise MagneticPickerError("frequency sweep produced an empty feasible front")
+    n = len(front)
+
+    if not os.environ.get("MOONSHOT_API_KEY"):
+        return {"index": 0, "source": "deterministic",
+                "reason": "no API key — deterministic total-loss argmin"}
+
+    import json
+
+    from heaviside.agents.llm_call import LLMCallError, call_agent_json
+
+    payload = {
+        "topology_spec": {
+            "inputVoltage": spec.get("inputVoltage"),
+            "operatingPoints": spec.get("operatingPoints"),
+        },
+        "fsw_hz": float(result.fsw_star_hz),
+        "candidates": pareto_summary_from_sweep(result),
+        "instructions": (
+            "index 0 is the total-loss argmin at fsw*. Pick ONE candidate by "
+            "index from this list (you cannot invent one). Prefer index 0 unless "
+            "a qualitative reason — stock, manufacturability, gapability, "
+            "turn-count sanity, exotic core/material — justifies a nearby cell. "
+            "Return JSON {\"index\": <int>, \"reason\": \"<1-2 sentences>\"}."
+        ),
+    }
+    try:
+        data = call_agent_json("magnetic-pareto-picker", json.dumps(payload))
+        idx = int(data["index"])
+    except (LLMCallError, KeyError, TypeError, ValueError) as exc:
+        raise MagneticPickerError(
+            f"magnetic-pareto-picker returned an unusable pick: {exc}"
+        ) from exc
+    if not (0 <= idx < n):
+        raise MagneticPickerError(
+            f"magnetic-pareto-picker picked index {idx} outside the front [0,{n}) "
+            f"— it may not invent a candidate"
+        )
+    return {"index": idx, "source": "llm", "reason": str(data.get("reason", ""))}
+
+
 def pick_best_pareto(
     designs: Sequence[MagneticDesign],
     *,

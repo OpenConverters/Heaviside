@@ -49,6 +49,24 @@ The tool returns:
 The list is sorted by ascending `scoring` (lower = lower estimated
 losses), so `index 0` is the loss-optimal default.
 
+### Frequency-resolved fronts (loss + fsw columns)
+
+When the list comes from the designer's **frequency sweep**, each row also
+carries the resolved switching frequency and the full loss split:
+
+* `total_loss_w` — worst-operating-point **magnetic + switching** loss at the
+  chosen `fsw_hz` (this is the real objective; the list is sorted ascending by
+  it, so `index 0` is the total-loss argmin).
+* `magnetic_loss_w` / `switching_loss_w` — the split, so you can see whether a
+  candidate is core-loss- or copper-loss-dominated.
+* `fsw_hz` — the frequency the sweep chose for the whole front (shared).
+* `isat_a` vs `ipeak_worst_a` — saturation headroom at `inductance_uh`; a row
+  whose `isat_a` only barely exceeds `ipeak_worst_a` is saturation-marginal.
+
+On a frequency-resolved front, **`index 0` is already loss-optimal** — only
+move off it for a *qualitative* reason (stock, manufacturability, gapability,
+turn-count sanity, an exotic core/material) and say so explicitly.
+
 ### Step 1 — Reason about the tradeoff
 
 Read all candidates. Don't just pick `index 0` reflexively. Consider:
