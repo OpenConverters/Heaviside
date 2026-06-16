@@ -220,11 +220,13 @@ def test_sweep_raises_when_everything_saturates(monkeypatch):
 
 
 def test_trap7_unregistered_topology_raises(monkeypatch):
-    """A topology with no Ipeak_worst computer must raise, not silently pass the
-    saturation gate. push_pull is registered as a topology but not in
-    bridge._IPEAK_WORST."""
+    """A topology with no sweep Ipeak_worst computer must raise, not silently
+    pass the saturation gate. Resonant topologies (llc) are deliberately not in
+    bridge._IPEAK_WORST — their fsw comes from the gain law (B6), not the loss
+    sweep. (Transformers ARE now registered via the magnetizing-current
+    computer, so they no longer trip trap #7.)"""
     with pytest.raises(fs.FrequencySweepError, match="Ipeak_worst computer"):
-        fs.sweep("push_pull", _spec())
+        fs.sweep("llc", _spec())
 
 
 def test_bad_band_raises():

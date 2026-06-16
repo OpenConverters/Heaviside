@@ -1507,31 +1507,73 @@ def _candidate_inductance(cand: "MagneticDesign") -> float | None:
     return float(L) if isinstance(L, (int, float)) and L > 0 else None
 
 
+def _ipeak_from_mas(cand: "MagneticDesign") -> float | None:
+    """Worst-case peak winding current read straight from MKF's SIMULATED
+    excitation waveform — the real current PyOM/ngspice computed for this exact
+    magnetic, NOT an analytical Heaviside formula (house rule: magnetics/current
+    math lives in MKF). Returns ``max |i(t)|`` across every winding and operating
+    point in ``mas.inputs.operatingPoints[*].excitationsPerWinding[*].current
+    .waveform.data``, or ``None`` if no waveform is present.
+
+    This supersedes the per-topology analytical ``_IPEAK_WORST`` computers (which
+    over-/under-estimated, e.g. cuk/zeta's switch-sum or the flyback ripple that
+    needed a seeded Lm). The simulated peak is exact, accounts for ripple /
+    CCM-DCM, and is topology-agnostic."""
+    try:
+        mas = cand.mas
+    except Exception:
+        return None
+    if not isinstance(mas, Mapping):
+        return None
+    ops = (mas.get("inputs") or {}).get("operatingPoints")
+    if not isinstance(ops, list):
+        return None
+    peak = 0.0
+    seen = False
+    for op in ops:
+        if not isinstance(op, Mapping):
+            continue
+        for exc in op.get("excitationsPerWinding") or []:
+            if not isinstance(exc, Mapping):
+                continue
+            wf = (exc.get("current") or {}).get("waveform") if isinstance(exc, Mapping) else None
+            data = wf.get("data") if isinstance(wf, Mapping) else None
+            if isinstance(data, list):
+                for v in data:
+                    if isinstance(v, (int, float)):
+                        seen = True
+                        a = abs(float(v))
+                        if a > peak:
+                            peak = a
+    return peak if (seen and peak > 0) else None
+
+
 def _isat_margin_inputs(
     entry: TopologyEntry, spec: Mapping[str, Any], cand: "MagneticDesign"
 ) -> tuple[float | None, float | None]:
     """``(Ipeak_worst, L_for_guard)`` for an isat-margin check on ``cand``.
 
-    Ipeak is computed from the candidate's OWN inductance (via
-    :func:`_candidate_inductance`); only when that can't be harvested do we
-    fall back to the spec's ``desiredInductance`` seed (preserving the prior
-    behaviour). Returns ``(None, None)`` when no Ipeak can be computed — the
-    caller then keeps MKF's top scorer rather than silently hiding the design.
+    Ipeak comes — house-rule-clean — from the **peak of MKF's simulated winding
+    current** (:func:`_ipeak_from_mas`). The per-topology analytical computers
+    (:data:`_IPEAK_WORST`) are only a FALLBACK for candidates whose MAS carries
+    no excitation waveform (e.g. some fast-mode results). ``L_for_guard`` is the
+    candidate's own harvested inductance. Returns ``(None, None)`` when neither a
+    waveform nor an analytical computer yields a peak — the caller then keeps
+    MKF's top scorer rather than silently hiding the design.
     """
-    ipeak_fn = _IPEAK_WORST.get(entry.name)
-    if ipeak_fn is None:
-        return None, None
     L_cand = _candidate_inductance(cand)
-    if L_cand is not None:
-        spec_eff: Mapping[str, Any] = {**spec, "desiredInductance": L_cand}
-        L_guard: Any = L_cand
-    else:
-        spec_eff = spec
-        L_guard = spec.get("desiredInductance")
-    ipeak = ipeak_fn(spec_eff)
-    if not isinstance(ipeak, (int, float)) or ipeak <= 0:
-        return None, None
+    L_guard: Any = L_cand if L_cand is not None else spec.get("desiredInductance")
     if not isinstance(L_guard, (int, float)) or L_guard <= 0:
+        return None, None
+    # PRIMARY: the real simulated peak from MKF's MAS.
+    ipeak = _ipeak_from_mas(cand)
+    if ipeak is None:
+        # FALLBACK: the legacy analytical per-topology computer.
+        ipeak_fn = _IPEAK_WORST.get(entry.name)
+        if ipeak_fn is not None:
+            spec_eff = {**spec, "desiredInductance": L_cand} if L_cand is not None else spec
+            ipeak = ipeak_fn(spec_eff)
+    if not isinstance(ipeak, (int, float)) or ipeak <= 0:
         return None, None
     return float(ipeak), float(L_guard)
 
