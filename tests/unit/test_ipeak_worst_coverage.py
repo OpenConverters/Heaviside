@@ -24,10 +24,11 @@ from heaviside.pipeline.stress import derive_stresses
 _NEWLY_COVERED = ["sepic", "zeta", "four_switch_buck_boost"]
 # Already covered before B3 (regression guard).
 _PREVIOUSLY_COVERED = ["buck", "boost", "cuk", "flyback"]
-# Transformer topologies that MUST stay unregistered (wrong-physics otherwise).
+# Topologies that MUST stay unregistered for the loss SWEEP: resonant (fsw from
+# the gain law, B6) + non-converter magnetics. (Transformers ARE now registered
+# via the magnetizing-current computer — see the transformer tests below.)
 _MUST_STAY_UNREGISTERED = [
-    "single_switch_forward", "two_switch_forward", "push_pull",
-    "asymmetric_half_bridge", "phase_shifted_full_bridge", "llc",
+    "llc", "cllc", "series_resonant", "dual_active_bridge", "common_mode_choke",
 ]
 
 
@@ -84,9 +85,9 @@ def test_sepic_zeta_ipeak_is_conservative_sum():
 
 
 @pytest.mark.parametrize("topo", _MUST_STAY_UNREGISTERED)
-def test_transformer_topologies_unregistered(topo):
-    """Their id_stress is primary LOAD current, not the magnetizing/flux
-    current — registering it would mis-gate the transformer core."""
+def test_unregistered_for_sweep(topo):
+    """Resonant topologies (gain-law fsw, not a loss sweep) + non-converter
+    magnetics must NOT be in the sweep's Ipeak table."""
     assert bridge._IPEAK_WORST.get(topo) is None
 
 
@@ -103,5 +104,38 @@ def test_sweep_raises_for_unregistered_topology():
     silently claiming feasibility it never checked."""
     from heaviside.stages import frequency_sweep
 
+    # llc is resonant — no sweep Ipeak computer (it uses the gain-law branch)
     with pytest.raises(frequency_sweep.FrequencySweepError, match="Ipeak_worst computer"):
-        frequency_sweep.sweep("push_pull", _spec())
+        frequency_sweep.sweep("llc", _spec())
+
+
+# --- transformer magnetizing-current Ipeak (forward/bridge/push-pull) --------
+
+_TRANSFORMERS_UNI = ["single_switch_forward", "two_switch_forward", "active_clamp_forward"]
+_TRANSFORMERS_BI = ["push_pull", "asymmetric_half_bridge",
+                    "phase_shifted_full_bridge", "phase_shifted_half_bridge", "weinberg"]
+
+
+def test_magnetizing_ipeak_formula():
+    spec = {"inputVoltage": {"minimum": 36, "nominal": 48, "maximum": 60},
+            "maximumDutyCycle": 0.45, "desiredInductance": 1e-3,
+            "operatingPoints": [{"switchingFrequency": 200_000}]}
+    uni = bridge._ipeak_worst_magnetizing(spec, bidirectional=False)
+    bi = bridge._ipeak_worst_magnetizing(spec, bidirectional=True)
+    assert uni == pytest.approx(60 * 0.45 / (1e-3 * 200_000))  # ΔIm
+    assert bi == pytest.approx(uni / 2)                         # ±ΔIm/2
+    # incomplete spec ⇒ None (no fabrication)
+    assert bridge._ipeak_worst_magnetizing(
+        {"inputVoltage": {"maximum": 60}, "maximumDutyCycle": 0.45,
+         "operatingPoints": [{"switchingFrequency": 2e5}]}, bidirectional=False) is None
+
+
+@pytest.mark.parametrize("topo", _TRANSFORMERS_UNI + _TRANSFORMERS_BI)
+def test_transformer_registered_with_magnetizing(topo):
+    assert bridge._IPEAK_WORST.get(topo) is not None
+
+
+@pytest.mark.parametrize("topo", ["llc", "cllc", "clllc", "series_resonant", "dual_active_bridge"])
+def test_resonant_still_unregistered(topo):
+    # resonant fsw comes from the gain law (B6), not the loss sweep
+    assert bridge._IPEAK_WORST.get(topo) is None

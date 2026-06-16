@@ -1370,6 +1370,43 @@ def _ipeak_worst_from_stress(topology: str, spec: Mapping[str, Any]) -> float | 
     return float(s.id_stress)
 
 
+def _ipeak_worst_magnetizing(
+    spec: Mapping[str, Any], *, bidirectional: bool
+) -> float | None:
+    """Peak MAGNETIZING current of a transformer core — the quantity that
+    saturates it (the secondary balances the load component, so the load current
+    does NOT set the flux).
+
+    The applied volt-seconds during the ON time ramp the magnetizing current::
+
+        ΔIm = Vin_max · D_max / (Lm · fsw)
+
+    * Unidirectional cores (forward-class: single/two-switch, active-clamp) reset
+      to zero each cycle, so the peak magnetizing current is the full ΔIm.
+    * Bidirectional cores (bridge, push-pull) swing symmetrically ±ΔIm/2, so the
+      peak is ΔIm/2.
+
+    ``Vin_max · D_max`` is the conservative worst-case volt-seconds (over-states
+    the flux → tightens the gate → never passes a saturating core). ``Lm`` is the
+    candidate's magnetizing inductance, which the caller stamps as
+    ``desiredInductance`` (``_isat_margin_inputs`` sets it to the harvested L).
+    Returns ``None`` when the spec lacks Vin / duty / Lm / fsw."""
+    try:
+        iv = spec.get("inputVoltage") or {}
+        vmax = (iv.get("maximum") or iv.get("nominal")) if isinstance(iv, Mapping) else None
+        d_max = spec.get("maximumDutyCycle")
+        lm = spec.get("desiredInductance")
+        ops = spec.get("operatingPoints")
+        op = ops[0] if isinstance(ops, list) and ops and isinstance(ops[0], Mapping) else None
+        fsw = op.get("switchingFrequency") if isinstance(op, Mapping) else None
+        if not all(isinstance(x, (int, float)) and x > 0 for x in (vmax, d_max, lm, fsw)):
+            return None
+        delta_im = float(vmax) * float(d_max) / (float(lm) * float(fsw))
+        return delta_im / 2.0 if bidirectional else delta_im
+    except Exception:
+        return None
+
+
 _IPEAK_WORST: dict[str, Any] = {
     # Buck stays on the L-derived ripple formula (Vout * (1 - Dmin) /
     # (0.8 * L * fsw) / 2) so the post-filter and realism extract.py
@@ -1389,14 +1426,22 @@ _IPEAK_WORST: dict[str, Any] = {
     "four_switch_buck_boost": lambda spec: _ipeak_worst_from_stress(
         "four_switch_buck_boost", spec
     ),
-    # NOT registered: transformer topologies (forward/push_pull/AHB/PSFB/
-    # resonant/…). Their stress id_stress is the PRIMARY LOAD current, which is
-    # NOT the flux-setting current — a transformer core saturates on the
-    # MAGNETIZING current (Vin·D/(Lm·fsw)), balanced by the secondary. Using the
-    # load current as Ipeak_worst would be wrong physics (over-conservative in a
-    # way that mis-sizes the magnetic), so we deliberately leave them out and
-    # let the frequency sweep raise (trap #7) until a magnetizing-current
-    # computer is added.
+    # Hard-switched transformer families: the core saturates on the MAGNETIZING
+    # current Vin·D/(Lm·fsw) (the load component is balanced by the secondary),
+    # NOT the primary load current the stress deriver returns. Forward-class
+    # cores reset each cycle → unidirectional peak ΔIm; bridge/push-pull cores
+    # swing ±ΔIm/2. Lm = the candidate's harvested magnetizing inductance.
+    "single_switch_forward": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=False),
+    "two_switch_forward": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=False),
+    "active_clamp_forward": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=False),
+    "push_pull": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=True),
+    "asymmetric_half_bridge": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=True),
+    "phase_shifted_full_bridge": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=True),
+    "phase_shifted_half_bridge": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=True),
+    "weinberg": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=True),
+    # NOT registered: resonant topologies (llc/cllc/clllc/src/dab) — fsw comes
+    # from the gain law (stages.resonant_freq, B6), not the loss sweep, so they
+    # take a separate design flow rather than this saturation-gated sweep.
 }
 
 
