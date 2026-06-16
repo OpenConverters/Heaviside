@@ -44,6 +44,7 @@ dependencies = [
   "beautifulsoup4>=4.12",
   # Misc
   "httpx>=0.27",
+  "weasyprint>=60",  # HTML report -> deliverable PDF (reporter stage)
   "tenacity>=9.0",
   "orjson>=3.10",
   "structlog>=24.4",

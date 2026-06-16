@@ -36,6 +36,64 @@ def _e(text: Any) -> str:
     return html.escape(str(text))
 
 
+def _poly(xs: list[float], ys: list[float], w: int, h: int, pad: int) -> str:
+    """Map (xs, ys) to an SVG polyline points string within a w×h box."""
+    if not xs or not ys or len(xs) != len(ys):
+        return ""
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    xr = (x1 - x0) or 1.0
+    yr = (y1 - y0) or 1.0
+    pts = []
+    for x, y in zip(xs, ys):
+        px = pad + (x - x0) / xr * (w - 2 * pad)
+        py = h - pad - (y - y0) / yr * (h - 2 * pad)  # invert y for screen
+        pts.append(f"{px:.1f},{py:.1f}")
+    return " ".join(pts)
+
+
+def _waveform_svg(mas: Any, *, w: int = 720, h: int = 230) -> str:
+    """Inline SVG dual-trace plot (winding current + voltage) from the magnetic's
+    PyOM-ngspice excitation waveforms. Works in both the browser and WeasyPrint
+    PDF. Empty string when no waveform is available."""
+    try:
+        from heaviside.pipeline.converter_designer import magnetic_waveforms
+        wfs = magnetic_waveforms(mas, max_points=300)
+    except Exception:
+        return ""
+    if not wfs:
+        return ""
+    wf = wfs[0]  # nominal / first operating point
+    t = wf.get("time_s") or []
+    cur = wf.get("current_a") or []
+    volt = wf.get("voltage_v")
+    pad = 28
+    cur_pts = _poly(t, cur, w, h, pad)
+    if not cur_pts:
+        return ""
+    parts = [
+        "<h2>Simulation waveforms <span class='muted'>(PyOM ngspice, primary winding)</span></h2>",
+        f"<svg viewBox='0 0 {w} {h}' width='100%' style='max-width:{w}px;background:#06100f;"
+        "border:1px solid rgba(60,224,200,.25);border-radius:8px'>",
+        f"<rect x='0' y='0' width='{w}' height='{h}' fill='#06100f'/>",
+        f"<polyline fill='none' stroke='#3ce0c8' stroke-width='1.6' points='{cur_pts}'/>",
+    ]
+    if isinstance(volt, list) and len(volt) == len(t):
+        v_pts = _poly(t, volt, w, h, pad)
+        if v_pts:
+            parts.append(
+                f"<polyline fill='none' stroke='#ffb84d' stroke-width='1.2' "
+                f"opacity='0.85' points='{v_pts}'/>"
+            )
+    cmin, cmax = min(cur), max(cur)
+    parts.append(
+        f"<text x='{pad}' y='16' fill='#3ce0c8' font-size='11' "
+        f"font-family='monospace'>I (aqua) {cmin:.2f}..{cmax:.2f} A · V (amber)</text>"
+    )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
 def render_html(outcome: Any) -> str:
     """Render a ``DesignOutcome`` as standalone HTML."""
     lines = [
@@ -65,6 +123,11 @@ def render_html(outcome: Any) -> str:
             )
         lines.append("</table>")
     lines.append(f"<p><strong>Scoring (total losses):</strong> {mag.scoring:.4f}</p>")
+
+    # Simulation waveforms (PyOM ngspice excitation, inline SVG)
+    svg = _waveform_svg(mag.mas)
+    if svg:
+        lines.append(svg)
 
     # BOM section
     if outcome.tas:
