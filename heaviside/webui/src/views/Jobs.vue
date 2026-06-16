@@ -72,6 +72,8 @@ onUnmounted(() => clearInterval(timer))
       <Column header="">
         <template #body="{ data }">
           <Button v-if="data.status === 'done'" label="View" icon="pi pi-eye" text size="small" @click.stop="view(data)" />
+          <a v-if="data.status === 'done' && data.kind === 'design'" :href="api.reportPdfUrl(data.job_id)"
+             target="_blank" @click.stop class="pdf-link mono">PDF</a>
           <Button :label="isActive(data.status) ? 'Cancel' : 'Delete'" text size="small"
                   :severity="isActive(data.status) ? 'warn' : 'danger'" @click.stop="act(data)" />
         </template>
@@ -96,4 +98,7 @@ onUnmounted(() => clearInterval(timer))
 .dot.d-running { background: var(--ch1); box-shadow: 0 0 6px var(--ch1); animation: blink 1s infinite; }
 .dot.d-error { background: var(--fault); }
 @keyframes blink { 50% { opacity: .35; } }
+.pdf-link { font-size: .7rem; color: var(--ch1); text-decoration: none; padding: 0 .3rem;
+  border: 1px solid var(--ch1-deep); border-radius: 5px; }
+.pdf-link:hover { background: rgba(60,224,200,.14); }
 </style>

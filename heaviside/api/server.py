@@ -477,6 +477,93 @@ def submit_design(req: DesignRequest) -> dict[str, str]:
     return {"job_id": job_id}
 
 
+# Closed-loop (fsw-from-magnetic) designer — drives the NEW pipeline stages so
+# the Jobs view shows them: constraints → sweep → pick → reconcile → realize
+# (real BOM + MKF SPICE) → review. Single-inductor hard-switched topologies.
+_CLOSED_LOOP_STAGES = [
+    "Topology constraints", "Frequency sweep", "Magnetic pick",
+    "Cross-OP reconcile", "Realize: BOM + SPICE + realism", "Adversarial review",
+]
+
+
+def _design_converter_job(spec: dict[str, Any], topology: str | None, update: Any) -> dict[str, Any]:
+    from heaviside.pipeline.converter_designer import design_converter
+    from heaviside.report import render_html
+
+    if hasattr(update, "set_stages"):
+        update.set_stages(_CLOSED_LOOP_STAGES)
+
+    # Resolve a topology if "Auto": take the first hard-switched single-inductor
+    # one the screen finds (the sweep only covers those today).
+    topo = topology
+    if not topo:
+        from heaviside.pipeline.topology_screen import feasible_topology_names
+
+        supported = {"buck", "boost", "cuk", "sepic", "zeta", "four_switch_buck_boost"}
+        names = [n for n in feasible_topology_names(spec) if n in supported]
+        if not names:
+            return {"topology": None, "verdict": None,
+                    "html": "<p>No hard-switched single-inductor topology is feasible for "
+                            "this spec yet (the closed-loop designer covers buck/boost/cuk/"
+                            "sepic/zeta/4SBB). Use the standard designer for others.</p>"}
+        topo = names[0]
+
+    def cb(msg: str, pct: int) -> None:
+        if hasattr(update, "start_stage"):
+            stage = (
+                _CLOSED_LOOP_STAGES[0] if pct < 20 else
+                _CLOSED_LOOP_STAGES[1] if pct < 55 else
+                _CLOSED_LOOP_STAGES[2] if pct < 70 else
+                _CLOSED_LOOP_STAGES[3] if pct < 72 else
+                _CLOSED_LOOP_STAGES[4] if pct < 90 else
+                _CLOSED_LOOP_STAGES[5]
+            )
+            update.start_stage(stage)
+        update(f"{pct}% — {msg}")
+
+    design = design_converter(topo, spec, use_llm=True, with_reviewers=True, progress=cb)
+    return {
+        "topology": topo,
+        "verdict": design.verdict,
+        "fsw_hz": design.fsw_hz,
+        "html": render_html(design.outcome),
+        "bom": design.bom,
+    }
+
+
+@app.post("/jobs/design/closed-loop")
+def submit_design_closed_loop(req: DesignRequest) -> dict[str, str]:
+    from heaviside.api.jobs import registry
+
+    topo = (req.topologies or [None])[0]
+    return {"job_id": registry.submit(
+        "design", lambda update: _design_converter_job(req.spec, topo, update))}
+
+
+@app.get("/jobs/{job_id}/report.pdf")
+def job_report_pdf(job_id: str):
+    """Render a finished design job's HTML report to a deliverable PDF."""
+    from fastapi.responses import Response
+
+    from heaviside.api.jobs import registry
+    from heaviside.stages.reporter import ReporterError, html_to_pdf
+
+    job = registry.get(job_id)
+    if job is None or job.status != "done":
+        raise HTTPException(status_code=404, detail="no finished job with that id")
+    html = job.result.get("html") if isinstance(job.result, dict) else None
+    if not html:
+        raise HTTPException(status_code=409, detail="job has no HTML report to render")
+    try:
+        pdf = html_to_pdf(html)
+    except ReporterError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="design_{job_id}.pdf"'},
+    )
+
+
 @app.post("/jobs/crossref")
 def submit_crossref(req: CrossRefRequest) -> dict[str, str]:
     from heaviside.api.jobs import registry
