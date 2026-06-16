@@ -564,6 +564,12 @@ def assemble_bom_from_tas(
     _add_soft_start_capacitor(tas, spec=spec)
     _add_current_sense_resistor(tas, spec=spec, i_peak=stresses.id_stress)
 
+    # B1: give every stamped real part the uniform {producer, method,
+    # source_ref, inputs_hash} provenance envelope the realism gate audits.
+    from heaviside import provenance
+
+    provenance.stamp_components(tas)
+
     return tas
 
 

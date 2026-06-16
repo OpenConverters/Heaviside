@@ -860,7 +860,46 @@ def evaluate_tas(
             )
         )
 
+    # --- selection_provenance_complete (B1) -----------------------------
+    # Every stamped REAL part (one carrying an mpn / selection_provenance)
+    # must carry the uniform {producer, method, source_ref, inputs_hash}
+    # envelope, or its origin cannot be audited. A sourceless part ⇒
+    # UNAVAILABLE (we don't FAIL the physics — the number may be right — but
+    # we never silently trust an un-auditable pick).
+    checks.append(_check_selection_provenance(tas))
+
     return _verdict_from(tuple(checks))
+
+
+def _check_selection_provenance(tas: Mapping[str, Any]) -> CheckResult:
+    from heaviside import provenance
+
+    selected = 0
+    sourceless: list[str] = []
+    for _stage_name, comp in _iter_components(tas):
+        prov = comp.get("selection_provenance")
+        has_mpn = isinstance(comp.get("mpn"), str) and comp.get("mpn")
+        if prov is None and not has_mpn:
+            continue  # a placeholder / non-selected node — nothing to audit
+        selected += 1
+        if not provenance.is_complete(prov):
+            sourceless.append(str(comp.get("name", comp.get("mpn", "?"))))
+    if selected == 0:
+        return _not_applicable(
+            "selection_provenance_complete", "no selected real parts in TAS"
+        )
+    if sourceless:
+        return _unavailable(
+            "selection_provenance_complete",
+            f"{len(sourceless)}/{selected} selected parts lack a complete "
+            f"{{producer, method, source_ref, inputs_hash}} provenance: "
+            f"{', '.join(sorted(sourceless))}",
+        )
+    return CheckResult(
+        name="selection_provenance_complete",
+        status=CheckStatus.PASS,
+        detail=f"all {selected} selected parts carry a complete provenance envelope",
+    )
 
 
 def _verdict_from(checks: tuple[CheckResult, ...]) -> RealismReport:
