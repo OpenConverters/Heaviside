@@ -40,6 +40,36 @@ def test_worst_op_loss_maxes_each_bucket_independently():
     assert analyst.inductor_loss_worst_op(comp) == {"L1_core": 3.0, "L1_dcr": 0.5}
 
 
+def test_worst_op_loss_reads_fast_path_scalar_winding():
+    """FAST path (calculate_advised_magnetics_fast) reports total winding loss
+    as a SCALAR windingLosses.windingLosses (W), with per-component detail in
+    windingLossesPerWinding — unlike the slow path's list. The reader must
+    handle both, else every fast-path candidate is 'unrankable (no loss)'."""
+    fast = {"data": {"outputs": [{
+        "coreLosses": {"coreLosses": 0.0049},
+        "windingLosses": {
+            "windingLosses": 0.766,  # scalar total (fast path)
+            "windingLossesPerWinding": [{"name": "Primary",
+                "ohmicLosses": {"losses": 0.766}}],
+            "dcResistancePerWinding": [0.084],  # OHMS, must NOT be read as loss
+        },
+    }]}}
+    assert analyst.inductor_loss_worst_op(fast) == {"L1_core": 0.0049, "L1_dcr": 0.766}
+
+
+def test_worst_op_loss_per_winding_component_fallback():
+    """When neither scalar nor list total is present, sum the per-winding
+    ohmic+skin+proximity components."""
+    comp = {"data": {"outputs": [{
+        "coreLosses": {"coreLosses": 1.0},
+        "windingLosses": {"windingLossesPerWinding": [
+            {"ohmicLosses": {"losses": 0.5}, "skinEffectLosses": {"losses": 0.1},
+             "proximityEffectLosses": {"losses": 0.2}},
+        ]},
+    }]}}
+    assert analyst.inductor_loss_worst_op(comp)["L1_dcr"] == pytest.approx(0.8)
+
+
 def test_worst_op_loss_none_when_no_outputs():
     assert analyst.inductor_loss_worst_op({"data": {"outputs": []}}) == {
         "L1_core": None, "L1_dcr": None

@@ -144,25 +144,44 @@ def _loss_at_output(op_obj: Any) -> tuple[float | None, float | None]:
     winding_obj = op_obj.get("windingLosses")
     winding_loss: float | None = None
     if isinstance(winding_obj, Mapping):
-        # PyMKF reports per-winding DC loss; sum across windings.
-        total = 0.0
-        seen = False
         per = winding_obj.get("windingLosses")
-        if isinstance(per, list):
+        if isinstance(per, (int, float)) and per >= 0:
+            # FAST path (calculate_advised_magnetics_fast): the total winding
+            # loss is a single scalar (watts) here.
+            winding_loss = float(per)
+        elif isinstance(per, list):
+            # SLOW path: a list of per-winding entries; sum across windings.
+            total = 0.0
+            seen = False
             for entry in per:
                 if isinstance(entry, Mapping):
                     pl = entry.get("totalLosses") or entry.get("dcLosses")
                     if isinstance(pl, (int, float)) and pl >= 0:
                         total += float(pl)
                         seen = True
-        # Fallback path used by some PyMKF builds: a single scalar.
-        if not seen:
-            scalar = winding_obj.get("dcResistancePerWinding") or winding_obj.get("totalLosses")
-            if isinstance(scalar, (int, float)) and scalar >= 0:
-                total = float(scalar)
-                seen = True
-        if seen:
-            winding_loss = total
+            if seen:
+                winding_loss = total
+        if winding_loss is None:
+            # Robust fallback: sum the per-winding loss components MKF breaks
+            # out (ohmic + skin + proximity), each as {"losses": W}. This is a
+            # genuine loss sum — NOT dcResistancePerWinding (that field is
+            # ohms, not watts; using it as a loss was a latent bug).
+            pw = winding_obj.get("windingLossesPerWinding")
+            if isinstance(pw, list):
+                total = 0.0
+                seen = False
+                for w in pw:
+                    if not isinstance(w, Mapping):
+                        continue
+                    for key in ("ohmicLosses", "skinEffectLosses", "proximityEffectLosses"):
+                        comp = w.get(key)
+                        if isinstance(comp, Mapping):
+                            v = comp.get("losses")
+                            if isinstance(v, (int, float)) and v >= 0:
+                                total += float(v)
+                                seen = True
+                if seen:
+                    winding_loss = total
     return core_loss, winding_loss
 
 
