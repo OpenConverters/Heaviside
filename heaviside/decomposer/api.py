@@ -232,6 +232,7 @@ def decompose_from_spec(
     op_index: int = 0,
     bridge_simulation_mode: str = "",
     output_names: Sequence[str] | None = None,
+    spice_config: Mapping[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Full pipeline: spec → MKF spice → wrapped TAS document.
 
@@ -262,6 +263,7 @@ def decompose_from_spec(
         vin_index=vin_index,
         op_index=op_index,
         bridge_simulation_mode=bridge_simulation_mode,
+        spice_config=spice_config,
     )
     topology_block = decompose_netlist(topology, netlist)
     try:
