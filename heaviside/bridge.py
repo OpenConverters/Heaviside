@@ -1364,11 +1364,28 @@ _IPEAK_WORST: dict[str, Any] = {
     # (0.8 * L * fsw) / 2) so the post-filter and realism extract.py
     # agree on Ipeak without requiring currentRippleRatio in the spec.
     "buck": _ipeak_worst_buck,
-    # Other topologies use the spec.currentRippleRatio path via the
-    # stress deriver (less restrictive — works without knowing L).
+    # Energy-storage-inductor topologies: the stress deriver's id_stress IS
+    # the saturation-relevant inductor peak current (boost/four_switch), or a
+    # CONSERVATIVE upper bound on it (cuk/sepic/zeta use the switch sum current
+    # iin+iout ≥ the per-winding current — over-estimating Ipeak only ever
+    # tightens the saturation gate, never lets a saturating core through). All
+    # use the spec.currentRippleRatio path (works without knowing L).
     "boost": lambda spec: _ipeak_worst_from_stress("boost", spec),
     "cuk": lambda spec: _ipeak_worst_from_stress("cuk", spec),
     "flyback": lambda spec: _ipeak_worst_from_stress("flyback", spec),
+    "sepic": lambda spec: _ipeak_worst_from_stress("sepic", spec),
+    "zeta": lambda spec: _ipeak_worst_from_stress("zeta", spec),
+    "four_switch_buck_boost": lambda spec: _ipeak_worst_from_stress(
+        "four_switch_buck_boost", spec
+    ),
+    # NOT registered: transformer topologies (forward/push_pull/AHB/PSFB/
+    # resonant/…). Their stress id_stress is the PRIMARY LOAD current, which is
+    # NOT the flux-setting current — a transformer core saturates on the
+    # MAGNETIZING current (Vin·D/(Lm·fsw)), balanced by the secondary. Using the
+    # load current as Ipeak_worst would be wrong physics (over-conservative in a
+    # way that mis-sizes the magnetic), so we deliberately leave them out and
+    # let the frequency sweep raise (trap #7) until a magnetizing-current
+    # computer is added.
 }
 
 
