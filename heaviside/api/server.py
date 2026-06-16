@@ -388,8 +388,22 @@ def _design_job(
 
     progress_cb = None
     if update is not None:
+        # Declare the design pipeline as named stages so the Jobs view can draw
+        # the flow with per-stage timing. full_design emits (msg, pct) at coarse
+        # milestones (5 topology, 15 magnetics, 95 review, 100 done); map each
+        # pct band to its stage.
+        _DESIGN_STAGES = ["Topology screen", "Magnetics & realize", "Adversarial review"]
+        if hasattr(update, "set_stages"):
+            update.set_stages(_DESIGN_STAGES)
 
         def progress_cb(msg, pct):
+            if hasattr(update, "start_stage"):
+                stage = (
+                    _DESIGN_STAGES[0] if pct < 15
+                    else _DESIGN_STAGES[1] if pct < 95
+                    else _DESIGN_STAGES[2]
+                )
+                update.start_stage(stage)
             return update(f"{pct}% — {msg}")
 
     _, stage2, outcomes = full_design(
@@ -612,6 +626,24 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
     return {"job_id": registry.submit("crossref_url", run)}
 
 
+def _serialize_stages(job: Any) -> list[dict[str, Any]]:
+    """Per-stage pipeline state for the Jobs UI: name, status, and real
+    duration (counting up live while a stage runs)."""
+    import time
+
+    stages = getattr(job, "stages", None) or []
+    now = time.monotonic()
+    out: list[dict[str, Any]] = []
+    for s in stages:
+        dur = s.duration_s(now=now)
+        out.append({
+            "name": s.name,
+            "status": s.status,
+            "duration_s": round(dur, 2) if dur is not None else None,
+        })
+    return out
+
+
 def _job_summary(job: Any) -> dict[str, Any]:
     """Compact view for the jobs list — no heavy `result` payload."""
     summary: str | None = None
@@ -634,6 +666,7 @@ def _job_summary(job: Any) -> dict[str, Any]:
         "status": job.status,
         "progress": job.progress,
         "summary": summary,
+        "stages": _serialize_stages(job),
     }
 
 
@@ -658,6 +691,7 @@ def get_job(job_id: str) -> dict[str, Any]:
         "progress": job.progress,
         "result": job.result if job.status == "done" else None,
         "error": job.error,
+        "stages": _serialize_stages(job),
     }
 
 

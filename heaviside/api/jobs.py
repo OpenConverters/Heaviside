@@ -20,9 +20,29 @@ import time
 import traceback
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from queue import Queue
 from typing import Any
+
+
+@dataclass
+class Stage:
+    """One pipeline stage in a job's lifecycle, with real timing.
+
+    ``status`` is pending → running → done (or error). ``started`` / ``ended``
+    are ``time.monotonic()`` stamps; ``duration_s`` is computed from them (and
+    counts up live while the stage is running)."""
+
+    name: str
+    status: str = "pending"  # pending | running | done | error
+    started: float | None = None
+    ended: float | None = None
+
+    def duration_s(self, *, now: float | None = None) -> float | None:
+        if self.started is None:
+            return None
+        end = self.ended if self.ended is not None else (now if self.status == "running" else None)
+        return None if end is None else max(0.0, end - self.started)
 
 
 @dataclass
@@ -35,6 +55,34 @@ class Job:
     progress: str = ""
     created_monotonic: float | None = None
     cancel_requested: bool = False
+    stages: list[Stage] = field(default_factory=list)
+
+
+class ProgressReporter:
+    """Passed to a job's ``fn`` as the ``update`` argument.
+
+    Backward-compatible: calling it with a string sets the human-readable
+    progress AND auto-advances a stage timeline (each new message becomes a
+    stage), so existing jobs get a pipeline view for free. A job that wants
+    named stages calls :meth:`set_stages` once then :meth:`start_stage`."""
+
+    def __init__(self, registry: "JobRegistry", job_id: str) -> None:
+        self._registry = registry
+        self._job_id = job_id
+        self._explicit = False
+
+    def __call__(self, msg: Any) -> None:
+        self._registry._set(self._job_id, progress=str(msg))
+        if not self._explicit:
+            self._registry._start_stage(self._job_id, str(msg), create=True)
+
+    def set_stages(self, names: list[str]) -> None:
+        self._explicit = True
+        self._registry._init_stages(self._job_id, names)
+
+    def start_stage(self, name: str) -> None:
+        self._explicit = True
+        self._registry._start_stage(self._job_id, name, create=True)
 
 
 class JobRegistry:
@@ -98,6 +146,50 @@ class JobRegistry:
             for k, v in kw.items():
                 setattr(job, k, v)
 
+    def _init_stages(self, job_id: str, names: list[str]) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is not None:
+                job.stages = [Stage(name=n) for n in names]
+
+    def _start_stage(self, job_id: str, name: str, *, create: bool = False) -> None:
+        """Mark ``name`` as the running stage: finish whatever was running, then
+        start ``name`` (creating it if ``create`` and it isn't declared)."""
+        now = time.monotonic()
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            target = next((s for s in job.stages if s.name == name), None)
+            if target is not None and target.status == "running":
+                return  # already the active stage — no-op
+            # finish any currently-running stage(s)
+            for s in job.stages:
+                if s.status == "running":
+                    s.status = "done"
+                    s.ended = now
+            if target is None:
+                if not create:
+                    return
+                target = Stage(name=name)
+                job.stages.append(target)
+            target.status = "running"
+            target.started = now
+            target.ended = None
+
+    def _finalize_stages(self, job_id: str, *, errored: bool) -> None:
+        """At job end: the running stage becomes error (if the job failed) or
+        done; pending stages that never ran stay pending."""
+        now = time.monotonic()
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            for s in job.stages:
+                if s.status == "running":
+                    s.status = "error" if errored else "done"
+                    s.ended = now
+
     def _run(self) -> None:
         import inspect
 
@@ -110,15 +202,14 @@ class JobRegistry:
                 self._queue.task_done()
                 continue
             self._set(job_id, status="running")
+            update = ProgressReporter(self, job_id)
             try:
-
-                def update(msg, job_id=job_id):
-                    return self._set(job_id, progress=str(msg))
-
-                # fn may be zero-arg or take the progress updater.
+                # fn may be zero-arg or take the progress reporter.
                 result = fn(update) if len(inspect.signature(fn).parameters) >= 1 else fn()
+                self._finalize_stages(job_id, errored=False)
                 self._set(job_id, status="done", result=result)
             except Exception as exc:
+                self._finalize_stages(job_id, errored=True)
                 self._set(
                     job_id,
                     status="error",
