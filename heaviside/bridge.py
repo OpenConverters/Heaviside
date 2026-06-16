@@ -521,6 +521,66 @@ def design_magnetics_fast(
     )
 
 
+def design_magnetics_at_fsw(
+    topology: str | TopologyEntry,
+    converter_spec: Mapping[str, Any],
+    fsw_hz: float,
+    *,
+    max_results: int = 5,
+    core_mode: str = "standard cores",
+) -> list[MagneticDesign]:
+    """Design the magnetic at a specific switching frequency, letting MKF
+    re-derive the inductance for that frequency.
+
+    This is the single seam the frequency sweep (master-plan stage C-hs)
+    turns: it stamps ``fsw_hz`` onto every operating point of a copy of the
+    BASE converter spec and hands it to :func:`design_magnetics` (the SLOW
+    base path), where MKF derives L from the operating point +
+    ``currentRippleRatio`` (L ∝ 1/fsw). Heaviside never computes L itself —
+    that keeps the sweep house-rule-clean (all magnetics math in MKF).
+
+    **Why the slow path (for now):** the fast path (:func:`design_magnetics_fast`
+    → ``process_converter``) hard-requires a pre-computed ``desiredInductance``
+    (verified 2026-06-16; abt #11 tracks the MKF gap). Using it would force
+    Heaviside to derive L per-fsw and inject it as a seed — the exact
+    magnetics-math-downstream violation B0c removed. When MKF #11 lands a
+    base-schema ``process_converter``, swap this one body to the fast base
+    path for a ~10× speedup with zero physics change; the sweep above this
+    seam is untouched.
+
+    Raises
+    ------
+    BridgeError
+        If ``fsw_hz`` is not positive, the spec has no operating points, or
+        the spec still carries a ``desiredInductance``/``desiredMagnetizingInductance``
+        (a BASE-schema violation on the designer path — surfaced loudly, not
+        silently stripped).
+    """
+    if not isinstance(fsw_hz, (int, float)) or fsw_hz <= 0:
+        raise BridgeError(f"design_magnetics_at_fsw: fsw_hz must be > 0, got {fsw_hz!r}")
+    for k in ("desiredInductance", "desiredMagnetizingInductance"):
+        if k in converter_spec:
+            raise BridgeError(
+                f"design_magnetics_at_fsw: BASE-schema spec must not carry {k!r} "
+                f"(MKF derives L from the operating point + currentRippleRatio; an "
+                f"injected seed is ignored and signals a designer-path bug). "
+                f"Build the spec via stages.converter_spec_build."
+            )
+    ops = converter_spec.get("operatingPoints")
+    if not isinstance(ops, list) or not ops:
+        raise BridgeError(
+            "design_magnetics_at_fsw: spec has no operatingPoints to stamp fsw onto."
+        )
+    spec_f = dict(converter_spec)
+    spec_f["operatingPoints"] = [
+        {**op, "switchingFrequency": float(fsw_hz)} if isinstance(op, Mapping) else op
+        for op in ops
+    ]
+    return design_magnetics(
+        topology, spec_f, max_results=max_results, core_mode=core_mode
+    )
+
+
 # -----------------------------------------------------------------------------
 # TAS annotation
 # -----------------------------------------------------------------------------

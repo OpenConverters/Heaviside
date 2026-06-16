@@ -124,32 +124,24 @@ def _find_named(tas: Mapping[str, Any], name: str) -> dict[str, Any] | None:
     return None
 
 
-def _inductor_loss_from_mas(comp: Mapping[str, Any]) -> dict[str, float | None]:
-    """Pull core + winding loss out of the PyOM outputs already stamped
-    on the magnetic component.
+def _loss_at_output(op_obj: Any) -> tuple[float | None, float | None]:
+    """Core + winding loss (W) from a single PyOM ``outputs[op]`` object.
 
-    PyMKF populates ``data.outputs[op].coreLosses.coreLosses`` (W) and
-    ``data.outputs[op].windingLosses`` (an object whose total is the
-    sum across windings). We use the first operating point (op0).
-    Returns ``{"L1_core": ..., "L1_dcr": ...}`` with ``None`` for any
-    bucket that's missing.
+    Returns ``(core_loss, winding_loss)`` with ``None`` for any bucket the
+    op object doesn't carry. The single source of truth for reading MKF's
+    per-operating-point magnetic loss numbers — both the op0 reader
+    (:func:`_inductor_loss_from_mas`) and the worst-OP reader
+    (:func:`inductor_loss_worst_op`) delegate here so they never drift.
     """
-    data = comp.get("data")
-    if not isinstance(data, Mapping):
-        return {"L1_core": None, "L1_dcr": None}
-    outs = data.get("outputs")
-    if not isinstance(outs, list) or not outs:
-        return {"L1_core": None, "L1_dcr": None}
-    op0 = outs[0]
-    if not isinstance(op0, Mapping):
-        return {"L1_core": None, "L1_dcr": None}
-    core_obj = op0.get("coreLosses")
+    if not isinstance(op_obj, Mapping):
+        return None, None
+    core_obj = op_obj.get("coreLosses")
     core_loss: float | None = None
     if isinstance(core_obj, Mapping):
         v = core_obj.get("coreLosses")
         if isinstance(v, (int, float)) and v >= 0:
             core_loss = float(v)
-    winding_obj = op0.get("windingLosses")
+    winding_obj = op_obj.get("windingLosses")
     winding_loss: float | None = None
     if isinstance(winding_obj, Mapping):
         # PyMKF reports per-winding DC loss; sum across windings.
@@ -171,7 +163,58 @@ def _inductor_loss_from_mas(comp: Mapping[str, Any]) -> dict[str, float | None]:
                 seen = True
         if seen:
             winding_loss = total
+    return core_loss, winding_loss
+
+
+def _inductor_loss_from_mas(comp: Mapping[str, Any]) -> dict[str, float | None]:
+    """Pull core + winding loss out of the PyOM outputs already stamped
+    on the magnetic component.
+
+    PyMKF populates ``data.outputs[op].coreLosses.coreLosses`` (W) and
+    ``data.outputs[op].windingLosses`` (an object whose total is the
+    sum across windings). We use the first operating point (op0).
+    Returns ``{"L1_core": ..., "L1_dcr": ...}`` with ``None`` for any
+    bucket that's missing.
+    """
+    data = comp.get("data")
+    if not isinstance(data, Mapping):
+        return {"L1_core": None, "L1_dcr": None}
+    outs = data.get("outputs")
+    if not isinstance(outs, list) or not outs:
+        return {"L1_core": None, "L1_dcr": None}
+    core_loss, winding_loss = _loss_at_output(outs[0])
     return {"L1_core": core_loss, "L1_dcr": winding_loss}
+
+
+def inductor_loss_worst_op(comp: Mapping[str, Any]) -> dict[str, float | None]:
+    """Worst-operating-point core + winding loss for a magnetic component.
+
+    MKF designs the magnetic across every operating point and stamps a
+    per-OP loss under ``data.outputs[op]``. The frequency sweep ranks on the
+    *worst* OP (not op0), so this returns the maximum core and maximum
+    winding loss observed across all outputs — each maximised independently
+    (a conservative worst-OP envelope). ``None`` for a bucket means NO output
+    carried that number (honest "unavailable", never a fabricated 0).
+
+    Reads the same MAS structure as :func:`_inductor_loss_from_mas` via the
+    shared :func:`_loss_at_output`, so the op0 and worst-OP readers cannot
+    drift apart.
+    """
+    data = comp.get("data")
+    if not isinstance(data, Mapping):
+        return {"L1_core": None, "L1_dcr": None}
+    outs = data.get("outputs")
+    if not isinstance(outs, list) or not outs:
+        return {"L1_core": None, "L1_dcr": None}
+    worst_core: float | None = None
+    worst_wind: float | None = None
+    for op_obj in outs:
+        core, wind = _loss_at_output(op_obj)
+        if core is not None:
+            worst_core = core if worst_core is None else max(worst_core, core)
+        if wind is not None:
+            worst_wind = wind if worst_wind is None else max(worst_wind, wind)
+    return {"L1_core": worst_core, "L1_dcr": worst_wind}
 
 
 def compute_buck_loss_budget(
