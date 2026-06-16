@@ -7,7 +7,7 @@ import Tag from 'primevue/tag'
 import Message from 'primevue/message'
 import { api, pollJob } from '../api.js'
 
-const step = ref(1)
+const advanced = ref(false)
 const d = ref({
   vinMin: 9, vinNom: 12, vinMax: 16,
   outputs: [{ vout: 3.3, iout: 3 }],
@@ -69,103 +69,79 @@ async function run() {
 
 <template>
   <div class="panel">
-    <div class="steps">
-      <div class="step" :class="{ active: step === 1, done: step > 1 }">
-        <span class="num">1</span> Operating point
-      </div>
-      <span class="step-line"></span>
-      <div class="step" :class="{ active: step === 2, done: step > 2 }">
-        <span class="num">2</span> Inductor sizing
-      </div>
-      <span class="step-line"></span>
-      <div class="step" :class="{ active: step === 3 }">
-        <span class="num">3</span> Topology
+    <div class="hint mono">
+      Give the converter its <b>input voltage</b> and <b>output rails</b> — the designer
+      chooses the topology, switching frequency (swept against the magnetic’s total loss)
+      and the inductor itself.
+    </div>
+
+    <div class="section-label">Input voltage</div>
+    <div class="grid3">
+      <div class="field"><label class="fld-label">Vin min (V)</label>
+        <InputNumber v-model="d.vinMin" /></div>
+      <div class="field"><label class="fld-label">Vin nom (V)</label>
+        <InputNumber v-model="d.vinNom" /></div>
+      <div class="field"><label class="fld-label">Vin max (V)</label>
+        <InputNumber v-model="d.vinMax" /></div>
+    </div>
+
+    <div class="section-label" style="margin-top:1rem">
+      Output rails
+      <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">
+        — {{ totalPower.toFixed(1) }} W total{{ multiOutput ? ' · multi-output' : '' }}</span>
+    </div>
+    <div v-for="(o, i) in d.outputs" :key="i" class="rail">
+      <span class="rail-tag mono">OUT{{ i }}</span>
+      <div class="field"><label class="fld-label">Vout (V)</label>
+        <InputNumber v-model="o.vout" :minFractionDigits="1" :maxFractionDigits="2" /></div>
+      <div class="field"><label class="fld-label">Iout (A)</label>
+        <InputNumber v-model="o.iout" :maxFractionDigits="2" /></div>
+      <Button v-if="d.outputs.length > 1" icon="pi pi-trash" text rounded severity="danger"
+              aria-label="remove rail" @click="removeOutput(i)" />
+    </div>
+    <Button label="Add output rail" icon="pi pi-plus" text size="small" @click="addOutput" />
+    <Message v-if="multiOutput" severity="info" style="margin-top:.6rem">
+      Multiple rails describe a multi-output converter — the designer will favour an
+      isolated topology. Magnetic sizing &amp; the primary side use the full
+      {{ totalPower.toFixed(1) }} W; per-secondary component selection is summarised on the
+      main rail.
+    </Message>
+
+    <div class="section-label" style="margin-top:1rem">
+      Topology
+      <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">
+        — auto-selected, or pin one</span>
+    </div>
+    <div class="topo-grid">
+      <span v-for="t in topologies" :key="String(t.value)" class="chip"
+            :class="{ sel: d.topology === t.value }" @click="d.topology = t.value">
+        <span class="chip-dot" v-if="t.value !== null"></span>
+        {{ t.value === null ? '✦ Auto-select' : t.label }}
+      </span>
+    </div>
+
+    <div class="adv-toggle" @click="advanced = !advanced">
+      <i :class="advanced ? 'pi pi-chevron-down' : 'pi pi-chevron-right'" />
+      Advanced
+      <span class="muted">— ambient {{ d.ambient }}°C · ripple {{ d.ripple.toFixed(2) }}</span>
+    </div>
+    <div v-show="advanced" class="grid4" style="margin-top:.5rem">
+      <div class="field"><label class="fld-label">Ambient (°C)</label>
+        <InputNumber v-model="d.ambient" /></div>
+      <div class="field">
+        <label class="fld-label">Current ripple ratio</label>
+        <InputNumber v-model="d.ripple" :minFractionDigits="2" :maxFractionDigits="2" :step="0.05" showButtons />
       </div>
     </div>
 
-    <!-- Step 1 -->
-    <div v-show="step === 1">
-      <div class="section-label">Input voltage</div>
-      <div class="grid3">
-        <div class="field"><label class="fld-label">Vin min (V)</label>
-          <InputNumber v-model="d.vinMin" /></div>
-        <div class="field"><label class="fld-label">Vin nom (V)</label>
-          <InputNumber v-model="d.vinNom" /></div>
-        <div class="field"><label class="fld-label">Vin max (V)</label>
-          <InputNumber v-model="d.vinMax" /></div>
-      </div>
-      <div class="section-label" style="margin-top:1rem">
-        Output rails
-        <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">
-          — {{ totalPower.toFixed(1) }} W total{{ multiOutput ? ' · multi-output' : '' }}</span>
-      </div>
-      <div v-for="(o, i) in d.outputs" :key="i" class="rail">
-        <span class="rail-tag mono">OUT{{ i }}</span>
-        <div class="field"><label class="fld-label">Vout (V)</label>
-          <InputNumber v-model="o.vout" :minFractionDigits="1" :maxFractionDigits="2" /></div>
-        <div class="field"><label class="fld-label">Iout (A)</label>
-          <InputNumber v-model="o.iout" :maxFractionDigits="2" /></div>
-        <Button v-if="d.outputs.length > 1" icon="pi pi-trash" text rounded severity="danger"
-                aria-label="remove rail" @click="removeOutput(i)" />
-      </div>
-      <Button label="Add output rail" icon="pi pi-plus" text size="small" @click="addOutput" />
-      <Message v-if="multiOutput" severity="info" style="margin-top:.6rem">
-        Multiple rails describe a multi-output converter — pick an isolated topology
-        (flyback, forward, isolated buck/-boost…) in step 3. Magnetic sizing &amp; the
-        primary side use the full {{ totalPower.toFixed(1) }} W; per-secondary component
-        selection is summarised on the main rail.
-      </Message>
-
-      <div class="section-label" style="margin-top:1rem">Operating conditions</div>
-      <div class="grid4">
-        <div class="field"><label class="fld-label">Ambient (°C)</label>
-          <InputNumber v-model="d.ambient" /></div>
-      </div>
-      <div style="margin-top:1.1rem">
-        <Button label="Next" icon="pi pi-arrow-right" iconPos="right" @click="step = 2" />
-      </div>
+    <div style="margin-top:1.3rem; display:flex; gap:.6rem; align-items:center">
+      <Button label="Design converter" icon="pi pi-cog" :loading="running" @click="run" />
+      <span v-if="status && !running" class="stage-line">{{ status }}</span>
     </div>
-
-    <!-- Step 2 -->
-    <div v-show="step === 2">
-      <div class="section-label">Magnetic design</div>
-      <p class="muted" style="font-size:.82rem; margin-top:.2rem">
-        The designer picks the switching frequency by sweeping it against the magnetic’s
-        total loss (MKF core + copper + switching), and sizes the inductor at that fsw —
-        you don’t set them. Optionally tune the ripple target MKF uses to derive L:
-      </p>
-      <div class="grid4" style="margin-top:.4rem">
-        <div class="field">
-          <label class="fld-label">Current ripple ratio</label>
-          <InputNumber v-model="d.ripple" :minFractionDigits="2" :maxFractionDigits="2" :step="0.05" showButtons />
-        </div>
-      </div>
-      <div style="margin-top:1.1rem; display:flex; gap:.5rem">
-        <Button label="Back" icon="pi pi-arrow-left" severity="secondary" outlined @click="step = 1" />
-        <Button label="Next" icon="pi pi-arrow-right" iconPos="right" @click="step = 3" />
-      </div>
-    </div>
-
-    <!-- Step 3 -->
-    <div v-show="step === 3">
-      <div class="section-label">Topology <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">— pick one, or let the screen choose</span></div>
-      <div class="topo-grid">
-        <span v-for="t in topologies" :key="String(t.value)" class="chip"
-              :class="{ sel: d.topology === t.value }" @click="d.topology = t.value">
-          <span class="chip-dot" v-if="t.value !== null"></span>
-          {{ t.value === null ? '✦ Auto-select' : t.label }}
-        </span>
-      </div>
-      <div style="margin-top:1.2rem; display:flex; gap:.5rem; align-items:center">
-        <Button label="Back" icon="pi pi-arrow-left" severity="secondary" outlined @click="step = 2" />
-        <Button label="Design converter" icon="pi pi-cog" :loading="running" @click="run" />
-        <span v-if="status && !running" class="stage-line">{{ status }}</span>
-      </div>
-      <div v-if="running" style="margin-top:.8rem">
-        <div class="stage-line" style="margin-bottom:.3rem">{{ status }}</div>
-        <ProgressBar v-if="pct > 0" :value="pct" />
-        <ProgressBar v-else mode="indeterminate" style="height:8px" />
-      </div>
+    <div v-if="running" style="margin-top:.8rem">
+      <div class="stage-line" style="margin-bottom:.3rem">{{ status }}</div>
+      <ProgressBar v-if="pct > 0" :value="pct" />
+      <ProgressBar v-else mode="indeterminate" style="height:8px" />
     </div>
   </div>
 
@@ -179,3 +155,18 @@ async function run() {
   </div>
   <Message v-if="error" severity="error" style="margin-top:1rem">{{ error }}</Message>
 </template>
+
+<style scoped>
+.hint {
+  font-size: .76rem; line-height: 1.5; color: var(--p-surface-300);
+  border-left: 2px solid var(--ch1-deep); padding: .1rem 0 .1rem .7rem;
+  margin-bottom: 1.1rem;
+}
+.adv-toggle {
+  margin-top: 1.1rem; display: inline-flex; align-items: center; gap: .4rem;
+  font-size: .78rem; color: var(--ch1); cursor: pointer; user-select: none;
+}
+.adv-toggle i { font-size: .7rem; }
+.adv-toggle:hover { color: var(--p-surface-100); }
+.adv-toggle .muted { color: var(--p-surface-400); }
+</style>
