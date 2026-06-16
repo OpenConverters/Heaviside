@@ -22,24 +22,44 @@ applies deterministic defaults when those constraints are absent.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from heaviside.stages.topology_constraints import DesignConstraints
 
 
-def build(spec: dict[str, Any], topology: str | None = None) -> dict[str, Any]:
+def build(
+    spec: dict[str, Any],
+    topology: str | None = None,
+    *,
+    constraints: "DesignConstraints | None" = None,
+) -> dict[str, Any]:
     """Return ``spec`` augmented with the converter-level constraints MKF
     requires. Mutates and returns the passed dict (callers pass a copy).
 
     ``topology`` enables model-specific augmentation (AHB rectifier type,
     PSFB phase shift, resonant fsw window, CLLLC bus voltages) without leaking
     a key into other converter models' specs.
+
+    ``constraints`` (master-plan B2) supplies ``maximumDutyCycle`` /
+    ``maximumDrainSourceVoltage`` from the ``topology-constraint-proposer``;
+    when ``None`` the band-guarded deterministic fallback
+    (``topology_constraints.deterministic`` — 0.5 / 3·Vmax) is used. Either way
+    the two values now live in one place, not as literals here. An explicit
+    caller-set value on ``spec`` still wins (``stamp`` uses ``setdefault``).
     """
-    spec.setdefault("maximumDutyCycle", 0.5)
-    if "maximumDrainSourceVoltage" not in spec:
+    from heaviside.stages import topology_constraints
+
+    if constraints is None:
+        # inputVoltage may be absent on non-converter specs reaching this thin
+        # builder; only derive defaults when a Vmax exists (matches the prior
+        # guarded behaviour — no silent fabrication otherwise).
         iv = spec.get("inputVoltage") or {}
-        vmax = iv.get("maximum") or iv.get("nominal")
-        if vmax:
-            # Generous Vds budget so MKF can pick a sensible reflected voltage.
-            spec["maximumDrainSourceVoltage"] = round(float(vmax) * 3.0, 1)
+        has_vmax = isinstance(iv, dict) and (iv.get("maximum") or iv.get("nominal"))
+        if has_vmax:
+            constraints = topology_constraints.deterministic(spec, topology)
+    if constraints is not None:
+        constraints.stamp(spec)
 
     # MKF's AsymmetricHalfBridge requires a per-operating-point ``dutyCycle``
     # (AhbOperatingPoint.from_json calls j.at("dutyCycle")). It is the
