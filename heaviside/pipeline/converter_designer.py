@@ -44,12 +44,56 @@ class ConverterDesign:
     reconcile: Any  # op_reconcile.ReconciliationReport
     review: Any = None  # reviewer_panel.PanelResult | None
     bom: list[dict[str, Any]] = field(default_factory=list)
+    # PyOM-ngspice excitation waveforms (winding current + voltage per OP) read
+    # from the chosen magnetic's MAS — produced by PyOM's bundled libngspice
+    # during design, so they ARE the design's simulation traces (no extra run).
+    waveforms: list[dict[str, Any]] = field(default_factory=list)
     notes: tuple[str, ...] = ()
 
     @property
     def verdict(self) -> str | None:
         vd = getattr(self.outcome, "verdict_dict", None)
         return vd.get("verdict") if isinstance(vd, Mapping) else None
+
+
+def magnetic_waveforms(mas: Mapping[str, Any], *, max_points: int = 400) -> list[dict[str, Any]]:
+    """Extract PyOM's ngspice excitation waveforms (primary-winding current +
+    voltage per operating point) from the chosen magnetic's MAS, downsampled for
+    plotting. These are computed by PyOM's bundled libngspice during design — the
+    design's own simulation traces — so no extra simulator run is needed.
+
+    Returns one entry per operating point: ``{op_index, label, time_s,
+    current_a, voltage_v}``. Skips operating points without a usable waveform
+    (no fabrication)."""
+    out: list[dict[str, Any]] = []
+    ops = (mas.get("inputs") or {}).get("operatingPoints") if isinstance(mas, Mapping) else None
+    if not isinstance(ops, list):
+        return out
+    for i, op in enumerate(ops):
+        if not isinstance(op, Mapping):
+            continue
+        excs = op.get("excitationsPerWinding")
+        if not isinstance(excs, list) or not excs:
+            continue
+        exc = excs[0]  # primary winding (the inductor / main current)
+        cur_wf = (exc.get("current") or {}).get("waveform") if isinstance(exc, Mapping) else None
+        volt_wf = (exc.get("voltage") or {}).get("waveform") if isinstance(exc, Mapping) else None
+        time = cur_wf.get("time") if isinstance(cur_wf, Mapping) else None
+        cur = cur_wf.get("data") if isinstance(cur_wf, Mapping) else None
+        volt = volt_wf.get("data") if isinstance(volt_wf, Mapping) else None
+        if not (isinstance(time, list) and isinstance(cur, list) and time and cur):
+            continue
+        # ceil division so the result is guaranteed <= max_points
+        step = max(1, -(-len(time) // max_points))
+        sl = slice(None, None, step)
+        out.append({
+            "op_index": i,
+            "label": (op.get("name") if isinstance(op.get("name"), str) else None) or f"op{i}",
+            "time_s": time[sl],
+            "current_a": cur[sl],
+            "voltage_v": volt[sl] if isinstance(volt, list) and len(volt) == len(time) else None,
+        })
+    return out
 
 
 def _extract_bom(tas: Mapping[str, Any] | None) -> list[dict[str, Any]]:
@@ -199,5 +243,6 @@ def design_converter(
         reconcile=recon,
         review=review,
         bom=_extract_bom(outcome.tas),
+        waveforms=magnetic_waveforms(chosen.mas),
         notes=tuple(notes),
     )
