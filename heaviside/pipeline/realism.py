@@ -868,7 +868,44 @@ def evaluate_tas(
     # we never silently trust an un-auditable pick).
     checks.append(_check_selection_provenance(tas))
 
+    # --- estimators_agree (B7 cross_check) ------------------------------
+    # Independent estimators of the same quantity (analyst vs sim efficiency /
+    # total loss / Tj) must agree within tolerance; a recorded disagreement
+    # FAILs the design (surface, don't average). UNAVAILABLE until cross_check
+    # has run.
+    checks.append(_check_estimators_agree(tas))
+
     return _verdict_from(tuple(checks))
+
+
+def _check_estimators_agree(tas: Mapping[str, Any]) -> CheckResult:
+    cc = tas.get("cross_check")
+    if not isinstance(cc, Mapping):
+        return _unavailable(
+            "estimators_agree",
+            "no tas.cross_check — independent-estimator triangulation has not run",
+        )
+    comparisons = cc.get("comparisons")
+    if not isinstance(comparisons, list) or not comparisons:
+        return _unavailable("estimators_agree", "tas.cross_check has no comparisons")
+    disagreeing = [
+        c for c in comparisons
+        if isinstance(c, Mapping) and c.get("agree") is False
+    ]
+    if disagreeing:
+        bits = ", ".join(
+            f"{c.get('quantity')}({'/'.join(c.get('sources', []))}): "
+            f"Δ={c.get('relative_diff')}>{c.get('tolerance')}"
+            for c in disagreeing
+        )
+        return CheckResult(
+            name="estimators_agree", status=CheckStatus.FAIL,
+            detail=f"independent estimators disagree beyond tolerance: {bits}",
+        )
+    return CheckResult(
+        name="estimators_agree", status=CheckStatus.PASS,
+        detail=f"all {len(comparisons)} independent-estimator comparisons agree",
+    )
 
 
 def _check_selection_provenance(tas: Mapping[str, Any]) -> CheckResult:
