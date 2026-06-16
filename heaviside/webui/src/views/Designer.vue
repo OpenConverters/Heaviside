@@ -1,7 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import InputNumber from 'primevue/inputnumber'
-import SelectButton from 'primevue/selectbutton'
 import Button from 'primevue/button'
 import ProgressBar from 'primevue/progressbar'
 import Tag from 'primevue/tag'
@@ -12,18 +11,13 @@ const step = ref(1)
 const d = ref({
   vinMin: 9, vinNom: 12, vinMax: 16,
   outputs: [{ vout: 3.3, iout: 3 }],
-  fswKhz: 500, ambient: 25, eff: 0.92,
-  mode: 'ripple', ripple: 0.3, inductanceUh: 4.7, topology: null,
+  ambient: 25, ripple: 0.3, topology: null,
 })
 function addOutput() { d.value.outputs.push({ vout: 5, iout: 1 }) }
 function removeOutput(i) { d.value.outputs.splice(i, 1) }
 const totalPower = computed(() =>
   d.value.outputs.reduce((s, o) => s + (o.vout || 0) * (o.iout || 0), 0))
 const multiOutput = computed(() => d.value.outputs.length > 1)
-const modes = [
-  { label: 'Ripple ratio', value: 'ripple' },
-  { label: 'Known inductance', value: 'known' },
-]
 const topologies = ref([{ label: 'Auto', value: null }])
 const running = ref(false)
 const status = ref('')
@@ -39,18 +33,20 @@ onMounted(async () => {
 })
 
 function buildSpec() {
-  const spec = {
+  // Minimal input: Vin window + output rails + ambient. The designer chooses
+  // the switching frequency (from the magnetic's total-loss sweep), sizes the
+  // inductor, and seeds efficiency / diode drop — so those are no longer form
+  // inputs. currentRippleRatio is the one optional magnetic knob MKF uses to
+  // derive L from the operating point.
+  return {
     inputVoltage: { minimum: d.value.vinMin, nominal: d.value.vinNom, maximum: d.value.vinMax },
     operatingPoints: [{
       outputVoltages: d.value.outputs.map((o) => o.vout),
       outputCurrents: d.value.outputs.map((o) => o.iout),
-      switchingFrequency: d.value.fswKhz * 1000, ambientTemperature: d.value.ambient,
+      ambientTemperature: d.value.ambient,
     }],
-    efficiency: d.value.eff, diodeVoltageDrop: 0.7,
+    currentRippleRatio: d.value.ripple,
   }
-  if (d.value.mode === 'known') spec.desiredInductance = d.value.inductanceUh * 1e-6
-  else spec.currentRippleRatio = d.value.ripple
-  return spec
 }
 
 async function run() {
@@ -120,12 +116,10 @@ async function run() {
         selection is summarised on the main rail.
       </Message>
 
-      <div class="section-label" style="margin-top:1rem">Switching</div>
+      <div class="section-label" style="margin-top:1rem">Operating conditions</div>
       <div class="grid4">
-        <div class="field"><label class="fld-label">fsw (kHz)</label>
-          <InputNumber v-model="d.fswKhz" /></div>
-        <div class="field"><label class="fld-label">Efficiency target</label>
-          <InputNumber v-model="d.eff" :minFractionDigits="2" :maxFractionDigits="3" /></div>
+        <div class="field"><label class="fld-label">Ambient (°C)</label>
+          <InputNumber v-model="d.ambient" /></div>
       </div>
       <div style="margin-top:1.1rem">
         <Button label="Next" icon="pi pi-arrow-right" iconPos="right" @click="step = 2" />
@@ -134,24 +128,18 @@ async function run() {
 
     <!-- Step 2 -->
     <div v-show="step === 2">
-      <div class="section-label">How should the main inductor be sized?</div>
-      <SelectButton v-model="d.mode" :options="modes" optionLabel="label" optionValue="value" />
-      <div class="grid4" style="margin-top:1rem">
-        <div class="field" v-if="d.mode === 'ripple'">
+      <div class="section-label">Magnetic design</div>
+      <p class="muted" style="font-size:.82rem; margin-top:.2rem">
+        The designer picks the switching frequency by sweeping it against the magnetic’s
+        total loss (MKF core + copper + switching), and sizes the inductor at that fsw —
+        you don’t set them. Optionally tune the ripple target MKF uses to derive L:
+      </p>
+      <div class="grid4" style="margin-top:.4rem">
+        <div class="field">
           <label class="fld-label">Current ripple ratio</label>
           <InputNumber v-model="d.ripple" :minFractionDigits="2" :maxFractionDigits="2" :step="0.05" showButtons />
         </div>
-        <div class="field" v-else>
-          <label class="fld-label">Desired inductance (µH)</label>
-          <InputNumber v-model="d.inductanceUh" :minFractionDigits="1" :maxFractionDigits="2" />
-        </div>
-        <div class="field"><label class="fld-label">Ambient (°C)</label>
-          <InputNumber v-model="d.ambient" /></div>
       </div>
-      <p class="muted" style="font-size:.82rem">
-        Ripple ratio lets MKF size the inductance from the operating point; “known inductance”
-        passes your value straight to the magnetic designer.
-      </p>
       <div style="margin-top:1.1rem; display:flex; gap:.5rem">
         <Button label="Back" icon="pi pi-arrow-left" severity="secondary" outlined @click="step = 1" />
         <Button label="Next" icon="pi pi-arrow-right" iconPos="right" @click="step = 3" />

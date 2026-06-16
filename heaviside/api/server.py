@@ -372,6 +372,16 @@ def _design_job(
     # turns ratios) — the CRE path computes these in to_heaviside_spec. Mirror
     # the inductance sizing here so a minimal form yields a real design.
     spec = dict(spec)
+    # The web form no longer asks for fsw — the designer is meant to pick it from
+    # the magnetic's total-loss sweep. Until that sweep pipeline is wired into
+    # this endpoint (B9), seed a starting switching frequency so the current
+    # full_design pipeline (which designs at one fixed fsw) still produces a
+    # design. The frequency_sweep stage overrides this per-point when it lands.
+    spec["operatingPoints"] = [
+        {**o, "switchingFrequency": o.get("switchingFrequency", 500000)}
+        if isinstance(o, dict) else o
+        for o in (spec.get("operatingPoints") or [{}])
+    ]
     op = (spec.get("operatingPoints") or [{}])[0]
     vouts = op.get("outputVoltages") or []
     iouts = op.get("outputCurrents") or []
