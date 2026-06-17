@@ -49,7 +49,7 @@ onUnmounted(() => clearInterval(timer))
       <Button label="Refresh" icon="pi pi-refresh" size="small" severity="secondary" outlined @click="load" />
       <span class="stage-line">click a row to watch its pipeline · auto-refreshing</span>
     </div>
-    <DataTable :value="jobs" :loading="loading" size="small" stripedRows
+    <DataTable :value="jobs" size="small" stripedRows
                v-model:expandedRows="expanded" dataKey="job_id"
                @rowClick="(e) => (expanded[e.data.job_id] = expanded[e.data.job_id] ? undefined : e.data)"
                rowHover>

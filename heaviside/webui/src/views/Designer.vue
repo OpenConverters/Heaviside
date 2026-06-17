@@ -123,15 +123,11 @@ async function run() {
     <div class="adv-toggle" @click="advanced = !advanced">
       <i :class="advanced ? 'pi pi-chevron-down' : 'pi pi-chevron-right'" />
       Advanced
-      <span class="muted">— ambient {{ d.ambient }}°C · ripple {{ d.ripple.toFixed(2) }}</span>
+      <span class="muted">— ambient {{ d.ambient }}°C</span>
     </div>
     <div v-show="advanced" class="grid4" style="margin-top:.5rem">
       <div class="field"><label class="fld-label">Ambient (°C)</label>
         <InputNumber v-model="d.ambient" /></div>
-      <div class="field">
-        <label class="fld-label">Current ripple ratio</label>
-        <InputNumber v-model="d.ripple" :minFractionDigits="2" :maxFractionDigits="2" :step="0.05" showButtons />
-      </div>
     </div>
 
     <div style="margin-top:1.3rem; display:flex; gap:.6rem; align-items:center">
