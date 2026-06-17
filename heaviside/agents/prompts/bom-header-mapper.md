@@ -28,7 +28,12 @@ field**. You do NOT read or transform the cell values — you only name columns.
     tell them apart: manufacturer MPNs look like alphanumeric device codes;
     house numbers are usually short sequential digits.
 * **manufacturer** — the maker/brand column (`MFG`, `Mfr`, `Vendor`, `Brand`).
-* **component_type** — component category/type (`Type`, `Category`, `JEDEC_TYPE`).
+* **component_type** — component category (`Type`, `Category`): capacitor /
+  resistor / inductor / diode / IC, etc. Map this ONLY to a real category
+  column. Do NOT map a *package/footprint* column (`JEDEC_TYPE`, `Package`,
+  `Case` — values like `C0402`, `SOT23`, `0603`) here; leave `component_type`
+  null if the only type-like column holds package codes (the category is then
+  inferred from the description downstream).
 * **value** — the electrical value (`Value`, `VALUE`).
 * **rated_voltage** — the voltage rating (`Voltage`, `VOLTAGE`, `Voltage Rating`).
 * **quantity** — quantity per board (`Qty`, `Quantity`).
@@ -57,7 +62,7 @@ for fields with no matching column):
 {
   "original_mpn": " MFG_PN",
   "manufacturer": "MFG",
-  "component_type": "JEDEC_TYPE",
+  "component_type": null,
   "value": " VALUE",
   "rated_voltage": "VOLTAGE",
   "quantity": "Qty",

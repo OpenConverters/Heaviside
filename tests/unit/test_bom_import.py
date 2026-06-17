@@ -98,6 +98,8 @@ def test_llm_fallback_maps_novel_headers(monkeypatch):
     # hermetic — the values still come from the real cells, never the LLM.
     import heaviside.agents.llm_call as llm
 
+    monkeypatch.setenv("MOONSHOT_API_KEY", "test")  # gate _llm_available()
+
     def fake_call_agent_json(name, message, **kw):
         assert name == "bom-header-mapper"
         return {
@@ -115,28 +117,48 @@ def test_llm_fallback_maps_novel_headers(monkeypatch):
     assert bom[0]["description"] == "cap"
 
 
-def test_llm_fallback_unavailable_resurfaces_part_number_error(monkeypatch):
+def test_llm_unavailable_falls_back_to_deterministic(monkeypatch):
+    # LLM errors (or no key) → best-effort empty overrides → deterministic
+    # aliasing still parses a well-formed BOM (no crash, no raise).
     import heaviside.agents.llm_call as llm
 
-    def boom(*a, **k):
-        raise llm.LLMCallError("no MOONSHOT_API_KEY or OPENAI_API_KEY in environment")
+    monkeypatch.setenv("MOONSHOT_API_KEY", "test")
+    monkeypatch.setattr(
+        llm, "call_agent_json",
+        lambda *a, **k: (_ for _ in ()).throw(llm.LLMCallError("API 521")),
+    )
+    bom = parse_bom_file(b"MPN,Mfr\nABC123,TDK\n", "x.csv")  # deterministic still works
+    assert bom[0]["original_mpn"] == "ABC123"
 
-    monkeypatch.setattr(llm, "call_agent_json", boom)
-    with pytest.raises(BomImportError, match="part-number"):
-        parse_bom_file(b"IntRef,Pieces,Detail\nA001,2,cap\n", "bom.csv")
 
-
-def test_llm_fallback_without_mpn_still_raises(monkeypatch):
-    # The LLM maps other columns but finds no MPN column → re-raises (correct:
+def test_no_mpn_raises_even_after_llm(monkeypatch):
+    # The LLM maps other columns but finds no MPN column → raises (correct:
     # better than mislabelling an internal number as the manufacturer MPN).
     import heaviside.agents.llm_call as llm
 
+    monkeypatch.setenv("MOONSHOT_API_KEY", "test")
     monkeypatch.setattr(
         llm, "call_agent_json",
         lambda *a, **k: {"original_mpn": None, "manufacturer": "Maker"},
     )
     with pytest.raises(BomImportError, match="part-number"):
         parse_bom_file(b"IntRef,Pieces,Maker\nA001,2,Acme\n", "bom.csv")
+
+
+def test_llm_maps_location_to_refdes(monkeypatch):
+    # The real ADAQ7767-1 case: a LOCATION column is the ref designator. The
+    # always-on mapper names it so rows don't collapse (deterministic alias
+    # table doesn't know LOCATION=ref_des).
+    import heaviside.agents.llm_call as llm
+
+    monkeypatch.setenv("MOONSHOT_API_KEY", "test")
+    monkeypatch.setattr(
+        llm, "call_agent_json",
+        lambda *a, **k: {"original_mpn": "MFG_PN", "manufacturer": "MFG", "ref_des": "LOCATION"},
+    )
+    raw = b"ITEM#,MFG,MFG_PN,LOCATION\n1,Samsung,CL05A106,C11\n2,Kemet,C0603C105,C12\n"
+    bom = parse_bom_file(raw, "bom.csv")
+    assert [c["ref_des"] for c in bom] == ["C11", "C12"]
 
 
 def test_legacy_xls_rejected():

@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["BomImportError", "parse_bom_bytes", "parse_bom_file"]
 
@@ -218,20 +221,31 @@ def _read_xlsx_table(raw: bytes) -> tuple[list[str], list[list[Any]]]:
     return [str(h) if h is not None else "" for h in headers], rows
 
 
+def _llm_available() -> bool:
+    """True if an LLM API key is configured (else the mapper is skipped)."""
+    import os
+
+    return bool(os.environ.get("MOONSHOT_API_KEY") or os.environ.get("OPENAI_API_KEY"))
+
+
 def _llm_header_overrides(headers: list[str], rows: list[list[Any]]) -> dict[str, str]:
     """Ask the bom-header-mapper agent which columns map to which canonical
     fields, returning a ``{source_header: canonical_field}`` override map.
 
-    The LLM only *names columns* — it never reads or fabricates values. Raises
-    :class:`BomImportError` (no API key, agent failure, or no MPN column found)
-    so the caller re-surfaces the original "add a part-number column" error
-    rather than silently proceeding."""
+    The LLM only *names columns* — it never reads or fabricates values. This is
+    BEST-EFFORT: any failure (no key, agent error, bad output) returns ``{}`` and
+    is logged, so a parseable BOM still goes through deterministic aliasing. The
+    "no part-number column" error is raised downstream by ``_rows_to_components``,
+    not here — so it fires whether or not the LLM ran."""
     import json
 
     from heaviside.agents.llm_call import LLMCallError, call_agent_json
 
+    if not _llm_available():
+        return {}
     # Feed the header row + a few sample data rows so the agent can tell a real
-    # manufacturer MPN column apart from an internal/house part-number column.
+    # manufacturer MPN column apart from an internal/house part-number column,
+    # and recognise non-obvious column names (e.g. LOCATION = ref designator).
     sample = [
         {str(headers[i]): ("" if i >= len(r) or r[i] is None else str(r[i]))
          for i in range(len(headers))}
@@ -246,17 +260,15 @@ def _llm_header_overrides(headers: list[str], rows: list[list[Any]]) -> dict[str
     try:
         result = call_agent_json("bom-header-mapper", user_message, json_mode=True)
     except LLMCallError as exc:
-        raise BomImportError(
-            "BOM file has no recognisable part-number column, and the LLM "
-            f"column-mapper could not run ({exc}). Add a column named one of: "
-            "MPN, Part, Part Number, or Manufacturer Part Number."
-        ) from exc
+        logger.warning("bom-header-mapper unavailable, using deterministic aliasing: %s", exc)
+        return {}
+    if not isinstance(result, dict):
+        return {}
     # Drop the rationale / any null entries; keep only canonical→header strings.
-    overrides = {
+    return {
         k: v for k, v in result.items()
         if k != "rationale" and isinstance(v, str) and v.strip()
     }
-    return overrides
 
 
 def parse_bom_bytes(
@@ -266,11 +278,15 @@ def parse_bom_bytes(
     by the filename extension. Raises :class:`BomImportError` on any failure
     (unsupported type, empty file, no header, no rows, no part-number column).
 
-    When the deterministic header aliasing cannot find a part-number column and
-    ``allow_llm`` is set, an LLM column-mapper is consulted to identify which
-    existing column is the manufacturer part number (and the other fields). The
-    LLM only selects among the file's own columns — it never invents values, so
-    every emitted value still comes verbatim from a real cell."""
+    When ``allow_llm`` is set (and an API key is configured), the LLM
+    column-mapper ALWAYS runs and identifies which column is each canonical
+    field (manufacturer part number, ref designator, value, category, …) —
+    catching non-standard headers (e.g. ``LOCATION`` = ref designator, ``MFG_PN``
+    = MPN) that the deterministic alias table doesn't know. Its mapping wins per
+    column; unmapped columns fall back to deterministic aliasing. The LLM only
+    selects among the file's own columns — it never invents values, so every
+    emitted value still comes verbatim from a real cell. The mapper is
+    best-effort: if it's unavailable, deterministic aliasing alone is used."""
     if not raw:
         raise BomImportError("uploaded file is empty.")
     name = (filename or "").lower()
@@ -289,16 +305,11 @@ def parse_bom_bytes(
                 f"unsupported BOM file type {filename!r}; use .csv or .xlsx ({exc})"
             ) from exc
 
-    try:
-        return _rows_to_components(headers, rows)
-    except _NoPartNumberColumn:
-        if not allow_llm:
-            raise
-        # Recoverable: headers are just non-standard. Let the LLM identify the
-        # part-number column from the headers + sample rows, then re-map. If the
-        # LLM still can't find an MPN column, _rows_to_components re-raises.
-        overrides = _llm_header_overrides(headers, rows)
-        return _rows_to_components(headers, rows, header_overrides=overrides)
+    # The LLM column-mapper runs on every parse (best-effort); its per-column
+    # mapping wins, deterministic aliasing fills the rest. _rows_to_components
+    # raises _NoPartNumberColumn if NEITHER finds a part-number column.
+    overrides = _llm_header_overrides(headers, rows) if allow_llm else {}
+    return _rows_to_components(headers, rows, header_overrides=overrides)
 
 
 # Convenience alias used by the API layer.

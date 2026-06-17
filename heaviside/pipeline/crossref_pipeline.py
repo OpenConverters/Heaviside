@@ -1360,6 +1360,15 @@ _CATEGORY_ALIASES = {
     "transformer": "magnetic",
 }
 
+# Categories the pipeline recognises as-is. A component_type that is neither one
+# of these nor an alias above (e.g. a JEDEC/package code like "c0402h32" wrongly
+# mapped into the type column) is treated as unknown → re-inferred from the
+# description rather than trusted.
+_CR_CANONICAL_CATEGORIES = frozenset({
+    "capacitor", "resistor", "magnetic", "mosfet", "diode",
+    "semiconductor", "controller", "connector",
+})
+
 
 def _humanize_value(value: str, category: str) -> str:
     """Convert raw SI values like '10e-6' to human-readable '10µF'.
@@ -1458,17 +1467,22 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
         _seen_refs.add(ref)
         row["ref_des"] = ref
 
-        # component_type: infer from description when no category column was
-        # provided, so passive rows reach the cross-referencer (and prefetch can
-        # find candidates by category) instead of falling through unclassified.
-        if not row.get("component_type"):
-            inferred = _infer_component_type(row)
-            if inferred:
-                row["component_type"] = inferred
-
-        cat = row.get("component_type", "")
-        if cat in _CATEGORY_ALIASES:
-            row["component_type"] = _CATEGORY_ALIASES[cat]
+        # component_type: normalize through the alias table; if the provided
+        # value isn't a recognised CR category — absent, OR a JEDEC/package code
+        # that got mapped into the type column (e.g. "C0402H32", "SOT23_6-2") —
+        # infer it from the description so passive rows still reach the
+        # cross-referencer (and prefetch can find candidates by category). A
+        # non-passive (IC/connector/diode) infers to "" and is left unclassified.
+        raw_ct = str(row.get("component_type", "")).strip().lower()
+        cat = _CATEGORY_ALIASES.get(raw_ct) or (
+            raw_ct if raw_ct in _CR_CANONICAL_CATEGORIES else ""
+        )
+        if not cat:
+            cat = _infer_component_type(row)
+        if cat:
+            row["component_type"] = cat
+        else:
+            row.pop("component_type", None)  # drop a bogus package-code value
         # Convert raw SI values to human-readable for the LLM
         val = row.get("value", "")
         if val and cat:
