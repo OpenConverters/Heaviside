@@ -117,3 +117,25 @@ def test_stage_duration_counts_up_while_running():
     s2 = Stage(name="Y", status="done", started=100.0, ended=100.3)
     assert s2.duration_s() == pytest.approx(0.3)
     assert Stage(name="Z").duration_s() is None  # not started
+
+
+def test_cancel_stops_a_running_job():
+    """A running job must abort at the next stage boundary when cancelled —
+    not run to completion (the reported Jobs-view 'cancel does nothing' bug)."""
+    reg = JobRegistry()
+
+    def long_job(update):
+        update.set_stages(["A", "B", "C", "D"])
+        for s in ["A", "B", "C", "D"]:
+            update.start_stage(s)
+            time.sleep(0.15)
+        return {"finished": True}
+
+    jid = reg.submit("crossref", long_job)
+    time.sleep(0.2)  # let it enter the running state
+    assert reg.get(jid).status == "running"
+    assert reg.cancel(jid) is True
+    j = _wait(reg, jid)
+    assert j.status == "cancelled"
+    assert j.result is None  # did NOT run to completion
+    assert any(s.status == "pending" for s in j.stages)  # later stages never ran

@@ -74,20 +74,39 @@ class Job:
     stages: list[Stage] = field(default_factory=list)
 
 
+class JobCancelled(Exception):
+    """Raised inside a job's ``fn`` when the user requested cancellation.
+
+    The worker checks at every stage boundary (via :class:`ProgressReporter`),
+    so a long-running pipeline stops at the next stage transition rather than
+    running to completion. Caught by the worker → job status ``cancelled``."""
+
+
 class ProgressReporter:
     """Passed to a job's ``fn`` as the ``update`` argument.
 
     Backward-compatible: calling it with a string sets the human-readable
     progress AND auto-advances a stage timeline (each new message becomes a
     stage), so existing jobs get a pipeline view for free. A job that wants
-    named stages calls :meth:`set_stages` once then :meth:`start_stage`."""
+    named stages calls :meth:`set_stages` once then :meth:`start_stage`.
+
+    Every progress/stage call also checks for cancellation and raises
+    :class:`JobCancelled` if the user pressed Cancel — giving the pipeline
+    frequent, natural abort points without threading a flag through each stage."""
 
     def __init__(self, registry: JobRegistry, job_id: str) -> None:
         self._registry = registry
         self._job_id = job_id
         self._explicit = False
 
+    def check_cancelled(self) -> None:
+        """Raise :class:`JobCancelled` if cancellation was requested."""
+        job = self._registry.get(self._job_id)
+        if job is not None and job.cancel_requested:
+            raise JobCancelled(f"job {self._job_id} cancelled by user")
+
     def __call__(self, msg: Any) -> None:
+        self.check_cancelled()
         self._registry._set(self._job_id, progress=str(msg))
         if not self._explicit:
             self._registry._start_stage(self._job_id, str(msg), create=True)
@@ -97,6 +116,7 @@ class ProgressReporter:
         self._registry._init_stages(self._job_id, names)
 
     def start_stage(self, name: str) -> None:
+        self.check_cancelled()
         self._explicit = True
         self._registry._start_stage(self._job_id, name, create=True)
 
@@ -300,6 +320,12 @@ class JobRegistry:
                 result = fn(update) if len(inspect.signature(fn).parameters) >= 1 else fn()
                 self._finalize_stages(job_id, errored=False)
                 self._set(job_id, status="done", result=result)
+            except JobCancelled:
+                # User pressed Cancel mid-run — a clean stop, not a failure.
+                logger.info("job %s cancelled mid-run", job_id)
+                self._finalize_stages(job_id, errored=True)  # running stage → not "done"
+                self._set(job_id, status="cancelled",
+                          progress="cancelled by user", result=None)
             except Exception as exc:
                 # Log the failure (the worker used to swallow it silently — the
                 # traceback only lived in the job's result), then persist it.
