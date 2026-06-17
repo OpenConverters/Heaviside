@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Tag from 'primevue/tag'
@@ -9,12 +9,15 @@ import PipelineFlow from '../components/PipelineFlow.vue'
 import { api } from '../api.js'
 import { jobSeverity } from '../status.js'
 
+// open-job: a job_id from a #/jobs/<id> deep link — auto-opened on mount.
+const props = defineProps({ openJob: { type: String, default: null } })
+
 const jobs = ref([])
 const loading = ref(false)
 const expanded = ref({})        // PrimeVue row expansion state (keyed by job_id)
 let timer = null
 
-const viewer = ref({ visible: false, loading: false, kind: '', title: '', result: {} })
+const viewer = ref({ visible: false, loading: false, kind: '', title: '', result: {}, jobId: '' })
 
 async function load() {
   loading.value = true
@@ -27,19 +30,39 @@ async function act(job) {
   else await api.deleteJob(job.job_id)
   load()
 }
-async function view(job) {
-  viewer.value = {
-    visible: true, loading: true, result: {},
-    kind: job.kind === 'design' ? 'design' : 'crossref',
-    title: job.kind + ' · ' + job.job_id,
-  }
-  try { viewer.value.result = (await api.job(job.job_id)).result || {} }
-  finally { viewer.value.loading = false }
+// Open a result by job_id (works from a row click OR a deep link — the result
+// is fetched directly, so the list need not have loaded yet). The job's kind
+// (design vs crossref) is read from the fetched response, so deep links render
+// the right view. Stamps the URL hash for a shareable/bookmarkable fixed URL.
+async function viewById(jobId, kind) {
+  if (viewer.value.visible && viewer.value.jobId === jobId) return  // already open
+  viewer.value = { visible: true, loading: true, result: {}, jobId, kind: 'crossref',
+                   title: (kind || 'job') + ' · ' + jobId }
+  if (location.hash !== `#/jobs/${jobId}`) location.hash = `#/jobs/${jobId}`
+  try {
+    const job = await api.job(jobId)
+    const k = kind || job.kind || ''
+    viewer.value.kind = k === 'design' ? 'design' : 'crossref'
+    viewer.value.title = (k || 'job') + ' · ' + jobId
+    viewer.value.result = job.result || {}
+  } finally { viewer.value.loading = false }
 }
+const view = (job) => viewById(job.job_id, job.kind)
+
+// When the viewer closes, drop the per-job id from the URL (back to #/jobs).
+watch(() => viewer.value.visible, (vis) => {
+  if (!vis && location.hash.startsWith('#/jobs/')) location.hash = '#/jobs'
+})
+// React to the deep-link prop (and a fresh value while already on the tab).
+watch(() => props.openJob, (id) => { if (id) viewById(id) }, { immediate: false })
 
 // Poll faster (1.5s) so the in-flight pipeline animates; the /jobs list already
 // carries each job's stages, so no extra request is needed for the flow view.
-onMounted(() => { load(); timer = setInterval(load, 1500) })
+onMounted(() => {
+  load()
+  timer = setInterval(load, 1500)
+  if (props.openJob) viewById(props.openJob)   // deep-linked open on first paint
+})
 onUnmounted(() => clearInterval(timer))
 </script>
 
@@ -72,7 +95,7 @@ onUnmounted(() => clearInterval(timer))
       <Column header="">
         <template #body="{ data }">
           <Button v-if="data.status === 'done'" label="View" icon="pi pi-eye" text size="small" @click.stop="view(data)" />
-          <a v-if="data.status === 'done' && data.kind === 'design'" :href="api.reportPdfUrl(data.job_id)"
+          <a v-if="data.status === 'done'" :href="api.reportPdfUrl(data.job_id)"
              target="_blank" @click.stop class="pdf-link mono">PDF</a>
           <Button :label="isActive(data.status) ? 'Cancel' : 'Delete'" text size="small"
                   :severity="isActive(data.status) ? 'warn' : 'danger'" @click.stop="act(data)" />
@@ -86,7 +109,8 @@ onUnmounted(() => clearInterval(timer))
   </div>
 
   <ResultViewer v-model:visible="viewer.visible" :title="viewer.title"
-                :kind="viewer.kind" :result="viewer.result" :loading="viewer.loading" />
+                :kind="viewer.kind" :result="viewer.result" :loading="viewer.loading"
+                :pdf-url="viewer.jobId ? api.reportPdfUrl(viewer.jobId) : ''" />
 </template>
 
 <style scoped>

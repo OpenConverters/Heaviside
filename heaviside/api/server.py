@@ -581,7 +581,9 @@ def submit_design_closed_loop(req: DesignRequest) -> dict[str, str]:
 
 @app.get("/jobs/{job_id}/report.pdf")
 def job_report_pdf(job_id: str):
-    """Render a finished design job's HTML report to a deliverable PDF."""
+    """Render a finished job's report to a deliverable PDF — a design report for
+    design jobs, a full cross-reference report (coverage, per-category crossing
+    tables, the per-parameter rationale, reviewer verdicts) for crossref jobs."""
     from fastapi.responses import Response
 
     from heaviside.api.jobs import registry
@@ -590,16 +592,26 @@ def job_report_pdf(job_id: str):
     job = registry.get(job_id)
     if job is None or job.status != "done":
         raise HTTPException(status_code=404, detail="no finished job with that id")
-    html = job.result.get("html") if isinstance(job.result, dict) else None
+    result = job.result if isinstance(job.result, dict) else {}
+    # Design jobs carry pre-rendered HTML; crossref jobs are rendered on demand
+    # from the outcome dict (same data the GUI shows).
+    html = result.get("html")
+    if not html and "components" in result:
+        from heaviside.report.crossref_html import render_crossref_html
+
+        html = render_crossref_html(result, title=f"{job.kind} · {job_id}")
+        prefix = "crossref"
+    else:
+        prefix = "design"
     if not html:
-        raise HTTPException(status_code=409, detail="job has no HTML report to render")
+        raise HTTPException(status_code=409, detail="job has no report to render")
     try:
         pdf = html_to_pdf(html)
     except ReporterError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return Response(
         content=pdf, media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="design_{job_id}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="{prefix}_{job_id}.pdf"'},
     )
 
 

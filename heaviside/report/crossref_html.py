@@ -31,6 +31,15 @@ th { background: #f3f4f6; font-weight: 600; }
 .mpn { font-family: 'SF Mono', SFMono-Regular, Consolas, monospace; font-size: 0.85rem; }
 .footer { color: #9ca3af; font-size: 0.8rem; margin-top: 3rem; border-top: 1px solid #e5e7eb;
           padding-top: 0.5rem; }
+.why { font-weight: 600; margin-bottom: .15rem; }
+.pp { font-size: 0.78rem; color: #374151; }
+.pp .pn { display: inline-block; min-width: 3.4rem; color: #6b7280; text-transform: capitalize; }
+.vv { font-size: 0.7rem; padding: 0 .3rem; border-radius: 4px; font-weight: 600; }
+.v-good { background: #d1fae5; color: #059669; }
+.v-warn { background: #fef3c7; color: #d97706; }
+.v-bad  { background: #fee2e2; color: #dc2626; }
+.v-muted{ background: #f3f4f6; color: #9ca3af; }
+.note { font-size: 0.78rem; font-style: italic; color: #6b7280; margin-top: .15rem; }
 @media print { body { margin: 0; } .no-print { display: none; } }
 """
 
@@ -54,6 +63,34 @@ _STATUS_LABELS = {
 
 def _e(text: Any) -> str:
     return html.escape(str(text))
+
+
+_VERDICT_CLASS = {
+    "exact": "v-good", "same": "v-good", "exceeds": "v-good",
+    "differs": "v-warn", "lower": "v-bad", "n/a": "v-muted",
+}
+
+
+def _why_cell(c: dict[str, Any]) -> str:
+    """Render the deterministic per-parameter rationale (why this status) for one
+    component into a table cell: the 'why' line, the param chips
+    (value/voltage/package: original→substitute + verdict), then the LLM note."""
+    md = c.get("match_detail") or {}
+    bits: list[str] = []
+    why = md.get("why") or c.get("notes") or ""
+    if why:
+        bits.append(f'<div class="why">{_e(why)}</div>')
+    for p in md.get("params", []):
+        cls = _VERDICT_CLASS.get(p.get("verdict", ""), "v-muted")
+        o, s = p.get("original") or "—", p.get("substitute") or "—"
+        bits.append(
+            f'<div class="pp"><span class="pn">{_e(p.get("name", ""))}</span> '
+            f'{_e(o)} → {_e(s)} <span class="vv {cls}">{_e(p.get("verdict", ""))}</span></div>'
+        )
+    note = c.get("notes", "")
+    if note and note != why:
+        bits.append(f'<div class="note">{_e(note)}</div>')
+    return "".join(bits) or "—"
 
 
 def _sort_key(ref_des: str) -> tuple[str, int]:
@@ -120,7 +157,7 @@ def render_crossref_html(
     # Summary table
     parts.append("<h2>1. Outcome Summary</h2>")
     parts.append(
-        "<table><tr><th>Category</th><th>Fitted</th><th>Already Würth</th>"
+        f"<table><tr><th>Category</th><th>Fitted</th><th>Already {_e(target)}</th>"
         "<th>Newly Replaced</th><th>Not Replaced</th></tr>"
     )
     for cat in _CAT_ORDER:
@@ -149,20 +186,19 @@ def render_crossref_html(
         parts.append(f"<h3>{_e(label)}</h3>")
         parts.append("<table>")
         parts.append(
-            "<tr><th>Ref</th><th>Original MPN</th><th>Würth PN</th>"
-            "<th>Status</th><th>Notes</th></tr>"
+            f"<tr><th>Ref</th><th>Original MPN</th><th>{_e(target)} PN</th>"
+            "<th>Status</th><th>Why / Notes</th></tr>"
         )
         for c in cat_comps:
             sl, sc = _STATUS_LABELS.get(c["status"], (c["status"], ""))
             sub = c.get("substitute_mpn") or "—"
             orig = c.get("original_mpn") or "—"
-            notes = _e(c.get("notes", "") or "")
             parts.append(
                 f"<tr><td>{_e(c['ref_des'])}</td>"
                 f'<td class="mpn">{_e(orig)}</td>'
                 f'<td class="mpn"><strong>{_e(sub)}</strong></td>'
                 f'<td class="{sc}">{_e(sl)}</td>'
-                f"<td>{notes}</td></tr>"
+                f"<td>{_why_cell(c)}</td></tr>"
             )
         parts.append("</table>")
 

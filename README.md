@@ -12,9 +12,20 @@ Heaviside is the second-generation successor to [Proteus](https://github.com/Ope
 4. **Realism gate is fail-closed.** No design leaves the pipeline that violates ratings, stresses, thermal limits, or component availability. There are no overrides.
 5. **Reproducibility from day 1.** CI runs `ruff` + `mypy --strict` + unit tests + analytical regression against the 48 designs in `TAS/data/converters.ndjson` on every PR.
 
+## What works today
+
+Heaviside runs as a local web bench (`uvicorn heaviside.api:app`, then open `http://localhost:8000`) with four surfaces:
+
+- **Cross-Reference** — upload a BOM (CSV/XLSX) or a reference-design PDF/URL and re-source it to a target manufacturer. An LLM column-mapper understands messy PLM exports; a reverse-engineering front (`RE = spec_extract + reverse_engineer + verify + sim`) simulates the reference so substitutes are ranked against **real per-component stress**, not nameplate. Every substitution carries a **deterministic per-parameter rationale** (value / voltage / package → exact / exceeds / deviates) so each `recommended`/`partial` is auditable. Beats the previous Proteus system on all 10 Würth reference designs. Exportable as a PDF report.
+- **Converter Designer** — minimal input (Vin + output rails); the designer sweeps switching frequency against the magnetic's total loss, sizes the inductor via MKF, builds a full BOM from real TAS parts, simulates it in MKF SPICE, and runs a Ray + Nicola adversarial review.
+- **Jobs** — every run is a job with a live per-stage pipeline view; results persist to disk (survive restart) and have shareable `#/jobs/<id>` URLs.
+- **TAS Catalog** — browse the component database.
+
+High-risk LLM stages are gated by a **Ray + Nicola review-and-retry** loop (produce → review → re-run with their objections if rejected). See [`docs/cross-reference.md`](docs/cross-reference.md).
+
 ## Status
 
-`v0.1.0.dev0` — bootstrapping. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the seven-phase delivery plan.
+`v0.1.0.dev0`. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the delivery plan.
 
 ## Layout
 

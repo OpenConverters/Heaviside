@@ -8,6 +8,7 @@ import { statusSeverity } from '../status.js'
 
 defineProps({
   visible: Boolean, title: String, kind: String, result: Object, loading: Boolean,
+  pdfUrl: { type: String, default: '' },   // /jobs/<id>/report.pdf — enables Download
 })
 defineEmits(['update:visible'])
 
@@ -21,8 +22,16 @@ const verdictClass = (v) => ({
 
 <template>
   <Dialog :visible="visible" @update:visible="$emit('update:visible', $event)" modal
-          maximizable :header="title" :style="{ width: 'min(960px, 95vw)' }"
-          :pt="{ root: { class: 'om-dark' } }">
+          maximizable :style="{ width: '95vw', height: '92vh' }"
+          :contentStyle="{ height: '100%' }" :pt="{ root: { class: 'om-dark' } }">
+    <template #header>
+      <div class="rv-head">
+        <span class="rv-title">{{ title }}</span>
+        <a v-if="pdfUrl" :href="pdfUrl" target="_blank" class="rv-pdf">
+          <i class="pi pi-download" /> Download PDF
+        </a>
+      </div>
+    </template>
     <div v-if="loading">Loading…</div>
     <template v-else-if="kind === 'design'">
       <Tag v-if="result.verdict" :severity="result.verdict === 'pass' ? 'success' : 'warn'"
@@ -86,6 +95,11 @@ const verdictClass = (v) => ({
 </template>
 
 <style scoped>
+.rv-head { display: flex; align-items: center; gap: 1rem; flex: 1; }
+.rv-title { font-weight: 600; }
+.rv-pdf { font-size: .74rem; color: var(--ch1); text-decoration: none; padding: .25rem .6rem;
+  border: 1px solid var(--ch1-deep); border-radius: 6px; display: inline-flex; align-items: center; gap: .35rem; }
+.rv-pdf:hover { background: rgba(60,224,200,.14); }
 .why-line { font-size: .72rem; color: var(--p-surface-300); }
 .mx-detail { padding: .5rem .8rem; font-size: .74rem; }
 .mx-why { margin-bottom: .5rem; color: var(--p-surface-200); }

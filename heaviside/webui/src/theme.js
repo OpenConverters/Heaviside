@@ -1,29 +1,34 @@
 import { definePreset } from '@primeuix/themes'
 import Aura from '@primeuix/themes/aura'
 
-// OpenMagnetics-style teal accent (#539796) on a slate dark surface.
-const teal = {
-  50: '#f0faf9', 100: '#d6f0ee', 200: '#aee0dd', 300: '#7fccc8',
-  400: '#54b3af', 500: '#539796', 600: '#3f7a79', 700: '#356363',
-  800: '#2d5050', 900: '#274343', 950: '#132726',
+// "Bench instrument" theme — CH1 phosphor-aqua trace on a deep CRT teal-black
+// enclosure. Dual-trace scope: amber (CH2) lives in CSS as the warning accent.
+const phosphor = {
+  50: '#e9fffb', 100: '#c5fdf2', 200: '#8df7e6', 300: '#52ecd6',
+  400: '#3ce0c8', 500: '#1ec4ac', 600: '#129e8b', 700: '#147d70',
+  800: '#16635a', 900: '#164f49', 950: '#06302c',
 }
 
 export const OmAura = definePreset(Aura, {
   semantic: {
-    primary: teal,
+    primary: phosphor,
     colorScheme: {
       dark: {
         surface: {
-          0: '#ffffff', 50: '#f7f8fa', 100: '#e9edf2', 200: '#cdd5df',
-          300: '#9fadbf', 400: '#6b7c92', 500: '#475569', 600: '#33415a',
-          700: '#26334a', 800: '#1b2640', 900: '#131c33', 950: '#0b1220',
+          0: '#ffffff', 50: '#eef6f4', 100: '#d8ece8', 200: '#b0d0ca',
+          300: '#83aaa3', 400: '#5d8077', 500: '#3f5d56', 600: '#2a4640',
+          700: '#1c3631', 800: '#142a26', 900: '#0c1d1a', 950: '#06100f',
         },
         primary: {
-          color: '#54b3af', contrastColor: '#0b1220',
-          hoverColor: '#7fccc8', activeColor: '#54b3af',
+          color: '#3ce0c8', contrastColor: '#04201c',
+          hoverColor: '#52ecd6', activeColor: '#3ce0c8',
         },
-        content: { background: '{surface.900}', borderColor: '{surface.800}' },
-        text: { color: '{surface.100}', mutedColor: '{surface.400}' },
+        content: { background: '{surface.900}', borderColor: '{surface.700}' },
+        text: { color: '#d6e7e2', mutedColor: '{surface.400}' },
+        formField: {
+          background: '#091713', borderColor: '{surface.700}',
+          focusBorderColor: '#3ce0c8',
+        },
       },
     },
   },
