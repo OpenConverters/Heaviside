@@ -1400,6 +1400,28 @@ def _humanize_value(value: str, category: str) -> str:
     return f"{v}{unit}"
 
 
+def _infer_component_type(row: dict[str, Any]) -> str:
+    """Infer a CR category from a row's free text when no category column exists
+    (PLM/eval-board exports give the type only in the description, e.g.
+    'CAP CER 10UF', 'RES 10K', 'IND 4.7UH'). Returns "" when it isn't a
+    substitutable passive — those rows are correctly left for keep_original
+    rather than mis-classified. Manufacturer-agnostic, keyword-based."""
+    text = " ".join(
+        str(row.get(k, "")) for k in ("description", "jedec_type", "value")
+    ).upper()
+    # Order matters: check the more specific magnetic/resistor words before the
+    # capacitor 'CAP' (which also appears in unrelated words rarely).
+    if any(w in text for w in ("INDUCTOR", "IND ", "CHOKE", "FERRITE", "BEAD",
+                               "TRANSFORMER", "XFMR", "COIL", "UH ", "MH ")):
+        return "magnetic"
+    if any(w in text for w in ("RESISTOR", "RES ", "RES-", "OHM", "KOHM")):
+        return "resistor"
+    if any(w in text for w in ("CAP CER", "CAPACITOR", "MLCC", "CER CAP", "CAP ",
+                               "UF", "NF", "PF")):
+        return "capacitor"
+    return ""  # IC / connector / diode / etc. — not a substitutable passive
+
+
 def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Canonicalise BOM field names so the pipeline works with both
     Heaviside-native and Proteus-style BOMs."""
@@ -1412,11 +1434,38 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
     import re as _re
 
     out: list[dict[str, Any]] = []
-    for comp in bom:
+    _seen_refs: set[str] = set()
+    for idx, comp in enumerate(bom):
         row = dict(comp)
         for old_key, new_key in _FIELD_MAP.items():
             if old_key in row and new_key not in row:
                 row[new_key] = row[old_key]
+
+        # ref_des: a missing/blank designator must NOT default to a shared "?"
+        # key — that collapses every such row onto one identity and makes the
+        # whole BOM look pre-classified (the ADAQ7767-1 bug). Fall back to the
+        # ref-des column some exports name differently (location/designator),
+        # then to a synthetic unique id. Also de-dupe grouped/repeated refs.
+        ref = str(row.get("ref_des") or "").strip()
+        if not ref or ref in ("?", "n/a"):
+            for alt in ("location", "designator", "refdes", "ref", "item#"):
+                v = str(row.get(alt) or "").strip()
+                if v and v not in ("?", "n/a"):
+                    ref = v
+                    break
+        if not ref or ref in _seen_refs:
+            ref = f"{ref or 'CMP'}#{idx}"  # guarantee uniqueness
+        _seen_refs.add(ref)
+        row["ref_des"] = ref
+
+        # component_type: infer from description when no category column was
+        # provided, so passive rows reach the cross-referencer (and prefetch can
+        # find candidates by category) instead of falling through unclassified.
+        if not row.get("component_type"):
+            inferred = _infer_component_type(row)
+            if inferred:
+                row["component_type"] = inferred
+
         cat = row.get("component_type", "")
         if cat in _CATEGORY_ALIASES:
             row["component_type"] = _CATEGORY_ALIASES[cat]
