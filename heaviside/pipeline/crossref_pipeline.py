@@ -706,6 +706,36 @@ def _stage2_preclassify(state: CrossRefState) -> CrossRefState:
 # ---------------------------------------------------------------------------
 
 
+def _merge_preclassified(state: CrossRefState) -> None:
+    """Append the pre-classified (keep_original) rows to ``crossref_result`` so
+    they appear in the final output. Idempotent — skips refs already present (the
+    correction loop re-runs stage 3, and the empty-BOM path also calls this)."""
+    present = {r.get("ref_des") for r in state.crossref_result}
+    for ref, info in state.preclassified.items():
+        if ref in present:
+            continue
+        comp = next((c for c in state.source_bom if c.get("ref_des", c.get("name")) == ref), None)
+        if comp:
+            state.crossref_result.append(
+                {
+                    "ref_des": ref,
+                    "component_type": comp.get("component_type", ""),
+                    "original_pn": comp.get(
+                        "original_mpn", comp.get("mpn", comp.get("original_pn", ""))
+                    ),
+                    "original_value": comp.get("value", ""),
+                    "original_voltage": comp.get("voltage", comp.get("rated_voltage", "")),
+                    "original_package": comp.get("package", ""),
+                    "substitute_pn": comp.get("original_mpn", comp.get("mpn", "")),
+                    "substitute_value": comp.get("value", ""),
+                    "substitute_voltage": comp.get("voltage", ""),
+                    "substitute_package": comp.get("package", ""),
+                    "status": "keep_original",
+                    "notes": info["reason"],
+                }
+            )
+
+
 def _stage3_crossref(state: CrossRefState) -> CrossRefState:
     """Call the cross-referencer agent with constrained candidates."""
     bom_for_llm = []
@@ -738,7 +768,12 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
         bom_for_llm.append(entry)
 
     if not bom_for_llm:
+        # Every component was pre-classified (already target-mfr / not-fitted).
+        # There's nothing for the LLM, but the kept-original rows MUST still
+        # reach the output — otherwise a BOM that needs no substitutions comes
+        # back with 0 components and looks like a failure.
         state.diagnostics.append("all components pre-classified, nothing to crossref")
+        _merge_preclassified(state)
         return state
 
     user_msg = json.dumps(
@@ -759,27 +794,7 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
     state.crossref_result = data.get("crossref", [])
 
     # Merge pre-classified rows back in
-    for ref, info in state.preclassified.items():
-        comp = next((c for c in state.source_bom if c.get("ref_des", c.get("name")) == ref), None)
-        if comp:
-            state.crossref_result.append(
-                {
-                    "ref_des": ref,
-                    "component_type": comp.get("component_type", ""),
-                    "original_pn": comp.get(
-                        "original_mpn", comp.get("mpn", comp.get("original_pn", ""))
-                    ),
-                    "original_value": comp.get("value", ""),
-                    "original_voltage": comp.get("voltage", comp.get("rated_voltage", "")),
-                    "original_package": comp.get("package", ""),
-                    "substitute_pn": comp.get("original_mpn", comp.get("mpn", "")),
-                    "substitute_value": comp.get("value", ""),
-                    "substitute_voltage": comp.get("voltage", ""),
-                    "substitute_package": comp.get("package", ""),
-                    "status": "keep_original",
-                    "notes": info["reason"],
-                }
-            )
+    _merge_preclassified(state)
 
     logger.info("CR stage 3: crossref produced %d rows", len(state.crossref_result))
     return state

@@ -15,14 +15,29 @@ several RE/design jobs at once trips the Moonshot 429 rate limit
 
 from __future__ import annotations
 
+import contextlib
+import json
+import logging
+import os
 import threading
 import time
 import traceback
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from queue import Queue
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Where finished jobs are persisted so results survive a server restart.
+_DEFAULT_JOBS_DIR = Path(
+    os.environ.get("HEAVISIDE_JOBS_DIR", str(Path.home() / ".heaviside" / "jobs"))
+)
+# Terminal states worth persisting (in-flight jobs aren't — they die with the
+# process and can't be resumed; only completed results need to outlive it).
+_TERMINAL = {"done", "error", "cancelled"}
 
 
 @dataclass
@@ -54,6 +69,7 @@ class Job:
     error: str | None = None
     progress: str = ""
     created_monotonic: float | None = None
+    created_wall: float | None = None  # epoch seconds — survives restart for ordering
     cancel_requested: bool = False
     stages: list[Stage] = field(default_factory=list)
 
@@ -88,10 +104,12 @@ class ProgressReporter:
 class JobRegistry:
     """Thread-safe job store with a single serializing worker."""
 
-    def __init__(self) -> None:
+    def __init__(self, persist_dir: Path | str | None = None) -> None:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self._queue: Queue[tuple[str, Callable[[], Any]]] = Queue()
+        self._persist_dir = Path(persist_dir) if persist_dir is not None else _DEFAULT_JOBS_DIR
+        self._load_persisted()
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
@@ -100,7 +118,10 @@ class JobRegistry:
         callable it can call to publish a human-readable progress string."""
         job_id = uuid.uuid4().hex[:12]
         with self._lock:
-            self._jobs[job_id] = Job(id=job_id, kind=kind, created_monotonic=time.monotonic())
+            self._jobs[job_id] = Job(
+                id=job_id, kind=kind,
+                created_monotonic=time.monotonic(), created_wall=time.time(),
+            )
         self._queue.put((job_id, fn))
         return job_id
 
@@ -112,7 +133,9 @@ class JobRegistry:
         """All jobs, newest first."""
         with self._lock:
             jobs = list(self._jobs.values())
-        jobs.sort(key=lambda j: j.created_monotonic or 0.0, reverse=True)
+        # created_wall (epoch) orders correctly across a restart; monotonic
+        # resets each process so restored jobs would otherwise sort wrong.
+        jobs.sort(key=lambda j: j.created_wall or j.created_monotonic or 0.0, reverse=True)
         return jobs
 
     def delete(self, job_id: str) -> bool:
@@ -124,7 +147,8 @@ class JobRegistry:
             if job.status in ("queued", "running"):
                 return False  # don't delete in-flight work
             del self._jobs[job_id]
-            return True
+        self._delete_persisted(job_id)
+        return True
 
     def cancel(self, job_id: str) -> bool:
         """Request cancellation. A still-queued job is cancelled immediately;
@@ -134,9 +158,12 @@ class JobRegistry:
             if job is None or job.status in ("done", "error", "cancelled"):
                 return False
             job.cancel_requested = True
-            if job.status == "queued":
+            cancelled_now = job.status == "queued"
+            if cancelled_now:
                 job.status = "cancelled"
-            return True
+        if cancelled_now:
+            self._persist_job(job_id)
+        return True
 
     def _set(self, job_id: str, **kw: Any) -> None:
         with self._lock:
@@ -190,6 +217,71 @@ class JobRegistry:
                     s.status = "error" if errored else "done"
                     s.ended = now
 
+    # ------------------------------------------------------------------
+    # Persistence — finished jobs are written to disk so results survive a
+    # server restart (the in-memory dict alone loses everything on exit).
+    # ------------------------------------------------------------------
+
+    def _job_path(self, job_id: str) -> Path:
+        return self._persist_dir / f"{job_id}.json"
+
+    def _persist_job(self, job_id: str) -> None:
+        """Write a terminal job to disk as JSON. Best-effort: a non-serializable
+        result or IO error is logged, not raised — the job already succeeded in
+        memory; losing its on-disk copy must not break the request."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status not in _TERMINAL:
+                return
+            snapshot = {
+                "id": job.id, "kind": job.kind, "status": job.status,
+                "result": job.result, "error": job.error, "progress": job.progress,
+                "created_wall": job.created_wall,
+                "stages": [
+                    {"name": s.name, "status": s.status, "duration_s": s.duration_s()}
+                    for s in job.stages
+                ],
+            }
+        try:
+            self._persist_dir.mkdir(parents=True, exist_ok=True)
+            tmp = self._job_path(job_id).with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(snapshot))
+            tmp.replace(self._job_path(job_id))  # atomic
+        except (TypeError, ValueError, OSError) as exc:
+            logger.warning("could not persist job %s: %s", job_id, exc)
+
+    def _delete_persisted(self, job_id: str) -> None:
+        with contextlib.suppress(OSError):
+            self._job_path(job_id).unlink(missing_ok=True)
+
+    def _load_persisted(self) -> None:
+        """Restore finished jobs from disk on startup (status/result/stages).
+        Restored stages carry only their final duration (no live monotonic
+        timing); restored jobs are terminal, so that's all the UI needs."""
+        if not self._persist_dir.is_dir():
+            return
+        for path in self._persist_dir.glob("*.json"):
+            try:
+                d = json.loads(path.read_text())
+            except (OSError, ValueError) as exc:
+                logger.warning("skipping unreadable persisted job %s: %s", path.name, exc)
+                continue
+            stages = [
+                Stage(name=s.get("name", "?"), status=s.get("status", "done"),
+                      started=0.0,
+                      ended=s.get("duration_s") if s.get("duration_s") is not None else None)
+                for s in (d.get("stages") or [])
+            ]
+            job = Job(
+                id=d.get("id", path.stem), kind=d.get("kind", "?"),
+                status=d.get("status", "done"), result=d.get("result"),
+                error=d.get("error"), progress=d.get("progress", ""),
+                created_wall=d.get("created_wall"), stages=stages,
+            )
+            self._jobs[job.id] = job
+        if self._jobs:
+            logger.info("restored %d persisted jobs from %s", len(self._jobs), self._persist_dir)
+
     def _run(self) -> None:
         import inspect
 
@@ -209,6 +301,9 @@ class JobRegistry:
                 self._finalize_stages(job_id, errored=False)
                 self._set(job_id, status="done", result=result)
             except Exception as exc:
+                # Log the failure (the worker used to swallow it silently — the
+                # traceback only lived in the job's result), then persist it.
+                logger.exception("job %s (%s) failed", job_id, job.kind if job else "?")
                 self._finalize_stages(job_id, errored=True)
                 self._set(
                     job_id,
@@ -217,6 +312,7 @@ class JobRegistry:
                     result={"traceback": traceback.format_exc()[-2000:]},
                 )
             finally:
+                self._persist_job(job_id)  # done/error → survive a restart
                 self._queue.task_done()
 
 

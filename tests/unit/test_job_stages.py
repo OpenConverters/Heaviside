@@ -8,7 +8,16 @@ from __future__ import annotations
 
 import time
 
-from heaviside.api.jobs import JobRegistry, ProgressReporter, Stage
+import pytest
+
+from heaviside.api.jobs import JobRegistry, Stage
+
+
+@pytest.fixture(autouse=True)
+def _isolate_jobs_dir(tmp_path, monkeypatch):
+    """Persist test jobs to a throwaway dir, not the user's ~/.heaviside/jobs —
+    keeps tests hermetic (no cross-run contamination, no home-dir pollution)."""
+    monkeypatch.setattr("heaviside.api.jobs._DEFAULT_JOBS_DIR", tmp_path / "jobs")
 
 
 def _wait(reg, jid, timeout=5.0):
@@ -26,9 +35,12 @@ def test_explicit_named_stages_have_status_and_timing():
 
     def fn(update):
         update.set_stages(["A", "B", "C"])
-        update.start_stage("A"); time.sleep(0.02)
-        update.start_stage("B"); time.sleep(0.02)
-        update.start_stage("C"); time.sleep(0.02)
+        update.start_stage("A")
+        time.sleep(0.02)
+        update.start_stage("B")
+        time.sleep(0.02)
+        update.start_stage("C")
+        time.sleep(0.02)
         return {"ok": True}
 
     j = _wait(reg, reg.submit("design", fn))
@@ -42,8 +54,10 @@ def test_auto_stages_from_plain_update_calls():
     reg = JobRegistry()
 
     def fn(update):
-        update("Parsing"); time.sleep(0.02)
-        update("Matching"); time.sleep(0.02)
+        update("Parsing")
+        time.sleep(0.02)
+        update("Matching")
+        time.sleep(0.02)
         return 1
 
     j = _wait(reg, reg.submit("crossref", fn))
