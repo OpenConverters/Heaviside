@@ -1,4 +1,4 @@
-"""Verdict parsing for CRE and CR review stages.
+"""Verdict parsing for RE and CR review stages.
 
 Single source of truth for extracting a structured verdict (APPROVED /
 REJECTED / PROCEED / BLOCK / UNKNOWN) from LLM output. Used by both
@@ -9,7 +9,7 @@ Parsing strategy (in precedence order):
      closing tag (handles compact and multi-line forms).
   2. Keyword match: 'DESIGN APPROVED' / 'DESIGN REJECTED' (last
      occurrence wins when both appear).
-  3. Keyword match: 'PROCEED' / 'BLOCK' (for CRE gate verdicts).
+  3. Keyword match: 'PROCEED' / 'BLOCK' (for RE gate verdicts).
   4. Bare APPROVED / REJECTED keyword (last occurrence).
   5. Return ``'UNKNOWN'``.
 
@@ -42,7 +42,7 @@ def parse_verdict(text: str) -> str:
       - ``<verdict>APPROVED</verdict>`` (compact)
       - ``<verdict>REJECTED\\n\\n...explanation...</verdict>`` (multi-line)
       - ``DESIGN APPROVED`` / ``DESIGN REJECTED`` keywords
-      - ``PROCEED`` / ``BLOCK`` keywords (CRE gate)
+      - ``PROCEED`` / ``BLOCK`` keywords (RE gate)
       - Bare ``APPROVED`` / ``REJECTED`` keywords
 
     When multiple conflicting keywords appear, the **last** occurrence
@@ -69,7 +69,7 @@ def parse_verdict(text: str) -> str:
         last_rejected = rejected_pos[-1] if rejected_pos else -1
         return "APPROVED" if last_approved > last_rejected else "REJECTED"
 
-    # 4. PROCEED / BLOCK (CRE gate verdicts).
+    # 4. PROCEED / BLOCK (RE gate verdicts).
     proceed_pos = [m.start() for m in _KW_PROCEED_RE.finditer(text)]
     block_pos = [m.start() for m in _KW_BLOCK_RE.finditer(text)]
     if proceed_pos or block_pos:

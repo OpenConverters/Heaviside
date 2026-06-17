@@ -1,7 +1,7 @@
 """Lightweight LLM call for agent prompts.
 
 Sends a system prompt + user message to the configured LLM endpoint
-and returns the raw text response. Used by CRE and CR pipeline stages
+and returns the raw text response. Used by RE and CR pipeline stages
 that need LLM judgment.
 
 Provider: Moonshot/Kimi default, any OpenAI-compatible endpoint via
@@ -154,7 +154,7 @@ def call_llm(
     return content
 
 
-#: Agents whose verdicts gate the pipeline (Ray / Nicola / the CRE
+#: Agents whose verdicts gate the pipeline (Ray / Nicola / the RE
 #: reviewer). Their model must pass the tier policy's review-role gate —
 #: an un-vetted model silently rubber-stamping designs is worse than a
 #: loud refusal.

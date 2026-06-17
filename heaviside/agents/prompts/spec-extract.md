@@ -1,5 +1,5 @@
 ---
-name: competitor
+name: spec-extract
 description: Extracts structured specs and BOM from reference design PDFs or descriptions. Used by the CRE pipeline as the first stage — competitor analysis.
 allowed_tools: [component_exists]
 ---

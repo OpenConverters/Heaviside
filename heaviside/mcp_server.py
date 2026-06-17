@@ -211,13 +211,13 @@ def _query_lessons(args: dict[str, Any]) -> str:
 def _reverse_engineer(args: dict[str, Any]) -> str:
     from pathlib import Path
 
-    from heaviside.pipeline.cre_pipeline import run_cre_pipeline
+    from heaviside.pipeline.re_pipeline import run_re_pipeline
 
     reference = args["reference"]
     pdf_path = Path(args["pdf_path"]) if args.get("pdf_path") else None
 
     try:
-        outcome = run_cre_pipeline(reference, pdf_path=pdf_path)
+        outcome = run_re_pipeline(reference, pdf_path=pdf_path)
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 

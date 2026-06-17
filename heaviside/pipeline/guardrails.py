@@ -1183,7 +1183,7 @@ def apply_guardrails(
 
     _gfoot_footprint_compatibility(comps, bom_by_ref, fires, tas_data_dir=tas_data_dir)
 
-    # Stress-based guardrails (from CRE simulation)
+    # Stress-based guardrails (from RE simulation)
     if stress_by_ref:
         _g7_voltage_stress(comps, stress_by_ref, fires, tas_data_dir=tas_data_dir)
         _g8_current_stress(comps, stress_by_ref, fires, tas_data_dir=tas_data_dir)

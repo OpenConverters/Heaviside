@@ -224,7 +224,7 @@ def extract_bom_from_pdf(
     normalization/field-drift/grouped-ref-expansion are shared and tested
     once. Requires MOONSHOT_API_KEY in the environment.
 
-    Note the deliberate choice of agent: the CRE ``reverse-engineer`` agent
+    Note the deliberate choice of agent: the RE ``reverse-engineer`` agent
     extracts only the *power-path* components (what the converter designer
     needs), so it under-counts vs a full BOM. ``bom-extractor`` is scoped to
     the full parts census, which is what "extract a BOM" means here.

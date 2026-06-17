@@ -292,7 +292,7 @@ def compute_match_score(
     tech_w = {"match": 1.0, "compatible": 0.9, "regression": 0.4, "unknown": 0.95}
     overall *= tech_w.get(score["technology"], 0.95)
 
-    # Stress margin weighting (from CRE simulation)
+    # Stress margin weighting (from RE simulation)
     if stress:
         stress_margin = 1.0
         sub_volt = _coerce_float(comp.get("substitute_voltage"))

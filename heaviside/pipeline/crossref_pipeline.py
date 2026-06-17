@@ -545,7 +545,7 @@ def _rank_candidates(
                         voltage_penalty = 0.2  # slight penalty for overkill
             except (KeyError, TypeError, ValueError):
                 pass
-        # Stress-based penalties (from CRE simulation)
+        # Stress-based penalties (from RE simulation)
         stress_penalty = 0.0
         if stress:
             try:
@@ -1743,7 +1743,7 @@ def run_crossref_pipeline(
 ) -> CrossRefOutcome:
     """Run the full CR pipeline end-to-end.
 
-    When ``stress_by_ref`` is provided (from CRE simulation), candidates
+    When ``stress_by_ref`` is provided (from RE simulation), candidates
     are ranked and guardrails are applied using actual per-component
     voltage and current stress instead of static BOM specs.
 
@@ -1827,86 +1827,86 @@ def run_crossref_with_cre(
     progress: Any = None,
     review_llm: bool = False,
 ) -> CrossRefOutcome:
-    """CRE-fronted cross-reference: simulate first, then crossref with stress.
+    """RE-fronted cross-reference: simulate first, then crossref with stress.
 
-    Runs CRE stages 0→2.8 to extract specs, BOM, and simulate the
+    Runs RE stages 0→2.8 to extract specs, BOM, and simulate the
     reference design. Then extracts per-component V/I stress from the
     simulation and feeds it into the CR pipeline for stress-informed
     ranking, guardrails, and scoring.
 
     When ``source_bom_override`` is provided (e.g. from a pre-extracted
-    Proteus BOM), the CR pipeline uses that instead of the CRE-extracted
-    BOM. The CRE BOM is still used for simulation (power-path components).
+    Proteus BOM), the CR pipeline uses that instead of the RE-extracted
+    BOM. The RE BOM is still used for simulation (power-path components).
     """
-    from heaviside.pipeline.cre import CREState
-    from heaviside.pipeline.cre_pipeline import (
+    from heaviside.pipeline.re_pipeline import (
         _stage0_extract_pdf,
-        _stage1_competitor,
+        _stage1_spec_extract,
         _stage2_5_verify_mpns,
         _stage2_7_extract_claims,
         _stage2_8_testbench,
         _stage2_65_extract_rdson,
         _stage2_reverse_engineer,
     )
-    from heaviside.pipeline.cre_testbench import extract_component_stress
+    from heaviside.pipeline.re_state import REState
+    from heaviside.pipeline.re_testbench import extract_component_stress
 
     def _say(msg: str, pct: int) -> None:
         if progress is not None:
             with contextlib.suppress(Exception):
                 progress(msg, pct)
 
-    # --- CRE stages: extract and simulate ---
+    # --- RE stages: extract and simulate ---
     # Carry the review flag + progress sink so the high-risk extraction stages
     # (competitor specs, reverse-engineered BOM) run under Ray+Nicola review.
-    cre_state = CREState(reference=reference, pdf_path=pdf_path,
+    re_state = REState(reference=reference, pdf_path=pdf_path,
                          review_llm=review_llm, progress=progress)
     if pdf_text is not None:
         # Pre-extracted text (e.g. an HTML app-note fetched from a URL):
         # seed it directly so stage 0 skips PDF extraction.
-        cre_state.pdf_text = pdf_text
+        re_state.pdf_text = pdf_text
     _say("Extracting the reference document (text + tables)", 2)
-    cre_state = _stage0_extract_pdf(cre_state)
-    _say("Competitor analysis: specs + BOM from the reference", 6)
-    cre_state = _stage1_competitor(cre_state)
+    re_state = _stage0_extract_pdf(re_state)
+    _say("Spec extract: Vin/Vout/topology/fsw from the reference", 6)
+    re_state = _stage1_spec_extract(re_state)
     _say("Reverse-engineering the schematic + topology", 10)
-    cre_state = _stage2_reverse_engineer(cre_state)
+    re_state = _stage2_reverse_engineer(re_state)
     _say("Verifying extracted MPNs against the catalog", 14)
-    cre_state = _stage2_5_verify_mpns(cre_state)
+    re_state = _stage2_5_verify_mpns(re_state)
     _say("Extracting RDS(on) for the power FETs", 17)
-    cre_state = _stage2_65_extract_rdson(cre_state)
+    re_state = _stage2_65_extract_rdson(re_state)
     _say("Extracting the reference's datasheet performance claims", 20)
-    cre_state = _stage2_7_extract_claims(cre_state)
+    re_state = _stage2_7_extract_claims(re_state)
     _say("Testbench: simulating the reference design", 24)
-    cre_state = _stage2_8_testbench(cre_state)
+    re_state = _stage2_8_testbench(re_state)
 
     # --- Bridge: extract per-component stress ---
-    _say("CRE→CR bridge: extracting per-component V/I stress from the sim", 30)
-    stress_by_ref = extract_component_stress(cre_state)
-    logger.info("CRE→CR bridge: %d components have simulation stress data", len(stress_by_ref))
+    _say("RE→CR bridge: extracting per-component V/I stress from the sim", 30)
+    stress_by_ref = extract_component_stress(re_state)
+    logger.info("RE→CR bridge: %d components have simulation stress data", len(stress_by_ref))
 
     # --- CR pipeline with stress data ---
     # Use pre-extracted BOM if provided (more complete than LLM extraction),
-    # otherwise use the CRE-extracted BOM.
+    # otherwise use the RE-extracted BOM.
     if source_bom_override:
         source_bom = _normalize_bom(source_bom_override)
         logger.info(
-            "CRE→CR: using provided BOM (%d components) instead of CRE-extracted (%d)",
+            "RE→CR: using provided BOM (%d components) instead of RE-extracted (%d)",
             len(source_bom),
-            len(cre_state.ref_bom),
+            len(re_state.ref_bom),
         )
     else:
-        source_bom = _normalize_bom(cre_state.ref_bom)
+        source_bom = _normalize_bom(re_state.ref_bom)
 
-    # Build circuit context from CRE spec
+    # Build circuit context from RE spec
     ctx = ""
-    if cre_state.ref_spec:
-        s = cre_state.ref_spec
+    if re_state.ref_spec:
+        s = re_state.ref_spec
         ctx = (
             f"Topology: {s.topology}, Vin={s.vin_nom}V, "
             f"Vout={s.vout}V, Iout={s.iout}A, fsw={s.fsw / 1e3:.0f}kHz"
         )
 
-    # Forward progress to the CR core, scaling its 0–100 into the post-CRE band
+    # Forward progress to the CR core, scaling its 0–100 into the post-RE band
     # (30–100) so the percentage advances monotonically across both phases. The
     # stage names map by keyword, so they render correctly regardless of pct.
     cr_progress = None

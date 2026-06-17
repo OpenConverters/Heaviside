@@ -4,7 +4,7 @@ Engine (deterministic, this module): the static feasibility screen
 (``feasible``) and the canonical-name resolver (``resolve``) — pure physics
 + alias normalization, no LLM. ``feasible`` reuses the step-direction /
 multi-output / AC-input screen in ``pipeline.topology_screen``; ``resolve``
-reuses the alias/fuzzy normalizer the CRE pipeline uses, so a topology
+reuses the alias/fuzzy normalizer the RE pipeline uses, so a topology
 string from anywhere maps to one canonical registry name in one place.
 
 LLM layer (``identify``): the topology selector — given a spec it returns
@@ -37,7 +37,7 @@ def canonical_names() -> list[str]:
 def resolve(raw: str) -> str:
     """Map any topology string (alias, spacing, casing) to its canonical
     registry name, or return it unchanged if nothing resolves."""
-    from heaviside.pipeline.cre_pipeline import _resolve_canonical_topology
+    from heaviside.pipeline.re_pipeline import _resolve_canonical_topology
 
     return _resolve_canonical_topology(raw)
 

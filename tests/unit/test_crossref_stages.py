@@ -30,17 +30,17 @@ _CORE = [
     ("Learning from this run (persisting accepted substitutions)", "Learn"),
 ]
 
-# (message, expected-stage) for the CRE prefix — keep in sync with the _say(...)
+# (message, expected-stage) for the RE prefix — keep in sync with the _say(...)
 # calls in run_crossref_with_cre.
 _CRE = [
     ("Extracting the reference document (text + tables)", "Extract reference document"),
-    ("Competitor analysis: specs + BOM from the reference", "Competitor analysis"),
+    ("Spec extract: Vin/Vout/topology/fsw from the reference", "Spec extract"),
     ("Reverse-engineering the schematic + topology", "Reverse-engineer schematic"),
     ("Verifying extracted MPNs against the catalog", "Verify MPNs"),
     ("Extracting RDS(on) for the power FETs", "Extract RDS(on)"),
     ("Extracting the reference's datasheet performance claims", "Extract datasheet claims"),
     ("Testbench: simulating the reference design", "Testbench simulation"),
-    ("CRE→CR bridge: extracting per-component V/I stress from the sim", "CRE→CR stress bridge"),
+    ("RE→CR bridge: extracting per-component V/I stress from the sim", "RE→CR stress bridge"),
 ]
 
 
@@ -57,10 +57,10 @@ def test_core_messages_reach_every_core_stage():
 
 def test_cre_messages_reach_every_cre_prefix_stage():
     reached = {_crossref_stage_for_message(m) for m, _ in _CRE}
-    # the full list is CRE prefix + core; the prefix is everything before the core
+    # the full list is RE prefix + core; the prefix is everything before the core
     prefix = [s for s in _CROSSREF_FULL_STAGES if s not in _CROSSREF_CORE_STAGES]
     missing = [s for s in prefix if s not in reached]
-    assert not missing, f"CRE prefix stages never reached: {missing}"
+    assert not missing, f"RE prefix stages never reached: {missing}"
 
 
 def test_every_mapped_stage_is_declared_in_the_url_superset():

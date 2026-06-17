@@ -3,7 +3,7 @@
 Before the CR-coverage comparison can be trusted, our PDF->BOM extraction
 must see AT LEAST as many components as Proteus did — otherwise a high
 coverage % is just a smaller denominator. For each of the 10 reference
-designs this runs our real extraction (CRE stage0->stage2, LLM) on the
+designs this runs our real extraction (RE stage0->stage2, LLM) on the
 source PDF and asserts our component count >= Proteus's "Components
 reviewed".
 

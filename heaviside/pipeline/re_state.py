@@ -1,6 +1,6 @@
-"""CRE (Competitor Reverse-Engineering) data models.
+"""RE (Reverse-Engineering) data models.
 
-State and outcome dataclasses carried through the CRE pipeline:
+State and outcome dataclasses carried through the RE pipeline:
   PDF → extract spec + BOM + claims (waveforms, efficiency, operating points)
   → verify/fetch BOM into TAS (librarian)
   → map components to stencil roles (LLM)
@@ -141,8 +141,8 @@ class SimComparison:
 
 
 @dataclass(slots=True)
-class CREState:
-    """Mutable state carried through the CRE pipeline stages."""
+class REState:
+    """Mutable state carried through the RE pipeline stages."""
 
     reference: str
     pdf_path: Path | None = None
@@ -170,8 +170,8 @@ class CREState:
 
 
 @dataclass(frozen=True, slots=True)
-class CREOutcome:
-    """Immutable result of a completed CRE pipeline run."""
+class REOutcome:
+    """Immutable result of a completed RE pipeline run."""
 
     reference: str
     ref_spec: ReferenceSpec | None
@@ -189,7 +189,7 @@ class CREOutcome:
     diagnostics: tuple[str, ...] = ()
 
     @classmethod
-    def from_state(cls, state: CREState) -> CREOutcome:
+    def from_state(cls, state: REState) -> REOutcome:
         return cls(
             reference=state.reference,
             ref_spec=state.ref_spec,
@@ -208,9 +208,9 @@ class CREOutcome:
 
 
 __all__ = [
-    "CREOutcome",
-    "CREState",
     "ComponentRoleMap",
+    "REOutcome",
+    "REState",
     "ReferenceClaims",
     "ReferenceSpec",
     "SimComparison",

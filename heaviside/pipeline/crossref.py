@@ -14,9 +14,9 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class SimDerivedStress:
-    """Per-component electrical stress derived from CRE simulation.
+    """Per-component electrical stress derived from RE simulation.
 
-    Populated by ``extract_component_stress()`` after the CRE testbench
+    Populated by ``extract_component_stress()`` after the RE testbench
     runs. Fields are ``None`` when the simulation didn't measure that
     quantity for this component.
     """

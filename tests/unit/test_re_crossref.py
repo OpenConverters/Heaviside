@@ -1,4 +1,4 @@
-"""Integration tests for CRE and CR pipelines with mock LLM responses.
+"""Integration tests for RE and CR pipelines with mock LLM responses.
 
 These tests replace the real LLM call with deterministic mock responses
 so the full pipeline logic (spec extraction, MPN verification, guardrails,
@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
-from heaviside.pipeline.cre import ReferenceSpec
 from heaviside.pipeline.crossref import SubstitutionStatus
+from heaviside.pipeline.re_state import ReferenceSpec
 from heaviside.pipeline.value_parse import (
     parse_capacitance,
     parse_inductance,
@@ -125,7 +125,7 @@ class TestReferenceSpec:
 
 
 # ---------------------------------------------------------------------------
-# CRE pipeline with mock LLM
+# RE pipeline with mock LLM
 # ---------------------------------------------------------------------------
 
 
@@ -186,30 +186,30 @@ _MOCK_REVIEWER_RESPONSE = json.dumps(
 
 
 class TestCREPipelineMock:
-    """Test the CRE pipeline with mocked LLM calls."""
+    """Test the RE pipeline with mocked LLM calls."""
 
-    def test_cre_pipeline_extracts_spec(self) -> None:
-        from heaviside.pipeline.cre import CREState
-        from heaviside.pipeline.cre_pipeline import _stage1_competitor
+    def test_re_pipeline_extracts_spec(self) -> None:
+        from heaviside.pipeline.re_pipeline import _stage1_spec_extract
+        from heaviside.pipeline.re_state import REState
 
-        state = CREState(reference="test-buck-60W")
+        state = REState(reference="test-buck-60W")
 
-        with patch("heaviside.pipeline.cre_pipeline.call_agent_json") as mock:
+        with patch("heaviside.pipeline.re_pipeline.call_agent_json") as mock:
             mock.return_value = json.loads(_MOCK_COMPETITOR_RESPONSE)
-            state = _stage1_competitor(state)
+            state = _stage1_spec_extract(state)
 
         assert state.ref_spec is not None
         assert state.ref_spec.topology == "buck"
         assert state.ref_spec.vout == 12.0
         assert state.ref_spec.pout == 60.0
 
-    def test_cre_pipeline_extracts_bom(self) -> None:
-        from heaviside.pipeline.cre import CREState
-        from heaviside.pipeline.cre_pipeline import _stage2_reverse_engineer
+    def test_re_pipeline_extracts_bom(self) -> None:
+        from heaviside.pipeline.re_pipeline import _stage2_reverse_engineer
+        from heaviside.pipeline.re_state import REState
 
-        state = CREState(reference="test-buck-60W")
+        state = REState(reference="test-buck-60W")
 
-        with patch("heaviside.pipeline.cre_pipeline.call_agent_json") as mock:
+        with patch("heaviside.pipeline.re_pipeline.call_agent_json") as mock:
             mock.return_value = json.loads(_MOCK_RE_RESPONSE)
             state = _stage2_reverse_engineer(state)
 

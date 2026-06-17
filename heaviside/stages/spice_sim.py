@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # bounded knob kinds the calibrate layer may touch, mapped to the existing
-# deck rewriters in cre_testbench (one place, already proven on real decks).
+# deck rewriters in re_testbench (one place, already proven on real decks).
 _ALLOWED_KNOBS = ("component_value", "fsw")
 
 
@@ -107,7 +107,7 @@ def simulate_from_spec(
 
 def _apply_knob(deck: str, knob: dict[str, Any]) -> str:
     """Apply one bounded knob to the deck text using the proven rewriters."""
-    from heaviside.pipeline.cre_testbench import (
+    from heaviside.pipeline.re_testbench import (
         _rewrite_component_value,
         _rewrite_fsw,
     )

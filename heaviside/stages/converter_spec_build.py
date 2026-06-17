@@ -61,7 +61,7 @@ def build(
     spec: dict[str, Any],
     topology: str | None = None,
     *,
-    constraints: "DesignConstraints | None" = None,
+    constraints: DesignConstraints | None = None,
 ) -> dict[str, Any]:
     """Return ``spec`` augmented with the converter-level constraints MKF
     requires. Mutates and returns the passed dict (callers pass a copy).
@@ -93,8 +93,8 @@ def build(
     # Converter-level seeds MKF's base models read to derive L / duty / conduction
     # mode (Buck::process_design_requirements reads diodeVoltageDrop for the duty
     # calc; the loss/Pin balance reads efficiency). A minimal user spec (Vin +
-    # rails) carries neither, so seed them — the same values + rationale the CRE
-    # path uses (cre.py: Si rectifier ~0.7 V, 90% first-pass efficiency target).
+    # rails) carries neither, so seed them — the same values + rationale the RE
+    # path uses (re_state.py: Si rectifier ~0.7 V, 90% first-pass efficiency target).
     # Design *seeds* (like maximumDutyCycle), refined once a real rectifier/loss
     # budget exists — NOT a physics result. Explicit caller values win.
     if "inputVoltage" in spec and spec.get("operatingPoints"):

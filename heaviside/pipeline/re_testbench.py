@@ -1,4 +1,4 @@
-"""CRE virtual test bench: rebuild a reference design and simulate it.
+"""RE virtual test bench: rebuild a reference design and simulate it.
 
 Takes an extracted BOM + spec from a reference design PDF, builds the
 actual converter circuit using the reference's component values, simulates
@@ -17,10 +17,10 @@ from dataclasses import dataclass
 from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
-from heaviside.pipeline.cre import (
+from heaviside.pipeline.re_state import (
     ComponentRoleMap,
-    CREState,
     ReferenceClaims,
+    REState,
     SimComparison,
 )
 
@@ -335,7 +335,7 @@ def _inject_waveform_meas(deck: str, vout_target: float) -> str:
 
     meas = [
         "",
-        "* waveform characterization (CRE testbench)",
+        "* waveform characterization (RE testbench)",
         f".meas tran vout_max max v(vout) FROM={t_start:.6e} TO={t_stop:.6e}",
         f".meas tran vout_min min v(vout) FROM={t_start:.6e} TO={t_stop:.6e}",
         f".meas tran vsw_max max v(sw) FROM={t_start:.6e} TO={t_stop:.6e}",
@@ -794,7 +794,7 @@ def _build_comparison(
 # ---------------------------------------------------------------------------
 
 
-def _diagnose_mismatch(comparison: SimComparison, state: CREState) -> str:
+def _diagnose_mismatch(comparison: SimComparison, state: REState) -> str:
     """Generate a diagnosis for simulation mismatches."""
     from heaviside.agents.llm_call import LLMCallError, call_agent
 
@@ -818,7 +818,7 @@ def _diagnose_mismatch(comparison: SimComparison, state: CREState) -> str:
     try:
         diagnosis = call_agent(
             "reviewer",
-            f"CRE TESTBENCH DIAGNOSIS — simulation doesn't match reference claims.\n\n"
+            f"RE TESTBENCH DIAGNOSIS — simulation doesn't match reference claims.\n\n"
             f"Diagnose the most likely cause and suggest what to adjust.\n\n"
             f"{diag_input}",
             max_tokens=4096,
@@ -875,7 +875,7 @@ def _build_load_points(
     return sorted(points, key=lambda p: p["iout"])
 
 
-def _build_converter_json(state: CREState) -> tuple[dict[str, Any], str] | None:
+def _build_converter_json(state: REState) -> tuple[dict[str, Any], str] | None:
     """Build the MKF converter spec dict and normalize topology.
 
     Returns (converter_json, topology) or None on failure.
@@ -966,7 +966,7 @@ def _simulate_netlist(
     return sim_result, comparison
 
 
-def run_testbench(state: CREState) -> CREState:
+def run_testbench(state: REState) -> REState:
     """Virtual test bench: two-phase simulation.
 
     Phase 1 — Theoretical: decompose from spec with MKF's ideal
@@ -1334,7 +1334,7 @@ def run_testbench(state: CREState) -> CREState:
     return state
 
 
-def _learn_from_testbench(state: CREState) -> None:
+def _learn_from_testbench(state: REState) -> None:
     """Persist testbench lessons to the teacher."""
     try:
         from heaviside.pipeline.teacher import Lesson, store_lessons
@@ -1353,7 +1353,7 @@ def _learn_from_testbench(state: CREState) -> None:
             lessons.append(
                 Lesson(
                     id=hashlib.sha256(
-                        f"cre-tb:{state.reference}:{mm.get('param', '')}:{lesson_data['attempt']}".encode()
+                        f"re-tb:{state.reference}:{mm.get('param', '')}:{lesson_data['attempt']}".encode()
                     ).hexdigest()[:16],
                     timestamp=now,
                     topology=state.ref_spec.topology if state.ref_spec else "?",
@@ -1372,9 +1372,9 @@ def _learn_from_testbench(state: CREState) -> None:
 
 
 def extract_component_stress(
-    state: CREState,
+    state: REState,
 ) -> dict[str, SimDerivedStress]:
-    """Extract per-component V/I stress from CRE simulation results.
+    """Extract per-component V/I stress from RE simulation results.
 
     Maps simulation waveforms to each BOM component via the role map.
     Returns a dict keyed by ref_des. Components without a role mapping

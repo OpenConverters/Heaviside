@@ -1,7 +1,7 @@
 """mpn_verify — does this MPN exist in TAS, and what is it?
 
 Pure-Python stage (no LLM): the single "is this a real catalogue part"
-check shared by CRE MPN verification and the CR ``component_exists`` tool.
+check shared by RE MPN verification and the CR ``component_exists`` tool.
 Maps a PEAS category to its TAS file(s), reuses
 ``librarian.tas.component_exists`` for the boolean, and returns the PEAS
 envelope when found.

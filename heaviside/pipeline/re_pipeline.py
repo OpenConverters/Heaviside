@@ -1,4 +1,4 @@
-"""CRE (Competitor Reverse-Engineering) pipeline orchestrator.
+"""RE (Reverse-Engineering) pipeline orchestrator.
 
 Takes a reference design (PDF or description) and:
   1. Extracts specs + BOM (LLM: competitor + reverse-engineer agents)
@@ -16,7 +16,7 @@ The pipeline reuses Heaviside's existing infrastructure:
 
 Launch:
   heaviside reverse-engineer "TI TIDA-050072" --pdf path/to/pdf
-  POST /cre {"reference": "...", "pdf_text": "..."}
+  POST /reverse-engineer {"reference": "...", "pdf_text": "..."}
 """
 
 from __future__ import annotations
@@ -34,11 +34,11 @@ from heaviside.agents.llm_call import (
     call_agent_json,
     extract_json_block,
 )
-from heaviside.pipeline.cre import (
-    CREOutcome,
-    CREState,
+from heaviside.pipeline.re_state import (
     ReferenceClaims,
     ReferenceSpec,
+    REOutcome,
+    REState,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,9 +50,9 @@ def _reviewed_extraction(
     title: str,
     scope: str,
     present: Any,
-    state: CREState,
+    state: REState,
 ) -> dict[str, Any]:
-    """Run a CRE extraction LLM call under a Ray + Nicola review-and-retry loop
+    """Run a RE extraction LLM call under a Ray + Nicola review-and-retry loop
     (used by the high-risk competitor / reverse-engineer stages when
     ``state.review_llm`` is set). The panel judges whether the extraction is
     faithful to the source; a rejection re-extracts with their objections fed
@@ -89,8 +89,8 @@ def _first_output_field(specs: dict[str, Any], field: str, fallback: Any = 0) ->
     return float(fallback)
 
 
-class CREPipelineError(RuntimeError):
-    """Raised on unrecoverable CRE pipeline failures."""
+class REPipelineError(RuntimeError):
+    """Raised on unrecoverable RE pipeline failures."""
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ class CREPipelineError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-def _stage0_extract_pdf(state: CREState) -> CREState:
+def _stage0_extract_pdf(state: REState) -> REState:
     """Extract text from PDF if a path was provided."""
     if state.pdf_path is None:
         return state
@@ -106,10 +106,10 @@ def _stage0_extract_pdf(state: CREState) -> CREState:
         from heaviside.pipeline.pdf_extract import extract_pdf_text
 
         state.pdf_text = extract_pdf_text(state.pdf_path)
-        logger.info("CRE stage 0: extracted %d chars from %s", len(state.pdf_text), state.pdf_path)
+        logger.info("RE stage 0: extracted %d chars from %s", len(state.pdf_text), state.pdf_path)
     except Exception as exc:
         state.diagnostics.append(f"PDF extraction failed: {exc}")
-        logger.warning("CRE stage 0: PDF extraction failed: %s", exc)
+        logger.warning("RE stage 0: PDF extraction failed: %s", exc)
     return state
 
 
@@ -132,7 +132,7 @@ def _resolve_canonical_topology(raw: str) -> str:
     3. If neither resolves, return the raw string unchanged (full_design's
        static screen will still attempt a feasibility match).
     """
-    from heaviside.pipeline.cre_testbench import _normalize_topology
+    from heaviside.pipeline.re_testbench import _normalize_topology
 
     if not raw:
         return raw
@@ -144,7 +144,7 @@ def _resolve_canonical_topology(raw: str) -> str:
     return norm if norm else raw
 
 
-def _stage1_competitor(state: CREState) -> CREState:
+def _stage1_spec_extract(state: REState) -> REState:
     """Extract structured specs from the reference design."""
     user_msg = f"Reference design: {state.reference}\n\n"
     # Constrain topology to the canonical registry, with the isolated-vs-
@@ -171,14 +171,14 @@ def _stage1_competitor(state: CREState) -> CREState:
     else:
         user_msg += "(No PDF provided — extract what you can from the name/description.)"
 
-    def _produce_competitor(feedback: str | None) -> dict[str, Any]:
+    def _produce_spec_extract(feedback: str | None) -> dict[str, Any]:
         msg = user_msg + (f"\n\n{feedback}" if feedback else "")
-        return call_agent_json("competitor", msg, max_tokens=8192, max_retries=2)
+        return call_agent_json("spec-extract", msg, max_tokens=8192, max_retries=2)
 
     try:
         if state.review_llm:
             data = _reviewed_extraction(
-                _produce_competitor,
+                _produce_spec_extract,
                 title="REFERENCE SPEC EXTRACTION REVIEW",
                 scope=(
                     "REFERENCE-DESIGN SPEC + BOM EXTRACTION from a datasheet / "
@@ -198,7 +198,7 @@ def _stage1_competitor(state: CREState) -> CREState:
                 state=state,
             )
         else:
-            data = _produce_competitor(None)
+            data = _produce_spec_extract(None)
     except LLMCallError as exc:
         state.diagnostics.append(f"competitor agent failed after retries: {exc}")
         return state
@@ -225,7 +225,7 @@ def _stage1_competitor(state: CREState) -> CREState:
         raw_topology = specs.get("topology", "unknown")
         resolved_topology = _resolve_canonical_topology(raw_topology)
         if resolved_topology != raw_topology:
-            logger.info("CRE stage 1: topology %r → canonical %r", raw_topology, resolved_topology)
+            logger.info("RE stage 1: topology %r → canonical %r", raw_topology, resolved_topology)
         ref = ReferenceSpec(
             topology=resolved_topology,
             vin_min=vin_min,
@@ -259,7 +259,7 @@ def _stage1_competitor(state: CREState) -> CREState:
         state.diagnostics.append(f"spec extraction failed: {exc}")
 
     logger.info(
-        "CRE stage 1: extracted spec for %s (%s)",
+        "RE stage 1: extracted spec for %s (%s)",
         state.reference,
         state.ref_spec.topology if state.ref_spec else "?",
     )
@@ -271,7 +271,7 @@ def _stage1_competitor(state: CREState) -> CREState:
 # ---------------------------------------------------------------------------
 
 
-def _stage2_reverse_engineer(state: CREState) -> CREState:
+def _stage2_reverse_engineer(state: REState) -> REState:
     """Extract the BOM from the reference design."""
     user_msg = f"Reference design: {state.reference}\n"
     if state.ref_spec:
@@ -335,7 +335,7 @@ def _stage2_reverse_engineer(state: CREState) -> CREState:
             expanded.append(comp)
     if len(expanded) > len(state.ref_bom):
         logger.info(
-            "CRE stage 2: expanded %d groups → %d individual components",
+            "RE stage 2: expanded %d groups → %d individual components",
             len(state.ref_bom),
             len(expanded),
         )
@@ -357,7 +357,7 @@ def _stage2_reverse_engineer(state: CREState) -> CREState:
                 turns_ratio=_float_or_none(specs.get("turns_ratio")),
             )
 
-    logger.info("CRE stage 2: extracted %d BOM components", len(state.ref_bom))
+    logger.info("RE stage 2: extracted %d BOM components", len(state.ref_bom))
     return state
 
 
@@ -366,7 +366,7 @@ def _stage2_reverse_engineer(state: CREState) -> CREState:
 # ---------------------------------------------------------------------------
 
 
-def _stage2_5_verify_mpns(state: CREState) -> CREState:
+def _stage2_5_verify_mpns(state: REState) -> REState:
     """Check which BOM MPNs exist in the TAS database."""
     try:
         from heaviside.librarian.tas import component_exists
@@ -398,7 +398,7 @@ def _stage2_5_verify_mpns(state: CREState) -> CREState:
         except Exception:
             comp["in_tas"] = False
 
-    logger.info("CRE stage 2.5: %d / %d MPNs found in TAS", found, len(state.ref_bom))
+    logger.info("RE stage 2.5: %d / %d MPNs found in TAS", found, len(state.ref_bom))
 
     # Fetch missing inductors/magnetics from Digi-Key — their DCR is
     # required for accurate simulation (no heuristic estimates allowed).
@@ -407,7 +407,7 @@ def _stage2_5_verify_mpns(state: CREState) -> CREState:
     return state
 
 
-def _fetch_missing_magnetics(state: CREState) -> None:
+def _fetch_missing_magnetics(state: REState) -> None:
     """Fetch missing inductor MPNs from Digi-Key and persist to TAS."""
     try:
         from heaviside.librarian.fetcher.auth import load_credentials
@@ -432,7 +432,7 @@ def _fetch_missing_magnetics(state: CREState) -> None:
         creds = load_credentials(require_digikey=True)
         client = DigiKeyClient(creds.digikey)
     except Exception as exc:
-        logger.warning("CRE stage 2.6: cannot init Digi-Key client: %s", exc)
+        logger.warning("RE stage 2.6: cannot init Digi-Key client: %s", exc)
         for comp in missing_magnetics:
             state.diagnostics.append(
                 f"inductor {comp['mpn']} not in TAS and Digi-Key unavailable: {exc}"
@@ -447,10 +447,10 @@ def _fetch_missing_magnetics(state: CREState) -> None:
                 tas_record = convert_digikey_to_tas_magnetic(product)
                 add_component("magnetics", tas_record)
                 comp["in_tas"] = True
-                logger.info("CRE stage 2.6: fetched and persisted inductor %s to TAS", mpn)
+                logger.info("RE stage 2.6: fetched and persisted inductor %s to TAS", mpn)
             except Exception as exc:
                 state.diagnostics.append(f"failed to fetch inductor {mpn} from Digi-Key: {exc}")
-                logger.warning("CRE stage 2.6: inductor %s fetch failed: %s", mpn, exc)
+                logger.warning("RE stage 2.6: inductor %s fetch failed: %s", mpn, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +458,7 @@ def _fetch_missing_magnetics(state: CREState) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _stage3_design(state: CREState) -> CREState:
+def _stage3_design(state: REState) -> REState:
     """Run the full_design pipeline for the extracted spec."""
     if state.ref_spec is None:
         state.diagnostics.append("no spec extracted — cannot design")
@@ -480,8 +480,8 @@ def _stage3_design(state: CREState) -> CREState:
     def selector_fn(s: Mapping[str, Any]) -> tuple[list[str], str]:
         static = feasible_topology_names(s)
         if topo in static:
-            return [topo] + [t for t in static if t != topo], f"CRE: prefer {topo}"
-        return static, "CRE: static screen"
+            return [topo] + [t for t in static if t != topo], f"RE: prefer {topo}"
+        return static, "RE: static screen"
 
     try:
         _stage1, _stage2, outcomes = full_design(
@@ -497,7 +497,7 @@ def _stage3_design(state: CREState) -> CREState:
         state.design_outcome = best
         if best and best.verdict_dict:
             state.passed = best.verdict_dict["verdict"] == "pass"
-        logger.info("CRE stage 3: design %s", "PASSED" if state.passed else "FAILED/INCOMPLETE")
+        logger.info("RE stage 3: design %s", "PASSED" if state.passed else "FAILED/INCOMPLETE")
     except FullDesignError as exc:
         state.diagnostics.append(f"design pipeline failed: {exc}")
 
@@ -510,10 +510,10 @@ def _stage3_design(state: CREState) -> CREState:
 
 
 def _stage4_review(
-    state: CREState,
+    state: REState,
     *,
     max_attempts: int = 2,
-) -> CREState:
+) -> REState:
     """Run the adversarial reviewer on the design outcome."""
     if state.design_outcome is None:
         state.diagnostics.append("no design to review")
@@ -532,7 +532,7 @@ def _stage4_review(
         try:
             raw = call_agent(
                 "reviewer",
-                f"CRE REVIEW (adversarial mode)\n\n{json.dumps(review_input, indent=2)}",
+                f"RE REVIEW (adversarial mode)\n\n{json.dumps(review_input, indent=2)}",
                 max_tokens=8192,
             )
             verdict_data = extract_json_block(raw)
@@ -540,9 +540,9 @@ def _stage4_review(
             verdict = verdict_data.get("verdict", "").upper()
             if verdict in ("APPROVED", "PROCEED"):
                 state.passed = state.passed and True
-                logger.info("CRE stage 4: review %s (attempt %d)", verdict, attempt + 1)
+                logger.info("RE stage 4: review %s (attempt %d)", verdict, attempt + 1)
                 break
-            logger.info("CRE stage 4: review %s (attempt %d), retrying", verdict, attempt + 1)
+            logger.info("RE stage 4: review %s (attempt %d), retrying", verdict, attempt + 1)
         except LLMCallError as exc:
             state.diagnostics.append(f"review attempt {attempt + 1} failed: {exc}")
             break
@@ -555,7 +555,7 @@ def _stage4_review(
 # ---------------------------------------------------------------------------
 
 
-def _stage2_65_extract_rdson(state: CREState) -> CREState:
+def _stage2_65_extract_rdson(state: REState) -> REState:
     """If Rds_on wasn't extracted from the eval board PDF, fetch the IC
     datasheet and extract it from there."""
     if not state.ref_spec or (state.ref_spec.rdson_hs and state.ref_spec.rdson_ls):
@@ -596,11 +596,11 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
                         if ds:
                             datasheet_url = ds
                             logger.info(
-                                "CRE stage 2.65: found datasheet via search for %s", base_mpn
+                                "RE stage 2.65: found datasheet via search for %s", base_mpn
                             )
                             break
     except Exception as exc:
-        logger.debug("CRE stage 2.65: Digi-Key lookup for %s failed: %s", ic_mpn, exc)
+        logger.debug("RE stage 2.65: Digi-Key lookup for %s failed: %s", ic_mpn, exc)
 
     # Download and extract text from the IC datasheet
     ic_datasheet_text = ""
@@ -687,14 +687,14 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
                     os.unlink(tmp_path)
                 if ic_datasheet_text:
                     logger.info(
-                        "CRE stage 2.65: downloaded IC datasheet for %s (%d chars) from %s",
+                        "RE stage 2.65: downloaded IC datasheet for %s (%d chars) from %s",
                         ic_mpn,
                         len(ic_datasheet_text),
                         url[:60],
                     )
                     break
         except Exception as exc:
-            logger.debug("CRE stage 2.65: download from %s failed: %s", url[:60], exc)
+            logger.debug("RE stage 2.65: download from %s failed: %s", url[:60], exc)
 
     # Last resort: web search for a direct PDF link
     if not ic_datasheet_text:
@@ -721,11 +721,11 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
                     if decoded.endswith(".pdf") and decoded not in urls_to_try:
                         urls_to_try.append(decoded)
                 logger.info(
-                    "CRE stage 2.65: web search found %d PDF URLs",
+                    "RE stage 2.65: web search found %d PDF URLs",
                     sum(1 for u in urls_to_try if u.endswith(".pdf")),
                 )
         except Exception as exc:
-            logger.debug("CRE stage 2.65: web search failed: %s", exc)
+            logger.debug("RE stage 2.65: web search failed: %s", exc)
 
         # Retry download with newly found URLs
         for url in urls_to_try:
@@ -758,7 +758,7 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
                         os.unlink(tmp_path)
                     if ic_datasheet_text:
                         logger.info(
-                            "CRE stage 2.65: downloaded IC datasheet via web search "
+                            "RE stage 2.65: downloaded IC datasheet via web search "
                             "(%d chars) from %s",
                             len(ic_datasheet_text),
                             url[:60],
@@ -815,7 +815,7 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
             extra=old.extra,
         )
         logger.info(
-            "CRE stage 2.65: extracted Rds_on from %s datasheet: HS=%.1fmΩ LS=%.1fmΩ",
+            "RE stage 2.65: extracted Rds_on from %s datasheet: HS=%.1fmΩ LS=%.1fmΩ",
             ic_mpn,
             rdson_hs,
             rdson_ls or rdson_hs,
@@ -824,7 +824,7 @@ def _stage2_65_extract_rdson(state: CREState) -> CREState:
     return state
 
 
-def _stage2_7_extract_claims(state: CREState) -> CREState:
+def _stage2_7_extract_claims(state: REState) -> REState:
     """Extract performance claims from the competitor agent's output."""
     if not state.ref_spec:
         return state
@@ -909,41 +909,41 @@ def _stage2_7_extract_claims(state: CREState) -> CREState:
             extra=old.extra,
         )
         logger.info(
-            "CRE stage 2.7: extracted Rds_on from PDF: HS=%.1fmΩ LS=%.1fmΩ",
+            "RE stage 2.7: extracted Rds_on from PDF: HS=%.1fmΩ LS=%.1fmΩ",
             rdson_hs,
             rdson_ls or rdson_hs,
         )
 
     logger.info(
-        "CRE stage 2.7: extracted %d efficiency points, ripple=%s mV",
+        "RE stage 2.7: extracted %d efficiency points, ripple=%s mV",
         len(eff_dict),
         state.ref_claims.vout_ripple_mv,
     )
     return state
 
 
-def _stage2_8_testbench(state: CREState) -> CREState:
+def _stage2_8_testbench(state: REState) -> REState:
     """Run the virtual test bench: rebuild and simulate the reference converter."""
-    from heaviside.pipeline.cre_testbench import run_testbench
+    from heaviside.pipeline.re_testbench import run_testbench
 
     return run_testbench(state)
 
 
-def run_cre_pipeline(
+def run_re_pipeline(
     reference: str,
     *,
     pdf_path: Path | None = None,
     verbose: bool = False,
-) -> CREOutcome:
-    """Run the full CRE pipeline end-to-end.
+) -> REOutcome:
+    """Run the full RE pipeline end-to-end.
 
-    Returns a ``CREOutcome`` with the reference spec, extracted BOM,
+    Returns a ``REOutcome`` with the reference spec, extracted BOM,
     design outcome, review verdicts, and pass/fail status.
     """
-    state = CREState(reference=reference, pdf_path=pdf_path)
+    state = REState(reference=reference, pdf_path=pdf_path)
 
     state = _stage0_extract_pdf(state)
-    state = _stage1_competitor(state)
+    state = _stage1_spec_extract(state)
     state = _stage2_reverse_engineer(state)
     state = _stage2_5_verify_mpns(state)
     state = _stage2_65_extract_rdson(state)
@@ -955,9 +955,9 @@ def run_cre_pipeline(
         state = _stage3_design(state)
     state = _stage4_review(state)
 
-    outcome = CREOutcome.from_state(state)
-    logger.info("CRE pipeline %s: %s", "PASSED" if outcome.passed else "FAILED", reference)
+    outcome = REOutcome.from_state(state)
+    logger.info("RE pipeline %s: %s", "PASSED" if outcome.passed else "FAILED", reference)
     return outcome
 
 
-__all__ = ["CREPipelineError", "run_cre_pipeline"]
+__all__ = ["REPipelineError", "run_re_pipeline"]

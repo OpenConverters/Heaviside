@@ -235,22 +235,22 @@ def design_bom(req: BomRequest) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# CRE (Competitor Reverse-Engineering)
+# RE (Reverse-Engineering)
 # ---------------------------------------------------------------------------
 
 
-class CRERequest(BaseModel):
+class RERequest(BaseModel):
     reference: str
     pdf_text: str | None = None
 
 
-@app.post("/cre")
-def cre_endpoint(req: CRERequest) -> dict[str, Any]:
-    """Run the CRE pipeline on a reference design."""
+@app.post("/reverse-engineer")
+def cre_endpoint(req: RERequest) -> dict[str, Any]:
+    """Run the RE pipeline on a reference design."""
     import tempfile
     from pathlib import Path
 
-    from heaviside.pipeline.cre_pipeline import run_cre_pipeline
+    from heaviside.pipeline.re_pipeline import run_re_pipeline
 
     pdf_path = None
     if req.pdf_text:
@@ -259,7 +259,7 @@ def cre_endpoint(req: CRERequest) -> dict[str, Any]:
         pdf_path = Path(tmp.name)
 
     try:
-        outcome = run_cre_pipeline(req.reference, pdf_path=pdf_path)
+        outcome = run_re_pipeline(req.reference, pdf_path=pdf_path)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
@@ -321,7 +321,7 @@ def crossref_endpoint(req: CrossRefRequest) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Async jobs — the design / CRE / cross-reference pipelines take minutes, so
+# Async jobs — the design / RE / cross-reference pipelines take minutes, so
 # the UI submits a job and polls. Workers serialize LLM-heavy runs (avoids
 # Moonshot 429). See heaviside/api/jobs.py.
 # ---------------------------------------------------------------------------
@@ -363,13 +363,13 @@ def _design_job(
     topologies: list[str] | None = None,
     update: Any = None,
 ) -> dict[str, Any]:
-    from heaviside.pipeline.cre import compute_desired_inductance
     from heaviside.pipeline.full_design import full_design
+    from heaviside.pipeline.re_state import compute_desired_inductance
     from heaviside.report import render_html
 
     # The web form posts a bare electrical spec. The MKF magnetic designer
     # additionally needs `desiredInductance` (and, for isolated topologies,
-    # turns ratios) — the CRE path computes these in to_heaviside_spec. Mirror
+    # turns ratios) — the RE path computes these in to_heaviside_spec. Mirror
     # the inductance sizing here so a minimal form yields a real design.
     spec = dict(spec)
     # The web form no longer asks for fsw — the designer is meant to pick it from
@@ -598,8 +598,8 @@ def job_report_pdf(job_id: str):
 # Cross-reference pipeline stages, mirrored into the Jobs view so the run shows
 # its real per-stage progress (driven by the messages run_crossref_pipeline /
 # run_crossref_with_cre emit — the pipeline owns the granularity, the UI just
-# reflects it). The CRE-fronted paths (from-pdf / from-url) reverse-engineer the
-# reference first, so they declare the CRE prefix stages on top of the CR core.
+# reflects it). The RE-fronted paths (from-pdf / from-url) reverse-engineer the
+# reference first, so they declare the RE prefix stages on top of the CR core.
 _CROSSREF_CORE_STAGES = [
     "Prefetch TAS candidates",
     "Librarian: source missing parts",
@@ -614,13 +614,13 @@ _CROSSREF_CORE_STAGES = [
 ]
 _CROSSREF_CRE_PREFIX = [
     "Extract reference document",
-    "Competitor analysis",
+    "Spec extract",
     "Reverse-engineer schematic",
     "Verify MPNs",
     "Extract RDS(on)",
     "Extract datasheet claims",
     "Testbench simulation",
-    "CRE→CR stress bridge",
+    "RE→CR stress bridge",
 ]
 _CROSSREF_FULL_STAGES = _CROSSREF_CRE_PREFIX + _CROSSREF_CORE_STAGES
 # from-url adds a download step ahead of everything else.
@@ -630,15 +630,15 @@ _CROSSREF_URL_STAGES = ["Download reference", *_CROSSREF_FULL_STAGES]
 # more specific keywords before substrings that could also match them.
 _CROSSREF_KEYWORDS: list[tuple[str, str]] = [
     ("Downloading", "Download reference"),
-    # CRE prefix (from-pdf / from-url)
+    # RE prefix (from-pdf / from-url)
     ("reference document", "Extract reference document"),
-    ("Competitor", "Competitor analysis"),
+    ("Spec extract", "Spec extract"),
     ("Reverse-engineering", "Reverse-engineer schematic"),
     ("Verifying extracted MPNs", "Verify MPNs"),
     ("RDS(on)", "Extract RDS(on)"),
     ("performance claims", "Extract datasheet claims"),
     ("Testbench", "Testbench simulation"),
-    ("CRE→CR bridge", "CRE→CR stress bridge"),
+    ("RE→CR bridge", "RE→CR stress bridge"),
     # CR core (all paths)
     ("Prefetching", "Prefetch TAS candidates"),
     ("Librarian", "Librarian: source missing parts"),
@@ -701,7 +701,7 @@ async def submit_crossref_from_pdf(
     target_manufacturer: str,
     file: UploadFile = File(...),
 ) -> dict[str, str]:
-    """Upload a reference-design PDF → CRE simulate → stress → cross-reference."""
+    """Upload a reference-design PDF → RE simulate → stress → cross-reference."""
     from heaviside.api.jobs import registry
 
     raw = await file.read()

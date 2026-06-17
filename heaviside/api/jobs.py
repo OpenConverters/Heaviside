@@ -1,6 +1,6 @@
 """In-memory async job registry for long-running pipeline calls.
 
-The design / CRE / cross-reference pipelines take minutes (LLM + ngspice +
+The design / RE / cross-reference pipelines take minutes (LLM + ngspice +
 MKF), far longer than an HTTP request should block. The web UI submits a job
 (returns a job_id immediately), then polls for status/result.
 
@@ -9,7 +9,7 @@ multi-worker deployment, swap the dict for Redis/RQ — the interface (submit,
 get) stays the same.
 
 LLM-heavy work is SERIALIZED through one worker thread on purpose: running
-several CRE/design jobs at once trips the Moonshot 429 rate limit
+several RE/design jobs at once trips the Moonshot 429 rate limit
 (see kimi-k2-quirks memory). Jobs queue and run one at a time.
 """
 
@@ -66,7 +66,7 @@ class ProgressReporter:
     stage), so existing jobs get a pipeline view for free. A job that wants
     named stages calls :meth:`set_stages` once then :meth:`start_stage`."""
 
-    def __init__(self, registry: "JobRegistry", job_id: str) -> None:
+    def __init__(self, registry: JobRegistry, job_id: str) -> None:
         self._registry = registry
         self._job_id = job_id
         self._explicit = False

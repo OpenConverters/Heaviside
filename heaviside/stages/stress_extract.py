@@ -7,7 +7,7 @@ Two deterministic paths over the existing engines, exposed as one stage:
   the switch, Vr/If on the diode, V_working/I_ripple on the caps). Used to
   size parts before any simulation exists.
 - ``from_simulation``: per-component V/I stress read off the simulation
-  waveforms of a ``CREState`` (``cre_testbench.extract_component_stress``).
+  waveforms of a ``REState`` (``re_testbench.extract_component_stress``).
 
 Both return the existing engineering types unchanged so the realism gate and
 the selector consume one shape. There is no LLM layer — stress is physics.
@@ -39,9 +39,9 @@ def analytical_per_op(topology: str, spec: Mapping[str, Any]) -> list[ComponentS
 
 
 def from_simulation(state: Any) -> dict[str, SimDerivedStress]:
-    """Per-component stress read off a ``CREState``'s simulation waveforms,
+    """Per-component stress read off a ``REState``'s simulation waveforms,
     keyed by ref_des. Components with no role mapping or no sim data get no
     entry (never estimated — CLAUDE.md: no heuristic stand-ins)."""
-    from heaviside.pipeline.cre_testbench import extract_component_stress
+    from heaviside.pipeline.re_testbench import extract_component_stress
 
     return extract_component_stress(state)

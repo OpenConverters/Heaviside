@@ -613,11 +613,11 @@ def reverse_engineer(
     verbose: bool = typer.Option(False, "--verbose"),
 ) -> None:
     """Reverse-engineer a reference design: PDF → BOM → design → review."""
-    from heaviside.pipeline.cre_pipeline import run_cre_pipeline
+    from heaviside.pipeline.re_pipeline import run_re_pipeline
 
-    outcome = run_cre_pipeline(reference, pdf_path=pdf, verbose=verbose)
+    outcome = run_re_pipeline(reference, pdf_path=pdf, verbose=verbose)
 
-    typer.echo(f"CRE: {'PASSED' if outcome.passed else 'FAILED'}", err=True)
+    typer.echo(f"RE: {'PASSED' if outcome.passed else 'FAILED'}", err=True)
     if outcome.ref_spec:
         s = outcome.ref_spec
         typer.echo(

@@ -201,7 +201,7 @@ def _cr_coverage_attempt(design: str) -> dict:
     bom = [asdict(c) for c in extract_bom_from_pdf(pdf, reference=design)
            if not _is_dnp_or_zero_ohm(c)]
     # HEAVISIDE_CR_REVIEW=1 turns on the per-stage Ray+Nicola review-and-retry on
-    # the CRE extraction stages (the "new pipeline"); off by default so the
+    # the RE extraction stages (the "new pipeline"); off by default so the
     # historical benchmark cost/semantics are unchanged.
     outcome = run_crossref_with_cre(
         design, "Würth Elektronik", pdf_path=pdf, source_bom_override=bom,

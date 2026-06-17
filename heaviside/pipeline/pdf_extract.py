@@ -1,12 +1,12 @@
 """PDF text extraction using pdfplumber.
 
-The CRE pipeline sends the extracted text to an LLM agent (reverse-
+The RE pipeline sends the extracted text to an LLM agent (reverse-
 engineer, competitor) which reads BOM tables, specs, and schematics
 from the raw text. Each PDF has a unique layout — the LLM handles
 this naturally; regex/heuristic table parsers do not.
 
   * ``extract_pdf_text`` — full-text extraction with page markers.
-    This is the primary entry point. The CRE pipeline sends this
+    This is the primary entry point. The RE pipeline sends this
     text to the LLM.
   * ``extract_pdf_tables`` — pdfplumber's built-in table detector.
     Available as a fallback but NOT used by the pipeline — LLM
