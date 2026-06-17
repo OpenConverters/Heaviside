@@ -943,8 +943,11 @@ def full_design(
     return stage1, stage2, tuple(outcomes)
 
 
-def _stage4_adversarial_review(outcome: DesignOutcome) -> DesignOutcome:
+def _stage4_adversarial_review(outcome: DesignOutcome, *, progress: Any = None) -> DesignOutcome:
     """Run Ray (engineering) and Nicola (quality) on the best design.
+
+    ``progress`` (optional) is forwarded to the reviewer panel so a caller can
+    surface per-reviewer stage progress (Ray, then Nicola).
 
     Per CLAUDE.md "no silent fallbacks": a reviewer agent that cannot produce
     a verdict (LLM unreachable, timeout, or unparseable output even after
@@ -974,6 +977,7 @@ def _stage4_adversarial_review(outcome: DesignOutcome) -> DesignOutcome:
                 "layout are OUT OF SCOPE for this automated stage."
             ),
             title="CONVERTER DESIGN REVIEW",
+            progress=progress,
         )
     except LLMCallError as exc:
         raise FullDesignError(

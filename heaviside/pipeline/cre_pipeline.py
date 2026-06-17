@@ -44,6 +44,34 @@ from heaviside.pipeline.cre import (
 logger = logging.getLogger(__name__)
 
 
+def _reviewed_extraction(
+    produce: Any,
+    *,
+    title: str,
+    scope: str,
+    present: Any,
+    state: CREState,
+) -> dict[str, Any]:
+    """Run a CRE extraction LLM call under a Ray + Nicola review-and-retry loop
+    (used by the high-risk competitor / reverse-engineer stages when
+    ``state.review_llm`` is set). The panel judges whether the extraction is
+    faithful to the source; a rejection re-extracts with their objections fed
+    back. Unresolved after the budget: keep the best-effort extraction and record
+    the objections as a diagnostic (no silent drop — but a downstream sim/CR run
+    on an imperfect extraction still beats no run)."""
+    from heaviside.stages.reviewed_stage import review_and_retry
+
+    outcome = review_and_retry(
+        produce, present, scope=scope, title=title, progress=state.progress,
+    )
+    if not outcome.approved and outcome.objections:
+        state.diagnostics.append(
+            f"{title}: reviewers unresolved after {outcome.rounds} rounds: "
+            f"{'; '.join(outcome.objections)}"
+        )
+    return outcome.output
+
+
 def _float_or_none(val: Any) -> float | None:
     if val is None:
         return None
@@ -143,8 +171,34 @@ def _stage1_competitor(state: CREState) -> CREState:
     else:
         user_msg += "(No PDF provided — extract what you can from the name/description.)"
 
+    def _produce_competitor(feedback: str | None) -> dict[str, Any]:
+        msg = user_msg + (f"\n\n{feedback}" if feedback else "")
+        return call_agent_json("competitor", msg, max_tokens=8192, max_retries=2)
+
     try:
-        data = call_agent_json("competitor", user_msg, max_tokens=8192, max_retries=2)
+        if state.review_llm:
+            data = _reviewed_extraction(
+                _produce_competitor,
+                title="REFERENCE SPEC EXTRACTION REVIEW",
+                scope=(
+                    "REFERENCE-DESIGN SPEC + BOM EXTRACTION from a datasheet / "
+                    "eval-board PDF. Judge whether the extracted electricals (Vin "
+                    "window, Vout/Iout/Pout, topology, fsw, isolation/turns-ratio) "
+                    "and the component count are COMPLETE and CONSISTENT with the "
+                    "source — missing rails, an obviously wrong topology, "
+                    "contradictory numbers, or dropped line items are objections. "
+                    "Do NOT redesign the converter; only verify the extraction is "
+                    "faithful to the document."
+                ),
+                present=lambda d: {
+                    "specs": d.get("specs", {}),
+                    "performance": d.get("performance", {}),
+                    "bom_line_count": len(d.get("bom", []) or []),
+                },
+                state=state,
+            )
+        else:
+            data = _produce_competitor(None)
     except LLMCallError as exc:
         state.diagnostics.append(f"competitor agent failed after retries: {exc}")
         return state
@@ -230,8 +284,36 @@ def _stage2_reverse_engineer(state: CREState) -> CREState:
 
     # Scale tokens with PDF size — large BOMs need more output space
     bom_tokens = min(16384 + len(state.pdf_text or "") // 4, 32768)
+
+    def _produce_re(feedback: str | None) -> dict[str, Any]:
+        msg = user_msg + (f"\n\n{feedback}" if feedback else "")
+        return call_agent_json("reverse-engineer", msg, max_tokens=bom_tokens, max_retries=2)
+
     try:
-        data = call_agent_json("reverse-engineer", user_msg, max_tokens=bom_tokens, max_retries=2)
+        if state.review_llm:
+            data = _reviewed_extraction(
+                _produce_re,
+                title="REVERSE-ENGINEERED SCHEMATIC/BOM REVIEW",
+                scope=(
+                    "REVERSE-ENGINEERING the reference design's schematic + BOM "
+                    "from its PDF. Judge whether the BOM is COMPLETE and the parts "
+                    "make sense for the stated topology/specs — a power stage "
+                    "missing its main switch, inductor, or output caps; ref-des "
+                    "collisions; or parts that can't belong to this converter are "
+                    "objections. Do NOT design a new converter; only verify the "
+                    "extracted netlist/BOM is faithful and complete."
+                ),
+                present=lambda d: {
+                    "bom_line_count": len(d.get("bom", []) or []),
+                    "bom": [
+                        {k: c.get(k) for k in ("ref_des", "mpn", "part", "role", "value")}
+                        for c in (d.get("bom", []) or [])[:60]
+                    ],
+                },
+                state=state,
+            )
+        else:
+            data = _produce_re(None)
     except LLMCallError as exc:
         state.diagnostics.append(f"reverse-engineer agent failed after retries: {exc}")
         return state
@@ -780,9 +862,13 @@ def _stage2_7_extract_claims(state: CREState) -> CREState:
 
     perf = data.get("performance") or {}
 
-    # Build efficiency dict
+    # Build efficiency dict. Use `or []` not `.get(k, [])`: the LLM can emit
+    # `"efficiency_curve": null` (key present, value None), which `.get` returns
+    # as-is — iterating None then crashes. `or []` guards both absent and null.
     eff_dict: dict[str, float] = {}
-    for entry in perf.get("efficiency_curve", []):
+    for entry in (perf.get("efficiency_curve") or []):
+        if not isinstance(entry, dict):
+            continue
         load = entry.get("load_pct", 0)
         eff = entry.get("efficiency", 0)
         if load and eff:
@@ -798,10 +884,10 @@ def _stage2_7_extract_claims(state: CREState) -> CREState:
         thermal_rise_c=perf.get("thermal_rise_c"),
         load_regulation_pct=perf.get("load_regulation_pct"),
         line_regulation_pct=perf.get("line_regulation_pct"),
-        waveform_descriptions=perf.get("waveforms", []),
+        waveform_descriptions=perf.get("waveforms") or [],  # null-safe (see above)
     )
     # Extract Rds_on if the LLM found it
-    specs = data.get("specs", {})
+    specs = data.get("specs") or {}  # null-safe: LLM may emit "specs": null
     rdson_hs = _float_or_none(specs.get("rdson_hs_mohm"))
     rdson_ls = _float_or_none(specs.get("rdson_ls_mohm"))
     if rdson_hs and state.ref_spec and not state.ref_spec.rdson_hs:

@@ -22,6 +22,15 @@ class BomImportError(ValueError):
     """Raised when an uploaded BOM file cannot be parsed into components."""
 
 
+class _NoPartNumberColumn(BomImportError):
+    """The table parsed, rows exist, but no column maps to a part number.
+
+    Internal subclass so the LLM-fallback orchestrator can catch *only* this
+    case (a recoverable "messy headers" failure) and retry with an LLM column
+    map, while genuinely broken files (empty, no header, no rows) still fail
+    fast without burning an LLM call."""
+
+
 # Map common real-world spreadsheet header spellings → the canonical field
 # names the CR pipeline understands (see crossref_pipeline._normalize_bom,
 # which additionally maps mpn/part→original_mpn and type/category→component_type).
@@ -34,9 +43,14 @@ _HEADER_ALIASES: dict[str, str] = {
     "part#": "original_mpn",
     "manufacturer part number": "original_mpn",
     "manufacturer part no": "original_mpn",
+    "manufacturer pn": "original_mpn",
     "mfr part number": "original_mpn",
+    "mfr part no": "original_mpn",
     "mfr part #": "original_mpn",
+    "mfr pn": "original_mpn",
     "mfg part number": "original_mpn",
+    "mfg part no": "original_mpn",
+    "mfg pn": "original_mpn",
     "original mpn": "original_mpn",
     "original_mpn": "original_mpn",
     "manufacturer": "manufacturer",
@@ -91,8 +105,20 @@ def _canon_header(raw: str) -> str:
     return key.replace(" ", "_")
 
 
-def _rows_to_components(headers: list[str], rows: list[list[Any]]) -> list[dict[str, Any]]:
-    canon = [_canon_header(h) for h in headers]
+def _rows_to_components(
+    headers: list[str],
+    rows: list[list[Any]],
+    *,
+    header_overrides: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Map a header row + data rows into canonical component dicts.
+
+    ``header_overrides`` maps an exact source-header string → canonical field
+    name; it wins over the deterministic alias table. It is supplied by the
+    LLM column-mapper fallback (which only *identifies* columns — the values
+    still come verbatim from the cells, never fabricated)."""
+    overrides = _normalize_overrides(header_overrides) if header_overrides else {}
+    canon = [overrides.get(_norm_key(h)) or _canon_header(h) for h in headers]
     if not any(canon):
         raise BomImportError("BOM file has no usable header row.")
     components: list[dict[str, Any]] = []
@@ -114,14 +140,38 @@ def _rows_to_components(headers: list[str], rows: list[list[Any]]) -> list[dict[
     if not components:
         raise BomImportError("BOM file parsed but contained no component rows (all rows empty).")
     if not any("original_mpn" in c for c in components):
-        raise BomImportError(
+        raise _NoPartNumberColumn(
             "BOM file has no recognisable part-number column. Include a column "
             "named one of: MPN, Part, Part Number, or Manufacturer Part Number."
         )
     return components
 
 
-def _parse_csv(raw: bytes) -> list[dict[str, Any]]:
+def _norm_key(raw: Any) -> str:
+    """Whitespace/case-insensitive key for matching an override header to an
+    actual header cell (BOM exports pad headers with stray spaces, e.g.
+    `" MFG_PN"`)."""
+    return " ".join(str(raw).strip().lower().split())
+
+
+def _normalize_overrides(overrides: dict[str, str]) -> dict[str, str]:
+    """Index an LLM ``{canonical_field: source_header}`` map as
+    ``{normalized_source_header: canonical_field}`` for matching against the
+    real header row. Only canonical fields the pipeline understands are kept;
+    anything else (or a null/blank source) is dropped (no fabrication)."""
+    out: dict[str, str] = {}
+    valid_fields = set(_HEADER_ALIASES.values())
+    for field, source_header in overrides.items():
+        if field not in valid_fields:
+            continue
+        if not isinstance(source_header, str) or not source_header.strip():
+            continue
+        out[_norm_key(source_header)] = field
+    return out
+
+
+def _read_csv_table(raw: bytes) -> tuple[list[str], list[list[Any]]]:
+    """Decode + sniff a CSV/TSV into (headers, data_rows). No column mapping."""
     text = raw.decode("utf-8-sig", errors="replace")
     if not text.strip():
         raise BomImportError("CSV file is empty.")
@@ -138,10 +188,11 @@ def _parse_csv(raw: bytes) -> list[dict[str, Any]]:
     if not table:
         raise BomImportError("CSV file has no rows.")
     headers, *rows = table
-    return _rows_to_components(headers, rows)
+    return headers, rows
 
 
-def _parse_xlsx(raw: bytes) -> list[dict[str, Any]]:
+def _read_xlsx_table(raw: bytes) -> tuple[list[str], list[list[Any]]]:
+    """Read the active sheet of an .xlsx into (headers, data_rows)."""
     try:
         from openpyxl import load_workbook
     except ImportError as exc:  # pragma: no cover - dependency present in env
@@ -164,29 +215,90 @@ def _parse_xlsx(raw: bytes) -> list[dict[str, Any]]:
     if not table:
         raise BomImportError("Excel sheet has no rows.")
     headers, *rows = table
-    return _rows_to_components([h if h is not None else "" for h in headers], rows)
+    return [str(h) if h is not None else "" for h in headers], rows
 
 
-def parse_bom_bytes(raw: bytes, filename: str) -> list[dict[str, Any]]:
+def _llm_header_overrides(headers: list[str], rows: list[list[Any]]) -> dict[str, str]:
+    """Ask the bom-header-mapper agent which columns map to which canonical
+    fields, returning a ``{source_header: canonical_field}`` override map.
+
+    The LLM only *names columns* — it never reads or fabricates values. Raises
+    :class:`BomImportError` (no API key, agent failure, or no MPN column found)
+    so the caller re-surfaces the original "add a part-number column" error
+    rather than silently proceeding."""
+    import json
+
+    from heaviside.agents.llm_call import LLMCallError, call_agent_json
+
+    # Feed the header row + a few sample data rows so the agent can tell a real
+    # manufacturer MPN column apart from an internal/house part-number column.
+    sample = [
+        {str(headers[i]): ("" if i >= len(r) or r[i] is None else str(r[i]))
+         for i in range(len(headers))}
+        for r in rows[:5]
+    ]
+    user_message = (
+        "Header row (exact strings):\n"
+        + json.dumps(list(headers), ensure_ascii=False)
+        + "\n\nSample data rows:\n"
+        + json.dumps(sample, ensure_ascii=False)
+    )
+    try:
+        result = call_agent_json("bom-header-mapper", user_message, json_mode=True)
+    except LLMCallError as exc:
+        raise BomImportError(
+            "BOM file has no recognisable part-number column, and the LLM "
+            f"column-mapper could not run ({exc}). Add a column named one of: "
+            "MPN, Part, Part Number, or Manufacturer Part Number."
+        ) from exc
+    # Drop the rationale / any null entries; keep only canonical→header strings.
+    overrides = {
+        k: v for k, v in result.items()
+        if k != "rationale" and isinstance(v, str) and v.strip()
+    }
+    return overrides
+
+
+def parse_bom_bytes(
+    raw: bytes, filename: str, *, allow_llm: bool = True
+) -> list[dict[str, Any]]:
     """Parse raw file bytes into a BOM component list, choosing CSV vs XLSX
     by the filename extension. Raises :class:`BomImportError` on any failure
-    (unsupported type, empty file, no header, no rows, no part-number column)."""
+    (unsupported type, empty file, no header, no rows, no part-number column).
+
+    When the deterministic header aliasing cannot find a part-number column and
+    ``allow_llm`` is set, an LLM column-mapper is consulted to identify which
+    existing column is the manufacturer part number (and the other fields). The
+    LLM only selects among the file's own columns — it never invents values, so
+    every emitted value still comes verbatim from a real cell."""
     if not raw:
         raise BomImportError("uploaded file is empty.")
     name = (filename or "").lower()
-    if name.endswith((".xlsx", ".xlsm")):
-        return _parse_xlsx(raw)
     if name.endswith(".xls"):
         raise BomImportError("legacy .xls is not supported — re-save as .xlsx or export to CSV.")
-    if name.endswith((".csv", ".tsv", ".txt", "")):
-        return _parse_csv(raw)
-    # Unknown extension: try CSV (most BOM exports are text) before giving up.
+    if name.endswith((".xlsx", ".xlsm")):
+        headers, rows = _read_xlsx_table(raw)
+    elif name.endswith((".csv", ".tsv", ".txt", "")):
+        headers, rows = _read_csv_table(raw)
+    else:
+        # Unknown extension: try CSV (most BOM exports are text) before giving up.
+        try:
+            headers, rows = _read_csv_table(raw)
+        except BomImportError as exc:
+            raise BomImportError(
+                f"unsupported BOM file type {filename!r}; use .csv or .xlsx ({exc})"
+            ) from exc
+
     try:
-        return _parse_csv(raw)
-    except BomImportError as exc:
-        raise BomImportError(
-            f"unsupported BOM file type {filename!r}; use .csv or .xlsx ({exc})"
-        ) from exc
+        return _rows_to_components(headers, rows)
+    except _NoPartNumberColumn:
+        if not allow_llm:
+            raise
+        # Recoverable: headers are just non-standard. Let the LLM identify the
+        # part-number column from the headers + sample rows, then re-map. If the
+        # LLM still can't find an MPN column, _rows_to_components re-raises.
+        overrides = _llm_header_overrides(headers, rows)
+        return _rows_to_components(headers, rows, header_overrides=overrides)
 
 
 # Convenience alias used by the API layer.

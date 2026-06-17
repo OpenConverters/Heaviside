@@ -70,6 +70,114 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+_RESULTS: list[dict] = []  # best attempt per design, for the end-of-run summary
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _print_summary_table():
+    """After all designs run, print the comparison table with Time + Tokens per
+    design and the REAL total cost from the Moonshot balance delta.
+
+    Per-design $ is not measurable live — the balance API settles with a delay,
+    so a per-run delta reads ~0. We snapshot balance once at the start and once
+    at the end (the window covers the whole run); the real total cost is the
+    delta, apportioned to each design by its token share (honest: the total is
+    real, the split is by measured token usage, not a guessed price)."""
+    bal_start = _moonshot_balance()
+    yield
+    # Moonshot posts charges with a lag — wait for the balance to settle so the
+    # delta reflects the run's TRUE cost (an instant read under-counts).
+    bal_end = _settled_balance()
+    if not _RESULTS:
+        return
+    best: dict[str, dict] = {}
+    for r in _RESULTS:
+        d = r["design"]
+        if d not in best or r["ours_pct"] > best[d]["ours_pct"]:
+            best[d] = r
+    rows = [best[d] for d in PROTEUS_BASELINE if d in best]
+    review_on = any(r.get("review") for r in rows)
+    t_tot = sum(r["runtime_s"] for r in rows)
+    tok_tot = sum(r["in_tok"] + r["out_tok"] for r in rows)
+    real_total = (
+        bal_start - bal_end
+        if (bal_start is not None and bal_end is not None and bal_start - bal_end > 0)
+        else None
+    )
+
+    def _cost(r: dict) -> str:
+        if real_total is None or tok_tot == 0:
+            return "n/a"
+        share = (r["in_tok"] + r["out_tok"]) / tok_tot
+        return f"${real_total * share:.3f}"
+
+    print(f"\n\n{'='*82}\nCR vs PROTEUS — {len(rows)} designs"
+          f"  (per-stage review: {'ON' if review_on else 'off'})\n{'='*82}")
+    print(f"{'design':<26} {'ours':>7} {'proteus':>8} {'verdict':<6} "
+          f"{'time':>7} {'tokens':>9} {'cost*':>8}")
+    print("-" * 82)
+    for r in rows:
+        ours = f"{r['ours_pct']*100:.0f}%"
+        prot = f"{r['proteus_pct']*100:.0f}%"
+        verdict = "WIN" if r["ours_pct"] >= r["proteus_pct"] else "LOSS"
+        ktok = f"{(r['in_tok'] + r['out_tok']) / 1000:.0f}k"
+        print(f"{r['design'][:26]:<26} {ours:>7} {prot:>8} {verdict:<6} "
+              f"{r['runtime_s']:>6.0f}s {ktok:>9} {_cost(r):>8}")
+    print("-" * 82)
+    wins = sum(1 for r in rows if r["ours_pct"] >= r["proteus_pct"])
+    rt = f"${real_total:.2f}" if real_total is not None else "n/a (balance not settled)"
+    print(f"{f'TOTAL {wins}/{len(rows)} beat Proteus':<26} {'':>7} {'':>8} {'':<6} "
+          f"{t_tot:>6.0f}s {tok_tot/1000:>8.0f}k {rt:>8}")
+    print(f"{'='*82}\n* per-design cost = real total (balance delta) apportioned by "
+          f"token share.\n  Token×list-price overestimates ~3.7x (prompt caching); "
+          f"balance delta is the truth.", flush=True)
+
+
+def _moonshot_balance() -> float | None:
+    """Real account balance (USD) from the Moonshot balance API. The only
+    cost-bearing endpoint Moonshot exposes (no billing/usage endpoint exists),
+    so balance DELTA is the source of truth for real spend (the token×list-price
+    formula runs ~3.7x high because of prompt caching). Returns None on failure
+    so the benchmark never breaks on a balance hiccup."""
+    import httpx
+
+    key = os.environ.get("MOONSHOT_API_KEY")
+    if not key:
+        return None
+    base = os.environ.get("HEAVISIDE_LLM_BASE_URL", "https://api.moonshot.ai/v1")
+    try:
+        r = httpx.get(
+            f"{base.rstrip('/')}/users/me/balance",
+            headers={"Authorization": f"Bearer {key}"}, timeout=20,
+        )
+        if r.status_code != 200:
+            return None
+        return float(r.json()["data"]["available_balance"])
+    except Exception:
+        return None
+
+
+def _settled_balance(timeout_s: float = 300.0, interval_s: float = 25.0) -> float | None:
+    """Poll the balance until it stops dropping — Moonshot posts charges with a
+    few-minute lag, so an instant read after a run under-counts. Returns once two
+    consecutive reads match (settled) or the timeout elapses."""
+    import time
+
+    last = _moonshot_balance()
+    if last is None:
+        return None
+    t0 = time.time()
+    while time.time() - t0 < timeout_s:
+        time.sleep(interval_s)
+        cur = _moonshot_balance()
+        if cur is None:
+            return last
+        if cur == last:  # two equal reads → charges have settled
+            return cur
+        last = cur
+    return last
+
+
 def _cr_coverage_attempt(design: str) -> dict:
     """One stage-based CR run for ``design``; returns coverage + telemetry.
 
@@ -92,8 +200,12 @@ def _cr_coverage_attempt(design: str) -> dict:
     pdf = PROTEUS_DIR / f"{design}.pdf"
     bom = [asdict(c) for c in extract_bom_from_pdf(pdf, reference=design)
            if not _is_dnp_or_zero_ohm(c)]
+    # HEAVISIDE_CR_REVIEW=1 turns on the per-stage Ray+Nicola review-and-retry on
+    # the CRE extraction stages (the "new pipeline"); off by default so the
+    # historical benchmark cost/semantics are unchanged.
     outcome = run_crossref_with_cre(
         design, "Würth Elektronik", pdf_path=pdf, source_bom_override=bom,
+        review_llm=os.environ.get("HEAVISIDE_CR_REVIEW") == "1",
     )
     passives = [c for c in outcome.components if c.component_type in _PASSIVE_TYPES]
     scope = [c for c in passives if c.status.value != "keep_original"]
@@ -127,13 +239,16 @@ def test_cr_coverage_matches_or_beats_proteus(design: str) -> None:
         rec = {"design": design, "attempt": attempt + 1,
                "ours": [r["ours_n"], r["ours_scope"]], "ours_pct": round(r["ours_pct"], 3),
                "proteus": [p_sub, p_scope], "proteus_pct": round(proteus_pct, 3),
-               "runtime_s": r["runtime_s"], "in_tok": r["in_tok"], "out_tok": r["out_tok"],
-               "calls": r["calls"]}
+               "runtime_s": r["runtime_s"],
+               "review": os.environ.get("HEAVISIDE_CR_REVIEW") == "1",
+               "in_tok": r["in_tok"], "out_tok": r["out_tok"], "calls": r["calls"]}
         with Path("/tmp/cr_vs_proteus_results.ndjson").open("a") as fh:
             fh.write(json.dumps(rec) + "\n")
+        ktok = (r["in_tok"] + r["out_tok"]) / 1000
         print(f"\n{design} [try{attempt + 1}]: ours {r['ours_n']}/{r['ours_scope']} = "
               f"{r['ours_pct']*100:.0f}%  |  proteus {p_sub}/{p_scope} = {proteus_pct*100:.0f}%"
-              f"  |  {r['runtime_s']:.0f}s", flush=True)
+              f"  |  {r['runtime_s']:.0f}s  |  {ktok:.0f}k tok / {r['calls']} calls", flush=True)
+        _RESULTS.append(rec)
         if r["ours_pct"] >= proteus_pct:
             break
 

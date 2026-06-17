@@ -19,6 +19,7 @@ never fabricate a "review").
 """
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -74,18 +75,26 @@ def review(
     reviewers: tuple[str, ...] = REVIEWERS,
     max_tokens: int = 8192,
     max_retries: int = 2,
+    progress: Any = None,
 ) -> PanelResult:
     """LLM layer: run the real reviewer panel over ``payload`` and aggregate.
 
     ``scope`` is the in/out-of-scope preamble (the reviewers behave
     differently for a CR check vs a full power-stage design). Each reviewer
     is called for real; an invalid verdict propagates as ``LLMCallError``
-    (no fabricated review). Returns the aggregated :class:`PanelResult`."""
+    (no fabricated review). Returns the aggregated :class:`PanelResult`.
+
+    ``progress`` (optional) is called as ``progress(reviewer_name, index, total)``
+    just before each reviewer runs, so a caller can surface per-reviewer stage
+    progress (Ray, then Nicola)."""
     from heaviside.agents.llm_call import call_agent_json, normalize_reviewer_verdict
 
     msg = _build_message(payload, scope=scope, title=title)
     verdicts: list[ReviewVerdict] = []
-    for name in reviewers:
+    for i, name in enumerate(reviewers):
+        if progress is not None:
+            with contextlib.suppress(Exception):
+                progress(name, i, len(reviewers))
         data = call_agent_json(
             name, msg, max_tokens=max_tokens, max_retries=max_retries, json_mode=True
         )

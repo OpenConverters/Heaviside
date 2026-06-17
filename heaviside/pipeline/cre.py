@@ -162,6 +162,11 @@ class CREState:
     diagnostics: list[str] = field(default_factory=list)
     attempt: int = 0
     passed: bool = False
+    # Optional Ray+Nicola review-and-retry on the high-risk LLM extraction
+    # stages (competitor specs, reverse-engineered schematic) + a (msg, pct)
+    # progress sink. Off by default; the API job turns them on.
+    review_llm: bool = False
+    progress: Any = None
 
 
 @dataclass(frozen=True, slots=True)

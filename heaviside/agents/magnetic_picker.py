@@ -149,7 +149,13 @@ def pick_best_from_sweep(result: Any) -> int:
     return 0
 
 
-def pick_magnetic_from_sweep_llm(result: Any, spec: Mapping[str, Any]) -> dict[str, Any]:
+def pick_magnetic_from_sweep_llm(
+    result: Any,
+    spec: Mapping[str, Any],
+    *,
+    with_review: bool = False,
+    progress: Any = None,
+) -> dict[str, Any]:
     """LLM suitability pick over the loss-annotated front (master-plan B5).
 
     The deterministic argmin (``pick_best_from_sweep``) already chose the
@@ -159,8 +165,14 @@ def pick_magnetic_from_sweep_llm(result: Any, spec: Mapping[str, Any]) -> dict[s
     outside the front. Falls back to the deterministic pick (index 0, source
     ``deterministic``) when no API key is configured.
 
+    ``with_review`` (opt-in, set by the design pipeline) wraps the pick in a
+    Ray + Nicola review-and-retry loop: the panel judges whether the chosen
+    magnetic is the right size/loss/saturation trade-off, and a rejection
+    re-picks with their objections fed back.
+
     Returns ``{"index": int, "source": "llm"|"deterministic", "reason": str}``.
     """
+    import json
     import os
 
     front = getattr(result, "front", None)
@@ -172,38 +184,79 @@ def pick_magnetic_from_sweep_llm(result: Any, spec: Mapping[str, Any]) -> dict[s
         return {"index": 0, "source": "deterministic",
                 "reason": "no API key — deterministic total-loss argmin"}
 
-    import json
-
     from heaviside.agents.llm_call import LLMCallError, call_agent_json
 
-    payload = {
-        "topology_spec": {
-            "inputVoltage": spec.get("inputVoltage"),
-            "operatingPoints": spec.get("operatingPoints"),
-        },
-        "fsw_hz": float(result.fsw_star_hz),
-        "candidates": pareto_summary_from_sweep(result),
-        "instructions": (
-            "index 0 is the total-loss argmin at fsw*. Pick ONE candidate by "
-            "index from this list (you cannot invent one). Prefer index 0 unless "
-            "a qualitative reason — stock, manufacturability, gapability, "
-            "turn-count sanity, exotic core/material — justifies a nearby cell. "
-            "Return JSON {\"index\": <int>, \"reason\": \"<1-2 sentences>\"}."
+    rows = pareto_summary_from_sweep(result)
+
+    def produce(feedback: str | None) -> dict[str, Any]:
+        payload = {
+            "topology_spec": {
+                "inputVoltage": spec.get("inputVoltage"),
+                "operatingPoints": spec.get("operatingPoints"),
+            },
+            "fsw_hz": float(result.fsw_star_hz),
+            "candidates": rows,
+            "instructions": (
+                "index 0 is the total-loss argmin at fsw*. Pick ONE candidate by "
+                "index from this list (you cannot invent one). Prefer index 0 unless "
+                "a qualitative reason — stock, manufacturability, gapability, "
+                "turn-count sanity, exotic core/material — justifies a nearby cell. "
+                "Return JSON {\"index\": <int>, \"reason\": \"<1-2 sentences>\"}."
+            ),
+        }
+        msg = json.dumps(payload)
+        if feedback:  # reviewer objections from a prior round
+            msg += "\n\n" + feedback
+        try:
+            data = call_agent_json("magnetic-pareto-picker", msg)
+            idx = int(data["index"])
+        except (LLMCallError, KeyError, TypeError, ValueError) as exc:
+            raise MagneticPickerError(
+                f"magnetic-pareto-picker returned an unusable pick: {exc}"
+            ) from exc
+        if not (0 <= idx < n):
+            raise MagneticPickerError(
+                f"magnetic-pareto-picker picked index {idx} outside the front [0,{n}) "
+                f"— it may not invent a candidate"
+            )
+        return {"index": idx, "source": "llm", "reason": str(data.get("reason", ""))}
+
+    if not with_review:
+        return produce(None)
+
+    from heaviside.stages.reviewed_stage import review_and_retry
+
+    def present(pick: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "picked_index": pick["index"],
+            "pick_reason": pick["reason"],
+            "picked_candidate": rows[pick["index"]],
+            "front": rows,
+        }
+
+    outcome = review_and_retry(
+        produce,
+        present,
+        scope=(
+            "MAGNETIC SELECTION from a frequency-resolved feasible front. Every "
+            "candidate already PASSES the saturation gate (isat ≥ ipeak·margin) "
+            "and is sorted ascending by total loss; index 0 is the loss argmin. "
+            "Judge whether the PICK is the right size/loss/saturation-headroom/"
+            "manufacturability trade-off for this spec — and whether any move off "
+            "index 0 is justified. Core physics (loss, isat, L) come from MKF and "
+            "are not yours to recompute; gate-drive, layout, control are OUT OF SCOPE."
         ),
-    }
-    try:
-        data = call_agent_json("magnetic-pareto-picker", json.dumps(payload))
-        idx = int(data["index"])
-    except (LLMCallError, KeyError, TypeError, ValueError) as exc:
-        raise MagneticPickerError(
-            f"magnetic-pareto-picker returned an unusable pick: {exc}"
-        ) from exc
-    if not (0 <= idx < n):
-        raise MagneticPickerError(
-            f"magnetic-pareto-picker picked index {idx} outside the front [0,{n}) "
-            f"— it may not invent a candidate"
-        )
-    return {"index": idx, "source": "llm", "reason": str(data.get("reason", ""))}
+        title="MAGNETIC PICK REVIEW",
+        progress=progress,
+    )
+    pick = outcome.output
+    assert pick is not None
+    if not outcome.approved and outcome.objections:
+        pick = {**pick, "reason": (
+            f"{pick['reason']} [reviewers (unresolved after {outcome.rounds} rounds): "
+            f"{'; '.join(outcome.objections)}]"
+        )}
+    return pick
 
 
 def pick_best_pareto(

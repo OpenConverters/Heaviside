@@ -481,9 +481,41 @@ def submit_design(req: DesignRequest) -> dict[str, str]:
 # the Jobs view shows them: constraints → sweep → pick → reconcile → realize
 # (real BOM + MKF SPICE) → review. Single-inductor hard-switched topologies.
 _CLOSED_LOOP_STAGES = [
-    "Topology constraints", "Frequency sweep", "Magnetic pick",
-    "Cross-OP reconcile", "Realize: BOM + SPICE + realism", "Adversarial review",
+    "Topology constraints",
+    "Converter spec",
+    "Frequency sweep",
+    "Magnetic pick",
+    "Cross-OP reconcile",
+    "Realize: real BOM + SPICE",
+    "Tune SPICE from real parts",
+    "Realism gate + gatekeeper",
+    "Review: Ray (engineering)",
+    "Review: Nicola (quality)",
 ]
+
+# Map a pipeline progress message → the stage it belongs to, by a distinctive
+# keyword in the message design_converter emits (robust to wording/pct drift —
+# the pipeline owns the granularity, the UI just mirrors it). First match wins.
+_STAGE_KEYWORDS: list[tuple[str, str]] = [
+    ("Proposing", "Topology constraints"),
+    ("base converter spec", "Converter spec"),
+    ("Sweep", "Frequency sweep"),          # "Sweeping…" and "Sweep done…"
+    ("Picking the magnetic", "Magnetic pick"),
+    ("Reconciling", "Cross-OP reconcile"),
+    ("Realizing converter", "Realize: real BOM + SPICE"),
+    ("Re-simulating", "Tune SPICE from real parts"),
+    ("Realism gate", "Realism gate + gatekeeper"),
+    ("Ray", "Review: Ray (engineering)"),
+    ("Nicola", "Review: Nicola (quality)"),
+]
+
+
+def _stage_for_message(msg: str) -> str | None:
+    """Resolve the current stage from a pipeline progress message."""
+    for keyword, stage in _STAGE_KEYWORDS:
+        if keyword.lower() in msg.lower():
+            return stage
+    return None
 
 
 def _design_converter_job(spec: dict[str, Any], topology: str | None, update: Any) -> dict[str, Any]:
@@ -509,16 +541,15 @@ def _design_converter_job(spec: dict[str, Any], topology: str | None, update: An
         topo = names[0]
 
     def cb(msg: str, pct: int) -> None:
+        # Drive the per-stage UI from the message the pipeline emits (the
+        # pipeline owns the granularity); fall back to a pct band only if a
+        # message has no recognised keyword, so the flow never stalls.
         if hasattr(update, "start_stage"):
-            stage = (
-                _CLOSED_LOOP_STAGES[0] if pct < 20 else
-                _CLOSED_LOOP_STAGES[1] if pct < 55 else
-                _CLOSED_LOOP_STAGES[2] if pct < 70 else
-                _CLOSED_LOOP_STAGES[3] if pct < 72 else
-                _CLOSED_LOOP_STAGES[4] if pct < 90 else
-                _CLOSED_LOOP_STAGES[5]
-            )
-            update.start_stage(stage)
+            stage = _stage_for_message(msg)
+            if stage is None and pct >= 100:
+                stage = _CLOSED_LOOP_STAGES[-1]  # "Done" → last stage complete
+            if stage is not None:
+                update.start_stage(stage)
         update(f"{pct}% — {msg}")
 
     design = design_converter(topo, spec, use_llm=True, with_reviewers=True, progress=cb)
@@ -564,17 +595,101 @@ def job_report_pdf(job_id: str):
     )
 
 
+# Cross-reference pipeline stages, mirrored into the Jobs view so the run shows
+# its real per-stage progress (driven by the messages run_crossref_pipeline /
+# run_crossref_with_cre emit — the pipeline owns the granularity, the UI just
+# reflects it). The CRE-fronted paths (from-pdf / from-url) reverse-engineer the
+# reference first, so they declare the CRE prefix stages on top of the CR core.
+_CROSSREF_CORE_STAGES = [
+    "Prefetch TAS candidates",
+    "Librarian: source missing parts",
+    "Pre-classify components",
+    "Cross-reference (LLM)",
+    "Guardrails",
+    "Score candidates",
+    "Otto challenge",
+    "In-kind rescue",
+    "Review: Ray + Nicola",
+    "Learn",
+]
+_CROSSREF_CRE_PREFIX = [
+    "Extract reference document",
+    "Competitor analysis",
+    "Reverse-engineer schematic",
+    "Verify MPNs",
+    "Extract RDS(on)",
+    "Extract datasheet claims",
+    "Testbench simulation",
+    "CRE→CR stress bridge",
+]
+_CROSSREF_FULL_STAGES = _CROSSREF_CRE_PREFIX + _CROSSREF_CORE_STAGES
+# from-url adds a download step ahead of everything else.
+_CROSSREF_URL_STAGES = ["Download reference", *_CROSSREF_FULL_STAGES]
+
+# (distinctive keyword in the emitted message, stage). First match wins, so put
+# more specific keywords before substrings that could also match them.
+_CROSSREF_KEYWORDS: list[tuple[str, str]] = [
+    ("Downloading", "Download reference"),
+    # CRE prefix (from-pdf / from-url)
+    ("reference document", "Extract reference document"),
+    ("Competitor", "Competitor analysis"),
+    ("Reverse-engineering", "Reverse-engineer schematic"),
+    ("Verifying extracted MPNs", "Verify MPNs"),
+    ("RDS(on)", "Extract RDS(on)"),
+    ("performance claims", "Extract datasheet claims"),
+    ("Testbench", "Testbench simulation"),
+    ("CRE→CR bridge", "CRE→CR stress bridge"),
+    # CR core (all paths)
+    ("Prefetching", "Prefetch TAS candidates"),
+    ("Librarian", "Librarian: source missing parts"),
+    ("Pre-classifying", "Pre-classify components"),
+    ("Cross-referencing", "Cross-reference (LLM)"),
+    ("guardrails", "Guardrails"),
+    ("Scoring", "Score candidates"),
+    ("Otto", "Otto challenge"),
+    ("rescue", "In-kind rescue"),
+    ("review", "Review: Ray + Nicola"),
+    ("Correction loop", "Review: Ray + Nicola"),
+    ("Learning", "Learn"),
+]
+
+
+def _crossref_stage_for_message(msg: str) -> str | None:
+    """Resolve the current crossref stage from a pipeline progress message."""
+    for keyword, stage in _CROSSREF_KEYWORDS:
+        if keyword.lower() in msg.lower():
+            return stage
+    return None
+
+
+def _crossref_progress_cb(update: Any, stages: list[str]) -> Any:
+    """Build a ``(msg, pct)`` progress callback that advances the declared
+    crossref ``stages`` from the pipeline's emitted messages."""
+    if hasattr(update, "set_stages"):
+        update.set_stages(stages)
+
+    def cb(msg: str, pct: int) -> None:
+        if hasattr(update, "start_stage"):
+            stage = _crossref_stage_for_message(msg)
+            if stage is not None:
+                update.start_stage(stage)
+        update(f"{pct}% — {msg}")
+
+    return cb
+
+
 @app.post("/jobs/crossref")
 def submit_crossref(req: CrossRefRequest) -> dict[str, str]:
     from heaviside.api.jobs import registry
     from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
 
     def run(update: Any) -> dict[str, Any]:
-        update(f"Cross-referencing {len(req.source_bom)} parts → {req.target_manufacturer}")
+        cb = _crossref_progress_cb(update, _CROSSREF_CORE_STAGES)
         outcome = run_crossref_pipeline(
             req.source_bom,
             req.target_manufacturer,
             circuit_context=req.circuit_context,
+            progress=cb,
         )
         return _crossref_outcome_dict(outcome)
 
@@ -599,15 +714,17 @@ async def submit_crossref_from_pdf(
 
         from heaviside.pipeline.crossref_pipeline import run_crossref_with_cre
 
-        update(f"Reverse-engineering {orig_name} → {target_manufacturer}")
+        cb = _crossref_progress_cb(update, _CROSSREF_FULL_STAGES)
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             f.write(raw)
             tmp = f.name
         try:
             outcome = run_crossref_with_cre(
-                Path(tmp).stem,
+                Path(orig_name).stem,  # human-meaningful reference name, not the temp stem
                 target_manufacturer,
                 pdf_path=Path(tmp),
+                progress=cb,
+                review_llm=True,  # Ray+Nicola review the extraction stages
             )
         finally:
             os.unlink(tmp)
@@ -625,23 +742,26 @@ async def submit_crossref_from_bom(
     target manufacturer. No reference-design extraction — the file IS the
     component list. The BOM is parsed up front so a malformed file fails fast
     with 422 instead of inside the background job."""
+    import asyncio
+
     from heaviside.api.jobs import registry
     from heaviside.pipeline.bom_import import BomImportError, parse_bom_file
 
     raw = await file.read()
     orig_name = file.filename or "bom.csv"
     try:
-        source_bom = parse_bom_file(raw, orig_name)
+        # parse_bom_file may consult an LLM column-mapper when the headers are
+        # non-standard; run it off the event loop so a slow LLM call can't block
+        # the server (deterministic parses return ~instantly regardless).
+        source_bom = await asyncio.to_thread(parse_bom_file, raw, orig_name)
     except BomImportError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     def run(update: Any) -> dict[str, Any]:
         from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
 
-        update(
-            f"Cross-referencing {len(source_bom)} parts from {orig_name} → {target_manufacturer}"
-        )
-        outcome = run_crossref_pipeline(source_bom, target_manufacturer)
+        cb = _crossref_progress_cb(update, _CROSSREF_CORE_STAGES)
+        outcome = run_crossref_pipeline(source_bom, target_manufacturer, progress=cb)
         return _crossref_outcome_dict(outcome)
 
     return {"job_id": registry.submit("crossref_bom", run)}
@@ -674,26 +794,25 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
         import tempfile
         from pathlib import Path
 
-        import httpx
-
         from heaviside.pipeline.crossref_pipeline import run_crossref_with_cre
+        from heaviside.pipeline.url_fetch import DocumentFetchError, fetch_document
 
+        cb = _crossref_progress_cb(update, _CROSSREF_URL_STAGES)
         url = req.url.strip()
         if not url.lower().startswith(("http://", "https://")):
             url = "https://" + url  # forgive a pasted bare URL
         name = (url.rsplit("/", 1)[-1].split("?")[0] or "design")[:50]
-        update(f"Downloading {name}…")
-        resp = httpx.get(
-            url,
-            follow_redirects=True,
-            timeout=90.0,
-            headers={"User-Agent": "Mozilla/5.0 (Heaviside crossref)"},
-        )
-        resp.raise_for_status()
-        body = resp.content
-        is_pdf = body[:5] == b"%PDF-" or "pdf" in resp.headers.get("content-type", "").lower()
+        cb(f"Downloading the reference from {name}", 0)
+        # Manufacturer CDNs (Analog Devices, TI, Infineon) sit behind Akamai bot
+        # protection that 403s a bare request; fetch_document escalates from a
+        # browser-profile httpx call to a real headless Chromium when blocked.
+        try:
+            doc = fetch_document(url, timeout=90.0)
+        except DocumentFetchError as exc:
+            raise ValueError(str(exc)) from exc
+        body = doc.content
+        is_pdf = body[:5] == b"%PDF-" or "pdf" in doc.content_type.lower()
 
-        update(f"Reverse-engineering {name} → {req.target_manufacturer}")
         if is_pdf:
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
                 f.write(body)
@@ -703,6 +822,8 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
                     Path(tmp).stem,
                     req.target_manufacturer,
                     pdf_path=Path(tmp),
+                    progress=cb,
+                    review_llm=True,
                 )
             finally:
                 os.unlink(tmp)
@@ -717,6 +838,8 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
                 name,
                 req.target_manufacturer,
                 pdf_text=text,
+                progress=cb,
+                review_llm=True,
             )
         return _crossref_outcome_dict(outcome)
 

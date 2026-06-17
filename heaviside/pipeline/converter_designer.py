@@ -27,6 +27,7 @@ may be iterated.
 """
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -203,31 +204,42 @@ def design_converter(
 
     def _say(msg: str, pct: int) -> None:
         if progress is not None:
-            try:
+            with contextlib.suppress(Exception):
                 progress(msg, pct)
-            except Exception:
-                pass
 
     entry = get_topology(topology)
     notes: list[str] = []
 
-    # B2 — converter-level constraints (LLM, bounded + TAS-class-checked).
-    _say("Proposing converter constraints", 5)
-    constraints = topology_constraints.propose(spec, topology, use_llm=use_llm, check_tas=True)
+    # B2 — converter-level constraints (LLM, bounded + TAS-class-checked). When
+    # reviewers are enabled, Ray + Nicola judge the proposal and it re-proposes
+    # with their objections if rejected (on top of the deterministic guard).
+    _say("Proposing converter constraints (duty ceiling + FET Vds class)", 5)
+    constraints = topology_constraints.propose(
+        spec, topology, use_llm=use_llm, check_tas=True,
+        with_review=use_llm and with_reviewers, progress=_say,
+    )
 
     # B0 — BASE-schema spec.
+    _say("Building base converter spec (MKF design constraints)", 12)
     base = converter_spec_build.build(dict(spec), topology, constraints=constraints)
 
     # B4 — frequency sweep: fsw* + feasible magnetic front (MKF derives L per fsw).
     _say("Sweeping switching frequency vs magnetic total loss", 20)
     result = frequency_sweep.sweep(topology, base, **dict(sweep_kwargs or {}))
+    _say(
+        f"Sweep done: fsw* = {result.fsw_star_hz / 1e3:.0f} kHz, "
+        f"{len(result.front)} feasible magnetics",
+        52,
+    )
 
     # B5 — pick ONE magnetic from the loss-annotated front.
-    _say("Picking the magnetic", 55)
+    _say("Picking the magnetic from the loss-annotated front", 55)
     from heaviside.agents import magnetic_picker
 
     if use_llm:
-        picked = magnetic_picker.pick_magnetic_from_sweep_llm(result, base)
+        picked = magnetic_picker.pick_magnetic_from_sweep_llm(
+            result, base, with_review=with_reviewers, progress=_say,
+        )
         idx = picked["index"]
         pick_reason = picked.get("reason", "")
     else:
@@ -245,6 +257,7 @@ def design_converter(
     ]
 
     # B7 — cross-OP reconcile of the chosen (magnetic, fsw*) (don't raise; record).
+    _say("Reconciling the magnetic across all operating points", 64)
     try:
         recon = op_reconcile.reconcile(
             topology, spec_at, chosen.mas, min_isat_ratio=1.2, raise_on_infeasible=False
@@ -256,7 +269,7 @@ def design_converter(
         notes.append(f"op_reconcile: {exc}")
 
     # --- realize the real converter around the PINNED magnetic ---
-    _say("Building the converter: real BOM + SPICE sim + realism", 70)
+    _say("Realizing converter: selecting real TAS parts + MKF SPICE netlist", 70)
     pick = TopologyPick(
         topology=entry, main_magnetic=md, candidates=(md,),
         pick_reason=pick_reason, pick_criteria="frequency_sweep+suitability",
@@ -269,6 +282,7 @@ def design_converter(
     # if the configured pass fails, keep the first (no silent regression).
     knobs = spice_config_from_bom(outcome.tas)
     if knobs:
+        _say("Re-simulating with SPICE knobs from the real parts (FET RON, diode RS)", 80)
         try:
             tuned = stage3_realize(pick, spec_at, pinned_main=md, spice_config=knobs)
             if tuned.tas is not None:
@@ -276,14 +290,24 @@ def design_converter(
                 notes.append(f"sim configured from BOM: {knobs}")
         except Exception as exc:  # keep the first realize
             notes.append(f"BOM-configured re-sim skipped: {str(exc)[:120]}")
+    _say("Realism gate + gatekeeper on the simulated waveforms", 86)
     outcome = replace(outcome, gatekeeper=stage3b_gatekeeper(outcome),
                       fsw_optimal=float(result.fsw_star_hz))
 
     # --- Ray + Nicola adversarial review ---
     review = None
     if with_reviewers and use_llm:
-        _say("Adversarial review (Ray + Nicola)", 90)
-        outcome = _stage4_adversarial_review(outcome)
+        _say("Adversarial review starting (Ray + Nicola)", 90)
+        # Per-reviewer progress: Ray (engineering) then Nicola (quality), so the
+        # UI shows each named reviewer as its own stage.
+        _REVIEW_PCT = {"ray": 92, "nicola": 96}
+        _REVIEW_LABEL = {"ray": "Ray (engineering)", "nicola": "Nicola (quality)"}
+
+        def _review_progress(name: str, idx: int, total: int) -> None:
+            label = _REVIEW_LABEL.get(name, name)
+            _say(f"Reviewing — {label}", _REVIEW_PCT.get(name, 90 + idx))
+
+        outcome = _stage4_adversarial_review(outcome, progress=_review_progress)
 
     _say("Done", 100)
     return ConverterDesign(

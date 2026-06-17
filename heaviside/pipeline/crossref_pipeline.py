@@ -19,6 +19,7 @@ Launch:
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import hashlib
 import json
@@ -1646,6 +1647,47 @@ def _best_inkind_candidate(
     return None
 
 
+def _ondemand_candidates(
+    target_manufacturer: str,
+    category: str,
+    comp: dict[str, Any],
+    cache: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Load + rank target-manufacturer candidates for one component straight
+    from TAS, used by the deterministic rescue when prefetch left none. The
+    per-category manufacturer rows are cached across the rescue call so each
+    NDJSON is scanned at most once."""
+    files = {
+        "capacitor": "capacitors.ndjson",
+        "resistor": "resistors.ndjson",
+        "magnetic": "magnetics.ndjson",
+    }
+    if category not in files:
+        return []
+    if category not in cache:
+        from heaviside.catalogue._reader import CatalogueReadError, iter_envelopes
+
+        tas_dir = Path(
+            os.environ.get(
+                "HEAVISIDE_TAS_DATA_DIR",
+                str(Path(__file__).resolve().parents[2] / "TAS" / "data"),
+            )
+        )
+        path = tas_dir / files[category]
+        rows: list[dict[str, Any]] = []
+        target = _normalize_manufacturer(target_manufacturer)
+        if path.exists():
+            try:
+                for _lineno, env in iter_envelopes(path):
+                    mfr = _extract_manufacturer(env, category)
+                    if mfr and target in _normalize_manufacturer(mfr):
+                        rows.append(env)
+            except CatalogueReadError:
+                pass
+        cache[category] = rows
+    return _rank_candidates(comp, category, cache[category], max_results=50)
+
+
 def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
     """Deterministic floor under the two stochastic LLM stages (stage3 crossref
     + stage6 otto): for any remaining no_substitute, if a prefetched candidate
@@ -1653,16 +1695,29 @@ def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
     means 'no qualifying candidate exists in TAS', not 'the LLM dropped it' —
     removing the run-to-run variance (e.g. um3491's X7T caps)."""
     by_ref = {c.get("ref_des", c.get("name", "?")): c for c in state.source_bom}
+    ondemand_cache: dict[str, list[dict[str, Any]]] = {}
     rescued = 0
     for row in state.crossref_result:
         if row.get("status") != "no_substitute":
             continue
         ref = row.get("ref_des")
         cat = row.get("component_type", "")
+        comp = by_ref.get(ref, row)
         cands = state.candidates_by_ref.get(ref, [])
         if not cands:
+            # Prefetch left no candidates for this row — usually a ref-des /
+            # category mismatch between the source BOM (prefetch keys on it) and
+            # the cross-referenced result. The deterministic floor must not skip
+            # a rescuable part on that account, so fetch from TAS on demand.
+            cands = _ondemand_candidates(state.target_manufacturer, cat, comp, ondemand_cache)
+            if cands:
+                logger.info(
+                    "CR stage 6.5: prefetch had 0 candidates for %s (%s); "
+                    "fetched %d on-demand", ref, cat, len(cands)
+                )
+        if not cands:
             continue
-        patch = _best_inkind_candidate(by_ref.get(ref, row), cat, cands)
+        patch = _best_inkind_candidate(comp, cat, cands)
         if patch is None:
             continue
         row.update(patch)
@@ -1684,13 +1739,23 @@ def run_crossref_pipeline(
     circuit_context: str | None = None,
     stress_by_ref: dict[str, Any] | None = None,
     verbose: bool = False,
+    progress: Any = None,
 ) -> CrossRefOutcome:
     """Run the full CR pipeline end-to-end.
 
     When ``stress_by_ref`` is provided (from CRE simulation), candidates
     are ranked and guardrails are applied using actual per-component
     voltage and current stress instead of static BOM specs.
+
+    ``progress`` (optional) is called as ``progress(message, pct)`` before
+    each stage so a caller (the Jobs UI) can render granular per-stage state.
     """
+    def _say(msg: str, pct: int) -> None:
+        if progress is not None:
+            with contextlib.suppress(Exception):
+                progress(msg, pct)
+
+    n = len(source_bom)
     state = CrossRefState(
         source_bom=_normalize_bom(source_bom),
         target_manufacturer=target_manufacturer,
@@ -1698,17 +1763,27 @@ def run_crossref_pipeline(
         stress_by_ref=stress_by_ref or {},
     )
 
+    _say(f"Prefetching TAS candidates for {n} components", 5)
     state = _stage1_prefetch(state)
+    _say("Librarian: sourcing any missing components from datasheets/distributors", 15)
     state = _stage1_5_librarian(state)
+    _say("Pre-classifying each component by category", 28)
     state = _stage2_preclassify(state)
+    _say(f"Cross-referencing to {target_manufacturer} (LLM picks equivalents)", 38)
     state = _stage3_crossref(state)
+    _say("Applying guardrails (voltage/current/package physics checks)", 55)
     state = _stage4_guardrails(state)
+    _say("Scoring the substitute candidates", 64)
     state = _stage5_score(state)
+    _say("Otto challenge (field-sales rebuttal of every no-substitute)", 70)
     state = _stage6_otto(state)
+    _say("Deterministic in-kind rescue for residual gaps", 78)
     state = _stage6_5_deterministic_rescue(state)
+    _say("Adversarial review (Ray + Nicola)", 84)
     state = _stage7_review(state)
 
-    # Correction loop: if reviewer rejects, fix objected components and re-review
+    # Correction loop: if reviewer rejects, fix objected components and re-review.
+    # Re-runs stay under the "review" stage (no backward stage bounce in the UI).
     for loop_i in range(1, _MAX_REVIEW_LOOPS + 1):
         if state.passed:
             break
@@ -1718,6 +1793,7 @@ def run_crossref_pipeline(
             break
 
         logger.info("CR correction loop %d: addressing %d objections", loop_i, len(objections))
+        _say(f"Correction loop {loop_i}: addressing {len(objections)} reviewer objections", 88)
         state = _stage3b_correct(state, objections)
         state = _stage4_guardrails(state)
         state = _stage5_score(state)
@@ -1726,6 +1802,7 @@ def run_crossref_pipeline(
         state = _stage7_review(state)
 
     # Stage 8: Learn from this run
+    _say("Learning from this run (persisting accepted substitutions)", 95)
     _stage8_learn(state)
 
     outcome = CrossRefOutcome.from_state(state)
@@ -1747,6 +1824,8 @@ def run_crossref_with_cre(
     pdf_text: str | None = None,
     source_bom_override: list[dict[str, Any]] | None = None,
     verbose: bool = False,
+    progress: Any = None,
+    review_llm: bool = False,
 ) -> CrossRefOutcome:
     """CRE-fronted cross-reference: simulate first, then crossref with stress.
 
@@ -1771,21 +1850,37 @@ def run_crossref_with_cre(
     )
     from heaviside.pipeline.cre_testbench import extract_component_stress
 
+    def _say(msg: str, pct: int) -> None:
+        if progress is not None:
+            with contextlib.suppress(Exception):
+                progress(msg, pct)
+
     # --- CRE stages: extract and simulate ---
-    cre_state = CREState(reference=reference, pdf_path=pdf_path)
+    # Carry the review flag + progress sink so the high-risk extraction stages
+    # (competitor specs, reverse-engineered BOM) run under Ray+Nicola review.
+    cre_state = CREState(reference=reference, pdf_path=pdf_path,
+                         review_llm=review_llm, progress=progress)
     if pdf_text is not None:
         # Pre-extracted text (e.g. an HTML app-note fetched from a URL):
         # seed it directly so stage 0 skips PDF extraction.
         cre_state.pdf_text = pdf_text
+    _say("Extracting the reference document (text + tables)", 2)
     cre_state = _stage0_extract_pdf(cre_state)
+    _say("Competitor analysis: specs + BOM from the reference", 6)
     cre_state = _stage1_competitor(cre_state)
+    _say("Reverse-engineering the schematic + topology", 10)
     cre_state = _stage2_reverse_engineer(cre_state)
+    _say("Verifying extracted MPNs against the catalog", 14)
     cre_state = _stage2_5_verify_mpns(cre_state)
+    _say("Extracting RDS(on) for the power FETs", 17)
     cre_state = _stage2_65_extract_rdson(cre_state)
+    _say("Extracting the reference's datasheet performance claims", 20)
     cre_state = _stage2_7_extract_claims(cre_state)
+    _say("Testbench: simulating the reference design", 24)
     cre_state = _stage2_8_testbench(cre_state)
 
     # --- Bridge: extract per-component stress ---
+    _say("CRE→CR bridge: extracting per-component V/I stress from the sim", 30)
     stress_by_ref = extract_component_stress(cre_state)
     logger.info("CRE→CR bridge: %d components have simulation stress data", len(stress_by_ref))
 
@@ -1811,12 +1906,21 @@ def run_crossref_with_cre(
             f"Vout={s.vout}V, Iout={s.iout}A, fsw={s.fsw / 1e3:.0f}kHz"
         )
 
+    # Forward progress to the CR core, scaling its 0–100 into the post-CRE band
+    # (30–100) so the percentage advances monotonically across both phases. The
+    # stage names map by keyword, so they render correctly regardless of pct.
+    cr_progress = None
+    if progress is not None:
+        def cr_progress(msg: str, pct: int) -> None:
+            _say(msg, 30 + int(pct * 0.70))
+
     return run_crossref_pipeline(
         source_bom,
         target_manufacturer,
         circuit_context=ctx,
         stress_by_ref=stress_by_ref,
         verbose=verbose,
+        progress=cr_progress,
     )
 
 

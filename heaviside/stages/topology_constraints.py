@@ -139,13 +139,18 @@ def validate(c: DesignConstraints, spec: Mapping[str, Any], *, check_tas: bool =
         )
 
 
-def _propose_llm(spec: Mapping[str, Any], topology: str | None) -> DesignConstraints:
+def _propose_llm(
+    spec: Mapping[str, Any], topology: str | None, *, feedback: str | None = None
+) -> DesignConstraints:
     import json
 
     from heaviside.agents.llm_call import call_agent_json
 
     payload = {"topology": topology, "spec": _spec_digest(spec)}
-    data = call_agent_json("topology-constraint-proposer", json.dumps(payload))
+    msg = json.dumps(payload)
+    if feedback:  # reviewer objections from a prior round — re-propose addressing them
+        msg += "\n\n" + feedback
+    data = call_agent_json("topology-constraint-proposer", msg)
     try:
         d = float(data["maximumDutyCycle"])
         vds = float(data["maximumDrainSourceVoltage"])
@@ -173,12 +178,73 @@ def _spec_digest(spec: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _propose_llm_reviewed(
+    spec: Mapping[str, Any],
+    topology: str | None,
+    *,
+    check_tas: bool,
+    progress: Any = None,
+) -> DesignConstraints:
+    """LLM propose under a Ray + Nicola review-and-retry loop: the deterministic
+    guard (``validate``) still rejects out-of-band / no-real-switch values, and
+    on top the panel judges whether the (valid) duty/Vds are engineering-sound;
+    a rejection re-proposes with their objections fed back. Unresolved after the
+    retry budget: keep the (deterministically valid) constraints and record the
+    objections on the rationale — no silent drop, but a band-valid result is not
+    blocked on advisory critique."""
+    from dataclasses import replace
+
+    from heaviside.stages.reviewed_stage import review_and_retry
+
+    def produce(feedback: str | None) -> DesignConstraints:
+        c = _propose_llm(spec, topology, feedback=feedback)
+        validate(c, spec, check_tas=check_tas)  # hard guard still raises (no retry)
+        return c
+
+    def present(c: DesignConstraints) -> dict[str, Any]:
+        return {
+            "topology": topology,
+            "spec": _spec_digest(spec),
+            "proposed": {
+                "maximumDutyCycle": c.maximum_duty_cycle,
+                "maximumDrainSourceVoltage": c.maximum_drain_source_voltage,
+                "rationale": c.rationale,
+            },
+        }
+
+    outcome = review_and_retry(
+        produce,
+        present,
+        scope=(
+            "CONVERTER-LEVEL CONSTRAINTS — a deterministic guard has ALREADY "
+            "confirmed these are in band (0.05<D<0.95, Vmax<Vds≤20·Vmax) and map "
+            "to a real stocked MOSFET. Judge only whether they are ENGINEERING-"
+            "SOUND for this topology + spec: duty headroom for line/load "
+            "transients, Vds margin for the off-state spike / reflected voltage, "
+            "and a commonly stocked voltage class. Magnetic sizing, control loop, "
+            "gate drive, and layout are OUT OF SCOPE."
+        ),
+        title="TOPOLOGY CONSTRAINT REVIEW",
+        progress=progress,
+    )
+    c = outcome.output
+    assert c is not None
+    if not outcome.approved and outcome.objections:
+        c = replace(c, rationale=(
+            f"{c.rationale} [reviewers (unresolved after {outcome.rounds} rounds): "
+            f"{'; '.join(outcome.objections)}]"
+        ).strip())
+    return c
+
+
 def propose(
     spec: Mapping[str, Any],
     topology: str | None = None,
     *,
     use_llm: bool = True,
     check_tas: bool = True,
+    with_review: bool = False,
+    progress: Any = None,
 ) -> DesignConstraints:
     """Return validated design constraints for ``topology``.
 
@@ -186,8 +252,13 @@ def propose(
     picks the values; ``validate`` enforces the band + a real TAS switch class
     and RAISES on a violation. No-key / ``use_llm=False``: the deterministic
     fallback (in-band by construction). The deterministic result is validated
-    too (so a TAS gap on the 3·Vmax class still surfaces)."""
+    too (so a TAS gap on the 3·Vmax class still surfaces).
+
+    ``with_review`` (opt-in, set by the design pipeline) wraps the LLM proposal
+    in a Ray + Nicola review-and-retry loop on top of the deterministic guard."""
     if use_llm and os.environ.get("MOONSHOT_API_KEY"):
+        if with_review:
+            return _propose_llm_reviewed(spec, topology, check_tas=check_tas, progress=progress)
         c = _propose_llm(spec, topology)
     else:
         c = deterministic(spec, topology)
