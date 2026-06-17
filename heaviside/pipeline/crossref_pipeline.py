@@ -1674,6 +1674,109 @@ def _to_volts(v: Any) -> float | None:
         return None
 
 
+_VALUE_PARSERS = {
+    "capacitor": "parse_capacitance",
+    "resistor": "parse_resistance",
+    "magnetic": "parse_inductance",
+}
+
+
+def _parse_value_si(value: Any, category: str) -> float | None:
+    """Parse a value string to SI base units using the category-specific parser
+    (F / Ω / H), falling back to the generic SI parser."""
+    from heaviside.pipeline import value_parse
+
+    if value in (None, "", "?"):
+        return None
+    fn = _VALUE_PARSERS.get(category)
+    try:
+        if fn:
+            return float(getattr(value_parse, fn)(str(value)))
+        return value_parse.parse_si_value(str(value))
+    except Exception:
+        return None
+
+
+def _param_verdict(orig: float | None, sub: float | None, *, higher_is_ok: bool) -> str:
+    """Compare two numeric parameters → exact / exceeds / lower / differs / n-a.
+
+    ``higher_is_ok`` (voltage rating, bypass capacitance): a larger substitute is
+    fine ('exceeds'); a smaller one is a real downgrade ('lower'). For value-type
+    params where exactness matters, the caller passes higher_is_ok=False."""
+    if orig is None or sub is None:
+        return "n/a"
+    if abs(sub - orig) <= 0.02 * abs(orig) if orig else sub == orig:
+        return "exact"
+    if sub > orig:
+        return "exceeds" if higher_is_ok else "differs"
+    return "lower" if higher_is_ok else "differs"
+
+
+def build_match_detail(row: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic per-parameter rationale for ONE cross-reference row.
+
+    Compares the original vs substitute value / voltage / package — each with a
+    verdict (exact / exceeds / lower / differs / same / n-a) and the raw pair —
+    then derives a human ``why`` line explaining the row's status. The data is
+    already on the row (no LLM); this just makes 'why exact/recommended/partial'
+    explicit and auditable instead of buried in the LLM's free-text notes."""
+    cat = row.get("component_type", "")
+    status = row.get("status", "")
+    params: list[dict[str, Any]] = []
+
+    # value (capacitance/resistance/inductance) — exactness matters
+    o_val, s_val = row.get("original_value", ""), row.get("substitute_value", "")
+    if o_val or s_val:
+        v = _param_verdict(
+            _parse_value_si(o_val, cat), _parse_value_si(s_val, cat),
+            higher_is_ok=(cat == "capacitor"),  # bypass/bulk caps tolerate higher
+        )
+        params.append({"name": "value", "original": str(o_val), "substitute": str(s_val),
+                       "verdict": v})
+
+    # voltage rating — higher is good, lower is a downgrade
+    o_v, s_v = row.get("original_voltage", ""), row.get("substitute_voltage", "")
+    if o_v or s_v:
+        params.append({"name": "voltage", "original": str(o_v), "substitute": str(s_v),
+                       "verdict": _param_verdict(_to_volts(o_v), _to_volts(s_v),
+                                                 higher_is_ok=True)})
+
+    # package — string equality (case/space-insensitive)
+    o_p = str(row.get("original_package", "")).strip().lower()
+    s_p = str(row.get("substitute_package", "")).strip().lower()
+    if o_p or s_p:
+        verdict = "same" if (o_p and o_p == s_p) else ("differs" if (o_p and s_p) else "n/a")
+        params.append({"name": "package", "original": row.get("original_package", ""),
+                       "substitute": row.get("substitute_package", ""), "verdict": verdict})
+
+    # derive a one-line "why" from the parameter verdicts + status
+    deviations = [p["name"] for p in params if p["verdict"] in ("differs", "lower")]
+    exceeds = [p["name"] for p in params if p["verdict"] == "exceeds"]
+    exacts = [p["name"] for p in params if p["verdict"] in ("exact", "same")]
+    if status == "exact":
+        why = "identical part from the target manufacturer"
+    elif status == "keep_original":
+        why = row.get("notes") or "kept as-is (already target manufacturer / not fitted)"
+    elif status == "no_substitute":
+        why = row.get("notes") or "no qualifying part found in the target catalogue"
+    else:
+        bits = []
+        if deviations:
+            bits.append("deviates on " + ", ".join(deviations))
+        if exceeds:
+            bits.append("exceeds on " + ", ".join(exceeds))
+        if exacts:
+            bits.append("matches " + ", ".join(exacts))
+        why = f"{status}: " + ("; ".join(bits) if bits else "meets constraints")
+    return {"params": params, "why": why}
+
+
+def _annotate_match_detail(state: CrossRefState) -> None:
+    """Attach a deterministic per-parameter match_detail to every result row."""
+    for row in state.crossref_result:
+        row["match_detail"] = build_match_detail(row)
+
+
 def _best_inkind_candidate(
     comp: dict[str, Any], cat: str, candidates: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
@@ -1883,6 +1986,9 @@ def run_crossref_pipeline(
     _say("Learning from this run (persisting accepted substitutions)", 95)
     _stage8_learn(state)
 
+    # Deterministic per-parameter rationale (why exact/recommended/partial) for
+    # every row, computed from the original-vs-substitute fields already present.
+    _annotate_match_detail(state)
     outcome = CrossRefOutcome.from_state(state)
     logger.info(
         "CR pipeline %s: %d components, %s → %s",

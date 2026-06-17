@@ -333,8 +333,16 @@ def _crossref_outcome_dict(outcome: Any) -> dict[str, Any]:
             "ref_des": c.ref_des,
             "component_type": c.component_type,
             "original_mpn": c.original_mpn,
+            "original_value": c.original_value,
+            "original_voltage": c.original_voltage,
+            "original_package": c.original_package,
             "substitute_mpn": c.substitute_mpn,
+            "substitute_value": c.substitute_value,
+            "substitute_voltage": c.substitute_voltage,
+            "substitute_package": c.substitute_package,
             "status": c.status.value,
+            "match_detail": c.match_detail,   # per-parameter rationale (why this status)
+            "guardrail_fires": list(c.guardrail_fires),
             "notes": c.notes,
         }
         for c in outcome.components

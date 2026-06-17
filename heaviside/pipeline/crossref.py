@@ -55,6 +55,7 @@ class CrossRefComponent:
     substitute_package: str
     status: SubstitutionStatus
     match_score: dict[str, Any] | None = None
+    match_detail: dict[str, Any] | None = None  # per-parameter rationale (why this status)
     sourcing: dict[str, Any] | None = None
     notes: str = ""
     guardrail_fires: tuple[str, ...] = ()
@@ -113,6 +114,7 @@ class CrossRefOutcome:
                     substitute_voltage=row.get("substitute_voltage", ""),
                     substitute_package=row.get("substitute_package", ""),
                     status=SubstitutionStatus(row.get("status", "no_substitute")),
+                    match_detail=row.get("match_detail"),
                     notes=row.get("notes", ""),
                     guardrail_fires=tuple(row.get("guardrail_fires", [])),
                 )
