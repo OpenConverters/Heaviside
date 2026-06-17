@@ -20,7 +20,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-os.environ.setdefault("MOONSHOT_API_KEY", "sk-viKudfa58QW8GjUm8aYxkfv5hmz0i5Y3HRdMKKpphPUupleQ")
+os.environ.setdefault("MOONSHOT_API_KEY", os.environ.get("MOONSHOT_API_KEY", ""))
 
 import logging
 
