@@ -171,9 +171,14 @@ def _stage1_spec_extract(state: REState) -> REState:
     else:
         user_msg += "(No PDF provided — extract what you can from the name/description.)"
 
+    # The merged extraction now also returns the full BOM, which is large — scale
+    # the token budget with PDF size like the dedicated reverse-engineer call did
+    # (8192 can't hold an 80+ line BOM, which silently truncated it → fallback).
+    spec_tokens = min(16384 + len(state.pdf_text or "") // 4, 32768)
+
     def _produce_spec_extract(feedback: str | None) -> dict[str, Any]:
         msg = user_msg + (f"\n\n{feedback}" if feedback else "")
-        return call_agent_json("spec-extract", msg, max_tokens=8192, max_retries=2)
+        return call_agent_json("spec-extract", msg, max_tokens=spec_tokens, max_retries=2)
 
     try:
         if state.review_llm:
@@ -200,8 +205,12 @@ def _stage1_spec_extract(state: REState) -> REState:
         else:
             data = _produce_spec_extract(None)
     except LLMCallError as exc:
-        state.diagnostics.append(f"competitor agent failed after retries: {exc}")
+        state.diagnostics.append(f"spec-extract agent failed after retries: {exc}")
         return state
+
+    # Stash for the merged single-call path: reverse_engineer reuses this BOM
+    # instead of re-reading the whole PDF in a second call.
+    state.extract_data = data
 
     specs = data.get("specs", {})
 
@@ -289,6 +298,19 @@ def _stage2_reverse_engineer(state: REState) -> REState:
         msg = user_msg + (f"\n\n{feedback}" if feedback else "")
         return call_agent_json("reverse-engineer", msg, max_tokens=bom_tokens, max_retries=2)
 
+    # MERGED single-call path: spec_extract already extracted the full BOM (and
+    # was reviewed). Reuse it — no second full-PDF call, no second review.
+    # Fall back to the dedicated reverse-engineer call only if that BOM is empty.
+    stashed = state.extract_data or {}
+    if stashed.get("bom"):
+        logger.info(
+            "RE stage 2: reusing spec-extract's %d-line BOM (merged single call)",
+            len(stashed["bom"]),
+        )
+        data = stashed
+        state.extract_data = None  # consumed
+        return _finish_reverse_engineer(state, data)
+
     try:
         if state.review_llm:
             data = _reviewed_extraction(
@@ -318,7 +340,14 @@ def _stage2_reverse_engineer(state: REState) -> REState:
         state.diagnostics.append(f"reverse-engineer agent failed after retries: {exc}")
         return state
 
-    state.ref_bom = data.get("bom", [])
+    return _finish_reverse_engineer(state, data)
+
+
+def _finish_reverse_engineer(state: REState, data: dict[str, Any]) -> REState:
+    """Parse a reverse-engineer/spec-extract ``data`` dict into ``state.ref_bom``
+    (with grouped-ref expansion) and a fallback ``ref_spec``. Shared by both the
+    dedicated reverse-engineer call and the merged spec-extract reuse path."""
+    state.ref_bom = data.get("bom", []) or []
 
     # Expand grouped ref_des into individual rows for downstream stages
     expanded: list[dict[str, Any]] = []

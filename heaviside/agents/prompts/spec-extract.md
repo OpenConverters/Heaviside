@@ -35,7 +35,12 @@ For the reference design, extract:
 
 ## Output Schema
 
-Reply with a single fenced JSON block:
+Reply with a single fenced JSON block. The `bom` array must be the COMPLETE
+bill of materials — every component line item you can find in the reference
+(not just the power-path highlights in `key_components`), each with its
+`ref_des`, `mpn`, `manufacturer`, `value`, `package`, and `category`
+(mosfet / diode / magnetic / capacitor / resistor / controller). This BOM is
+consumed directly downstream, so completeness matters.
 
 ```json
 {
@@ -86,6 +91,14 @@ Reply with a single fenced JSON block:
     {"ref_des": "Q1", "mpn": "LMG3624", "role": "primarySwitch", "notes": "600V GaN"},
     {"ref_des": "U1", "mpn": "UCC28780", "role": "controller", "notes": "ACF controller"},
     {"ref_des": "T1", "mpn": "", "role": "mainTransformer", "notes": "EE25, Lm=380uH"}
+  ],
+  "bom": [
+    {"ref_des": "Q1", "role": "primarySwitch", "mpn": "LMG3624", "manufacturer": "TI",
+     "value": "", "package": "QFN", "category": "mosfet", "notes": "600V GaN"},
+    {"ref_des": "T1", "role": "mainTransformer", "mpn": "", "manufacturer": "",
+     "value": "Lm=380uH, N=5:1", "package": "EE25", "category": "magnetic", "notes": "flyback xfmr"},
+    {"ref_des": "D1", "role": "outputRectifier", "mpn": "STTH3R02", "manufacturer": "ST",
+     "value": "", "package": "DO-247", "category": "diode", "notes": "200V/3A"}
   ],
   "comparison_caveats": [
     "Reference efficiency is a bench measurement from a real prototype",
