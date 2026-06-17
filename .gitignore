@@ -67,3 +67,16 @@ heaviside/webui/node_modules/
 # local-only Würth REDEXPERT MCP converter tooling (not committed)
 scripts/redexpert_client.py
 scripts/fetch_redexpert_wurth.py
+
+# Built web frontend (regenerate with `npm run build`; do NOT commit — it bloats history)
+heaviside/api/static/
+
+# Large catalog enrichment data artifacts (kept on disk, not in the repo)
+scripts/enrichment/*.ndjson
+
+# Report screenshots / scratch images
+/evq-*.png
+*.pyc
+
+# Persisted job results (runtime, per-machine)
+.heaviside/
