@@ -639,12 +639,16 @@ def _get_inductor_dcr(ref_bom: list[dict[str, Any]]) -> float | None:
                 or ref_upper.startswith(mpn_upper)
                 or mpn_upper.startswith(ref_upper)
             ):
-                dcr_block = (
+                el_raw = (
                     rec.get("magnetic", {})
                     .get("manufacturerInfo", {})
                     .get("datasheetInfo", {})
-                    .get("electrical", {})
-                    .get("dcResistance", {})
+                    .get("electrical")
+                )
+                el_items = el_raw if isinstance(el_raw, list) else ([el_raw] if isinstance(el_raw, dict) else [])
+                dcr_block = next(
+                    (item.get("dcResistance", {}) for item in el_items if "dcResistance" in item),
+                    {},
                 )
                 dcr_max = dcr_block.get("maximum")
                 if isinstance(dcr_max, (int, float)) and dcr_max > 0:

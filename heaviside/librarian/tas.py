@@ -212,6 +212,7 @@ SCHEMA_MAP: dict[str, tuple[Path, Any]] = {
     "igbts": (_REPO_ROOT / "SAS" / "schemas" / "igbt.json", _unwrap_two("semiconductor", "igbt")),
     "capacitors": (_REPO_ROOT / "CAS" / "schemas" / "capacitor.json", _unwrap_top("capacitor")),
     "resistors": (_REPO_ROOT / "RAS" / "schemas" / "resistor.json", _unwrap_top("resistor")),
+    "varistors": (_REPO_ROOT / "RAS" / "schemas" / "varistor.json", _unwrap_top("varistor")),
     "magnetics": (_REPO_ROOT / "MAS" / "schemas" / "magnetic.json", _unwrap_top("magnetic")),
 }
 

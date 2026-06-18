@@ -1,4 +1,4 @@
-"""Render a CrossRefOutcome as a standalone HTML report."""
+"""Render a CrossRefOutcome as a standalone HTML report (Proteus-style)."""
 
 from __future__ import annotations
 
@@ -8,94 +8,238 @@ from collections import Counter
 from typing import Any
 
 _CSS = """
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-       max-width: 1000px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
-h1 { border-bottom: 2px solid #c8102e; padding-bottom: 0.5rem; }
-h2 { color: #c8102e; margin-top: 2rem; }
-h3 { color: #333; margin-top: 1.5rem; }
-table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.9rem; }
-th, td { border: 1px solid #d1d5db; padding: 0.4rem 0.6rem; text-align: left; }
-th { background: #f3f4f6; font-weight: 600; }
-.exact { color: #059669; font-weight: 600; }
-.replaced { color: #2563eb; font-weight: 600; }
-.partial { color: #d97706; font-weight: 600; }
-.no-sub { color: #9ca3af; }
-.keep { color: #6b7280; }
-.summary-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;
-               padding: 1rem 1.5rem; margin: 1rem 0; }
-.coverage { font-size: 1.3rem; font-weight: 700; color: #c8102e; }
-.guardrail { background: #fef3c7; padding: 0.3rem 0.6rem; border-left: 3px solid #d97706;
-             margin: 0.2rem 0; font-size: 0.85rem; }
-.diagnostic { background: #fef2f2; padding: 0.3rem 0.6rem; border-left: 3px solid #dc2626;
-              margin: 0.2rem 0; font-size: 0.85rem; }
-.mpn { font-family: 'SF Mono', SFMono-Regular, Consolas, monospace; font-size: 0.85rem; }
-.footer { color: #9ca3af; font-size: 0.8rem; margin-top: 3rem; border-top: 1px solid #e5e7eb;
-          padding-top: 0.5rem; }
-.why { font-weight: 600; margin-bottom: .15rem; }
-.pp { font-size: 0.78rem; color: #374151; }
-.pp .pn { display: inline-block; min-width: 3.4rem; color: #6b7280; text-transform: capitalize; }
-.vv { font-size: 0.7rem; padding: 0 .3rem; border-radius: 4px; font-weight: 600; }
-.v-good { background: #d1fae5; color: #059669; }
-.v-warn { background: #fef3c7; color: #d97706; }
-.v-bad  { background: #fee2e2; color: #dc2626; }
-.v-muted{ background: #f3f4f6; color: #9ca3af; }
-.note { font-size: 0.78rem; font-style: italic; color: #6b7280; margin-top: .15rem; }
-@media print { body { margin: 0; } .no-print { display: none; } }
+@page { size: A4; margin: 22mm 20mm; }
+body { font-family: Georgia, 'Times New Roman', serif; font-size: 10.5pt;
+       max-width: 820px; margin: 2rem auto; padding: 0 1.5rem; color: #111; line-height: 1.45; }
+h1 { font-size: 1.45em; font-weight: bold; margin: 0 0 0.2em; border: none; }
+h2 { font-size: 1.05em; font-weight: bold; margin: 1.8em 0 0.5em; }
+h3 { font-size: 0.97em; font-weight: bold; font-style: italic; margin: 1.4em 0 0.35em; }
+.subtitle { font-size: 1.1em; font-weight: bold; margin: 0.15em 0; }
+.context  { font-style: italic; margin: 0.2em 0 0.4em; }
+.intro-meta { font-size: 0.92em; }
+hr.sep { width: 55%; margin: 1.4em auto; border: none; border-top: 1px solid #111; }
+/* Tables */
+table { border-collapse: collapse; width: 100%; margin: 0.7em 0; font-size: 0.88em;
+        table-layout: fixed; }
+th { border-top: 1.5px solid #111; border-bottom: 1px solid #111;
+     padding: 0.28em 0.5em; text-align: left; font-weight: normal;
+     background: none; font-style: italic; }
+td { padding: 0.28em 0.5em; vertical-align: top;
+     overflow-wrap: break-word; word-break: break-word; }
+td.no-wrap { white-space: nowrap; }
+tr.data-row td { border-bottom: 1px solid #d8d8d8; }
+tr.last-row td { border-bottom: 1.5px solid #111; }
+tr.total-row td { border-top: 1.5px solid #111; border-bottom: 1.5px solid #111;
+                  font-weight: bold; }
+/* Summary table */
+.summary-tbl { width: auto; min-width: 55%; }
+.summary-tbl td:first-child { width: 22em; }
+/* Substitution table column widths */
+.sub-tbl col.c-ref  { width: 7%;  }
+.sub-tbl col.c-orig { width: 17%; }
+.sub-tbl col.c-sub  { width: 17%; }
+.sub-tbl col.c-st   { width: 20%; }
+.sub-tbl col.c-conf { width: 9%;  }
+.sub-tbl col.c-note { width: 30%; }
+/* Engineering compare table */
+.cmp-tbl col.c-param { width: 30%; }
+.cmp-tbl col.c-orig2 { width: 35%; }
+.cmp-tbl col.c-sub2  { width: 35%; }
+/* Not-replaced table */
+.nr-tbl col.c-ref2  { width: 10%; }
+.nr-tbl col.c-orig2 { width: 30%; }
+.nr-tbl col.c-why   { width: 60%; }
+/* Monospace for PNs */
+.mpn { font-family: 'Courier New', Courier, monospace; font-size: 0.84em; word-break: break-all; }
+.conf-high   { font-weight: bold; }
+.conf-caveat { font-weight: bold; font-style: italic; }
+.conf-muted  { color: #666; }
+/* Recommendations */
+.rec-list { margin: 0.5em 0; padding-left: 1.5em; }
+.rec-list li { margin-bottom: 0.4em; }
+.rec-label { font-weight: bold; }
+/* Coverage callout */
+.coverage-line { font-style: italic; font-size: 0.88em; margin: 0.6em 0; color: #333; }
+/* Footer */
+.footer { color: #888; font-size: 0.78em; margin-top: 3em;
+          border-top: 1px solid #ccc; padding-top: 0.5em; text-align: center; }
+@media print { body { margin: 0; max-width: none; }
+               .no-print { display: none; } }
 """
 
 _CAT_ORDER = ["capacitor", "resistor", "magnetic", "mosfet", "diode", "ic"]
-_CAT_LABELS = {
-    "capacitor": "Capacitors",
-    "resistor": "Resistors",
-    "magnetic": "Magnetics",
-    "mosfet": "MOSFETs",
-    "diode": "Diodes",
-    "ic": "ICs",
-}
-_STATUS_LABELS = {
-    "exact": ("EXACT", "exact"),
-    "recommended": ("REPLACED", "replaced"),
-    "partial": ("PARTIAL", "partial"),
-    "no_substitute": ("NOT REPLACED", "no-sub"),
-    "keep_original": ("KEEP", "keep"),
-}
 
 
 def _e(text: Any) -> str:
     return html.escape(str(text))
 
 
-_VERDICT_CLASS = {
-    "exact": "v-good", "same": "v-good", "exceeds": "v-good",
-    "differs": "v-warn", "lower": "v-bad", "n/a": "v-muted",
-}
-
-
-def _why_cell(c: dict[str, Any]) -> str:
-    """Render the deterministic per-parameter rationale (why this status) for one
-    component into a table cell: the 'why' line, the param chips
-    (value/voltage/package: original→substitute + verdict), then the LLM note."""
-    md = c.get("match_detail") or {}
-    bits: list[str] = []
-    why = md.get("why") or c.get("notes") or ""
-    if why:
-        bits.append(f'<div class="why">{_e(why)}</div>')
-    for p in md.get("params", []):
-        cls = _VERDICT_CLASS.get(p.get("verdict", ""), "v-muted")
-        o, s = p.get("original") or "—", p.get("substitute") or "—"
-        bits.append(
-            f'<div class="pp"><span class="pn">{_e(p.get("name", ""))}</span> '
-            f'{_e(o)} → {_e(s)} <span class="vv {cls}">{_e(p.get("verdict", ""))}</span></div>'
-        )
-    note = c.get("notes", "")
-    if note and note != why:
-        bits.append(f'<div class="note">{_e(note)}</div>')
-    return "".join(bits) or "—"
-
-
 def _sort_key(ref_des: str) -> tuple[str, int]:
     m = re.match(r"([A-Z]+)(\d+)", ref_des)
     return (m.group(1), int(m.group(2))) if m else (ref_des, 0)
+
+
+def _status_label(status: str, target: str) -> tuple[str, str]:
+    """(display_text, css_class)"""
+    return {
+        "exact":          ("[OK] Recommended", ""),
+        "recommended":    ("[OK] Recommended", ""),
+        "partial":        ("~ Partial",         ""),
+        "no_substitute":  ("- No substitute",   "conf-muted"),
+        "keep_original":  (f"- (already {target})", "conf-muted"),
+    }.get(status, (status, ""))
+
+
+def _confidence(comp: dict[str, Any]) -> tuple[str, str]:
+    """(label, css_class)"""
+    status = comp.get("status", "")
+    notes  = (comp.get("notes") or "").lower()
+    if status in ("no_substitute", "keep_original"):
+        return "-", "conf-muted"
+    if status == "exact":
+        return "HIGH", "conf-high"
+    md = comp.get("match_detail") or {}
+    params = md.get("params", [])
+    # CAVEAT: package upsize, downsize, or explicit verify note
+    pkg_keywords = ("upsize", "downsize", "size class", "footprint", "verify", "caveat")
+    if any(k in notes for k in pkg_keywords):
+        return "CAVEAT", "conf-caveat"
+    # HIGH if all params are exact/exceeds
+    good = {"exact", "exceeds", "same"}
+    if params and all(p.get("verdict", "") in good for p in params):
+        return "HIGH", "conf-high"
+    if "exact" in notes and "match" in notes:
+        return "HIGH", "conf-high"
+    return "MED", ""
+
+
+def _short_note(comp: dict[str, Any]) -> str:
+    """Compact one-liner note from match_detail params + notes text."""
+    md   = comp.get("match_detail") or {}
+    note = (comp.get("notes") or "").strip()
+    bits: list[str] = []
+    for p in md.get("params", []):
+        o, s = p.get("original") or "", p.get("substitute") or ""
+        verd = p.get("verdict", "")
+        name = p.get("name", "")
+        if o and s and o != s:
+            bits.append(f"{name}: {o}→{s}")
+        elif o:
+            bits.append(f"{name}: {o}")
+    param_str = ", ".join(bits)
+    # Trim note to first sentence to keep cells short
+    first_sentence = re.split(r"(?<=[.!?])\s", note)[0] if note else ""
+    if param_str and first_sentence and first_sentence not in param_str:
+        return f"{first_sentence} ({param_str})" if len(first_sentence) < 60 else first_sentence
+    return first_sentence or param_str or note[:80] or "—"
+
+
+def _tr(cells: list[str], *, cls: str = "data-row") -> str:
+    inner = "".join(f"<td>{c}</td>" for c in cells)
+    return f'<tr class="{cls}">{inner}</tr>'
+
+
+def _engineering_notes(comps: list[dict[str, Any]], target: str) -> str:
+    """Generate per-notable-component engineering analysis paragraphs."""
+    parts: list[str] = []
+    for comp in comps:
+        status = comp.get("status", "")
+        if status == "no_substitute":
+            continue
+        md   = comp.get("match_detail") or {}
+        params = md.get("params", [])
+        if not params:
+            continue
+        # Only include components with detailed params (value, voltage, package)
+        ref  = comp.get("ref_des", "?")
+        orig = comp.get("original_mpn", "?")
+        sub  = comp.get("substitute_mpn", "?")
+        note = (comp.get("notes") or "").strip()
+        cat  = comp.get("component_type", "")
+        # Build compare table
+        rows: list[str] = []
+        for p in params:
+            o = _e(p.get("original") or "—")
+            s = _e(p.get("substitute") or "—")
+            nm = _e(p.get("name") or "")
+            rows.append(
+                f'<tr class="data-row"><td>{nm}</td>'
+                f'<td class="mpn">{o}</td><td class="mpn">{s}</td></tr>'
+            )
+        if not rows:
+            continue
+        cat_label = {"capacitor": "Capacitor", "resistor": "Resistor",
+                     "magnetic": "Inductor/Magnetic", "mosfet": "MOSFET",
+                     "diode": "Diode"}.get(cat, cat.title())
+        parts.append(
+            f'<h3>{_e(ref)} ({cat_label}) — <span class="mpn">{_e(orig)}</span>'
+            f' → <span class="mpn">{_e(sub)}</span></h3>'
+        )
+        parts.append(
+            '<table class="cmp-tbl"><colgroup>'
+            '<col class="c-param"><col class="c-orig2"><col class="c-sub2">'
+            '</colgroup>'
+            f'<tr><th>Parameter</th><th>Original ({_e(orig)})</th>'
+            f'<th>Substitute ({_e(sub)})</th></tr>'
+        )
+        parts.extend(rows)
+        parts.append('</table>')
+        if note:
+            # Bold first sentence if it looks like a label
+            first, *rest = re.split(r"(?<=[:.])\s", note, maxsplit=1)
+            if rest and len(first) < 40 and first.endswith(":"):
+                parts.append(
+                    f'<p><strong>{_e(first)}</strong> {_e(" ".join(rest))}</p>'
+                )
+            else:
+                parts.append(f"<p>{_e(note)}</p>")
+    return "\n".join(parts)
+
+
+def _recommendations(comps: list[dict[str, Any]]) -> list[str]:
+    """Derive actionable recommendations from substitution patterns."""
+    recs: list[str] = []
+    # Package upsizes
+    upsized = [c for c in comps if c.get("status") in ("recommended", "partial")
+               and any(k in (c.get("notes") or "").lower()
+                       for k in ("upsize", "size class", "larger"))]
+    if upsized:
+        refs = ", ".join(c["ref_des"] for c in upsized[:6])
+        if len(upsized) > 6:
+            refs += f" (+{len(upsized)-6} more)"
+        recs.append(
+            f"<li><span class='rec-label'>Package upsizes ({refs}):</span> "
+            "Verify PCB keepout clearances and component height against adjacent parts.</li>"
+        )
+    # Package downsizes
+    downsized = [c for c in comps if c.get("status") in ("recommended", "partial")
+                 and "downsize" in (c.get("notes") or "").lower()]
+    if downsized:
+        refs = ", ".join(c["ref_des"] for c in downsized[:4])
+        recs.append(
+            f"<li><span class='rec-label'>Package downsizes ({refs}):</span> "
+            "Verify power dissipation and pad geometry before committing to smaller footprint.</li>"
+        )
+    # THT → SMD conversions
+    tht = [c for c in comps if "tht" in (c.get("notes") or "").lower()
+           or "through-hole" in (c.get("notes") or "").lower()]
+    if tht:
+        refs = ", ".join(c["ref_des"] for c in tht[:4])
+        recs.append(
+            f"<li><span class='rec-label'>THT→SMD conversion ({refs}):</span> "
+            "Verify mechanical requirements, vibration tolerance, and gate waveform integrity where applicable.</li>"
+        )
+    # No substitute components
+    no_sub = [c for c in comps if c.get("status") == "no_substitute"]
+    if no_sub:
+        refs = ", ".join(c["ref_des"] for c in no_sub[:6])
+        if len(no_sub) > 6:
+            refs += f" (+{len(no_sub)-6} more)"
+        recs.append(
+            f"<li><span class='rec-label'>Not replaced ({refs}):</span> "
+            "Source from original manufacturer or request targeted catalogue search.</li>"
+        )
+    return recs
 
 
 def render_crossref_html(
@@ -104,191 +248,190 @@ def render_crossref_html(
     title: str = "",
     circuit_context: str = "",
 ) -> str:
-    """Render a crossref outcome dict as standalone HTML."""
-    comps = sorted(outcome.get("components", []), key=lambda c: _sort_key(c["ref_des"]))
+    """Render a crossref outcome dict as a Proteus-style standalone HTML report."""
+    comps  = sorted(outcome.get("components", []), key=lambda c: _sort_key(c["ref_des"]))
     target = outcome.get("target_manufacturer", "?")
 
-    total = len(comps)
-    status_counts = Counter(c["status"] for c in comps)
-    replaced = status_counts.get("recommended", 0) + status_counts.get("partial", 0)
-    exact = status_counts.get("exact", 0)
-    coverage = exact + replaced
-    no_sub = status_counts.get("no_substitute", 0)
-    keep = status_counts.get("keep_original", 0)
-
-    cat_stats: dict[str, dict[str, int]] = {}
-    for c in comps:
-        cat = c.get("component_type", "other")
-        if cat not in cat_stats:
-            cat_stats[cat] = {"total": 0, "exact": 0, "replaced": 0, "no_sub": 0, "keep": 0}
-        cat_stats[cat]["total"] += 1
-        if c["status"] == "exact":
-            cat_stats[cat]["exact"] += 1
-        elif c["status"] in ("recommended", "partial"):
-            cat_stats[cat]["replaced"] += 1
-        elif c["status"] == "no_substitute":
-            cat_stats[cat]["no_sub"] += 1
-        else:
-            cat_stats[cat]["keep"] += 1
+    # ── Stats ────────────────────────────────────────────────────────────────
+    total        = len(comps)
+    status_cnt   = Counter(c["status"] for c in comps)
+    already      = status_cnt.get("exact", 0)
+    newly_repl   = status_cnt.get("recommended", 0) + status_cnt.get("partial", 0)
+    no_sub       = status_cnt.get("no_substitute", 0)
+    keep         = status_cnt.get("keep_original", 0)
+    # "trivial" = keep_original (no-change)
+    scope        = total - keep
+    coverage     = already + newly_repl
+    cov_pct      = f"{100 * coverage / scope:.0f}%" if scope else "N/A"
 
     parts: list[str] = []
     parts.append("<!DOCTYPE html><html><head><meta charset='utf-8'>")
-    parts.append(f"<title>{_e(title or f'{target} Cross-Reference Report')}</title>")
+    parts.append(
+        f"<title>{_e(title or f'{target} Cross-Reference Report')}</title>"
+    )
     parts.append(f"<style>{_CSS}</style></head><body>")
 
-    # Header
-    parts.append(f"<h1>{_e(target)} Cross-Reference Report</h1>")
+    # ── Header ───────────────────────────────────────────────────────────────
+    parts.append("<h1>OpenConverters Cross-Reference Report</h1>")
     if title:
-        parts.append(f"<h2>{_e(title)}</h2>")
-    if circuit_context:
-        parts.append(f"<p><em>{_e(circuit_context)}</em></p>")
+        parts.append(f'<div class="subtitle">{_e(title)}</div>')
+    parts.append(
+        f'<p class="intro-meta context">'
+        f"Target supplier: <strong>{_e(target)}</strong>"
+        + (f"&nbsp;&nbsp;{_e(circuit_context)}" if circuit_context else "")
+        + "</p>"
+    )
+    parts.append('<hr class="sep">')
 
-    # Summary box
-    parts.append('<div class="summary-box">')
-    parts.append(
-        f'<p class="coverage">{_e(target)} coverage: {coverage} / {total} = {100 * coverage / total:.0f}%</p>'
-    )
-    parts.append(
-        f"<p>Already {_e(target)}: {exact} · Newly replaced: {replaced} · "
-        f"Not replaced: {no_sub} · Keep/NC: {keep}</p>"
-    )
-    parts.append("</div>")
-
-    # Summary table
-    parts.append("<h2>1. Outcome Summary</h2>")
-    parts.append(
-        f"<table><tr><th>Category</th><th>Fitted</th><th>Already {_e(target)}</th>"
-        "<th>Newly Replaced</th><th>Not Replaced</th></tr>"
-    )
-    for cat in _CAT_ORDER:
-        if cat not in cat_stats:
-            continue
-        s = cat_stats[cat]
-        label = _CAT_LABELS.get(cat, cat.title())
-        parts.append(
-            f"<tr><td>{_e(label)}</td><td>{s['total']}</td><td>{s['exact']}</td>"
-            f"<td>{s['replaced']}</td><td>{s['no_sub'] + s['keep']}</td></tr>"
-        )
-    parts.append(
-        f"<tr><td><strong>Total</strong></td><td><strong>{total}</strong></td>"
-        f"<td><strong>{exact}</strong></td><td><strong>{replaced}</strong></td>"
-        f"<td><strong>{no_sub + keep}</strong></td></tr>"
-    )
+    # ── Executive Summary ────────────────────────────────────────────────────
+    parts.append("<h2>Executive Summary</h2>")
+    parts.append('<table class="summary-tbl"><colgroup><col><col></colgroup>')
+    rows_summary = [
+        ("Components reviewed",                  str(total)),
+        (f"Already {target} (no change required)", str(already + keep)),
+        ("Trivial passives (0Ω jumpers / DNP)",   "—"),
+        ("Substitutable scope (real engineering work)", str(scope)),
+        (f"{target} substitutions offered",       f"{coverage} ({cov_pct} of substitutable scope)"),
+        ("No equivalent available",               str(no_sub)),
+    ]
+    for i, (metric, value) in enumerate(rows_summary):
+        cls = "last-row" if i == len(rows_summary) - 1 else "data-row"
+        parts.append(_tr([_e(metric), _e(value)], cls=cls))
     parts.append("</table>")
+    parts.append(
+        '<p class="coverage-line"><em>Coverage % is calculated against the substitutable scope '
+        "so it reflects actual engineering substitution work, "
+        f"NOT pre-existing alignment with the {_e(target)} catalogue.</em></p>"
+    )
+    parts.append('<hr class="sep">')
 
-    # Per-category tables
-    parts.append("<h2>2. Crossing Table</h2>")
-    for cat in _CAT_ORDER:
-        cat_comps = [c for c in comps if c.get("component_type") == cat]
-        if not cat_comps:
-            continue
-        label = _CAT_LABELS.get(cat, cat.title())
-        parts.append(f"<h3>{_e(label)}</h3>")
-        parts.append("<table>")
+    # ── Substitution Table ───────────────────────────────────────────────────
+    parts.append("<h2>Substitution Table</h2>")
+    parts.append(
+        '<table class="sub-tbl"><colgroup>'
+        '<col class="c-ref"><col class="c-orig"><col class="c-sub">'
+        '<col class="c-st"><col class="c-conf"><col class="c-note">'
+        "</colgroup>"
+    )
+    parts.append(
+        f"<tr><th>Ref</th><th>Original PN</th><th>{_e(target)} PN</th>"
+        "<th>Status</th><th>Conf.</th><th>Notes</th></tr>"
+    )
+    for i, c in enumerate(comps):
+        sl, _  = _status_label(c["status"], target)
+        cl, cc = _confidence(c)
+        sub    = c.get("substitute_mpn") or "—"
+        orig   = c.get("original_mpn")   or "—"
+        note   = _short_note(c)
+        cls    = "last-row" if i == len(comps) - 1 else "data-row"
         parts.append(
-            f"<tr><th>Ref</th><th>Original MPN</th><th>{_e(target)} PN</th>"
-            "<th>Status</th><th>Why / Notes</th></tr>"
+            f'<tr class="{cls}">'
+            f"<td>{_e(c['ref_des'])}</td>"
+            f'<td class="mpn">{_e(orig)}</td>'
+            f'<td class="mpn">{_e(sub)}</td>'
+            f'<td class="no-wrap">{_e(sl)}</td>'
+            f'<td class="no-wrap {cc}">{_e(cl)}</td>'
+            f"<td>{_e(note)}</td>"
+            "</tr>"
         )
-        for c in cat_comps:
-            sl, sc = _STATUS_LABELS.get(c["status"], (c["status"], ""))
-            sub = c.get("substitute_mpn") or "—"
-            orig = c.get("original_mpn") or "—"
+    parts.append("</table>")
+    parts.append('<hr class="sep">')
+
+    # ── Engineering Notes ────────────────────────────────────────────────────
+    eng_html = _engineering_notes(comps, target)
+    if eng_html:
+        parts.append("<h2>Engineering Notes</h2>")
+        parts.append(eng_html)
+        parts.append('<hr class="sep">')
+
+    # ── Components Not Replaced ──────────────────────────────────────────────
+    not_replaced = [c for c in comps if c.get("status") == "no_substitute"]
+    if not_replaced:
+        parts.append("<h2>Components Not Replaced</h2>")
+        parts.append(
+            '<table class="nr-tbl"><colgroup>'
+            '<col class="c-ref2"><col class="c-orig2"><col class="c-why">'
+            "</colgroup>"
+        )
+        parts.append("<tr><th>Ref</th><th>Original PN</th><th>Reason</th></tr>")
+        for i, c in enumerate(not_replaced):
+            cls  = "last-row" if i == len(not_replaced) - 1 else "data-row"
+            note = (c.get("notes") or "—").strip()
+            # Use first sentence only for brevity
+            reason = re.split(r"(?<=[.!?])\s", note)[0]
             parts.append(
-                f"<tr><td>{_e(c['ref_des'])}</td>"
-                f'<td class="mpn">{_e(orig)}</td>'
-                f'<td class="mpn"><strong>{_e(sub)}</strong></td>'
-                f'<td class="{sc}">{_e(sl)}</td>'
-                f"<td>{_why_cell(c)}</td></tr>"
+                f'<tr class="{cls}">'
+                f"<td>{_e(c['ref_des'])}</td>"
+                f'<td class="mpn">{_e(c.get("original_mpn") or "—")}</td>'
+                f"<td>{_e(reason)}</td>"
+                "</tr>"
             )
         parts.append("</table>")
+        parts.append('<hr class="sep">')
 
-    # Guardrails
+    # ── Recommendations ──────────────────────────────────────────────────────
+    recs = _recommendations(comps)
+    if recs:
+        parts.append("<h2>Recommendations</h2>")
+        parts.append(f'<ul class="rec-list">{"".join(recs)}</ul>')
+        parts.append('<hr class="sep">')
+
+    # ── Appendix: Guardrails / Otto / Reviewer (collapsed for print) ─────────
     guardrails = outcome.get("guardrail_log", [])
-    if guardrails:
-        parts.append("<h2>3. Guardrail Fires</h2>")
-        for g in guardrails:
-            parts.append(
-                f'<div class="guardrail">G{_e(g.get("guardrail_id", "?"))} '
-                f"{_e(g.get('ref_des', '?'))}: {_e(g.get('reason', ''))}</div>"
-            )
+    otto       = outcome.get("otto_log", {})
+    verdicts   = outcome.get("review_verdicts", [])
+    diags      = outcome.get("diagnostics", [])
 
-    # Otto challenge log
-    otto = outcome.get("otto_log", {})
-    challenges = otto.get("challenges", [])
-    if challenges:
-        parts.append("<h2>4. Otto Challenge Log</h2>")
-        parts.append(
-            "<p><em>Otto is a Würth Elektronik sales agent that challenges every "
-            "no_substitute verdict. Proposals are verified against Digi-Key before acceptance.</em></p>"
-        )
-        parts.append(
-            "<table><tr><th>Ref</th><th>Verdict</th><th>Diagnosis</th>"
-            "<th>Counter-Proposal</th><th>Verified?</th></tr>"
-        )
-        verified_refs = {v["ref_des"] for v in otto.get("verified", [])}
-        rejected_refs = {r["ref_des"] for r in otto.get("rejected", [])}
-        for ch in challenges:
-            ref = ch.get("ref_des", "?")
-            verdict = ch.get("verdict", "?")
-            diag = _e(ch.get("diagnosis", ""))
-            proposal = _e(ch.get("counter_proposal") or "—")
-            vc = "exact" if verdict == "OVERTURNED" else "no-sub"
-            if ref in verified_refs:
-                check = '<span class="exact">Verified</span>'
-            elif ref in rejected_refs:
-                check = '<span class="partial">Rejected</span>'
-            elif verdict == "CONFIRMED":
-                check = '<span class="no-sub">N/A</span>'
-            else:
-                check = "—"
+    if guardrails or otto.get("challenges") or verdicts or diags:
+        parts.append('<div class="no-print">')
+        if guardrails:
+            parts.append("<h2>Guardrail Fires</h2>")
+            for g in guardrails:
+                parts.append(
+                    f"<p>G{_e(g.get('guardrail_id','?'))} "
+                    f"{_e(g.get('ref_des','?'))}: {_e(g.get('reason',''))}</p>"
+                )
+        if otto.get("challenges"):
+            parts.append("<h2>Otto Challenge Log</h2>")
             parts.append(
-                f'<tr><td>{_e(ref)}</td><td class="{vc}">{_e(verdict)}</td>'
-                f"<td>{diag}</td><td>{proposal}</td><td>{check}</td></tr>"
+                "<p><em>Otto is a Würth Elektronik sales agent that challenges every "
+                "no_substitute verdict.</em></p>"
             )
-        parts.append("</table>")
-        summary = otto.get("summary", {})
-        if summary:
             parts.append(
-                f"<p>Otto summary: {_e(summary.get('overturned', 0))} overturned, "
-                f"{_e(summary.get('confirmed', 0))} confirmed out of "
-                f"{_e(summary.get('total_challenged', 0))} challenged.</p>"
+                "<table><tr><th>Ref</th><th>Verdict</th>"
+                "<th>Counter-Proposal</th><th>Verified?</th></tr>"
             )
-
-    # Reviewer verdict
-    verdicts = outcome.get("review_verdicts", [])
-    reviewer_log = outcome.get("reviewer_log", "")
-    if verdicts or reviewer_log:
-        parts.append("<h2>5. Reviewer Report (Nicola — Quality Mode)</h2>")
+            verified = {v["ref_des"] for v in otto.get("verified", [])}
+            rejected = {r["ref_des"] for r in otto.get("rejected", [])}
+            for i, ch in enumerate(otto["challenges"]):
+                ref      = ch.get("ref_des", "?")
+                verdict  = ch.get("verdict", "?")
+                proposal = ch.get("counter_proposal") or "—"
+                check    = ("Verified" if ref in verified
+                            else "Rejected" if ref in rejected
+                            else "N/A" if verdict == "CONFIRMED" else "—")
+                cls = "last-row" if i == len(otto["challenges"])-1 else "data-row"
+                parts.append(
+                    f'<tr class="{cls}"><td>{_e(ref)}</td><td>{_e(verdict)}</td>'
+                    f"<td>{_e(proposal)}</td><td>{_e(check)}</td></tr>"
+                )
+            parts.append("</table>")
         for v in verdicts:
-            vc = v.get("verdict", "?").upper()
-            css = "exact" if vc == "APPROVED" else ("partial" if vc == "PROCEED" else "no-sub")
-            parts.append(
-                f'<p>Verdict: <span class="{css}" style="font-size:1.2em">{_e(vc)}</span></p>'
-            )
-            summary_text = v.get("summary", "")
-            if summary_text:
-                parts.append(f"<p>{_e(summary_text)}</p>")
-            objections = v.get("objections", [])
-            if objections:
-                parts.append("<h3>Objections</h3><ul>")
-                for obj in objections:
-                    parts.append(f"<li>{_e(obj)}</li>")
-                parts.append("</ul>")
-            warnings = v.get("warnings", [])
-            if warnings:
-                parts.append("<h3>Warnings</h3><ul>")
-                for w in warnings:
-                    parts.append(f'<li class="warn">{_e(w)}</li>')
-                parts.append("</ul>")
+            vc  = v.get("verdict", "?").upper()
+            parts.append(f"<h2>Reviewer Verdict: {_e(vc)}</h2>")
+            if v.get("summary"):
+                parts.append(f"<p>{_e(v['summary'])}</p>")
+            for obj in v.get("objections", []):
+                parts.append(f"<p>⚠ {_e(obj)}</p>")
+        if diags:
+            parts.append("<h2>Diagnostics</h2>")
+            for d in diags:
+                parts.append(f"<p>{_e(d)}</p>")
+        parts.append("</div>")
 
-    # Diagnostics
-    diags = outcome.get("diagnostics", [])
-    if diags:
-        parts.append("<h2>6. Diagnostics</h2>")
-        for d in diags:
-            parts.append(f'<div class="diagnostic">{_e(d)}</div>')
-
-    parts.append('<div class="footer">Generated by Heaviside CR Pipeline</div>')
+    parts.append(
+        '<div class="footer">Generated by Heaviside CR Pipeline · OpenConverters</div>'
+    )
     parts.append("</body></html>")
     return "\n".join(parts)
 

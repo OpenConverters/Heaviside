@@ -99,6 +99,7 @@ CATEGORIES: frozenset[str] = frozenset(
         "diodes",
         "capacitors",
         "resistors",
+        "varistors",
         "magnetics",
         "igbts",
         "controllers",

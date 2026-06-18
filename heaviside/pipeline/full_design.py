@@ -291,9 +291,14 @@ def _stage2_pick_one(args: tuple[str, dict, int, str, str]) -> dict[str, Any]:
             # realism gate's criterion). Without this the fast adviser's
             # lowest-loss top scorer can be undersized against worst-case
             # peak current and fail inductor_isat_margin downstream.
+            # Augment the spec the same way as the transformer path — the
+            # fast-path worker also needs diodeVoltageDrop / efficiency / duty
+            # seeds that the REST endpoint doesn't carry (CLAUDE.md: throw on
+            # missing, so seed before handing to process_converter).
+            aug = _augment_converter_spec(dict(spec), topology_name)
             candidates = select_fast_by_isat_margin(
                 topology_name,
-                spec,
+                aug,
                 n_candidates=n_candidates,
                 core_mode=core_mode,
             )
@@ -346,9 +351,19 @@ def stage2_pick_magnetics(
 
     payloads: list[dict[str, Any]]
     if parallel and len(arg_list) > 1:
-        with ProcessPoolExecutor(max_workers=max_workers) as pool:
-            futures = [pool.submit(_stage2_pick_one, a) for a in arg_list]
-            payloads = [f.result() for f in as_completed(futures)]
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                futures = [pool.submit(_stage2_pick_one, a) for a in arg_list]
+                payloads = [f.result() for f in as_completed(futures)]
+        except Exception as _pool_exc:
+            # Worker processes were killed (OOM on low-memory hosts, or C++
+            # extension crash). Fall back to in-process sequential execution so
+            # the design still runs; it will be slower but correct.
+            logger.warning(
+                "stage2: ProcessPool failed (%s) — retrying sequentially",
+                type(_pool_exc).__name__,
+            )
+            payloads = [_stage2_pick_one(a) for a in arg_list]
     else:
         payloads = [_stage2_pick_one(a) for a in arg_list]
 

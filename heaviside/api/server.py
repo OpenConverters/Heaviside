@@ -477,10 +477,14 @@ def _design_job(
 @app.post("/jobs/design")
 def submit_design(req: DesignRequest) -> dict[str, str]:
     from heaviside.api.jobs import registry
+    from heaviside.api.telemetry import wrap_job
 
     job_id = registry.submit(
         "design",
-        lambda update: _design_job(req.spec, req.candidates_per_topology, req.topologies, update),
+        wrap_job(
+            lambda update: _design_job(req.spec, req.candidates_per_topology, req.topologies, update),
+            job_kind="design", input_type="spec", input_spec=req.spec,
+        ),
     )
     return {"job_id": job_id}
 
@@ -573,10 +577,16 @@ def _design_converter_job(spec: dict[str, Any], topology: str | None, update: An
 @app.post("/jobs/design/closed-loop")
 def submit_design_closed_loop(req: DesignRequest) -> dict[str, str]:
     from heaviside.api.jobs import registry
+    from heaviside.api.telemetry import wrap_job
 
     topo = (req.topologies or [None])[0]
     return {"job_id": registry.submit(
-        "design", lambda update: _design_converter_job(req.spec, topo, update))}
+        "design",
+        wrap_job(
+            lambda update: _design_converter_job(req.spec, topo, update),
+            job_kind="design", input_type="spec", input_spec=req.spec,
+        ),
+    )}
 
 
 @app.get("/jobs/{job_id}/report.pdf")
@@ -701,6 +711,7 @@ def _crossref_progress_cb(update: Any, stages: list[str]) -> Any:
 @app.post("/jobs/crossref")
 def submit_crossref(req: CrossRefRequest) -> dict[str, str]:
     from heaviside.api.jobs import registry
+    from heaviside.api.telemetry import wrap_job
     from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
 
     def run(update: Any) -> dict[str, Any]:
@@ -713,7 +724,11 @@ def submit_crossref(req: CrossRefRequest) -> dict[str, str]:
         )
         return _crossref_outcome_dict(outcome)
 
-    return {"job_id": registry.submit("crossref", run)}
+    return {"job_id": registry.submit("crossref", wrap_job(
+        run,
+        job_kind="crossref", input_type="bom_json",
+        input_bom=req.source_bom, target_manufacturer=req.target_manufacturer,
+    ))}
 
 
 @app.post("/jobs/crossref/from-pdf")
@@ -723,6 +738,7 @@ async def submit_crossref_from_pdf(
 ) -> dict[str, str]:
     """Upload a reference-design PDF → RE simulate → stress → cross-reference."""
     from heaviside.api.jobs import registry
+    from heaviside.api.telemetry import wrap_job
 
     raw = await file.read()
     orig_name = file.filename or "reference.pdf"
@@ -740,17 +756,22 @@ async def submit_crossref_from_pdf(
             tmp = f.name
         try:
             outcome = run_crossref_with_cre(
-                Path(orig_name).stem,  # human-meaningful reference name, not the temp stem
+                Path(orig_name).stem,
                 target_manufacturer,
                 pdf_path=Path(tmp),
                 progress=cb,
-                review_llm=True,  # Ray+Nicola review the extraction stages
+                review_llm=True,
             )
         finally:
             os.unlink(tmp)
         return _crossref_outcome_dict(outcome)
 
-    return {"job_id": registry.submit("crossref_pdf", run)}
+    return {"job_id": registry.submit("crossref_pdf", wrap_job(
+        run,
+        job_kind="crossref_pdf", input_type="pdf_file",
+        input_file_name=orig_name, input_file_data=raw,
+        target_manufacturer=target_manufacturer,
+    ))}
 
 
 @app.post("/jobs/crossref/from-bom")
@@ -765,14 +786,12 @@ async def submit_crossref_from_bom(
     import asyncio
 
     from heaviside.api.jobs import registry
+    from heaviside.api.telemetry import wrap_job
     from heaviside.pipeline.bom_import import BomImportError, parse_bom_file
 
     raw = await file.read()
     orig_name = file.filename or "bom.csv"
     try:
-        # parse_bom_file may consult an LLM column-mapper when the headers are
-        # non-standard; run it off the event loop so a slow LLM call can't block
-        # the server (deterministic parses return ~instantly regardless).
         source_bom = await asyncio.to_thread(parse_bom_file, raw, orig_name)
     except BomImportError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -784,7 +803,12 @@ async def submit_crossref_from_bom(
         outcome = run_crossref_pipeline(source_bom, target_manufacturer, progress=cb)
         return _crossref_outcome_dict(outcome)
 
-    return {"job_id": registry.submit("crossref_bom", run)}
+    return {"job_id": registry.submit("crossref_bom", wrap_job(
+        run,
+        job_kind="crossref_bom", input_type="bom_file",
+        input_file_name=orig_name, input_file_data=raw,
+        input_bom=source_bom, target_manufacturer=target_manufacturer,
+    ))}
 
 
 class CrossRefUrlRequest(BaseModel):
@@ -808,6 +832,7 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
     """Fetch a reference design from a URL (PDF or HTML app-note), reverse-
     engineer it, then cross-reference its BOM to the target manufacturer."""
     from heaviside.api.jobs import registry
+    from heaviside.api.telemetry import wrap_job
 
     def run(update: Any) -> dict[str, Any]:
         import os
@@ -863,7 +888,11 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
             )
         return _crossref_outcome_dict(outcome)
 
-    return {"job_id": registry.submit("crossref_url", run)}
+    return {"job_id": registry.submit("crossref_url", wrap_job(
+        run,
+        job_kind="crossref_url", input_type="url",
+        input_url=req.url, target_manufacturer=req.target_manufacturer,
+    ))}
 
 
 def _serialize_stages(job: Any) -> list[dict[str, Any]]:
@@ -1119,7 +1148,11 @@ def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]
     def _mag(env: dict[str, Any]) -> dict[str, Any] | None:
         try:
             m = env["magnetic"]["manufacturerInfo"]
-            el = m["datasheetInfo"].get("electrical", {})
+            el_raw = m["datasheetInfo"].get("electrical")
+            if isinstance(el_raw, list):
+                el = next((i for i in el_raw if isinstance(i, dict) and "inductance" in i), el_raw[0] if el_raw else {})
+            else:
+                el = el_raw or {}
         except (KeyError, TypeError):
             return None
         ref, name = m.get("reference"), m.get("name")

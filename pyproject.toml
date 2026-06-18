@@ -48,6 +48,9 @@ dependencies = [
   "tenacity>=9.0",
   "orjson>=3.10",
   "structlog>=24.4",
+  # Telemetry DB
+  "sqlalchemy>=2.0",
+  "psycopg2-binary>=2.9",
 ]
 
 [project.optional-dependencies]

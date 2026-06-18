@@ -87,6 +87,8 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         "capacitor": "capacitors.ndjson",
         "resistor": "resistors.ndjson",
         "magnetic": "magnetics.ndjson",
+        "chipBead": "magnetics.ndjson",   # subtype-filtered at scan time
+        "varistor": "varistors.ndjson",
     }
 
     target_mfr_lower = _normalize_manufacturer(state.target_manufacturer)
@@ -109,6 +111,8 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         rows: list[dict[str, Any]] = []
         try:
             for _lineno, env in iter_envelopes(path):
+                if cat == "chipBead" and not _is_chip_bead_env(env):
+                    continue
                 mfr_name = _extract_manufacturer(env, cat)
                 if mfr_name and target_mfr_lower in _normalize_manufacturer(mfr_name):
                     rows.append(env)
@@ -288,6 +292,34 @@ def _stage1_5_librarian(state: CrossRefState) -> CrossRefState:
     return state
 
 
+def _is_chip_bead_env(env: dict[str, Any]) -> bool:
+    """Return True when a magnetics.ndjson envelope is a chip bead (not an inductor)."""
+    try:
+        el = env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+        return bool(el) and el[0].get("subtype") == "chipBead"
+    except (KeyError, TypeError, IndexError):
+        return False
+
+
+def _chip_bead_impedance_at_100mhz(env: dict[str, Any]) -> float | None:
+    """Return the impedance magnitude (Ω) at 100 MHz from a chip bead envelope.
+
+    Searches impedancePoints for the point whose frequency is closest to 100e6 Hz.
+    Falls back to None when no impedance curve is present."""
+    try:
+        el = env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+        elec = el[0] if el else {}
+        points = elec.get("impedancePoints")
+        if not points:
+            return None
+        target_f = 100e6
+        best = min(points, key=lambda p: abs(p.get("frequency", 0) - target_f))
+        mag = (best.get("impedance") or {}).get("magnitude")
+        return float(mag) if mag is not None else None
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+
 def _extract_manufacturer(env: dict[str, Any], category: str) -> str | None:
     """Extract manufacturer name from a TAS envelope."""
     paths = {
@@ -296,6 +328,8 @@ def _extract_manufacturer(env: dict[str, Any], category: str) -> str | None:
         "capacitor": ("capacitor", "manufacturerInfo", "name"),
         "resistor": ("resistor", "manufacturerInfo", "name"),
         "magnetic": ("magnetic", "manufacturerInfo", "name"),
+        "chipBead": ("magnetic", "manufacturerInfo", "name"),
+        "varistor": ("varistor", "manufacturerInfo", "name"),
     }
     keys = paths.get(category, ())
     cur: Any = env
@@ -320,9 +354,16 @@ def _extract_value(env: dict[str, Any], category: str) -> float | None:
             v = res.get("nominal") if isinstance(res, dict) else res
             return float(v) if v is not None else None
         elif category == "magnetic":
-            elec = env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+            elec = _magnetic_elec(env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"])
             ind = elec.get("inductance")
             v = ind.get("nominal") if isinstance(ind, dict) else ind
+            return float(v) if v is not None else None
+        elif category == "chipBead":
+            return _chip_bead_impedance_at_100mhz(env)
+        elif category == "varistor":
+            vv = (env["varistor"]["manufacturerInfo"]["datasheetInfo"]
+                  ["electrical"].get("varistorVoltage"))
+            v = vv.get("nominal") if isinstance(vv, dict) else vv
             return float(v) if v is not None else None
     except (KeyError, TypeError, ValueError):
         pass
@@ -336,6 +377,8 @@ def _extract_package(env: dict[str, Any], category: str) -> str:
             "capacitor": ("capacitor",),
             "resistor": ("resistor",),
             "magnetic": ("magnetic",),
+            "chipBead": ("magnetic",),
+            "varistor": ("varistor",),
             "mosfet": ("semiconductor", "mosfet"),
             "diode": ("semiconductor", "diode"),
         }
@@ -444,6 +487,21 @@ def _infer_source_cap_technology(comp: dict[str, Any]) -> str | None:
     return None
 
 
+def _magnetic_elec(elec_raw: Any) -> dict[str, Any]:
+    """Return the inductor electrical dict from a TAS magnetic electrical field.
+
+    TAS v2 stores magnetics electrical as a list of subtype items; v1 used a plain
+    dict. Both shapes are supported: for list, return the first item that has
+    inductance or saturationCurrentPeak (i.e. the inductor item), falling back to
+    the first item. For dict, return as-is."""
+    if isinstance(elec_raw, list):
+        for item in elec_raw:
+            if isinstance(item, dict) and ("inductance" in item or "saturationCurrentPeak" in item):
+                return item
+        return elec_raw[0] if elec_raw and isinstance(elec_raw[0], dict) else {}
+    return elec_raw if isinstance(elec_raw, dict) else {}
+
+
 def _effective_saturation_current(cand_elec: dict[str, Any]) -> float | None:
     """Saturation current for a magnetic candidate's electrical block.
 
@@ -486,6 +544,11 @@ def _rank_candidates(
         target_val = parse_resistance(value_str)
     elif category == "magnetic" and value_str:
         target_val = parse_inductance(value_str)
+    elif category == "chipBead" and value_str:
+        target_val = parse_resistance(value_str)  # impedance in Ω
+    elif category == "varistor" and value_str:
+        from heaviside.pipeline.value_parse import parse_voltage
+        target_val = parse_voltage(value_str)
 
     if target_val is None:
         return all_candidates[:max_results]
@@ -567,11 +630,11 @@ def _rank_candidates(
                     if i_ripple and stress.i_rms and float(i_ripple) < stress.i_rms:
                         stress_penalty += 3.0
                 elif category == "magnetic":
-                    cand_elec = (
+                    cand_elec = _magnetic_elec(
                         cand.get("magnetic", {})
                         .get("manufacturerInfo", {})
                         .get("datasheetInfo", {})
-                        .get("electrical", {})
+                        .get("electrical")
                     )
                     isat = _effective_saturation_current(cand_elec)
                     i_rated = cand_elec.get("ratedCurrent")
@@ -618,6 +681,19 @@ def _rank_candidates(
                         stress_penalty += 5.0
                     if_avg = cand_elec.get("forwardCurrent")
                     if if_avg and stress.i_avg and float(if_avg) < stress.i_avg:
+                        stress_penalty += 3.0
+                elif category == "varistor":
+                    cand_elec = (
+                        cand.get("varistor", {})
+                        .get("manufacturerInfo", {})
+                        .get("datasheetInfo", {})
+                        .get("electrical", {})
+                    )
+                    i_surge = cand_elec.get("peakSurgeCurrent")
+                    if i_surge and stress.i_peak and float(i_surge) < stress.i_peak:
+                        stress_penalty += 5.0
+                    cv = cand_elec.get("clampingVoltage")
+                    if cv and stress.v_peak and float(cv) < stress.v_peak:
                         stress_penalty += 3.0
             except (KeyError, TypeError, ValueError):
                 pass
@@ -869,7 +945,7 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
         try:
             m = env["magnetic"]
             mi = m["manufacturerInfo"]
-            elec = mi["datasheetInfo"]["electrical"]
+            elec = _magnetic_elec(mi["datasheetInfo"]["electrical"])
             ind = elec.get("inductance")
             ind_val = ind.get("nominal") if isinstance(ind, dict) else ind
             # Field is saturationCurrentPeak (not saturationCurrent); reading the
@@ -891,6 +967,43 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
                 ),
                 "dcr": elec.get("dcResistance"),
                 "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
+            }
+        except (KeyError, TypeError):
+            pass
+    elif category == "chipBead":
+        try:
+            m = env["magnetic"]
+            mi = m["manufacturerInfo"]
+            elec = (mi["datasheetInfo"]["electrical"] or [{}])[0]
+            dcr = elec.get("dcResistance")
+            dcr_val = dcr.get("nominal") if isinstance(dcr, dict) else dcr
+            rated = elec.get("ratedCurrents")
+            rated_val = rated[0] if isinstance(rated, list) and rated else rated
+            summary = {
+                "mpn": mi.get("reference", "?"),
+                "impedance_100mhz": _chip_bead_impedance_at_100mhz(env),
+                "srf": elec.get("selfResonantFrequency"),
+                "dcr": dcr_val,
+                "rated_current": rated_val,
+                "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
+            }
+        except (KeyError, TypeError):
+            pass
+    elif category == "varistor":
+        try:
+            v = env["varistor"]
+            mi = v["manufacturerInfo"]
+            elec = mi["datasheetInfo"]["electrical"]
+            vv = elec.get("varistorVoltage")
+            vv_nom = vv.get("nominal") if isinstance(vv, dict) else vv
+            summary = {
+                "mpn": mi.get("reference", "?"),
+                "varistor_voltage": vv_nom,
+                "clamping_voltage": elec.get("clampingVoltage"),
+                "peak_surge_current": elec.get("peakSurgeCurrent"),
+                "energy_absorption": elec.get("energyAbsorption"),
+                "surge_waveform": elec.get("surgeWaveform"),
+                "max_ac_voltage": elec.get("maxContinuousAcVoltage"),
             }
         except (KeyError, TypeError):
             pass
@@ -1367,6 +1480,7 @@ _CATEGORY_ALIASES = {
 _CR_CANONICAL_CATEGORIES = frozenset({
     "capacitor", "resistor", "magnetic", "mosfet", "diode",
     "semiconductor", "controller", "connector",
+    "chipBead", "varistor",
 })
 
 
@@ -1384,7 +1498,8 @@ def _humanize_value(value: str, category: str) -> str:
     if v == 0:
         return value
 
-    units = {"capacitor": "F", "resistor": "Ω", "magnetic": "H", "inductor": "H"}
+    units = {"capacitor": "F", "resistor": "Ω", "magnetic": "H", "inductor": "H",
+             "chipBead": "Ω", "varistor": "V"}
     unit = units.get(category, "")
     if not unit:
         return value
@@ -1420,8 +1535,12 @@ def _infer_component_type(row: dict[str, Any]) -> str:
     ).upper()
     # Order matters: check the more specific magnetic/resistor words before the
     # capacitor 'CAP' (which also appears in unrelated words rarely).
-    if any(w in text for w in ("INDUCTOR", "IND ", "CHOKE", "FERRITE", "BEAD",
-                               "TRANSFORMER", "XFMR", "COIL", "UH ", "MH ")):
+    if any(w in text for w in ("FERRITE BEAD", "CHIP BEAD", "BEAD", "EMI FILTER")):
+        return "chipBead"
+    if any(w in text for w in ("VARISTOR", "MOV ", " MOV", "VDR ")):
+        return "varistor"
+    if any(w in text for w in ("INDUCTOR", "IND ", "CHOKE", "FERRITE", "TRANSFORMER",
+                               "XFMR", "COIL", "UH ", "MH ")):
         return "magnetic"
     if any(w in text for w in ("RESISTOR", "RES ", "RES-", "OHM", "KOHM")):
         return "resistor"
@@ -1842,6 +1961,8 @@ def _ondemand_candidates(
         "capacitor": "capacitors.ndjson",
         "resistor": "resistors.ndjson",
         "magnetic": "magnetics.ndjson",
+        "chipBead": "magnetics.ndjson",
+        "varistor": "varistors.ndjson",
     }
     if category not in files:
         return []
@@ -1860,6 +1981,8 @@ def _ondemand_candidates(
         if path.exists():
             try:
                 for _lineno, env in iter_envelopes(path):
+                    if category == "chipBead" and not _is_chip_bead_env(env):
+                        continue
                     mfr = _extract_manufacturer(env, category)
                     if mfr and target in _normalize_manufacturer(mfr):
                         rows.append(env)
@@ -1897,6 +2020,13 @@ def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
                     "fetched %d on-demand", ref, cat, len(cands)
                 )
         if not cands:
+            continue
+        # If the prior stage already determined there's no suitable substitute
+        # (e.g. "No suitable ferrite bead substitute available" — the internal DB
+        # has the wrong component sub-type), the rescue must not override that
+        # verdict by substituting a structurally different part.
+        prior_notes = (row.get("notes") or "").lower()
+        if "no suitable" in prior_notes and "substitute available" in prior_notes:
             continue
         patch = _best_inkind_candidate(comp, cat, cands)
         if patch is None:

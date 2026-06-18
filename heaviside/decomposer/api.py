@@ -5,11 +5,11 @@ Three public entry points:
 * :func:`generate_netlist` — call ``PyOpenMagnetics.generate_ngspice_circuit``
   with a converter spec and return the raw SPICE deck string.
 * :func:`decompose_netlist` — parse a SPICE deck + apply a topology stencil
-  → topology-shaped ``{"stages": ..., "interStageCircuit": ...}`` dict
+  → topology-shaped ``{"stages": ..., "interStageConnections": ...}`` dict
   (the inner ``topology`` block of a TAS document).
 * :func:`decompose_from_spec` — the full pipeline, returning ``(netlist, tas)``
   where ``tas`` is the fully wrapped TAS document
-  ``{"inputs": ..., "topology": {"stages": ..., "interStageCircuit": ...}}``.
+  ``{"inputs": ..., "topology": {"stages": ..., "interStageConnections": ...}}``.
 
 All three raise loudly on any error (PyOM engine error, parser failure,
 stencil mismatch) — no silent fallbacks.
@@ -212,8 +212,8 @@ def decompose_netlist(topology: str, netlist: str) -> dict[str, Any]:
     """Parse ``netlist`` and apply the topology stencil to produce a TAS
     ``topology`` block (``{"stages": [...], "interStageCircuit": [...]}``).
 
-    This is the inner block — to obtain a fully wrapped TAS document
-    use :func:`decompose_from_spec` instead.
+    This is the inner block (``{"stages": [...], "interStageConnections": [...]}``).
+    To obtain a fully wrapped TAS document use :func:`decompose_from_spec` instead.
     """
     deck: SpiceDeck = parse_spice(netlist)
     stencil = get_stencil(topology)
@@ -240,7 +240,7 @@ def decompose_from_spec(
     the current TAS root schema:
 
     ``{"inputs": {designRequirements, operatingPoints},
-       "topology": {stages, interStageCircuit}}``
+       "topology": {stages, interStageConnections}}``
 
     ``inputs`` is built from ``converter_json`` via
     :func:`heaviside.decomposer.inputs_mapper.build_tas_inputs`. ``topology``
