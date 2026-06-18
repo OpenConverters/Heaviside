@@ -169,6 +169,24 @@ def _apply_pyom_settings(ext: Any) -> Any:
 
 _pyom_settings_applied: bool = False
 _pyom_vendor_module: Any = None
+_pyom_fast_param_supported: bool | None = None  # None = not yet probed
+
+
+def _supports_fast_param(pyom: Any) -> bool:
+    """Return True if this PyOM build's design_magnetics_from_converter accepts
+    a 7th ``fast`` positional argument. Probed once per process via the
+    pybind11 docstring (the doc lists every overload including parameter names).
+    Falls back to False so old builds silently use the 6-arg slow path."""
+    global _pyom_fast_param_supported
+    if _pyom_fast_param_supported is not None:
+        return _pyom_fast_param_supported
+    try:
+        doc = pyom.design_magnetics_from_converter.__doc__ or ""
+        # The new overload lists "fast : bool" in its signature block.
+        _pyom_fast_param_supported = "fast" in doc
+    except Exception:
+        _pyom_fast_param_supported = False
+    return _pyom_fast_param_supported
 
 # The vendor build of the pybind11 extension (newer than the PyPI
 # wheel; carries generate_ngspice_circuit extras like
@@ -297,7 +315,10 @@ def design_magnetics(
         back.
     """
     entry = topology if isinstance(topology, TopologyEntry) else get(topology)
-    pyom = _import_pyom()
+    # Prefer the vendor .so: it is newer than the installed pip package and
+    # knows more topologies (weinberg, pushPull, …). Falls back to the
+    # installed package if the vendor .so is absent.
+    pyom = _import_pyom_vendor()
 
     # Pin useOnlyCoresInStock for the duration of the call when requested,
     # restoring the prior value afterwards. The flag is also threaded into
@@ -315,7 +336,12 @@ def design_magnetics(
         last_error: str | None = None
         for variant in entry.pyom_names:
             t0 = time.monotonic()
-            _spec_arg = dict(converter_spec)
+            # Strip keys the topology's schema doesn't accept (e.g. Weinberg
+            # uses additionalProperties:false and rejects _augment fields).
+            _spec_arg = {
+                k: v for k, v in converter_spec.items()
+                if k not in entry.strip_spec_keys
+            }
             _weights_arg = dict(weights) if weights is not None else None
             result = cached_call(
                 "design_magnetics_from_converter",
@@ -345,7 +371,7 @@ def design_magnetics(
                         v, s, int(max_results), str(core_mode), bool(use_ngspice), w,
                         bool(fast),
                     )
-                    if fast
+                    if (fast and _supports_fast_param(pyom))
                     else pyom.design_magnetics_from_converter(
                         v, s, int(max_results), str(core_mode), bool(use_ngspice), w,
                     )

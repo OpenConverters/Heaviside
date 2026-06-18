@@ -45,6 +45,11 @@ class TopologyEntry:
     # will refuse to auto-bind multi-magnetic outputs for this
     # topology and require the caller to supply an explicit mapping.
     magnetic_binding: dict[str, str | None] = field(default_factory=dict)
+    # Top-level spec keys to strip before passing to PyOM, for topologies
+    # whose MAS schema uses ``additionalProperties: false``. Keys injected
+    # by _augment_converter_spec that are not in the topology's schema must
+    # be listed here so PyOM doesn't reject the spec with a type error.
+    strip_spec_keys: frozenset[str] = field(default_factory=frozenset)
     # Mapping from TAS capacitor component name (as emitted by the
     # stencil) to its PyOM extras-cap role name (matches
     # ``inputs.designRequirements.name`` from
@@ -234,6 +239,15 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
             "T1": None,
             "L1": "inputCoupledInductor",
         },
+        # Weinberg schema uses additionalProperties:false — strip keys
+        # injected by _augment_converter_spec that are not in its schema.
+        strip_spec_keys=frozenset({
+            "maximumDutyCycle",
+            "maximumDrainSourceVoltage",
+            "desiredTurnsRatios",
+            "desiredInductance",
+            "desiredMagnetizingInductance",
+        }),
     ),
     # --- resonant ---
     TopologyEntry(
