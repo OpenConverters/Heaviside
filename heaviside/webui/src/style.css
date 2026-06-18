@@ -91,6 +91,7 @@ header.hv {
   position: relative; z-index: 2; margin-left: auto; text-align: right;
   display: flex; flex-direction: column; gap: .3rem; align-items: flex-end;
   font-family: var(--mono); font-size: .64rem; letter-spacing: .12em;
+  transform: translateY(-4px);
 }
 .hv-ch { display: flex; align-items: center; gap: .4rem; text-transform: uppercase; }
 .hv-ch b { font-weight: 600; }

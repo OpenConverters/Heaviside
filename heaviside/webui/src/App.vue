@@ -22,7 +22,17 @@ function applyHash() {
   if (_ids.includes(section)) tab.value = section
   deepJob.value = section === 'jobs' && id ? id : null
 }
-onMounted(() => { applyHash(); window.addEventListener('hashchange', applyHash) })
+onMounted(() => {
+  applyHash()
+  window.addEventListener('hashchange', applyHash)
+  // Self-hosted Umami (cookie-less) — separate website from openmagnetics.com
+  const s = document.createElement('script')
+  s.defer = true
+  s.src = '/stats/script.js'
+  s.setAttribute('data-website-id', '2e9c5afa-bf1f-41ee-949f-62fa9e0639f5')
+  s.setAttribute('data-domains', 'heaviside.openconverters.com')
+  document.head.appendChild(s)
+})
 onUnmounted(() => window.removeEventListener('hashchange', applyHash))
 // Reflect tab switches in the hash (but don't clobber an active job deep link).
 watch(tab, (t) => {
@@ -49,7 +59,7 @@ watch(tab, (t) => {
       <div class="hv-status">
         <span class="hv-ch c1"><b>CH1</b> auto-design</span>
         <span class="hv-ch c2"><b>CH2</b> cross-reference</span>
-        <span class="hv-rec"><i></i> kimi-k2.5 · online</span>
+        <span class="hv-rec"><i></i> AI · online</span>
       </div>
     </div>
   </header>

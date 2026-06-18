@@ -19,9 +19,20 @@ let timer = null
 
 const viewer = ref({ visible: false, loading: false, kind: '', title: '', result: {}, jobId: '' })
 
+// The job we want kept expanded (set when navigating here from Designer/CR).
+// Persists until the user manually collapses it.
+const trackedJob = ref(null)
+
 async function load() {
   loading.value = true
-  try { jobs.value = (await api.jobs()).jobs } catch (e) { /* keep prior */ }
+  try {
+    jobs.value = (await api.jobs()).jobs
+    // Auto-expand the tracked job as soon as it appears in the list.
+    if (trackedJob.value) {
+      const job = jobs.value.find((j) => j.job_id === trackedJob.value)
+      if (job && !expanded.value[job.job_id]) expanded.value[job.job_id] = job
+    }
+  } catch (e) { /* keep prior */ }
   finally { loading.value = false }
 }
 const isActive = (s) => s === 'queued' || s === 'running'
@@ -30,12 +41,9 @@ async function act(job) {
   else await api.deleteJob(job.job_id)
   load()
 }
-// Open a result by job_id (works from a row click OR a deep link — the result
-// is fetched directly, so the list need not have loaded yet). The job's kind
-// (design vs crossref) is read from the fetched response, so deep links render
-// the right view. Stamps the URL hash for a shareable/bookmarkable fixed URL.
+// Open a result viewer for a finished job.
 async function viewById(jobId, kind) {
-  if (viewer.value.visible && viewer.value.jobId === jobId) return  // already open
+  if (viewer.value.visible && viewer.value.jobId === jobId) return
   viewer.value = { visible: true, loading: true, result: {}, jobId, kind: 'crossref',
                    title: (kind || 'job') + ' · ' + jobId }
   if (location.hash !== `#/jobs/${jobId}`) location.hash = `#/jobs/${jobId}`
@@ -49,19 +57,29 @@ async function viewById(jobId, kind) {
 }
 const view = (job) => viewById(job.job_id, job.kind)
 
+// Track the job from a deep link: expand it in the table (not the viewer —
+// it may still be running). The viewer is opened by the user via "View".
+function trackJob(id) {
+  if (!id) return
+  trackedJob.value = id
+  if (location.hash !== `#/jobs/${id}`) location.hash = `#/jobs/${id}`
+  // Expand immediately if the job is already in the list.
+  const job = jobs.value.find((j) => j.job_id === id)
+  if (job) expanded.value[job.job_id] = job
+}
+
 // When the viewer closes, drop the per-job id from the URL (back to #/jobs).
 watch(() => viewer.value.visible, (vis) => {
   if (!vis && location.hash.startsWith('#/jobs/')) location.hash = '#/jobs'
 })
-// React to the deep-link prop (and a fresh value while already on the tab).
-watch(() => props.openJob, (id) => { if (id) viewById(id) }, { immediate: false })
+// React to the openJob prop (navigated here from Designer or CR).
+watch(() => props.openJob, (id) => { if (id) trackJob(id) }, { immediate: false })
 
-// Poll faster (1.5s) so the in-flight pipeline animates; the /jobs list already
-// carries each job's stages, so no extra request is needed for the flow view.
+// Poll faster (1.5s) so the in-flight pipeline animates.
 onMounted(() => {
   load()
   timer = setInterval(load, 1500)
-  if (props.openJob) viewById(props.openJob)   // deep-linked open on first paint
+  if (props.openJob) trackJob(props.openJob)
 })
 onUnmounted(() => clearInterval(timer))
 </script>

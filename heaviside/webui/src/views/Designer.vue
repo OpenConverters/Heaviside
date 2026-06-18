@@ -2,10 +2,8 @@
 import { ref, computed, onMounted } from 'vue'
 import InputNumber from 'primevue/inputnumber'
 import Button from 'primevue/button'
-import ProgressBar from 'primevue/progressbar'
-import Tag from 'primevue/tag'
 import Message from 'primevue/message'
-import { api, pollJob } from '../api.js'
+import { api } from '../api.js'
 
 const advanced = ref(false)
 const d = ref({
@@ -20,15 +18,12 @@ const totalPower = computed(() =>
 const multiOutput = computed(() => d.value.outputs.length > 1)
 const topologies = ref([{ label: 'Auto', value: null }])
 const running = ref(false)
-const status = ref('')
-const pct = ref(0)
-const result = ref(null)
 const error = ref(null)
 
 onMounted(async () => {
   try {
     const list = await api.topologies()
-    for (const t of list) topologies.value.push({ label: t.name, value: t.name })
+    for (const t of list) topologies.value.push({ label: t.name.replace(/_/g, ' '), value: t.name })
   } catch (e) { /* Auto still available */ }
 })
 
@@ -50,19 +45,13 @@ function buildSpec() {
 }
 
 async function run() {
-  error.value = null; result.value = null; running.value = true
-  status.value = 'submitting…'; pct.value = 0
+  error.value = null; running.value = true
   try {
     const body = { spec: buildSpec(), candidates_per_topology: 3 }
     if (d.value.topology) body.topologies = [d.value.topology]
-    const { job_id } = await api.submitDesign(body)
-    result.value = await pollJob(job_id, (j) => {
-      status.value = j.progress || j.status
-      const m = /^(\d+)%/.exec(j.progress || '')
-      pct.value = m ? +m[1] : 0
-    })
-    status.value = 'done'; pct.value = 100
-  } catch (e) { error.value = String(e); status.value = '' }
+    const { job_id } = await api.submitDesignClosedLoop(body)
+    location.hash = `#/jobs/${job_id}`
+  } catch (e) { error.value = String(e) }
   finally { running.value = false }
 }
 </script>
@@ -132,22 +121,8 @@ async function run() {
 
     <div style="margin-top:1.3rem; display:flex; gap:.6rem; align-items:center">
       <Button label="Design converter" icon="pi pi-cog" :loading="running" @click="run" />
-      <span v-if="status && !running" class="stage-line">{{ status }}</span>
+      <span v-if="running" class="stage-line">submitting…</span>
     </div>
-    <div v-if="running" style="margin-top:.8rem">
-      <div class="stage-line" style="margin-bottom:.3rem">{{ status }}</div>
-      <ProgressBar v-if="pct > 0" :value="pct" />
-      <ProgressBar v-else mode="indeterminate" style="height:8px" />
-    </div>
-  </div>
-
-  <div v-if="result" class="panel">
-    <Tag v-if="result.verdict" :severity="result.verdict === 'pass' ? 'success' : 'warn'"
-         :value="result.topology + ' · ' + result.verdict" />
-    <span v-if="result.alternatives?.length > 1" class="stage-line" style="margin-left:.5rem">
-      {{ result.alternatives.length }} topologies evaluated
-    </span>
-    <div class="report-html" style="margin-top:.7rem" v-html="result.html"></div>
   </div>
   <Message v-if="error" severity="error" style="margin-top:1rem">{{ error }}</Message>
 </template>

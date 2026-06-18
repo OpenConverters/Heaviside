@@ -5,13 +5,8 @@ import SelectButton from 'primevue/selectbutton'
 import Textarea from 'primevue/textarea'
 import InputText from 'primevue/inputtext'
 import Button from 'primevue/button'
-import DataTable from 'primevue/datatable'
-import Column from 'primevue/column'
-import Tag from 'primevue/tag'
-import ProgressBar from 'primevue/progressbar'
 import Message from 'primevue/message'
-import { api, pollJob } from '../api.js'
-import { statusSeverity } from '../status.js'
+import { api } from '../api.js'
 
 const target = ref('Würth Elektronik')
 const manufacturers = ref([])
@@ -27,8 +22,6 @@ const url = ref('')
 const pdfFile = ref(null)
 const bomFile = ref(null)
 const running = ref(false)
-const status = ref('')
-const result = ref(null)
 const error = ref(null)
 
 onMounted(async () => {
@@ -44,7 +37,7 @@ function onPdf(e) { pdfFile.value = e.target.files?.[0] || null }
 function onBom(e) { bomFile.value = e.target.files?.[0] || null }
 
 async function run() {
-  error.value = null; result.value = null; running.value = true; status.value = 'submitting…'
+  error.value = null; running.value = true
   try {
     let job_id
     if (mode.value === 'pdf') {
@@ -61,9 +54,8 @@ async function run() {
       try { bom = JSON.parse(bomText.value) } catch (e) { throw new Error('BOM is not valid JSON') }
       ;({ job_id } = await api.submitCrossref({ source_bom: bom, target_manufacturer: target.value }))
     }
-    result.value = await pollJob(job_id, (j) => { status.value = j.progress || j.status })
-    status.value = 'done'
-  } catch (e) { error.value = String(e); status.value = '' }
+    location.hash = `#/jobs/${job_id}`
+  } catch (e) { error.value = String(e) }
   finally { running.value = false }
 }
 </script>
@@ -106,36 +98,8 @@ async function run() {
 
     <div style="margin-top:.9rem; display:flex; gap:.5rem; align-items:center">
       <Button label="Cross-reference" icon="pi pi-sync" :loading="running" @click="run" />
-      <span v-if="status && !running" class="stage-line">{{ status }}</span>
+      <span v-if="running" class="stage-line">submitting…</span>
     </div>
-    <div v-if="running" style="margin-top:.7rem">
-      <div class="stage-line" style="margin-bottom:.3rem">{{ status }}</div>
-      <ProgressBar mode="indeterminate" style="height:8px" />
-    </div>
-  </div>
-
-  <div v-if="result" class="panel">
-    <Tag :severity="result.passed ? 'success' : 'warn'"
-         :value="(result.passed ? 'PASS' : 'REVIEW') + ' · ' + result.components.length + ' components → ' + result.target_manufacturer" />
-    <Tag v-if="result.coverage_pct != null" severity="info" style="margin-left:.5rem"
-         :value="'coverage ' + result.coverage_substituted + '/' + result.coverage_total + ' (' + result.coverage_pct + '%)'" />
-    <DataTable :value="result.components" size="small" stripedRows removableSort style="margin-top:.7rem">
-      <Column field="ref_des" header="Ref" sortable />
-      <Column field="component_type" header="Type" sortable />
-      <Column field="original_mpn" header="Original" sortable bodyClass="col-mpn" />
-      <Column field="substitute_mpn" header="Substitute" sortable bodyClass="col-mpn" />
-      <Column field="status" header="Status" sortable>
-        <template #body="{ data }">
-          <Tag :severity="statusSeverity(data.status)" :value="data.status" />
-        </template>
-      </Column>
-    </DataTable>
-    <Message v-if="!result.components.length" severity="warn" style="margin-top:.6rem">
-      No substitutions were produced — see diagnostics.
-    </Message>
-    <ul v-if="result.diagnostics?.length" class="diag">
-      <li v-for="(dg, i) in result.diagnostics" :key="i">{{ dg }}</li>
-    </ul>
   </div>
   <Message v-if="error" severity="error" style="margin-top:1rem">{{ error }}</Message>
 </template>
