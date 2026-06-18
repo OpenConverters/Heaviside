@@ -80,7 +80,7 @@ INPUTS_BOOST = {
 
 def _bind(tas: dict, bindings: dict[str, str]) -> dict:
     for stage in tas["topology"]["stages"]:
-        for c in stage["circuit"]["components"]:
+        for c in stage.get("circuit", {}).get("components", []):
             if c["name"] in bindings:
                 c["data"] = bindings[c["name"]]
     return tas

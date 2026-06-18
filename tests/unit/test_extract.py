@@ -75,7 +75,7 @@ def _buck_tas() -> dict:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

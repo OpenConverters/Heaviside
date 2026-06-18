@@ -109,15 +109,11 @@ def test_psfb_tas_shape() -> None:
     }
     assert inv_names == {"Q_A", "Q_B", "Q_C", "Q_D", "L_r"}, inv_names
 
-    t1 = tas["topology"]["stages"][1]["circuit"]["components"][0]
-    assert t1["name"] == "T1"
-    t1_pins = {
-        ep["pin"]
-        for w in tas["topology"]["interStageCircuit"]
-        for ep in w.get("endpoints", [])
-        if ep["component"] == "T1"
-    }
-    assert t1_pins == {"pri.1", "pri.2", "sec0.1", "sec0.2"}, t1_pins
+    # v2: T1 is in the isolation stage circuit, not reachable via inter_stage endpoints
+    t1_iso = tas["topology"]["stages"][1]
+    assert t1_iso["name"] == "isolation"
+    t1_comps = {c["name"] for c in t1_iso["circuit"]["components"]}
+    assert "T1" in t1_comps, t1_comps
 
     rect_names = {
         c["name"]
@@ -126,24 +122,19 @@ def test_psfb_tas_shape() -> None:
     }
     assert rect_names == {"D1", "D2", "L_out0", "C_out0"}, rect_names
 
-    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    assert {
-        "Vin",
-        "pri_top",
-        "mid_C",
-        "sec_a",
-        "sec_b",
-        "Vout0",
-        "GND",
-    } <= set(ports), set(ports)
+    ports = {p["name"]: p for p in tas["topology"]["interStageConnections"]}
+    # v2: no GND or gate wires in interStageConnections
+    assert set(ports) == {"Vin", "pri_top", "mid_C", "sec_a", "sec_b", "Vout0"}, set(ports)
 
-    # Vin reaches both leg high-sides (Q_A.D, Q_C.D), no others.
-    vin_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vin"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vin_eps == {("Q_A", "D"), ("Q_C", "D")}, vin_eps
+    # v2 endpoints use {stage, port}
+    vin_eps = {(e["stage"], e["port"]) for e in ports["Vin"]["endpoints"]}
+    assert vin_eps == {("inverter", "in")}, vin_eps
+
+    pri_top_eps = {(e["stage"], e["port"]) for e in ports["pri_top"]["endpoints"]}
+    assert pri_top_eps == {("inverter", "out"), ("isolation", "in")}, pri_top_eps
+
+    mid_c_eps = {(e["stage"], e["port"]) for e in ports["mid_C"]["endpoints"]}
+    assert mid_c_eps == {("inverter", "mid_c"), ("isolation", "pri_ret")}, mid_c_eps
 
     drives = {d["component"] for d in tas["topology"]["stages"][3]["drives"]}
     assert drives == {"Q_A", "Q_B", "Q_C", "Q_D"}, drives

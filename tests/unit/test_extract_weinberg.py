@@ -133,7 +133,7 @@ def _wb_tas(*, t1_kwargs: dict | None = None, l1_kwargs: dict | None = None) -> 
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

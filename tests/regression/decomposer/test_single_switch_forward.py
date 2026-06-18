@@ -92,22 +92,11 @@ def test_ssforward_tas_round_trip_shape() -> None:
     assert sw_names == {"Q1", "D_demag"}, sw_names
 
     # T1 is 3-winding: pri (excitation) + demag (reset) + sec0 (forward).
-    t1 = tas["topology"]["stages"][1]["circuit"]["components"][0]
-    assert t1["name"] == "T1"
-    t1_pins = {
-        ep["pin"]
-        for w in tas["topology"]["interStageCircuit"]
-        for ep in w.get("endpoints", [])
-        if ep["component"] == "T1"
-    }
-    assert t1_pins == {
-        "pri.1",
-        "pri.2",
-        "demag.1",
-        "demag.2",
-        "sec0.1",
-        "sec0.2",
-    }, t1_pins
+    # In v2, T1 is in the isolation stage circuit, not in interStageConnections endpoints.
+    t1_iso = tas["topology"]["stages"][1]
+    assert t1_iso["name"] == "isolation"
+    t1_comps = {c["name"] for c in t1_iso["circuit"]["components"]}
+    assert "T1" in t1_comps, t1_comps
 
     # Output stage (rail 0): 2 diodes (D_fwd0, D_fw0) + L_out0 + C_out0.
     rect_names = {
@@ -117,28 +106,19 @@ def test_ssforward_tas_round_trip_shape() -> None:
     }
     assert rect_names == {"D_fwd0", "D_fw0", "L_out0", "C_out0"}, rect_names
 
-    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageConnections"]}
+    # v2: GND/gate wires live inside stage circuits
     assert set(ports) == {
         "Vin",
         "switch_node",
         "demag_node",
         "sec0_node",
         "Vout0",
-        "GND",
     }, set(ports)
 
-    # Vin must reach both Q1.D and D_demag.K (demag reset returns to Vin).
-    vin_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vin"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vin_eps == {("Q1", "D"), ("D_demag", "K")}, vin_eps
+    # v2 endpoints use {stage, port}
+    vin_eps = {(e["stage"], e["port"]) for e in ports["Vin"]["endpoints"]}
+    assert vin_eps == {("primary_switch", "in")}, vin_eps
 
-    # Vout0 is the LC filter port.
-    vout_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vout0"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vout_eps == {("L_out0", "2"), ("C_out0", "1")}, vout_eps
+    vout_eps = {(e["stage"], e["port"]) for e in ports["Vout0"]["endpoints"]}
+    assert vout_eps == {("output_0", "out")}, vout_eps

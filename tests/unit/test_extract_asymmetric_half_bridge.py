@@ -122,7 +122,7 @@ def _ahb_tas(*, t1_kwargs: dict | None = None) -> dict:
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

@@ -39,22 +39,37 @@
         "name": "primary_bridge",
         "role": "inverter",
         "inputPort": {
-          "type": "dcBus",
-          "wire": "Vin"
+          "port": "in",
+          "type": "dcBus"
         },
-        "outputPorts": [
-          {
-            "type": "hfAc",
-            "wire": "bridge_a_hv",
-            "name": "bridge_a_hv"
-          },
-          {
-            "type": "hfAc",
-            "wire": "bridge_b_hv",
-            "name": "bridge_b_hv"
-          }
-        ],
+        "outputPort": {
+          "port": "out",
+          "type": "hfAc"
+        },
         "circuit": {
+          "ports": [
+            {
+              "name": "in"
+            },
+            {
+              "name": "out"
+            },
+            {
+              "name": "bridge_b_hv"
+            },
+            {
+              "name": "gate1"
+            },
+            {
+              "name": "gate2"
+            },
+            {
+              "name": "gate3"
+            },
+            {
+              "name": "gate4"
+            }
+          ],
           "components": [
             {
               "name": "Q1",
@@ -75,35 +90,161 @@
             {
               "name": "C_bus_HV",
               "data": "TAS/data/capacitors.ndjson?placeholder=C_bus_HV"
-            },
-            {
-              "name": "P_Vin",
-              "data": "TAS/data/terminals.ndjson?placeholder=P_Vin"
             }
           ],
-          "connections": []
+          "connections": [
+            {
+              "name": "vin_in",
+              "endpoints": [
+                {
+                  "component": "Q1",
+                  "pin": "D"
+                },
+                {
+                  "component": "Q3",
+                  "pin": "D"
+                },
+                {
+                  "component": "C_bus_HV",
+                  "pin": "1"
+                },
+                {
+                  "port": "in"
+                }
+              ]
+            },
+            {
+              "name": "bridge_a_hv_out",
+              "endpoints": [
+                {
+                  "component": "Q1",
+                  "pin": "S"
+                },
+                {
+                  "component": "Q2",
+                  "pin": "D"
+                },
+                {
+                  "port": "out"
+                }
+              ]
+            },
+            {
+              "name": "bridge_b_hv_out",
+              "endpoints": [
+                {
+                  "component": "Q3",
+                  "pin": "S"
+                },
+                {
+                  "component": "Q4",
+                  "pin": "D"
+                },
+                {
+                  "port": "bridge_b_hv"
+                }
+              ]
+            },
+            {
+              "name": "gnd",
+              "endpoints": [
+                {
+                  "component": "Q2",
+                  "pin": "S"
+                },
+                {
+                  "component": "Q4",
+                  "pin": "S"
+                },
+                {
+                  "component": "C_bus_HV",
+                  "pin": "2"
+                }
+              ]
+            },
+            {
+              "name": "gate1",
+              "endpoints": [
+                {
+                  "component": "Q1",
+                  "pin": "G"
+                },
+                {
+                  "port": "gate1"
+                }
+              ]
+            },
+            {
+              "name": "gate2",
+              "endpoints": [
+                {
+                  "component": "Q2",
+                  "pin": "G"
+                },
+                {
+                  "port": "gate2"
+                }
+              ]
+            },
+            {
+              "name": "gate3",
+              "endpoints": [
+                {
+                  "component": "Q3",
+                  "pin": "G"
+                },
+                {
+                  "port": "gate3"
+                }
+              ]
+            },
+            {
+              "name": "gate4",
+              "endpoints": [
+                {
+                  "component": "Q4",
+                  "pin": "G"
+                },
+                {
+                  "port": "gate4"
+                }
+              ]
+            }
+          ]
         }
       },
       {
         "name": "isolation",
         "role": "isolation",
         "inputPort": {
-          "type": "hfAc",
-          "wire": "bridge_a_hv"
+          "port": "in",
+          "type": "hfAc"
         },
         "outputPorts": [
           {
-            "type": "hfAc",
-            "wire": "bridge_a_lv",
-            "name": "bridge_a_lv"
+            "port": "bridge_a_lv",
+            "type": "hfAc"
           },
           {
-            "type": "hfAc",
-            "wire": "bridge_b_lv",
-            "name": "bridge_b_lv"
+            "port": "bridge_b_lv",
+            "type": "hfAc"
           }
         ],
         "circuit": {
+          "ports": [
+            {
+              "name": "in"
+            },
+            {
+              "name": "bridge_b_hv"
+            },
+            {
+              "name": "bridge_a_lv"
+            },
+            {
+              "name": "bridge_b_lv"
+            }
+          ],
           "components": [
             {
               "name": "C_r1",
@@ -127,6 +268,18 @@
             }
           ],
           "connections": [
+            {
+              "name": "bridge_a_hv_in",
+              "endpoints": [
+                {
+                  "component": "C_r1",
+                  "pin": "1"
+                },
+                {
+                  "port": "in"
+                }
+              ]
+            },
             {
               "name": "cr1_lr1_mid",
               "kind": "wire",
@@ -152,6 +305,18 @@
                 {
                   "component": "T1",
                   "pin": "pri.1"
+                }
+              ]
+            },
+            {
+              "name": "bridge_b_hv_in",
+              "endpoints": [
+                {
+                  "component": "T1",
+                  "pin": "pri.2"
+                },
+                {
+                  "port": "bridge_b_hv"
                 }
               ]
             },
@@ -182,6 +347,30 @@
                   "pin": "sec0.1"
                 }
               ]
+            },
+            {
+              "name": "bridge_a_lv_out",
+              "endpoints": [
+                {
+                  "component": "C_r2",
+                  "pin": "1"
+                },
+                {
+                  "port": "bridge_a_lv"
+                }
+              ]
+            },
+            {
+              "name": "bridge_b_lv_out",
+              "endpoints": [
+                {
+                  "component": "T1",
+                  "pin": "sec0.2"
+                },
+                {
+                  "port": "bridge_b_lv"
+                }
+              ]
             }
           ]
         }
@@ -190,16 +379,37 @@
         "name": "secondary_bridge",
         "role": "outputRectifier",
         "inputPort": {
-          "type": "hfAc",
-          "wire": "bridge_a_lv"
+          "port": "in",
+          "type": "hfAc"
         },
-        "outputPorts": [
-          {
-            "type": "dcOutput",
-            "wire": "Vout0"
-          }
-        ],
+        "outputPort": {
+          "port": "out",
+          "type": "dcOutput"
+        },
         "circuit": {
+          "ports": [
+            {
+              "name": "in"
+            },
+            {
+              "name": "in_b"
+            },
+            {
+              "name": "out"
+            },
+            {
+              "name": "gate5"
+            },
+            {
+              "name": "gate6"
+            },
+            {
+              "name": "gate7"
+            },
+            {
+              "name": "gate8"
+            }
+          ],
           "components": [
             {
               "name": "Q5",
@@ -218,111 +428,236 @@
               "data": "TAS/data/mosfets.ndjson?placeholder=Q8"
             }
           ],
-          "connections": []
+          "connections": [
+            {
+              "name": "bridge_a_lv_in",
+              "endpoints": [
+                {
+                  "component": "Q5",
+                  "pin": "S"
+                },
+                {
+                  "component": "Q6",
+                  "pin": "D"
+                },
+                {
+                  "port": "in"
+                }
+              ]
+            },
+            {
+              "name": "bridge_b_lv_in",
+              "endpoints": [
+                {
+                  "component": "Q7",
+                  "pin": "S"
+                },
+                {
+                  "component": "Q8",
+                  "pin": "D"
+                },
+                {
+                  "port": "in_b"
+                }
+              ]
+            },
+            {
+              "name": "vout_out",
+              "endpoints": [
+                {
+                  "component": "Q5",
+                  "pin": "D"
+                },
+                {
+                  "component": "Q7",
+                  "pin": "D"
+                },
+                {
+                  "port": "out"
+                }
+              ]
+            },
+            {
+              "name": "gnd",
+              "endpoints": [
+                {
+                  "component": "Q6",
+                  "pin": "S"
+                },
+                {
+                  "component": "Q8",
+                  "pin": "S"
+                }
+              ]
+            },
+            {
+              "name": "gate5",
+              "endpoints": [
+                {
+                  "component": "Q5",
+                  "pin": "G"
+                },
+                {
+                  "port": "gate5"
+                }
+              ]
+            },
+            {
+              "name": "gate6",
+              "endpoints": [
+                {
+                  "component": "Q6",
+                  "pin": "G"
+                },
+                {
+                  "port": "gate6"
+                }
+              ]
+            },
+            {
+              "name": "gate7",
+              "endpoints": [
+                {
+                  "component": "Q7",
+                  "pin": "G"
+                },
+                {
+                  "port": "gate7"
+                }
+              ]
+            },
+            {
+              "name": "gate8",
+              "endpoints": [
+                {
+                  "component": "Q8",
+                  "pin": "G"
+                },
+                {
+                  "port": "gate8"
+                }
+              ]
+            }
+          ]
         }
       },
       {
         "name": "output_filter",
         "role": "outputFilter",
         "inputPort": {
-          "type": "dcOutput",
-          "wire": "Vout0"
+          "port": "in",
+          "type": "dcOutput"
         },
-        "outputPorts": [
-          {
-            "type": "dcOutput",
-            "wire": "Vout0"
-          }
-        ],
+        "outputPort": {
+          "port": "out",
+          "type": "dcOutput"
+        },
         "circuit": {
+          "ports": [
+            {
+              "name": "in"
+            },
+            {
+              "name": "out"
+            }
+          ],
           "components": [
             {
               "name": "C_bus_LV",
               "data": "TAS/data/capacitors.ndjson?placeholder=C_bus_LV"
-            },
-            {
-              "name": "P_Vout0_external",
-              "data": "TAS/data/terminals.ndjson?placeholder=P_Vout0_external"
             }
           ],
-          "connections": []
+          "connections": [
+            {
+              "name": "filter_in_out",
+              "endpoints": [
+                {
+                  "component": "C_bus_LV",
+                  "pin": "1"
+                },
+                {
+                  "port": "in"
+                },
+                {
+                  "port": "out"
+                }
+              ]
+            },
+            {
+              "name": "gnd",
+              "endpoints": [
+                {
+                  "component": "C_bus_LV",
+                  "pin": "2"
+                }
+              ]
+            }
+          ]
         }
       },
       {
         "name": "controller",
         "role": "control",
-        "circuit": {
-          "components": [
-            {
-              "name": "U1",
-              "data": "TAS/data/controllers.ndjson?placeholder=U1"
-            }
-          ],
-          "connections": []
-        },
+        "controlImplementation": "virtual",
         "senses": [
           {
-            "wire": "Vout0",
+            "net": "Vout0",
             "signal": "voltage"
           }
         ],
         "drives": [
           {
+            "stage": "primary_bridge",
             "component": "Q1",
             "signal": "gate"
           },
           {
+            "stage": "primary_bridge",
             "component": "Q2",
             "signal": "gate"
           },
           {
+            "stage": "primary_bridge",
             "component": "Q3",
             "signal": "gate"
           },
           {
+            "stage": "primary_bridge",
             "component": "Q4",
             "signal": "gate"
           },
           {
+            "stage": "secondary_bridge",
             "component": "Q5",
             "signal": "gate"
           },
           {
+            "stage": "secondary_bridge",
             "component": "Q6",
             "signal": "gate"
           },
           {
+            "stage": "secondary_bridge",
             "component": "Q7",
             "signal": "gate"
           },
           {
+            "stage": "secondary_bridge",
             "component": "Q8",
             "signal": "gate"
           }
         ]
       }
     ],
-    "interStageCircuit": [
+    "interStageConnections": [
       {
         "name": "Vin",
         "kind": "externalPort",
         "direction": "input",
         "endpoints": [
           {
-            "component": "Q1",
-            "pin": "D"
-          },
-          {
-            "component": "Q3",
-            "pin": "D"
-          },
-          {
-            "component": "C_bus_HV",
-            "pin": "1"
-          },
-          {
-            "component": "P_Vin",
-            "pin": "1"
+            "stage": "primary_bridge",
+            "port": "in"
           }
         ]
       },
@@ -331,16 +666,12 @@
         "kind": "wire",
         "endpoints": [
           {
-            "component": "Q1",
-            "pin": "S"
+            "stage": "primary_bridge",
+            "port": "out"
           },
           {
-            "component": "Q2",
-            "pin": "D"
-          },
-          {
-            "component": "C_r1",
-            "pin": "1"
+            "stage": "isolation",
+            "port": "in"
           }
         ]
       },
@@ -349,16 +680,12 @@
         "kind": "wire",
         "endpoints": [
           {
-            "component": "Q3",
-            "pin": "S"
+            "stage": "primary_bridge",
+            "port": "bridge_b_hv"
           },
           {
-            "component": "Q4",
-            "pin": "D"
-          },
-          {
-            "component": "T1",
-            "pin": "pri.2"
+            "stage": "isolation",
+            "port": "bridge_b_hv"
           }
         ]
       },
@@ -367,16 +694,12 @@
         "kind": "wire",
         "endpoints": [
           {
-            "component": "Q5",
-            "pin": "S"
+            "stage": "isolation",
+            "port": "bridge_a_lv"
           },
           {
-            "component": "Q6",
-            "pin": "D"
-          },
-          {
-            "component": "C_r2",
-            "pin": "1"
+            "stage": "secondary_bridge",
+            "port": "in"
           }
         ]
       },
@@ -385,79 +708,37 @@
         "kind": "wire",
         "endpoints": [
           {
-            "component": "Q7",
-            "pin": "S"
+            "stage": "isolation",
+            "port": "bridge_b_lv"
           },
           {
-            "component": "Q8",
-            "pin": "D"
+            "stage": "secondary_bridge",
+            "port": "in_b"
+          }
+        ]
+      },
+      {
+        "name": "Vout0_node",
+        "kind": "wire",
+        "endpoints": [
+          {
+            "stage": "secondary_bridge",
+            "port": "out"
           },
           {
-            "component": "T1",
-            "pin": "sec0.2"
+            "stage": "output_filter",
+            "port": "in"
           }
         ]
       },
       {
         "name": "Vout0",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q5",
-            "pin": "D"
-          },
-          {
-            "component": "Q7",
-            "pin": "D"
-          },
-          {
-            "component": "C_bus_LV",
-            "pin": "1"
-          }
-        ]
-      },
-      {
-        "name": "Vout0_external",
         "kind": "externalPort",
         "direction": "output",
         "endpoints": [
           {
-            "component": "C_bus_LV",
-            "pin": "1"
-          },
-          {
-            "component": "P_Vout0_external",
-            "pin": "1"
-          }
-        ]
-      },
-      {
-        "name": "GND",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q2",
-            "pin": "S"
-          },
-          {
-            "component": "Q4",
-            "pin": "S"
-          },
-          {
-            "component": "Q6",
-            "pin": "S"
-          },
-          {
-            "component": "Q8",
-            "pin": "S"
-          },
-          {
-            "component": "C_bus_HV",
-            "pin": "2"
-          },
-          {
-            "component": "C_bus_LV",
-            "pin": "2"
+            "stage": "output_filter",
+            "port": "out"
           }
         ]
       }

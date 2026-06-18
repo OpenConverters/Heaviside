@@ -83,25 +83,19 @@ def test_isobuck_tas_round_trip_shape() -> None:
     }
     assert sw_names == {"Q1", "Q2"}, sw_names
 
-    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    assert set(ports) == {"Vin", "switch_node", "Vout_pri", "sec0_node", "Vout0", "GND"}, set(ports)
+    ports = {p["name"]: p for p in tas["topology"]["interStageConnections"]}
+    # v2: GND/gate wires live inside stage circuits.
+    # Flybuck: T1.pri.2, C_pri.1, and Vout_pri are the same node (no primary choke),
+    # so isolation.pri_out, output_pri.in, and output_pri.out all collapse into Vout_pri.
+    assert set(ports) == {"Vin", "switch_node", "Vout_pri", "sec0_node", "Vout0"}, set(ports)
 
-    # Switch node has Q1.S + Q2.D + T1.pri.1
-    sw_eps = {
-        (e["component"], e["pin"])
-        for e in ports["switch_node"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert sw_eps == {("Q1", "S"), ("Q2", "D"), ("T1", "pri.1")}, sw_eps
+    # v2 endpoints use {stage, port}
+    sw_eps = {(e["stage"], e["port"]) for e in ports["switch_node"]["endpoints"]}
+    assert sw_eps == {("primary_switch", "sw"), ("isolation", "in")}, sw_eps
 
-    # Vout_pri shares T1.pri.2 with C_pri.1 (primary buck output).
-    vp_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vout_pri"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vp_eps == {("T1", "pri.2"), ("C_pri", "1")}, vp_eps
+    vp_eps = {(e["stage"], e["port"]) for e in ports["Vout_pri"]["endpoints"]}
+    assert vp_eps == {("isolation", "pri_out"), ("output_pri", "in"), ("output_pri", "out")}, vp_eps
 
-    # Controller regulates around Vout_pri (NOT Vout0) — flybuck signature.
-    sense = tas["topology"]["stages"][4]["senses"][0]["wire"]
+    # Controller regulates around Vout_pri (NOT Vout0) — flybuck signature (v2 uses 'net' not 'wire').
+    sense = tas["topology"]["stages"][4]["senses"][0]["net"]
     assert sense == "Vout_pri", sense

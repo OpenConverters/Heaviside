@@ -128,7 +128,7 @@ def _acf_tas(*, t1_kwargs: dict | None = None) -> dict:
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

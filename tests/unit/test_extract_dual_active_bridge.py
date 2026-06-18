@@ -152,7 +152,7 @@ def _dab_tas(*, t1_kwargs: dict | None = None, lr_kwargs: dict | None = None) ->
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

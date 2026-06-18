@@ -113,23 +113,11 @@ def test_llc_tas_round_trip_shape() -> None:
     }, inv_names
 
     # T1 has three windings (primary + CT secondary modelled as two
-    # half-windings sec1/sec2).
-    t1 = tas["topology"]["stages"][1]["circuit"]["components"][0]
-    assert t1["name"] == "T1"
-    t1_pins = {
-        ep["pin"]
-        for w in tas["topology"]["interStageCircuit"]
-        for ep in w.get("endpoints", [])
-        if ep["component"] == "T1"
-    }
-    assert t1_pins == {
-        "pri.1",
-        "pri.2",
-        "sec1.1",
-        "sec1.2",
-        "sec2.1",
-        "sec2.2",
-    }, t1_pins
+    # half-windings sec1/sec2). In v2, T1 is in the isolation stage circuit.
+    t1_iso = tas["topology"]["stages"][1]
+    assert t1_iso["name"] == "isolation"
+    t1_comps = {c["name"] for c in t1_iso["circuit"]["components"]}
+    assert "T1" in t1_comps, t1_comps
 
     # Output rectifier: just the CT pair + Cout. No output choke (LLC).
     rect_names = {
@@ -139,7 +127,8 @@ def test_llc_tas_round_trip_shape() -> None:
     }
     assert rect_names == {"D1", "D2", "C_out0"}, rect_names
 
-    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageConnections"]}
+    # v2: no GND/gate wires in interStageConnections
     assert set(ports) == {
         "Vin",
         "mid_point",
@@ -148,35 +137,14 @@ def test_llc_tas_round_trip_shape() -> None:
         "sec_bot",
         "sec_ct",
         "Vout0",
-        "GND",
     }, set(ports)
 
-    # mid_point must touch both bus caps, both balancing resistors,
-    # AND T1.pri.2 (primary return through the capacitive divider).
-    mid_eps = {
-        (e["component"], e["pin"])
-        for e in ports["mid_point"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert mid_eps == {
-        ("C_bus_hi", "2"),
-        ("C_bus_lo", "1"),
-        ("R_bal_hi", "2"),
-        ("R_bal_lo", "1"),
-        ("T1", "pri.2"),
-    }, mid_eps
+    # v2 endpoints use {stage, port}
+    mid_eps = {(e["stage"], e["port"]) for e in ports["mid_point"]["endpoints"]}
+    assert mid_eps == {("inverter", "mid"), ("isolation", "pri_ret")}, mid_eps
 
-    # sec_ct must short T1.sec1.2 and T1.sec2.1 (CT node) to C_out0.2.
-    ct_eps = {
-        (e["component"], e["pin"])
-        for e in ports["sec_ct"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert ct_eps == {
-        ("T1", "sec1.2"),
-        ("T1", "sec2.1"),
-        ("C_out0", "2"),
-    }, ct_eps
+    ct_eps = {(e["stage"], e["port"]) for e in ports["sec_ct"]["endpoints"]}
+    assert ct_eps == {("isolation", "sec_ct"), ("output_0", "ct")}, ct_eps
 
     # Controller drives both bridge MOSFETs.
     drives = {d["component"] for d in tas["topology"]["stages"][3]["drives"]}

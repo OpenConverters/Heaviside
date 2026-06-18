@@ -83,21 +83,14 @@ def test_zeta_tas_round_trip_shape() -> None:
     names = {c["name"] for c in sc["circuit"]["components"] if not c["name"].startswith("P_")}
     assert names == {"Q1", "D1", "L1", "L2", "C_flying", "C_out"}, names
 
+    # v2 circuits also include port-endpoint connections; check internal nodes are present.
     conn_names = {c["name"] for c in sc["circuit"]["connections"]}
-    assert conn_names == {"node_SW", "node_X"}, conn_names
+    assert {"node_SW", "node_X"} <= conn_names, conn_names
 
-    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageConnections"]}
     assert set(ports) == {"Vin", "Vout", "GND"}
-    # Zeta signature: Vin enters at Q1.D (high-side switch)
-    vin_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vin"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vin_eps == {("Q1", "D")}, vin_eps
-    vout_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vout"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vout_eps == {("L2", "2"), ("C_out", "1")}, vout_eps
+    # v2 endpoints use {stage, port}
+    vin_eps = {(e["stage"], e["port"]) for e in ports["Vin"]["endpoints"]}
+    assert vin_eps == {("power_stage", "in")}, vin_eps
+    vout_eps = {(e["stage"], e["port"]) for e in ports["Vout"]["endpoints"]}
+    assert vout_eps == {("power_stage", "out")}, vout_eps

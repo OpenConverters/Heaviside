@@ -95,17 +95,14 @@ def test_isobb_tas_round_trip_shape() -> None:
     }
     assert pri_names == {"D_pri", "C_pri"}, pri_names
 
-    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    assert set(ports) == {"Vin", "switch_node", "Vout_pri", "sec0_node", "Vout0", "GND"}, set(ports)
+    ports = {p["name"]: p for p in tas["topology"]["interStageConnections"]}
+    # v2: GND/gate wires live inside stage circuits
+    assert set(ports) == {"Vin", "switch_node", "Vout_pri", "sec0_node", "Vout0"}, set(ports)
 
-    # Switch node taps Q1.S + T1.pri.1 + D_pri.K (the inverting-BB signature).
-    sw_eps = {
-        (e["component"], e["pin"])
-        for e in ports["switch_node"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert sw_eps == {("Q1", "S"), ("T1", "pri.1"), ("D_pri", "K")}, sw_eps
+    # v2 endpoints use {stage, port}: switch_node connects primary_switch, isolation, and output_pri
+    sw_eps = {(e["stage"], e["port"]) for e in ports["switch_node"]["endpoints"]}
+    assert sw_eps == {("primary_switch", "sw"), ("isolation", "in"), ("output_pri", "switch_in")}, sw_eps
 
-    # Controller regulates Vout_pri.
-    sense = tas["topology"]["stages"][4]["senses"][0]["wire"]
+    # Controller regulates Vout_pri (v2 uses 'net' not 'wire').
+    sense = tas["topology"]["stages"][4]["senses"][0]["net"]
     assert sense == "Vout_pri", sense

@@ -146,7 +146,7 @@ def _psfb_tas(
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

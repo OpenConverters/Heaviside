@@ -128,7 +128,7 @@ def _pp_tas(*, t1_kwargs: dict | None = None) -> dict:
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

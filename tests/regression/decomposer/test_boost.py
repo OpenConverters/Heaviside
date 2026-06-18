@@ -82,19 +82,10 @@ def test_boost_tas_round_trip_shape() -> None:
     names = {c["name"] for c in sc["circuit"]["components"] if not c["name"].startswith("P_")}
     assert names == {"Q1", "D1", "L1", "C_out"}, names
 
-    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
+    ports = {p["name"]: p for p in tas["topology"]["interStageConnections"]}
     assert set(ports) == {"Vin", "Vout", "GND"}
-    # Vin must land on the inductor (boost signature)
-    vin_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vin"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vin_eps == {("L1", "1")}, vin_eps
-    # Vout must land on D1.K and C_out.1
-    vout_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vout"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vout_eps == {("D1", "K"), ("C_out", "1")}, vout_eps
+    # v2 endpoints use {stage, port} — verify external ports reach the boost cell.
+    vin_eps = {(e["stage"], e["port"]) for e in ports["Vin"]["endpoints"]}
+    assert vin_eps == {("power_stage", "in")}, vin_eps
+    vout_eps = {(e["stage"], e["port"]) for e in ports["Vout"]["endpoints"]}
+    assert vout_eps == {("power_stage", "out")}, vout_eps

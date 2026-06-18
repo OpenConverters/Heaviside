@@ -233,7 +233,7 @@ class TestThermalLimit:
 
 
 def _empty_tas() -> dict:
-    return {"topology": {"stages": [], "interStageCircuit": []}}
+    return {"topology": {"stages": [], "interStageConnections": []}}
 
 
 def _buck_shaped_tas() -> dict:
@@ -253,7 +253,7 @@ def _buck_shaped_tas() -> dict:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

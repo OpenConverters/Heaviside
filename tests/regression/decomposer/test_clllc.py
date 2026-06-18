@@ -144,14 +144,10 @@ def test_clllc_tas_shape() -> None:
     drives = {d["component"] for d in tas["topology"]["stages"][4]["drives"]}
     assert drives == {"Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8"}, drives
 
-    # Vin reaches Q1.D, Q3.D, and C_bus_HV.1 (and nothing else).
-    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    vin_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vin"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vin_eps == {("Q1", "D"), ("Q3", "D"), ("C_bus_HV", "1")}, vin_eps
+    # v2 endpoints use {stage, port}
+    ports = {p["name"]: p for p in tas["topology"]["interStageConnections"]}
+    vin_eps = {(e["stage"], e["port"]) for e in ports["Vin"]["endpoints"]}
+    assert vin_eps == {("primary_bridge", "in")}, vin_eps
 
 
 def test_clllc_registry_binding_matches_extras_roles() -> None:

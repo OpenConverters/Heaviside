@@ -42,16 +42,28 @@
         "name": "phase_boost_cell",
         "role": "switchingCell",
         "inputPort": {
-          "type": "dcBus",
-          "wire": "Vin"
+          "port": "in",
+          "type": "dcBus"
         },
-        "outputPorts": [
-          {
-            "type": "dcOutput",
-            "wire": "Vout"
-          }
-        ],
+        "outputPort": {
+          "port": "out",
+          "type": "dcOutput"
+        },
         "circuit": {
+          "ports": [
+            {
+              "name": "in"
+            },
+            {
+              "name": "out"
+            },
+            {
+              "name": "gnd"
+            },
+            {
+              "name": "gate"
+            }
+          ],
           "components": [
             {
               "name": "L1",
@@ -68,14 +80,6 @@
             {
               "name": "C_bus_DC",
               "data": "TAS/data/capacitors.ndjson?placeholder=C_bus_DC"
-            },
-            {
-              "name": "P_Vin",
-              "data": "TAS/data/terminals.ndjson?placeholder=P_Vin"
-            },
-            {
-              "name": "P_Vout",
-              "data": "TAS/data/terminals.ndjson?placeholder=P_Vout"
             }
           ],
           "connections": [
@@ -96,6 +100,62 @@
                   "pin": "A"
                 }
               ]
+            },
+            {
+              "name": "vin_in",
+              "endpoints": [
+                {
+                  "component": "L1",
+                  "pin": "1"
+                },
+                {
+                  "port": "in"
+                }
+              ]
+            },
+            {
+              "name": "vout_out",
+              "endpoints": [
+                {
+                  "component": "D1",
+                  "pin": "K"
+                },
+                {
+                  "component": "C_bus_DC",
+                  "pin": "1"
+                },
+                {
+                  "port": "out"
+                }
+              ]
+            },
+            {
+              "name": "gnd",
+              "endpoints": [
+                {
+                  "component": "Q1",
+                  "pin": "S"
+                },
+                {
+                  "component": "C_bus_DC",
+                  "pin": "2"
+                },
+                {
+                  "port": "gnd"
+                }
+              ]
+            },
+            {
+              "name": "gate",
+              "endpoints": [
+                {
+                  "component": "Q1",
+                  "pin": "G"
+                },
+                {
+                  "port": "gate"
+                }
+              ]
             }
           ]
         }
@@ -103,42 +163,42 @@
       {
         "name": "controller",
         "role": "control",
-        "circuit": {
-          "components": [
-            {
-              "name": "U1",
-              "data": "TAS/data/controllers.ndjson?placeholder=U1"
-            }
-          ],
-          "connections": []
-        },
+        "controlImplementation": "virtual",
         "senses": [
           {
-            "wire": "Vout",
+            "net": "Vout",
             "signal": "voltage"
           }
         ],
         "drives": [
           {
+            "stage": "power_stage",
             "component": "Q1",
             "signal": "gate"
           }
         ]
       }
     ],
-    "interStageCircuit": [
+    "interStageConnections": [
       {
         "name": "Vin",
         "kind": "externalPort",
         "direction": "input",
         "endpoints": [
           {
-            "component": "L1",
-            "pin": "1"
-          },
+            "stage": "phase_boost_cell",
+            "port": "in"
+          }
+        ]
+      },
+      {
+        "name": "GND",
+        "kind": "externalPort",
+        "direction": "input",
+        "endpoints": [
           {
-            "component": "P_Vin",
-            "pin": "1"
+            "stage": "phase_boost_cell",
+            "port": "gnd"
           }
         ]
       },
@@ -148,30 +208,8 @@
         "direction": "output",
         "endpoints": [
           {
-            "component": "D1",
-            "pin": "K"
-          },
-          {
-            "component": "C_bus_DC",
-            "pin": "1"
-          },
-          {
-            "component": "P_Vout",
-            "pin": "1"
-          }
-        ]
-      },
-      {
-        "name": "GND",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q1",
-            "pin": "S"
-          },
-          {
-            "component": "C_bus_DC",
-            "pin": "2"
+            "stage": "phase_boost_cell",
+            "port": "out"
           }
         ]
       }

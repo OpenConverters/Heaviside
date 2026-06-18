@@ -91,18 +91,12 @@ def test_flyback_tas_round_trip_shape() -> None:
     }
     assert sw_names == {"Q1"}, sw_names
 
-    # Isolation stage holds T1 only, with pri+sec0 pins.
+    # Isolation stage holds T1 only.
     iso = tas["topology"]["stages"][1]
+    assert iso["name"] == "isolation"
     iso_names = {c["name"] for c in iso["circuit"]["components"] if not c["name"].startswith("P_")}
     assert iso_names == {"T1"}, iso_names
-    # Pins derived from observed connection endpoints (writer convention).
-    t1_pins = {
-        ep["pin"]
-        for w in tas["topology"]["interStageCircuit"]
-        for ep in w.get("endpoints", [])
-        if ep["component"] == "T1"
-    }
-    assert t1_pins == {"pri.1", "pri.2", "sec0.1", "sec0.2"}, t1_pins
+    # v2: T1 pins are in isolation stage circuit connections, not in interStageConnections endpoints.
 
     # Output rectifier stage holds D_out0 and C_out0.
     rect_names = {
@@ -112,37 +106,23 @@ def test_flyback_tas_round_trip_shape() -> None:
     }
     assert rect_names == {"D_out0", "C_out0"}, rect_names
 
-    # interStageCircuit must wire switch_node and sec0_node, plus Vin/Vout0.
-    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    assert set(ports) == {"Vin", "switch_node", "sec0_node", "Vout0", "GND"}
+    # interStageConnections must wire switch_node and sec0_node, plus Vin/Vout0.
+    ports = {p["name"]: p for p in tas["topology"]["interStageConnections"]}
+    # v2: GND and gate wires live inside stage circuits, not in interStageConnections
+    assert set(ports) == {"Vin", "switch_node", "sec0_node", "Vout0"}
 
-    vin_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vin"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vin_eps == {("Q1", "D")}, vin_eps
+    # v2 endpoints use {stage, port}
+    vin_eps = {(e["stage"], e["port"]) for e in ports["Vin"]["endpoints"]}
+    assert vin_eps == {("primary_switch", "in")}, vin_eps
 
-    sw_eps = {
-        (e["component"], e["pin"])
-        for e in ports["switch_node"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert sw_eps == {("Q1", "S"), ("T1", "pri.1")}, sw_eps
+    sw_eps = {(e["stage"], e["port"]) for e in ports["switch_node"]["endpoints"]}
+    assert sw_eps == {("primary_switch", "sw"), ("isolation", "in")}, sw_eps
 
-    sec_eps = {
-        (e["component"], e["pin"])
-        for e in ports["sec0_node"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert sec_eps == {("T1", "sec0.2"), ("D_out0", "A")}, sec_eps
+    sec_eps = {(e["stage"], e["port"]) for e in ports["sec0_node"]["endpoints"]}
+    assert sec_eps == {("isolation", "sec0"), ("output_0", "in")}, sec_eps
 
-    vout_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vout0"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vout_eps == {("D_out0", "K"), ("C_out0", "1")}, vout_eps
+    vout_eps = {(e["stage"], e["port"]) for e in ports["Vout0"]["endpoints"]}
+    assert vout_eps == {("output_0", "out")}, vout_eps
 
     # Controller drives Q1.
     drives = {d["component"] for d in tas["topology"]["stages"][3]["drives"]}

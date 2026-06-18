@@ -115,19 +115,12 @@ def test_vienna_tas_shape() -> None:
     drives = {d["component"] for d in tas["topology"]["stages"][1]["drives"]}
     assert drives == {"Q1"}, drives
 
-    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    vin_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vin"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vin_eps == {("L1", "1")}, vin_eps
-    vout_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vout"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vout_eps == {("D1", "K"), ("C_bus_DC", "1")}, vout_eps
+    ports = {p["name"]: p for p in tas["topology"]["interStageConnections"]}
+    # v2 endpoints use {stage, port} — verify external ports reach the boost cell.
+    vin_eps = {(e["stage"], e["port"]) for e in ports["Vin"]["endpoints"]}
+    assert vin_eps == {("phase_boost_cell", "in")}, vin_eps
+    vout_eps = {(e["stage"], e["port"]) for e in ports["Vout"]["endpoints"]}
+    assert vout_eps == {("phase_boost_cell", "out")}, vout_eps
 
 
 def test_vienna_registry_binding_matches_extras_roles() -> None:

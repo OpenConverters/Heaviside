@@ -185,7 +185,7 @@ def _clllc_tas(
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

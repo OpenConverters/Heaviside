@@ -133,11 +133,9 @@ def test_weinberg_tas_shape() -> None:
     drives = {d["component"] for d in tas["topology"]["stages"][4]["drives"]}
     assert drives == {"Q1", "Q2"}, drives
 
-    # Vin enters at L1.a.1 and L1.b.1 (NOT at any switch drain).
-    ports = {p["name"]: p for p in tas["topology"]["interStageCircuit"]}
-    vin_eps = {
-        (e["component"], e["pin"])
-        for e in ports["Vin"]["endpoints"]
-        if not e["component"].startswith("P_")
-    }
-    assert vin_eps == {("L1", "a.1"), ("L1", "b.1")}, vin_eps
+    # v2 endpoints use {stage, port}
+    ports = {p["name"]: p for p in tas["topology"]["interStageConnections"]}
+    # v2: gate wires are NOT in interStageConnections
+    assert "gate1" not in ports and "gate2" not in ports
+    vin_eps = {(e["stage"], e["port"]) for e in ports["Vin"]["endpoints"]}
+    assert vin_eps == {("input_coupled_inductor", "in")}, vin_eps

@@ -49,16 +49,31 @@
         "name": "primary_switch",
         "role": "switchingCell",
         "inputPort": {
-          "type": "dcBus",
-          "wire": "Vin"
+          "port": "in",
+          "type": "dcBus"
         },
-        "outputPorts": [
-          {
-            "type": "pulsatingDc",
-            "wire": "switch_node"
-          }
-        ],
+        "outputPort": {
+          "port": "sw",
+          "type": "pulsatingDc"
+        },
         "circuit": {
+          "ports": [
+            {
+              "name": "in"
+            },
+            {
+              "name": "sw"
+            },
+            {
+              "name": "gate1"
+            },
+            {
+              "name": "gate2"
+            },
+            {
+              "name": "gnd"
+            }
+          ],
           "components": [
             {
               "name": "Q1",
@@ -67,79 +82,249 @@
             {
               "name": "Q2",
               "data": "TAS/data/mosfets.ndjson?placeholder=Q2"
-            },
-            {
-              "name": "P_Vin",
-              "data": "TAS/data/terminals.ndjson?placeholder=P_Vin"
             }
           ],
-          "connections": []
+          "connections": [
+            {
+              "name": "vin_in",
+              "endpoints": [
+                {
+                  "component": "Q1",
+                  "pin": "D"
+                },
+                {
+                  "port": "in"
+                }
+              ]
+            },
+            {
+              "name": "sw_out",
+              "endpoints": [
+                {
+                  "component": "Q1",
+                  "pin": "S"
+                },
+                {
+                  "component": "Q2",
+                  "pin": "D"
+                },
+                {
+                  "port": "sw"
+                }
+              ]
+            },
+            {
+              "name": "gate1",
+              "endpoints": [
+                {
+                  "component": "Q1",
+                  "pin": "G"
+                },
+                {
+                  "port": "gate1"
+                }
+              ]
+            },
+            {
+              "name": "gate2",
+              "endpoints": [
+                {
+                  "component": "Q2",
+                  "pin": "G"
+                },
+                {
+                  "port": "gate2"
+                }
+              ]
+            },
+            {
+              "name": "gnd",
+              "endpoints": [
+                {
+                  "component": "Q2",
+                  "pin": "S"
+                },
+                {
+                  "port": "gnd"
+                }
+              ]
+            }
+          ]
         }
       },
       {
         "name": "isolation",
         "role": "isolation",
         "inputPort": {
-          "type": "pulsatingDc",
-          "wire": "switch_node"
+          "port": "in",
+          "type": "pulsatingDc"
         },
         "outputPorts": [
           {
-            "type": "hfAc",
-            "wire": "sec0_node"
+            "port": "pri_out",
+            "type": "hfAc"
+          },
+          {
+            "port": "sec0",
+            "type": "hfAc"
           }
         ],
         "circuit": {
+          "ports": [
+            {
+              "name": "in"
+            },
+            {
+              "name": "pri_out"
+            },
+            {
+              "name": "sec0"
+            },
+            {
+              "name": "gnd"
+            }
+          ],
           "components": [
             {
               "name": "T1",
               "data": "TAS/data/magnetics.ndjson?placeholder=T1"
-            },
-            {
-              "name": "P_Vout_pri",
-              "data": "TAS/data/terminals.ndjson?placeholder=P_Vout_pri"
             }
           ],
-          "connections": []
+          "connections": [
+            {
+              "name": "pri_in",
+              "endpoints": [
+                {
+                  "component": "T1",
+                  "pin": "pri.1"
+                },
+                {
+                  "port": "in"
+                }
+              ]
+            },
+            {
+              "name": "pri_out",
+              "endpoints": [
+                {
+                  "component": "T1",
+                  "pin": "pri.2"
+                },
+                {
+                  "port": "pri_out"
+                }
+              ]
+            },
+            {
+              "name": "sec0_out",
+              "endpoints": [
+                {
+                  "component": "T1",
+                  "pin": "sec0.2"
+                },
+                {
+                  "port": "sec0"
+                }
+              ]
+            },
+            {
+              "name": "gnd",
+              "endpoints": [
+                {
+                  "component": "T1",
+                  "pin": "sec0.1"
+                },
+                {
+                  "port": "gnd"
+                }
+              ]
+            }
+          ]
         }
       },
       {
         "name": "output_pri",
         "role": "outputFilter",
         "inputPort": {
-          "type": "hfAc",
-          "wire": "Vout_pri"
+          "port": "in",
+          "type": "hfAc"
         },
-        "outputPorts": [
-          {
-            "type": "dcOutput",
-            "wire": "Vout_pri"
-          }
-        ],
+        "outputPort": {
+          "port": "out",
+          "type": "dcOutput"
+        },
         "circuit": {
+          "ports": [
+            {
+              "name": "in"
+            },
+            {
+              "name": "out"
+            },
+            {
+              "name": "gnd"
+            }
+          ],
           "components": [
             {
               "name": "C_pri",
               "data": "TAS/data/capacitors.ndjson?placeholder=C_pri"
             }
           ],
-          "connections": []
+          "connections": [
+            {
+              "name": "filter_out",
+              "endpoints": [
+                {
+                  "component": "C_pri",
+                  "pin": "1"
+                },
+                {
+                  "port": "out"
+                },
+                {
+                  "port": "in"
+                }
+              ]
+            },
+            {
+              "name": "gnd",
+              "endpoints": [
+                {
+                  "component": "C_pri",
+                  "pin": "2"
+                },
+                {
+                  "port": "gnd"
+                }
+              ]
+            }
+          ]
         }
       },
       {
         "name": "output_0",
         "role": "outputRectifier",
         "inputPort": {
-          "type": "hfAc",
-          "wire": "sec0_node"
+          "port": "in",
+          "type": "hfAc"
         },
-        "outputPorts": [
-          {
-            "type": "dcOutput",
-            "wire": "Vout0"
-          }
-        ],
+        "outputPort": {
+          "port": "out",
+          "type": "dcOutput"
+        },
         "circuit": {
+          "ports": [
+            {
+              "name": "in"
+            },
+            {
+              "name": "out"
+            },
+            {
+              "name": "gnd"
+            }
+          ],
           "components": [
             {
               "name": "D_out0",
@@ -148,58 +333,85 @@
             {
               "name": "C_out0",
               "data": "TAS/data/capacitors.ndjson?placeholder=C_out0"
-            },
-            {
-              "name": "P_Vout0",
-              "data": "TAS/data/terminals.ndjson?placeholder=P_Vout0"
             }
           ],
-          "connections": []
+          "connections": [
+            {
+              "name": "rect_in",
+              "endpoints": [
+                {
+                  "component": "D_out0",
+                  "pin": "A"
+                },
+                {
+                  "port": "in"
+                }
+              ]
+            },
+            {
+              "name": "rect_out",
+              "endpoints": [
+                {
+                  "component": "D_out0",
+                  "pin": "K"
+                },
+                {
+                  "component": "C_out0",
+                  "pin": "1"
+                },
+                {
+                  "port": "out"
+                }
+              ]
+            },
+            {
+              "name": "gnd",
+              "endpoints": [
+                {
+                  "component": "C_out0",
+                  "pin": "2"
+                },
+                {
+                  "port": "gnd"
+                }
+              ]
+            }
+          ]
         }
       },
       {
         "name": "controller",
         "role": "control",
-        "circuit": {
-          "components": [
-            {
-              "name": "U1",
-              "data": "TAS/data/controllers.ndjson?placeholder=U1"
-            }
-          ],
-          "connections": []
-        },
+        "controlImplementation": "virtual",
         "senses": [
           {
-            "wire": "Vout_pri",
+            "net": "Vout_pri",
             "signal": "voltage"
           }
         ],
         "drives": [
           {
+            "stage": "primary_switch",
             "component": "Q1",
             "signal": "gate"
           },
           {
+            "stage": "primary_switch",
             "component": "Q2",
             "signal": "gate"
           }
         ]
       }
     ],
-    "interStageCircuit": [
+    "interStageConnections": [
       {
         "name": "Vin",
         "kind": "externalPort",
         "direction": "input",
         "endpoints": [
           {
-            "component": "Q1",
-            "pin": "D"
-          },
-          {
-            "component": "P_Vin",
-            "pin": "1"
+            "stage": "primary_switch",
+            "port": "in"
           }
         ]
       },
@@ -208,16 +420,12 @@
         "kind": "wire",
         "endpoints": [
           {
-            "component": "Q1",
-            "pin": "S"
+            "stage": "primary_switch",
+            "port": "sw"
           },
           {
-            "component": "Q2",
-            "pin": "D"
-          },
-          {
-            "component": "T1",
-            "pin": "pri.1"
+            "stage": "isolation",
+            "port": "in"
           }
         ]
       },
@@ -227,16 +435,16 @@
         "direction": "output",
         "endpoints": [
           {
-            "component": "T1",
-            "pin": "pri.2"
+            "stage": "isolation",
+            "port": "pri_out"
           },
           {
-            "component": "C_pri",
-            "pin": "1"
+            "stage": "output_pri",
+            "port": "in"
           },
           {
-            "component": "P_Vout_pri",
-            "pin": "1"
+            "stage": "output_pri",
+            "port": "out"
           }
         ]
       },
@@ -245,12 +453,12 @@
         "kind": "wire",
         "endpoints": [
           {
-            "component": "T1",
-            "pin": "sec0.2"
+            "stage": "isolation",
+            "port": "sec0"
           },
           {
-            "component": "D_out0",
-            "pin": "A"
+            "stage": "output_0",
+            "port": "in"
           }
         ]
       },
@@ -260,38 +468,8 @@
         "direction": "output",
         "endpoints": [
           {
-            "component": "D_out0",
-            "pin": "K"
-          },
-          {
-            "component": "C_out0",
-            "pin": "1"
-          },
-          {
-            "component": "P_Vout0",
-            "pin": "1"
-          }
-        ]
-      },
-      {
-        "name": "GND",
-        "kind": "wire",
-        "endpoints": [
-          {
-            "component": "Q2",
-            "pin": "S"
-          },
-          {
-            "component": "T1",
-            "pin": "sec0.1"
-          },
-          {
-            "component": "C_pri",
-            "pin": "2"
-          },
-          {
-            "component": "C_out0",
-            "pin": "2"
+            "stage": "output_0",
+            "port": "out"
           }
         ]
       }

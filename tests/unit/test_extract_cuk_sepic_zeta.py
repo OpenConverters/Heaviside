@@ -87,7 +87,7 @@ def _tas() -> dict:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

@@ -62,7 +62,7 @@ def _fsbb_tas() -> dict:
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

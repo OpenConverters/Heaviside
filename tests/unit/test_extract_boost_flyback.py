@@ -59,7 +59,7 @@ def _single_magnetic_tas(name: str, mas: dict) -> dict:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 

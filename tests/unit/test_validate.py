@@ -103,18 +103,18 @@ def test_tas_root_rejects_missing_topology() -> None:
 
 def test_tas_root_rejects_missing_inputs() -> None:
     """A TAS document with no ``inputs`` key fails the TAS root schema."""
-    bad = {"topology": {"stages": [], "interStageCircuit": []}}
+    bad = {"topology": {"stages": [], "interStageConnections": []}}
     report = validate_tas(bad, strict=False)
     assert not report.ok
     assert "tas_root" in _codes(report)
 
 
 def test_tas_root_rejects_flat_legacy_shape() -> None:
-    """The pre-migration flat shape ({stages, interStageCircuit} at root)
+    """The pre-migration flat shape ({stages, interStageConnections} at root)
     must be rejected by the current TAS root schema. This regression
     guards against accidentally reintroducing the legacy emission.
     """
-    legacy = {"stages": [], "interStageCircuit": []}
+    legacy = {"stages": [], "interStageConnections": []}
     report = validate_tas(legacy, strict=False)
     assert not report.ok
     assert any("inputs" in v.message or "topology" in v.message for v in report.violations)

@@ -101,7 +101,7 @@ INPUTS_BOOST = {
 
 def _bind(tas: dict, bindings: dict[str, str]) -> dict:
     for stage in tas["topology"]["stages"]:
-        for c in stage["circuit"]["components"]:
+        for c in stage.get("circuit", {}).get("components", []):
             if c["name"] in bindings:
                 c["data"] = bindings[c["name"]]
     return tas
@@ -236,7 +236,7 @@ def _bind_flyback_inline(tas: dict) -> dict:
         "C_out0": "TAS/data/capacitors.ndjson?mpn=UPW1H102MHD",
     }
     for stage in tas["topology"]["stages"]:
-        for c in stage["circuit"]["components"]:
+        for c in stage.get("circuit", {}).get("components", []):
             if c["name"] in bindings:
                 c["data"] = bindings[c["name"]]
             elif c["name"] == "T1":
@@ -275,12 +275,16 @@ def test_round_trip_isolated_flyback():
     assert len(transformers) == 1, comps
     t1 = transformers[0]
     # Derive pin set from observed connections (single switchingCell stage).
+    # spice_to_tas emits the old "interStageCircuit" key with flat {component, pin}
+    # endpoints (v1 format); accept both key names so the test works with the
+    # round-tripped TAS_B coming out of the spice reader.
+    t1_wires = tas_b.get("interStageCircuit") or tas_b.get("interStageConnections", [])
     t1_pins = sorted(
         {
             ep["pin"]
-            for w in tas_b.get("interStageCircuit", [])
+            for w in t1_wires
             for ep in w.get("endpoints", [])
-            if ep["component"] == t1["name"]
+            if ep.get("component") == t1["name"]
         }
     )
     assert t1_pins == ["pri.1", "pri.2", "sec0.1", "sec0.2"], t1_pins
@@ -348,7 +352,7 @@ _LLC_INLINE = {
 def _bind_llc_inline(tas: dict) -> dict:
     """Strip ``data:`` URLs; replace with inline values + T1 transformer."""
     for stage in tas["topology"]["stages"]:
-        for c in stage["circuit"]["components"]:
+        for c in stage.get("circuit", {}).get("components", []):
             if c["name"] in _LLC_INLINE:
                 cat, val = _LLC_INLINE[c["name"]]
                 c.pop("data", None)
@@ -400,12 +404,13 @@ def test_round_trip_isolated_llc():
     ]
     assert len(transformers) == 1, transformers
     t1 = transformers[0]
+    t1_wires = tas_b.get("interStageCircuit") or tas_b.get("interStageConnections", [])
     t1_pins = sorted(
         {
             ep["pin"]
-            for w in tas_b.get("interStageCircuit", [])
+            for w in t1_wires
             for ep in w.get("endpoints", [])
-            if ep["component"] == t1["name"]
+            if ep.get("component") == t1["name"]
         }
     )
     assert t1_pins == [
@@ -503,7 +508,7 @@ INPUTS_DUAL_ISO = {
 def _bind_generic_inline(tas: dict, t1_windings: dict[str, float]) -> dict:
     """Replace placeholder URLs with inline values for a single-T1 stencil."""
     for stage in tas["topology"]["stages"]:
-        for c in stage["circuit"]["components"]:
+        for c in stage.get("circuit", {}).get("components", []):
             if c["name"] in _GENERIC_INLINE:
                 cat, val = _GENERIC_INLINE[c["name"]]
                 c.pop("data", None)
