@@ -335,17 +335,23 @@ def design_magnetics(
             _prior_in_stock = None
         pyom.set_settings({"useOnlyCoresInStock": bool(use_only_cores_in_stock)})
 
+    # The vendor .so and the pip package have different 7-arg semantics.
+    # The vendor .so's 7th arg is `fast` (fast core-advise path, no ngspice).
+    # The pip package's 7th arg triggers ngspice internally — never pass it.
+    # Only use the 7-arg form with the vendor .so.
+    _vendor_so = _import_pyom_vendor()
+    _pip_so = pyom  # pyom is already _import_pyom()
+
     def _call_pyom(p: Any, variant: str, spec_arg: dict, weights_arg: Any) -> Any:
-        return (
-            p.design_magnetics_from_converter(
+        use_fast_arg = fast and (p is _vendor_so) and _supports_fast_param(p)
+        if use_fast_arg:
+            return p.design_magnetics_from_converter(
                 variant, spec_arg, int(max_results), str(core_mode),
                 bool(use_ngspice), weights_arg, bool(fast),
             )
-            if (fast and _supports_fast_param(p))
-            else p.design_magnetics_from_converter(
-                variant, spec_arg, int(max_results), str(core_mode),
-                bool(use_ngspice), weights_arg,
-            )
+        return p.design_magnetics_from_converter(
+            variant, spec_arg, int(max_results), str(core_mode),
+            bool(use_ngspice), weights_arg,
         )
 
     def _try_variants(p: Any, cache_prefix: str) -> tuple[dict | None, str | None]:
