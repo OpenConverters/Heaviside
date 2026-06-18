@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from heaviside.report.html import _waveform_svg, render_html
+from heaviside.report.html import _waveform_svg, _try_waveforms, render_html
 
 
 def _mas_with_waveforms(n=300):
@@ -21,6 +21,11 @@ def _mas_with_waveforms(n=300):
     }
 
 
+def _waveforms_from_mas(mas):
+    """Extract waveform list from a MAS dict (test helper)."""
+    return _try_waveforms(mas)
+
+
 def _outcome(mas):
     return NS(
         pick=NS(topology=NS(name="buck"), main_magnetic=NS(mas=mas, scoring=0.35)),
@@ -31,19 +36,21 @@ def _outcome(mas):
 
 
 def test_waveform_svg_has_traces():
-    svg = _waveform_svg(_mas_with_waveforms())
-    assert svg.startswith("<h2>Simulation waveforms") and "<svg" in svg
+    wfs = _waveforms_from_mas(_mas_with_waveforms())
+    assert wfs, "expected waveforms extracted from MAS"
+    svg = _waveform_svg(wfs)
+    assert "<svg" in svg
     assert svg.count("<polyline") == 2  # current + voltage
 
 
 def test_waveform_svg_empty_without_data():
-    assert _waveform_svg({"inputs": {"operatingPoints": []}}) == ""
-    assert _waveform_svg({}) == ""
+    assert _waveform_svg(_waveforms_from_mas({"inputs": {"operatingPoints": []}})) == ""
+    assert _waveform_svg([]) == ""
 
 
 def test_report_includes_waveform_section():
     html = render_html(_outcome(_mas_with_waveforms()))
-    assert "Simulation waveforms" in html and "<svg" in html
+    assert "Simulation Waveforms" in html and "<svg" in html
 
 
 def test_report_renders_to_pdf():

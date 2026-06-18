@@ -73,6 +73,7 @@ class _FakePyOM:
 
 def _patch_pyom(monkeypatch: pytest.MonkeyPatch, fake: _FakePyOM) -> None:
     monkeypatch.setattr(bridge, "_import_pyom", lambda: fake)
+    monkeypatch.setattr(bridge, "_import_pyom_vendor", lambda: fake)
 
 
 def _mas(*, scoring: float, shape: str, material: str, n_windings: int) -> dict:
@@ -251,7 +252,7 @@ def _single_magnetic_tas() -> dict:
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 
@@ -308,7 +309,7 @@ def test_attach_picks_up_inline_category_magnetic() -> None:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     designs = [
@@ -347,7 +348,7 @@ def test_attach_no_magnetics_in_tas_raises() -> None:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     designs = [
@@ -394,7 +395,7 @@ def _multi_magnetic_tas() -> dict:
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
 
@@ -703,7 +704,7 @@ def test_attach_components_acf_binds_main_and_extras() -> None:
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     main = bridge.MagneticDesign(
@@ -745,7 +746,7 @@ def test_attach_components_unknown_tas_magnetic_raises() -> None:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     main = bridge.MagneticDesign(
@@ -782,7 +783,7 @@ def test_attach_components_missing_extras_raises() -> None:
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     main = bridge.MagneticDesign(
@@ -810,7 +811,7 @@ def test_attach_components_topology_without_binding_raises() -> None:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     main = bridge.MagneticDesign(
@@ -899,7 +900,7 @@ def test_attach_components_binds_resonant_capacitors() -> None:
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     main = bridge.MagneticDesign(
@@ -952,7 +953,7 @@ def test_attach_components_picks_up_inline_category_capacitor() -> None:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     main = bridge.MagneticDesign(
@@ -994,7 +995,7 @@ def test_attach_components_leaves_unbound_capacitors_alone() -> None:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     main = bridge.MagneticDesign(
@@ -1027,7 +1028,7 @@ def test_attach_components_cap_binding_missing_in_tas_raises() -> None:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     main = bridge.MagneticDesign(
@@ -1064,7 +1065,7 @@ def test_attach_components_cap_role_missing_in_extras_raises() -> None:
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     main = bridge.MagneticDesign(
@@ -1117,7 +1118,7 @@ def test_attach_components_llc_registry_binds_C_r_resonant_cap() -> None:
                     },
                 },
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         }
     }
     main = bridge.MagneticDesign(
