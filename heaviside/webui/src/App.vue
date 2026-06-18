@@ -5,7 +5,7 @@ import CrossReference from './views/CrossReference.vue'
 import Jobs from './views/Jobs.vue'
 import Catalog from './views/Catalog.vue'
 
-const tab = ref('design')
+const tab = ref('xref')
 const deepJob = ref(null)   // job id to auto-open from a #/jobs/<id> URL
 const tabs = [
   { id: 'design', label: 'Converter Designer', icon: 'pi-cog' },
