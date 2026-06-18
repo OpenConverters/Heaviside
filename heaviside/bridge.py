@@ -315,10 +315,13 @@ def design_magnetics(
         back.
     """
     entry = topology if isinstance(topology, TopologyEntry) else get(topology)
-    # Prefer the vendor .so: it is newer than the installed pip package and
-    # knows more topologies (weinberg, pushPull, …). Falls back to the
-    # installed package if the vendor .so is absent.
-    pyom = _import_pyom_vendor()
+
+    # Use the installed pip package first — it handles all standard topologies
+    # without needing desiredInductance pre-computed. The vendor .so is a custom
+    # build that requires desiredInductance for single-inductor topologies (buck,
+    # boost, …), so we only fall through to it when the pip package returns
+    # "Unknown topology" (e.g. weinberg, which is absent from PyPI builds).
+    pyom = _import_pyom()
 
     # Pin useOnlyCoresInStock for the duration of the call when requested,
     # restoring the prior value afterwards. The flag is also threaded into
@@ -332,19 +335,35 @@ def design_magnetics(
             _prior_in_stock = None
         pyom.set_settings({"useOnlyCoresInStock": bool(use_only_cores_in_stock)})
 
-    try:
-        last_error: str | None = None
+    def _call_pyom(p: Any, variant: str, spec_arg: dict, weights_arg: Any) -> Any:
+        return (
+            p.design_magnetics_from_converter(
+                variant, spec_arg, int(max_results), str(core_mode),
+                bool(use_ngspice), weights_arg, bool(fast),
+            )
+            if (fast and _supports_fast_param(p))
+            else p.design_magnetics_from_converter(
+                variant, spec_arg, int(max_results), str(core_mode),
+                bool(use_ngspice), weights_arg,
+            )
+        )
+
+    def _try_variants(p: Any, cache_prefix: str) -> tuple[dict | None, str | None]:
+        """Try every variant name against PyOM instance p.
+
+        Returns (result_dict, None) on the first success, or (None, last_error)
+        if every variant returns 'Unknown topology'.  Any other error is raised
+        immediately as BridgeError.
+        """
+        _last: str | None = None
         for variant in entry.pyom_names:
-            t0 = time.monotonic()
-            # Strip keys the topology's schema doesn't accept (e.g. Weinberg
-            # uses additionalProperties:false and rejects _augment fields).
             _spec_arg = {
                 k: v for k, v in converter_spec.items()
                 if k not in entry.strip_spec_keys
             }
             _weights_arg = dict(weights) if weights is not None else None
-            result = cached_call(
-                "design_magnetics_from_converter",
+            res = cached_call(
+                cache_prefix,
                 (
                     variant,
                     _spec_arg,
@@ -352,123 +371,84 @@ def design_magnetics(
                     str(core_mode),
                     bool(use_ngspice),
                     _weights_arg,
-                    # cache-key discriminator: None preserves the legacy key
-                    # (callers that never pin the flag get identical keys to
-                    # before); an explicit bool partitions the namespace.
                     ("stock" if use_only_cores_in_stock else "allcores")
                     if use_only_cores_in_stock is not None
                     else None,
-                    # fast discriminator: omit (None) for the default slow path so
-                    # the legacy key is preserved; "fast" partitions fast results.
                     "fast" if fast else None,
                 ),
-                # fast=False calls PyOM the legacy 6-arg way (backward-compatible
-                # with builds predating the `fast` param). fast=True requires the
-                # unified design_magnetics_from_converter(..., fast) — base⇄advanced
-                # by desiredInductance for the single-inductor family, fast advise.
-                call=lambda v=variant, s=_spec_arg, w=_weights_arg: (
-                    pyom.design_magnetics_from_converter(
-                        v, s, int(max_results), str(core_mode), bool(use_ngspice), w,
-                        bool(fast),
-                    )
-                    if (fast and _supports_fast_param(pyom))
-                    else pyom.design_magnetics_from_converter(
-                        v, s, int(max_results), str(core_mode), bool(use_ngspice), w,
-                    )
-                ),
+                call=lambda v=variant, s=_spec_arg, w=_weights_arg: _call_pyom(p, v, s, w),
+            )
+            if not isinstance(res, dict):
+                raise BridgeError(
+                    f"design_magnetics_from_converter({variant!r}) returned "
+                    f"{type(res).__name__}, expected dict."
+                )
+            err = res.get("error")
+            if err is None:
+                return res, None
+            if isinstance(err, str) and "Unknown topology" in err:
+                _last = err
+                continue
+            raise BridgeError(f"PyOpenMagnetics rejected topology {variant!r}: {err}")
+        return None, _last
+
+    try:
+        # Phase 1: pip package — handles all standard topologies without
+        # needing desiredInductance pre-computed.
+        t0 = time.monotonic()
+        result, last_error = _try_variants(pyom, "design_magnetics_from_converter")
+        elapsed = time.monotonic() - t0
+
+        # Phase 2: vendor .so — only reached if every pip variant said
+        # "Unknown topology" (e.g. weinberg is absent from the PyPI build).
+        if result is None:
+            _vendor = _import_pyom_vendor()
+            result, last_error = _try_variants(
+                _vendor, "design_magnetics_from_converter_vendor"
             )
             elapsed = time.monotonic() - t0
 
-            if not isinstance(result, dict):
-                raise BridgeError(
-                    f"design_magnetics_from_converter({variant!r}) returned "
-                    f"{type(result).__name__}, expected dict."
-                )
+        if result is None:
+            raise BridgeError(
+                f"PyOpenMagnetics does not recognise any variant of topology "
+                f"{entry.name!r}. Tried: {entry.pyom_names}. Last error: "
+                f"{last_error!r}. This is an upstream binding gap — add it to "
+                f"vendor/PyOpenMagnetics/ and rebuild (do not work around it here)."
+            )
 
-            err = result.get("error")
-            if err is not None:
-                # PyOM uses "Unknown topology" to signal a missing binding —
-                # try the next variant. Any other error is fatal (no silent
-                # fallbacks to a different topology).
-                if isinstance(err, str) and "Unknown topology" in err:
-                    last_error = err
-                    continue
-                # Vendor .so may require 'desiredInductance' for some
-                # topologies when the installed pip package doesn't. Fall back
-                # to the installed package for this variant and retry once.
-                if (
-                    isinstance(err, str)
-                    and "desiredInductance" in err
-                    and pyom is not _import_pyom()
-                ):
-                    _pip_pyom = _import_pyom()
-                    _pip_result = cached_call(
-                        "design_magnetics_from_converter_pip",
-                        (variant, _spec_arg, int(max_results), str(core_mode),
-                         bool(use_ngspice), _weights_arg, "fast" if fast else None),
-                        call=lambda v=variant, s=_spec_arg, w=_weights_arg: (
-                            _pip_pyom.design_magnetics_from_converter(
-                                v, s, int(max_results), str(core_mode),
-                                bool(use_ngspice), w, bool(fast),
-                            )
-                            if (fast and _supports_fast_param(_pip_pyom))
-                            else _pip_pyom.design_magnetics_from_converter(
-                                v, s, int(max_results), str(core_mode),
-                                bool(use_ngspice), w,
-                            )
-                        ),
-                    )
-                    if isinstance(_pip_result, dict) and _pip_result.get("error") is None:
-                        result = _pip_result
-                        err = None
-                if err is not None:
-                    raise BridgeError(
-                        f"PyOpenMagnetics rejected topology {variant!r}: {err}"
-                    )
+        data = result.get("data")
+        if not isinstance(data, list):
+            raise BridgeError(
+                f"design_magnetics_from_converter({entry.name!r}) returned "
+                f"data={type(data).__name__}, expected list. "
+                f"Result keys: {sorted(result)}"
+            )
+        if not data:
+            raise BridgeError(
+                f"design_magnetics_from_converter({entry.name!r}) returned "
+                f"zero designs for spec. Loosen constraints or check "
+                f"converter inputs."
+            )
 
-            data = result.get("data")
-            if not isinstance(data, list):
+        designs: list[MagneticDesign] = []
+        for raw in data:
+            if not isinstance(raw, dict) or "mas" not in raw:
                 raise BridgeError(
-                    f"design_magnetics_from_converter({variant!r}) returned "
-                    f"data={type(data).__name__}, expected list. "
-                    f"Result keys: {sorted(result)}"
+                    f"design_magnetics_from_converter({entry.name!r}) returned "
+                    f"a design entry with no 'mas' field: keys={list(raw)}"
                 )
-            if not data:
-                raise BridgeError(
-                    f"design_magnetics_from_converter({variant!r}) returned "
-                    f"zero designs for spec. Loosen constraints or check "
-                    f"converter inputs."
+            designs.append(
+                MagneticDesign(
+                    scoring=float(raw.get("scoring", 0.0)),
+                    mas=raw["mas"],
+                    elapsed_s=elapsed,
                 )
-
-            designs: list[MagneticDesign] = []
-            for raw in data:
-                if not isinstance(raw, dict) or "mas" not in raw:
-                    raise BridgeError(
-                        f"design_magnetics_from_converter({variant!r}) returned "
-                        f"a design entry with no 'mas' field: keys={list(raw)}"
-                    )
-                designs.append(
-                    MagneticDesign(
-                        scoring=float(raw.get("scoring", 0.0)),
-                        mas=raw["mas"],
-                        elapsed_s=elapsed,
-                    )
-                )
-            designs.sort(key=lambda d: d.scoring, reverse=True)
-            return designs
+            )
+        designs.sort(key=lambda d: d.scoring, reverse=True)
+        return designs
     finally:
         if use_only_cores_in_stock is not None and _prior_in_stock is not None:
             pyom.set_settings({"useOnlyCoresInStock": _prior_in_stock})
-
-    # Every variant returned "Unknown topology" — same condition as
-    # ``topologies.dispatch.TopologyDispatchError`` but distinct symptom,
-    # so we raise BridgeError with the upstream-binding hint.
-    raise BridgeError(
-        f"PyOpenMagnetics does not recognise any variant of topology "
-        f"{entry.name!r}. Tried: {entry.pyom_names}. Last error: "
-        f"{last_error!r}. This is an upstream binding gap — add it to "
-        f"vendor/PyOpenMagnetics/ and rebuild (do not work around it here)."
-    )
 
 
 def design_magnetics_fast(

@@ -173,9 +173,13 @@ def test_design_magnetics_retries_unknown_topology_variant(
 def test_design_magnetics_unknown_topology_all_variants_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If every variant says 'Unknown topology', BridgeError is raised."""
+    """If every variant says 'Unknown topology' on both pip and vendor, BridgeError is raised."""
     fake = _FakePyOM(
         responses=[
+            # pip pass: cuk → unknown, cukConverter → unknown
+            {"error": "Exception: Unknown topology cuk"},
+            {"error": "Exception: Unknown topology cukConverter"},
+            # vendor pass: cuk → unknown, cukConverter → unknown
             {"error": "Exception: Unknown topology cuk"},
             {"error": "Exception: Unknown topology cukConverter"},
         ],
