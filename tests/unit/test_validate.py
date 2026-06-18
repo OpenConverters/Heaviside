@@ -154,15 +154,17 @@ def _minimal_tas_with_data(data_value: object) -> dict:
                 {
                     "name": "power_stage",
                     "role": "switchingCell",
-                    "inputPort": {"type": "dcBus", "wire": "Vin"},
-                    "outputPorts": [{"type": "dcOutput", "wire": "Vout"}],
+                    "inputPort": {"port": "in", "type": "dcBus"},
+                    "outputPort": {"port": "out", "type": "dcOutput"},
                     "circuit": {
+                        "name": "power-cell",
+                        "ports": [{"name": "in"}, {"name": "out"}],
                         "components": [{"name": "Q1", "data": data_value}],
                         "connections": [],
                     },
                 }
             ],
-            "interStageCircuit": [],
+            "interStageConnections": [],
         },
     }
 

@@ -26,3 +26,6 @@
 	path = TAS
 	url = git@github.com:OpenConverters/TAS.git
 	branch = main
+[submodule "CIAS"]
+	path = CIAS
+	url = git@github.com:Power-Supply-Manufacturers-Association/CIAS.git

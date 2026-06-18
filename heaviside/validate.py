@@ -54,6 +54,7 @@ _SCHEMA_ROOTS: tuple[str, ...] = (
     "CAS/schemas",
     "SAS/schemas",
     "RAS/schemas",
+    "CIAS/schemas",
     "COAS/schemas",
 )
 
