@@ -393,7 +393,38 @@ def design_magnetics(
                 if isinstance(err, str) and "Unknown topology" in err:
                     last_error = err
                     continue
-                raise BridgeError(f"PyOpenMagnetics rejected topology {variant!r}: {err}")
+                # Vendor .so may require 'desiredInductance' for some
+                # topologies when the installed pip package doesn't. Fall back
+                # to the installed package for this variant and retry once.
+                if (
+                    isinstance(err, str)
+                    and "desiredInductance" in err
+                    and pyom is not _import_pyom()
+                ):
+                    _pip_pyom = _import_pyom()
+                    _pip_result = cached_call(
+                        "design_magnetics_from_converter_pip",
+                        (variant, _spec_arg, int(max_results), str(core_mode),
+                         bool(use_ngspice), _weights_arg, "fast" if fast else None),
+                        call=lambda v=variant, s=_spec_arg, w=_weights_arg: (
+                            _pip_pyom.design_magnetics_from_converter(
+                                v, s, int(max_results), str(core_mode),
+                                bool(use_ngspice), w, bool(fast),
+                            )
+                            if (fast and _supports_fast_param(_pip_pyom))
+                            else _pip_pyom.design_magnetics_from_converter(
+                                v, s, int(max_results), str(core_mode),
+                                bool(use_ngspice), w,
+                            )
+                        ),
+                    )
+                    if isinstance(_pip_result, dict) and _pip_result.get("error") is None:
+                        result = _pip_result
+                        err = None
+                if err is not None:
+                    raise BridgeError(
+                        f"PyOpenMagnetics rejected topology {variant!r}: {err}"
+                    )
 
             data = result.get("data")
             if not isinstance(data, list):
