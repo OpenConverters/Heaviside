@@ -402,7 +402,7 @@ def design_magnetics(
         # Phase 1: pip package — handles all standard topologies without
         # needing desiredInductance pre-computed.
         t0 = time.monotonic()
-        result, last_error = _try_variants(pyom, "design_magnetics_from_converter")
+        result, last_error = _try_variants(pyom, "design_magnetics_from_converter_pip")
         elapsed = time.monotonic() - t0
 
         # Phase 2: vendor .so — only reached if every pip variant said
