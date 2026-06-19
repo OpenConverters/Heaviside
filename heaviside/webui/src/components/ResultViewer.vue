@@ -4,20 +4,28 @@ import Dialog from 'primevue/dialog'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Tag from 'primevue/tag'
+import Button from 'primevue/button'
 import { statusSeverity } from '../status.js'
+import { useDatasheet, inferCategory } from '../composables/useDatasheet.js'
 
 defineProps({
   visible: Boolean, title: String, kind: String, result: Object, loading: Boolean,
-  pdfUrl: { type: String, default: '' },   // /jobs/<id>/report.pdf — enables Download
+  pdfUrl: { type: String, default: '' },
 })
 defineEmits(['update:visible'])
 
+const { openDatasheet } = useDatasheet()
+
 const expanded = ref({})
-// colour the per-parameter verdict chips
 const verdictClass = (v) => ({
   exact: 'v-good', same: 'v-good', exceeds: 'v-good',
   differs: 'v-warn', lower: 'v-bad', 'n/a': 'v-muted',
 }[v] || 'v-muted')
+
+function dsOpen(mpn, componentType) {
+  const cat = inferCategory(componentType)
+  if (mpn && cat) openDatasheet(mpn, cat)
+}
 </script>
 
 <template>
@@ -50,8 +58,24 @@ const verdictClass = (v) => ({
         <Column expander style="width:2.5rem" />
         <Column field="ref_des" header="Ref" sortable />
         <Column field="component_type" header="Type" sortable />
-        <Column field="original_mpn" header="Original" sortable bodyClass="col-mpn" />
-        <Column field="substitute_mpn" header="Substitute" sortable bodyClass="col-mpn" />
+        <Column field="original_mpn" header="Original" sortable bodyClass="col-mpn">
+          <template #body="{ data }">
+            <span class="mpn-chip"
+                  :class="{ 'mpn-clickable': inferCategory(data.component_type) }"
+                  @click.stop="dsOpen(data.original_mpn, data.component_type)">
+              {{ data.original_mpn || '—' }}
+            </span>
+          </template>
+        </Column>
+        <Column field="substitute_mpn" header="Substitute" sortable bodyClass="col-mpn">
+          <template #body="{ data }">
+            <span class="mpn-chip"
+                  :class="{ 'mpn-clickable': inferCategory(data.component_type) }"
+                  @click.stop="dsOpen(data.substitute_mpn, data.component_type)">
+              {{ data.substitute_mpn || '—' }}
+            </span>
+          </template>
+        </Column>
         <Column field="status" header="Status" sortable>
           <template #body="{ data }">
             <Tag :severity="statusSeverity(data.status)" :value="data.status" />
@@ -64,7 +88,15 @@ const verdictClass = (v) => ({
         </Column>
         <template #expansion="{ data }">
           <div class="mx-detail">
-            <div class="mx-why"><b>Why {{ data.status }}:</b> {{ data.match_detail?.why || data.notes }}</div>
+            <div class="mx-why-row">
+              <div class="mx-why"><b>Why {{ data.status }}:</b> {{ data.match_detail?.why || data.notes }}</div>
+              <div v-if="inferCategory(data.component_type)" class="mx-ds-btns">
+                <Button v-if="data.original_mpn" icon="pi pi-file" :label="data.original_mpn" size="small"
+                        text severity="secondary" @click="dsOpen(data.original_mpn, data.component_type)" />
+                <Button v-if="data.substitute_mpn" icon="pi pi-file" :label="data.substitute_mpn" size="small"
+                        text severity="secondary" @click="dsOpen(data.substitute_mpn, data.component_type)" />
+              </div>
+            </div>
             <table v-if="data.match_detail?.params?.length" class="mx-params">
               <thead><tr><th>Parameter</th><th>Original</th><th></th><th>Substitute</th><th>Verdict</th></tr></thead>
               <tbody>
@@ -101,8 +133,13 @@ const verdictClass = (v) => ({
   border: 1px solid var(--ch1-deep); border-radius: 6px; display: inline-flex; align-items: center; gap: .35rem; }
 .rv-pdf:hover { background: rgba(60,224,200,.14); }
 .why-line { font-size: .72rem; color: var(--p-surface-300); }
+.mpn-chip { display: inline-block; }
+.mpn-clickable { color: var(--ch1); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+.mpn-clickable:hover { text-decoration: underline; }
 .mx-detail { padding: .5rem .8rem; font-size: .74rem; }
-.mx-why { margin-bottom: .5rem; color: var(--p-surface-200); }
+.mx-why-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: .5rem; }
+.mx-why { color: var(--p-surface-200); }
+.mx-ds-btns { display: flex; gap: .2rem; flex-shrink: 0; }
 .mx-params { border-collapse: collapse; width: auto; }
 .mx-params th { text-align: left; font-weight: 600; color: var(--p-surface-400);
   padding: .15rem .7rem .15rem 0; font-size: .66rem; text-transform: uppercase; letter-spacing: .3px; }

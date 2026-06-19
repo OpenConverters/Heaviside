@@ -4,6 +4,10 @@ import Designer from './views/Designer.vue'
 import CrossReference from './views/CrossReference.vue'
 import Jobs from './views/Jobs.vue'
 import Catalog from './views/Catalog.vue'
+import ComponentDatasheet from './components/ComponentDatasheet.vue'
+import { useDatasheet } from './composables/useDatasheet.js'
+
+const { visible: dsVisible, mpn: dsMpn, category: dsCategory } = useDatasheet()
 
 const tab = ref('xref')
 const deepJob = ref(null)   // job id to auto-open from a #/jobs/<id> URL
@@ -15,8 +19,6 @@ const tabs = [
 ]
 const _ids = tabs.map((t) => t.id)
 
-// Hash-based deep links (no vue-router): #/<tab> and #/jobs/<job_id>. Lets a
-// result be bookmarked / shared with a fixed URL and survive a reload.
 function applyHash() {
   const [section, id] = (location.hash || '').replace(/^#\/?/, '').split('/')
   if (_ids.includes(section)) tab.value = section
@@ -25,7 +27,6 @@ function applyHash() {
 onMounted(() => {
   applyHash()
   window.addEventListener('hashchange', applyHash)
-  // Self-hosted Umami (cookie-less) — separate website from openmagnetics.com
   const s = document.createElement('script')
   s.defer = true
   s.src = '/stats/script.js'
@@ -34,7 +35,6 @@ onMounted(() => {
   document.head.appendChild(s)
 })
 onUnmounted(() => window.removeEventListener('hashchange', applyHash))
-// Reflect tab switches in the hash (but don't clobber an active job deep link).
 watch(tab, (t) => {
   if (!(t === 'jobs' && deepJob.value)) location.hash = `#/${t}`
 })
@@ -43,8 +43,6 @@ watch(tab, (t) => {
 <template>
   <header class="hv">
     <div class="hv-inner">
-      <!-- Signature: the Heaviside unit-step response — rise, overshoot,
-           ring-down, settle — sweeping across the scope graticule. -->
       <svg class="hv-trace" viewBox="0 0 1000 100" preserveAspectRatio="none"
            aria-hidden="true">
         <path d="M0,72 H300 C330,72 338,16 366,16 C394,16 402,48 432,44
@@ -72,12 +70,12 @@ watch(tab, (t) => {
       </button>
     </nav>
 
-    <!-- v-show wrappers (single root) preserve in-progress state across tab
-         switches; the view templates are multi-root so v-show can't sit on
-         them directly. Jobs/Catalog use v-if to re-fetch fresh on each visit. -->
     <div v-show="tab === 'design'"><Designer /></div>
     <div v-show="tab === 'xref'"><CrossReference /></div>
     <Jobs v-if="tab === 'jobs'" :open-job="deepJob" />
     <Catalog v-if="tab === 'catalog'" />
   </div>
+
+  <!-- Global datasheet drawer — any component can open via useDatasheet() -->
+  <ComponentDatasheet v-model:visible="dsVisible" :category="dsCategory" :mpn="dsMpn" />
 </template>

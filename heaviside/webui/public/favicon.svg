@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Background: dark panel -->
+  <rect width="32" height="32" rx="6" fill="#0d1a17"/>
+
+  <!-- Graticule grid — faint scope lines -->
+  <line x1="8"  y1="2"  x2="8"  y2="30" stroke="#1a3a2e" stroke-width=".5"/>
+  <line x1="16" y1="2"  x2="16" y2="30" stroke="#1a3a2e" stroke-width=".5"/>
+  <line x1="24" y1="2"  x2="24" y2="30" stroke="#1a3a2e" stroke-width=".5"/>
+  <line x1="2"  y1="8"  x2="30" y2="8"  stroke="#1a3a2e" stroke-width=".5"/>
+  <line x1="2"  y1="16" x2="30" y2="16" stroke="#1a3a2e" stroke-width=".5"/>
+  <line x1="2"  y1="24" x2="30" y2="24" stroke="#1a3a2e" stroke-width=".5"/>
+
+  <!-- Heaviside step trace -->
+  <!-- Low flat segment -->
+  <line x1="2"  y1="22" x2="13" y2="22" stroke="#3ce0c8" stroke-width="2" stroke-linecap="round"/>
+  <!-- Rise -->
+  <line x1="13" y1="22" x2="13" y2="10" stroke="#3ce0c8" stroke-width="2" stroke-linecap="round"/>
+  <!-- High flat segment with subtle overshoot hint -->
+  <polyline points="13,10 16,8 19,9.5 22,9 30,9"
+            fill="none" stroke="#3ce0c8" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Trigger marker: small arrow at the step -->
+  <polygon points="4,22 2,20.5 2,23.5" fill="#3ce0c8" opacity=".7"/>
+</svg>

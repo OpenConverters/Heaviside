@@ -1212,6 +1212,41 @@ def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]
     return rows
 
 
+@app.get("/catalog/{category}/{mpn}/detail")
+def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
+    """Return the raw full PEAS data for a single MPN so the UI can render a datasheet."""
+    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.catalogue.selector import _tas_data_dir
+
+    _NDJSON: dict[str, str] = {
+        "mosfets": "mosfets.ndjson",
+        "diodes": "diodes.ndjson",
+        "capacitors": "capacitors.ndjson",
+        "resistors": "resistors.ndjson",
+        "magnetics": "magnetics.ndjson",
+    }
+    if category not in _NDJSON:
+        raise HTTPException(status_code=404, detail=f"unknown category '{category}'")
+    path = _tas_data_dir() / _NDJSON[category]
+    mpn_lo = mpn.strip().lower()
+    for _lineno, env in iter_envelopes(path):
+        # Locate the manufacturerInfo dict regardless of the envelope key.
+        for key in ("semiconductor", "capacitor", "resistor", "magnetic"):
+            sub = env.get(key, {})
+            if not sub:
+                continue
+            for inner_key in list(sub.keys()):
+                mi = sub[inner_key].get("manufacturerInfo") or sub.get("manufacturerInfo")
+                if mi is None:
+                    mi = sub.get("manufacturerInfo")
+                if mi is None:
+                    break
+                ref = mi.get("reference") or mi.get("name", "")
+                if ref.lower() == mpn_lo:
+                    return {"category": category, "mpn": mpn, "data": env}
+    raise HTTPException(status_code=404, detail=f"MPN '{mpn}' not found in {category}")
+
+
 @app.get("/catalog/{category}")
 def catalog(category: str, q: str = "", limit: int = 50) -> dict[str, Any]:
     """Parametric browse of a TAS component category. `q` matches MPN or

@@ -7,7 +7,10 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Tag from 'primevue/tag'
 import Message from 'primevue/message'
+import { useDatasheet } from '../composables/useDatasheet.js'
 import { api } from '../api.js'
+
+const { openDatasheet } = useDatasheet()
 
 const categories = ['mosfets', 'diodes', 'capacitors', 'resistors', 'magnetics']
 const category = ref('mosfets')
@@ -17,6 +20,8 @@ const labels = ref(['', '', ''])
 const count = ref(0)
 const loading = ref(false)
 const error = ref(null)
+
+function openSheet(row) { openDatasheet(row.mpn, category.value) }
 
 async function load() {
   loading.value = true; error.value = null
@@ -43,10 +48,11 @@ onMounted(load)
     </div>
     <div style="display:flex; align-items:center; gap:.6rem; margin:.3rem 0 .7rem">
       <Button label="Search" icon="pi pi-search" size="small" :loading="loading" @click="load" />
-      <span class="stage-line">{{ count }} matches (capped at 50)</span>
+      <span class="stage-line">{{ count }} matches · click any row for datasheet</span>
     </div>
     <DataTable :value="rows" :loading="loading" size="small" stripedRows removableSort
-               paginator :rows="12" :rowsPerPageOptions="[12, 25, 50]">
+               paginator :rows="12" :rowsPerPageOptions="[12, 25, 50]"
+               rowHover @rowClick="(e) => openSheet(e.data)">
       <Column field="mpn" header="Part Number" sortable bodyClass="col-mpn" />
       <Column field="manufacturer" header="Manufacturer" sortable />
       <Column field="tech" header="Tech" sortable />
@@ -56,6 +62,12 @@ onMounted(load)
       <Column field="status" header="Status" sortable>
         <template #body="{ data }">
           <Tag :severity="data.status === 'production' ? 'success' : 'secondary'" :value="data.status || '—'" />
+        </template>
+      </Column>
+      <Column header="">
+        <template #body="{ data }">
+          <Button icon="pi pi-file" text size="small" severity="secondary"
+                  title="View datasheet" @click.stop="openSheet(data)" />
         </template>
       </Column>
     </DataTable>
