@@ -44,3 +44,39 @@ def test_existing_category_is_not_overwritten():
     out = _normalize_bom([{"ref_des": "C1", "component_type": "capacitor",
                            "description": "IND something"}])
     assert out[0]["component_type"] == "capacitor"  # explicit wins over inference
+
+
+def test_value_and_package_recovered_from_description():
+    """LumiQuote/distributor BOMs have no value or package column — the value
+    ("15uH"/"10uF") and chip size ("0402") live in the description. _normalize_bom
+    must recover both so ranking can value-filter and footprint-fit has a source
+    size (the 'Test BOM -V2.xlsx' failure: warnings on every row, nothing
+    referenced)."""
+    bom = [
+        {"ref_des": "L1", "original_mpn": "SRR1260-150M",
+         "description": "Inductor Power Shielded Wirewound 15uH 20% 5A 0.027Ohm DCR"},
+        {"ref_des": "L2", "original_mpn": "0402CS-10NXGLU",
+         "description": "Inductor RF Chip 0.01uH 2% 250MHz 0.48A 0.2Ohm DCR 0402"},
+        {"ref_des": "C1", "original_mpn": "GRM155",
+         "description": "Capacitor Ceramic 10uF 25V X5R 0805"},
+        {"ref_des": "R1", "original_mpn": "CRCW",
+         "description": "Resistor Chip 10k 1% 0603"},
+    ]
+    nb = _normalize_bom(bom)
+    by = {c["ref_des"]: c for c in nb}
+    assert by["L1"]["value"] == "15uH"            # inductance, not the 0.027Ohm DCR
+    assert by["L2"]["value"] == "0.01uH"
+    assert by["L2"]["package"] == "0402"
+    assert by["C1"]["value"] == "10uF"
+    assert by["C1"]["package"] == "0805"
+    assert by["R1"]["value"] == "10k"
+    assert by["R1"]["package"] == "0603"
+
+
+def test_inductor_value_not_confused_by_khz_or_ohm():
+    """The magnetic value regex must skip '1KHz' and 'DCR Ohm' tokens."""
+    nb = _normalize_bom([{
+        "ref_des": "L1", "component_type": "magnetic", "original_mpn": "X",
+        "description": "Inductor 22uH 20% 1KHz 25Q-Factor 5A 0.027Ohm DCR",
+    }])
+    assert nb[0]["value"] == "22uH"

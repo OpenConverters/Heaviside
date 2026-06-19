@@ -158,12 +158,22 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
             if eia:
                 dims = (eia[0], eia[1], None)
         comp["_source_dims_m"] = dims
-        if dims is None:
-            ref = comp.get("ref_des", comp.get("name", "?"))
-            state.diagnostics.append(
-                f"{ref} ({comp.get('original_mpn', '?')}): source dimensions "
-                "unknown — footprint-fit ranking not enforced for this row"
-            )
+
+    # Surface missing source dimensions once, aggregated — one diagnostic per
+    # row floods the report on large BOMs. Footprint-fit is simply not enforced
+    # for rows whose physical size couldn't be resolved.
+    no_dims = [
+        c.get("original_mpn") or c.get("ref_des", "?")
+        for c in state.source_bom
+        if c.get("component_type") and c.get("_source_dims_m") is None
+    ]
+    if no_dims:
+        shown = ", ".join(str(m) for m in no_dims[:8])
+        more = f" (+{len(no_dims) - 8} more)" if len(no_dims) > 8 else ""
+        state.diagnostics.append(
+            f"footprint-fit not enforced for {len(no_dims)} row(s) with no "
+            f"resolvable dimensions: {shown}{more}"
+        )
 
     # Assign candidates per BOM row, ranked by relevance
     for comp in state.source_bom:
@@ -1923,6 +1933,54 @@ def _infer_component_type(row: dict[str, Any]) -> str:
     return ""  # IC / diode / etc. — not a substitutable passive
 
 
+# Primary electrical value per category, parsed out of a free-text part
+# description when the BOM has no dedicated value column (LumiQuote / distributor
+# exports bury it, e.g. "Inductor … 15uH 20% … 0.027Ohm DCR"). Category-scoped so
+# an inductor's "0.027Ohm" DCR or "1KHz" isn't mistaken for its value. These read
+# a value the part already declares — not a fabricated one.
+_VALUE_FROM_DESC_RE = {
+    # number + optional SI prefix + H, but NOT "Hz" (\b stops at the z boundary).
+    "magnetic": re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*([pnuµm]?)H\b", re.I),
+    # number + optional SI prefix + F (farads).
+    "capacitor": re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*([pnuµm]?)F\b", re.I),
+}
+# Resistance is written two ways in free text: ohm-terminated ("0.027Ohm",
+# "10kΩ") or metric-shorthand ("10k", "1M", "4R7"). Try the explicit-ohm form
+# first (unambiguous), then the shorthand.
+_RES_OHM_RE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*([kKmMgG]?)\s*(?:Ω|ohms?)\b", re.I)
+_RES_SHORT_RE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*([kKMGR])\b")
+
+
+def _value_from_description(desc: str, category: str) -> str | None:
+    """Recover the primary electrical value string (e.g. "15uH", "10uF", "10k")
+    from a part description for a given category. Returns None if not found."""
+    if not desc:
+        return None
+    if category == "resistor":
+        m = _RES_OHM_RE.search(desc) or _RES_SHORT_RE.search(desc)
+        if not m:
+            return None
+        return f"{m.group(1)}{(m.group(2) or '').strip()}".strip()
+    rx = _VALUE_FROM_DESC_RE.get(category)
+    if not rx:
+        return None
+    m = rx.search(desc)
+    if not m:
+        return None
+    num, prefix = m.group(1), (m.group(2) or "")
+    unit = {"magnetic": "H", "capacitor": "F"}[category]
+    return f"{num}{prefix.lower()}{unit}"
+
+
+def _package_from_description(desc: str) -> str | None:
+    """Recover a chip case code (EIA size, e.g. "0402") from a description, so
+    footprint-fit has a source size when there is no package column."""
+    if not desc:
+        return None
+    m = _EIA_CODE_RE.search(desc)
+    return m.group(1) if m else None
+
+
 def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Canonicalise BOM field names so the pipeline works with both
     Heaviside-native and Proteus-style BOMs."""
@@ -1979,6 +2037,19 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
         val = row.get("value", "")
         if val and cat:
             row["value"] = _humanize_value(val, cat)
+        elif not val and cat:
+            # No value column — recover the part's declared value from its
+            # description so ranking can value-filter candidates (else the LLM
+            # sees the first 50 unranked parts and matches nothing).
+            ev = _value_from_description(str(row.get("description", "")), cat)
+            if ev:
+                row["value"] = ev
+        # No package column — recover a chip case code from the description so
+        # footprint-fit has a source size (and stops warning on every row).
+        if not row.get("package"):
+            pkg = _package_from_description(str(row.get("description", "")))
+            if pkg:
+                row["package"] = pkg
         # Extract rated_voltage from notes if not explicitly set
         if not row.get("rated_voltage") and not row.get("voltage"):
             notes = str(row.get("notes", ""))
