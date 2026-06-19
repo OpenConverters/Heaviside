@@ -187,6 +187,18 @@ def parse_voltage(s: str) -> float:
     return _parse_si(s, "V", plausibility_max=1e6)
 
 
+def parse_current(s: str) -> float:
+    """Parse a current string to Amperes.
+
+    Examples::
+
+        parse_current("10A")    -> 10.0
+        parse_current("500mA")  -> 0.5
+        parse_current("2.5")    -> 2.5
+    """
+    return _parse_si(s, "A", plausibility_max=1e6)
+
+
 # ---------------------------------------------------------------------------
 # Generic entry point (for callers that dispatch by category)
 # ---------------------------------------------------------------------------

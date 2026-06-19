@@ -170,7 +170,7 @@ TELEMETRY_SHAPE_KEYS: frozenset[str] = frozenset({"id", "status"})
 # carry a resolvable manufacturer part number.  converters /
 # controllers / quarantine rows use different identity schemes.
 MPN_REQUIRED_CATEGORIES: frozenset[str] = frozenset(
-    {"mosfets", "diodes", "igbts", "capacitors", "resistors", "varistors", "magnetics"}
+    {"mosfets", "diodes", "igbts", "capacitors", "resistors", "varistors", "magnetics", "connectors"}
 )
 
 # Junk class 3 (audit-only) — known manufacturer → datasheet-host

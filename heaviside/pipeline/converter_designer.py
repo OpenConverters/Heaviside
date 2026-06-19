@@ -225,7 +225,10 @@ def design_converter(
 
     # B4 — frequency sweep: fsw* + feasible magnetic front (MKF derives L per fsw).
     _say("Sweeping switching frequency vs magnetic total loss", 20)
-    result = frequency_sweep.sweep(topology, base, **dict(sweep_kwargs or {}))
+    _check_cancel = getattr(progress, "check_cancelled", None)
+    result = frequency_sweep.sweep(
+        topology, base, check_cancel=_check_cancel, **dict(sweep_kwargs or {})
+    )
     _say(
         f"Sweep done: fsw* = {result.fsw_star_hz / 1e3:.0f} kHz, "
         f"{len(result.front)} feasible magnetics",

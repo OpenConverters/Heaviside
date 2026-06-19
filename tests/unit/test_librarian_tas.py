@@ -109,7 +109,9 @@ def _load_first_real_record(category: str) -> dict[str, Any]:
     if not path.exists():
         pytest.skip(f"TAS/data/{category}.ndjson not available")
     with path.open("r", encoding="utf-8") as fh:
-        line = fh.readline()
+        line = fh.readline().strip()
+    if not line:
+        pytest.skip(f"TAS/data/{category}.ndjson is empty (no records yet)")
     return json.loads(line)
 
 

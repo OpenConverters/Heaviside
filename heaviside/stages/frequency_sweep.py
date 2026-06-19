@@ -301,6 +301,7 @@ def sweep(
     top_k: int = 5,
     min_isat_ratio: float = 1.2,
     max_candidates_per_fsw: int = 5,
+    check_cancel: Any = None,
 ) -> FrequencySweepResult:
     """Find the switching frequency that minimises worst-OP total loss for the
     magnetic MKF can build (hard-switched topologies only).
@@ -382,6 +383,8 @@ def sweep(
     log_lo, log_hi = math.log(f_lo_hz), math.log(f_hi_hz)
     grid = [math.exp(log_lo + (log_hi - log_lo) * i / (n_coarse - 1)) for i in range(n_coarse)]
     for fsw in grid:
+        if check_cancel is not None:
+            check_cancel()
         evaluate(fsw)
 
     feasible_grid = [(f, cache[round(f, 1)][0][0].total_loss_w) for f in grid if cache[round(f, 1)][0]]
@@ -411,6 +414,8 @@ def sweep(
         d = a + _INV_PHI * (b - a)
         fc, fd = total_at(math.exp(c)), total_at(math.exp(d))
         for _ in range(max(0, golden_iters)):
+            if check_cancel is not None:
+                check_cancel()
             if fc < fd:
                 b, d, fd = d, c, fc
                 c = b - _INV_PHI * (b - a)

@@ -33,7 +33,7 @@ def test_category_inferred_from_description():
     assert _infer_component_type({"description": "CAP CER 10UF 10V X5R"}) == "capacitor"
     assert _infer_component_type({"description": "RES 10K 1% 0402"}) == "resistor"
     assert _infer_component_type({"description": "IND SHIELDED POWER", "value": "3.6UH"}) == "magnetic"
-    assert _infer_component_type({"description": "IND FERRITE BEAD 600OHM"}) == "magnetic"
+    assert _infer_component_type({"description": "IND FERRITE BEAD 600OHM"}) == "chipBead"
     # non-substitutable: left blank so they fall to keep_original, not mis-typed
     assert _infer_component_type({"description": "IC-ADI 180MEGHZ AMP"}) == ""
     assert _infer_component_type({"description": "CONN-PCB COAX SMB"}) == ""

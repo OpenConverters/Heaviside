@@ -214,6 +214,7 @@ SCHEMA_MAP: dict[str, tuple[Path, Any]] = {
     "resistors": (_REPO_ROOT / "RAS" / "schemas" / "resistor.json", _unwrap_top("resistor")),
     "varistors": (_REPO_ROOT / "RAS" / "schemas" / "varistor.json", _unwrap_top("varistor")),
     "magnetics": (_REPO_ROOT / "MAS" / "schemas" / "magnetic.json", _unwrap_top("magnetic")),
+    "connectors": (_REPO_ROOT / "CONAS" / "schemas" / "connector.json", _unwrap_top("connector")),
 }
 
 

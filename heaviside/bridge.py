@@ -399,20 +399,16 @@ def design_magnetics(
         return None, _last
 
     try:
-        # Phase 1: pip package — handles all standard topologies without
-        # needing desiredInductance pre-computed.
+        # Pip-first cascade: pip computes L internally and works for all
+        # standard topologies. Vendor .so fallback handles topologies absent
+        # from the PyPI build (e.g. weinberg → "Unknown topology").
         t0 = time.monotonic()
         result, last_error = _try_variants(pyom, "design_magnetics_from_converter_pip")
-        elapsed = time.monotonic() - t0
-
-        # Phase 2: vendor .so — only reached if every pip variant said
-        # "Unknown topology" (e.g. weinberg is absent from the PyPI build).
         if result is None:
-            _vendor = _import_pyom_vendor()
             result, last_error = _try_variants(
-                _vendor, "design_magnetics_from_converter_vendor"
+                _vendor_so, "design_magnetics_from_converter_vendor"
             )
-            elapsed = time.monotonic() - t0
+        elapsed = time.monotonic() - t0
 
         if result is None:
             raise BridgeError(

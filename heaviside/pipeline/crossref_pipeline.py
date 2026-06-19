@@ -89,6 +89,7 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         "magnetic": "magnetics.ndjson",
         "chipBead": "magnetics.ndjson",   # subtype-filtered at scan time
         "varistor": "varistors.ndjson",
+        "connector": "connectors.ndjson",
     }
 
     target_mfr_lower = _normalize_manufacturer(state.target_manufacturer)
@@ -100,6 +101,17 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         if cat in category_files:
             needed_cats.add(cat)
 
+    # Source MPNs whose physical dimensions we want to resolve (any
+    # manufacturer), so the footprint-fit ranking knows the board space the
+    # substitute must fit into. Keyed (cat, normalized-mpn).
+    source_mpn_by_cat: dict[str, set[str]] = {}
+    for comp in state.source_bom:
+        cat = comp.get("component_type", comp.get("category", ""))
+        mpn = str(comp.get("original_mpn", "")).strip().lower()
+        if cat in category_files and mpn:
+            source_mpn_by_cat.setdefault(cat, set()).add(mpn)
+    source_env_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+
     # Scan each needed NDJSON file ONCE, collect all target-mfr rows
     mfr_cache: dict[str, list[dict[str, Any]]] = {}
     for cat in needed_cats:
@@ -109,10 +121,17 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
             mfr_cache[cat] = []
             continue
         rows: list[dict[str, Any]] = []
+        want_source = source_mpn_by_cat.get(cat, set())
         try:
             for _lineno, env in iter_envelopes(path):
                 if cat == "chipBead" and not _is_chip_bead_env(env):
                     continue
+                # Capture the source part's own envelope (for its dimensions),
+                # regardless of manufacturer.
+                if want_source:
+                    ref = str(_envelope_reference(env, cat) or "").strip().lower()
+                    if ref and ref in want_source:
+                        source_env_by_key[(cat, ref)] = env
                 mfr_name = _extract_manufacturer(env, cat)
                 if mfr_name and target_mfr_lower in _normalize_manufacturer(mfr_name):
                     rows.append(env)
@@ -122,6 +141,29 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         logger.info(
             "CR prefetch: %s has %d %s candidates", state.target_manufacturer, len(rows), cat
         )
+
+    # Resolve each source row's physical footprint: prefer its catalogue
+    # envelope's mechanical drawing, fall back to the BOM-declared case code.
+    # When nothing is known, surface it (CLAUDE.md: no silent fallback) — the
+    # fit ranking simply can't be enforced for that row.
+    for comp in state.source_bom:
+        cat = comp.get("component_type", comp.get("category", ""))
+        mpn = str(comp.get("original_mpn", "")).strip().lower()
+        dims = None
+        src_env = source_env_by_key.get((cat, mpn)) if mpn else None
+        if src_env is not None:
+            dims = _extract_dimensions(src_env, cat)
+        if dims is None:
+            eia = _eia_dims_from_case(comp.get("package"))
+            if eia:
+                dims = (eia[0], eia[1], None)
+        comp["_source_dims_m"] = dims
+        if dims is None:
+            ref = comp.get("ref_des", comp.get("name", "?"))
+            state.diagnostics.append(
+                f"{ref} ({comp.get('original_mpn', '?')}): source dimensions "
+                "unknown — footprint-fit ranking not enforced for this row"
+            )
 
     # Assign candidates per BOM row, ranked by relevance
     for comp in state.source_bom:
@@ -330,6 +372,7 @@ def _extract_manufacturer(env: dict[str, Any], category: str) -> str | None:
         "magnetic": ("magnetic", "manufacturerInfo", "name"),
         "chipBead": ("magnetic", "manufacturerInfo", "name"),
         "varistor": ("varistor", "manufacturerInfo", "name"),
+        "connector": ("connector", "manufacturerInfo", "name"),
     }
     keys = paths.get(category, ())
     cur: Any = env
@@ -338,6 +381,22 @@ def _extract_manufacturer(env: dict[str, Any], category: str) -> str | None:
             return None
         cur = cur.get(k)
     return cur if isinstance(cur, str) else None
+
+
+def _envelope_reference(env: dict[str, Any], category: str) -> str | None:
+    """Extract the part reference (MPN) from a TAS envelope."""
+    cur: Any = env
+    for k in _BASE_PATHS.get(category, ()):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(k)
+    if not isinstance(cur, dict):
+        return None
+    mi = cur.get("manufacturerInfo")
+    if isinstance(mi, dict):
+        ref = mi.get("reference")
+        return ref if isinstance(ref, str) else None
+    return None
 
 
 def _extract_value(env: dict[str, Any], category: str) -> float | None:
@@ -365,6 +424,11 @@ def _extract_value(env: dict[str, Any], category: str) -> float | None:
                   ["electrical"].get("varistorVoltage"))
             v = vv.get("nominal") if isinstance(vv, dict) else vv
             return float(v) if v is not None else None
+        elif category == "connector":
+            # Primary sorting value: rated current per contact
+            v = (env["connector"]["manufacturerInfo"]["datasheetInfo"]
+                 ["electrical"].get("ratedCurrentPerContact"))
+            return float(v) if v is not None else None
     except (KeyError, TypeError, ValueError):
         pass
     return None
@@ -379,15 +443,176 @@ def _extract_package(env: dict[str, Any], category: str) -> str:
             "magnetic": ("magnetic",),
             "chipBead": ("magnetic",),
             "varistor": ("varistor",),
+            "connector": ("connector",),
             "mosfet": ("semiconductor", "mosfet"),
             "diode": ("semiconductor", "diode"),
         }
         cur: Any = env
         for k in base_paths.get(category, ()):
             cur = cur[k]
-        return cur["manufacturerInfo"]["datasheetInfo"]["part"].get("case", "")
+        part = cur["manufacturerInfo"]["datasheetInfo"]["part"]
+        # Magnetics carry the size under `caseCode` (Würth WE-PD "1260" etc.),
+        # chip passives under `case` (EIA "0402"…). Accept either so the
+        # package signal isn't silently empty for one family.
+        return part.get("case") or part.get("caseCode") or ""
     except (KeyError, TypeError):
         return ""
+
+
+# Category → path to the manufacturerInfo block inside a TAS envelope.
+_BASE_PATHS: dict[str, tuple[str, ...]] = {
+    "capacitor": ("capacitor",),
+    "resistor": ("resistor",),
+    "magnetic": ("magnetic",),
+    "chipBead": ("magnetic",),
+    "varistor": ("varistor",),
+    "connector": ("connector",),
+    "mosfet": ("semiconductor", "mosfet"),
+    "diode": ("semiconductor", "diode"),
+}
+
+
+# Standard EIA/IPC chip footprint dimensions: imperial case code → (L, W) in
+# metres. Used to derive a physical body footprint for chip passives that carry
+# only a case code and no explicit mechanical drawing. Heights are not
+# standardised per case code (they depend on the value/dielectric), so only the
+# L×W footprint — what governs whether a substitute fits the original's board
+# space — is mapped. Source: IPC-7351 / EIA chip-size standard. This is a
+# documented standard table, not a fabricated value.
+_EIA_CHIP_DIMENSIONS_M: dict[str, tuple[float, float]] = {
+    "01005": (0.0004, 0.0002),
+    "0201": (0.0006, 0.0003),
+    "0402": (0.0010, 0.0005),
+    "0603": (0.0016, 0.0008),
+    "0805": (0.0020, 0.00125),
+    "1206": (0.0032, 0.0016),
+    "1210": (0.0032, 0.0025),
+    "1812": (0.0045, 0.0032),
+    "2010": (0.0050, 0.0025),
+    "2220": (0.0057, 0.0050),
+    "2225": (0.0057, 0.0064),
+}
+_EIA_CODE_RE = re.compile(
+    r"(?<!\d)(01005|0201|0402|0603|0805|1206|1210|1812|2010|2220|2225)(?!\d)"
+)
+
+
+def _dim_value(d: Any) -> float | None:
+    """Pull a scalar length from a TAS dimension field (a {nominal/...} dict or
+    a bare number). Returns None when absent — never invents a value."""
+    if isinstance(d, dict):
+        v = d.get("nominal")
+        if v is None:
+            v = d.get("maximum")
+        if v is None:
+            v = d.get("typical")
+    else:
+        v = d
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _eia_dims_from_case(case: str | None) -> tuple[float, float] | None:
+    """Map a chip case-code string (e.g. "0402", "C0805") to its standard
+    footprint (L, W) in metres, or None if it isn't a recognised EIA code."""
+    if not case:
+        return None
+    m = _EIA_CODE_RE.search(str(case))
+    if m:
+        return _EIA_CHIP_DIMENSIONS_M.get(m.group(1))
+    return None
+
+
+def _extract_dimensions(
+    env: dict[str, Any], category: str
+) -> tuple[float, float, float | None] | None:
+    """Return the part's physical body size as (length, width, height) in metres.
+
+    Tries an explicit mechanical drawing first (``mechanical.length/width/height``
+    for magnetics, ``mechanical.dimensions.*`` for caps/connectors), then falls
+    back to the standard EIA footprint for a recognised chip case code. Height
+    may be None when only a footprint is known. Returns None when nothing is
+    available — no fabrication (CLAUDE.md: surface the gap, don't guess).
+    """
+    length = width = height = None
+    try:
+        cur: Any = env
+        for k in _BASE_PATHS.get(category, ()):
+            cur = cur[k]
+        mech = cur["manufacturerInfo"]["datasheetInfo"].get("mechanical") or {}
+    except (KeyError, TypeError):
+        mech = {}
+    if isinstance(mech, dict):
+        length = _dim_value(mech.get("length"))
+        width = _dim_value(mech.get("width"))
+        height = _dim_value(mech.get("height"))
+        nested = mech.get("dimensions")
+        if isinstance(nested, dict):
+            if length is None:
+                length = _dim_value(nested.get("length"))
+            if width is None:
+                width = _dim_value(nested.get("width"))
+            if height is None:
+                height = _dim_value(nested.get("height"))
+    if length is not None and width is not None:
+        return (length, width, height)
+    eia = _eia_dims_from_case(_extract_package(env, category))
+    if eia:
+        return (eia[0], eia[1], None)
+    return None
+
+
+# Footprint-fit penalty weights. A substitute must fit the board space the
+# original occupies; smaller is better, oversize is heavily penalised but still
+# selectable when nothing else exists (per product spec). val_dist/pkg/stress
+# terms sit in the 0–5 range, so OVERSIZE_BASE dominates them: any candidate
+# that fits always outranks any candidate that doesn't, yet an oversize part
+# stays finite-scored so it can win when it's the only option.
+_FIT_AREA_WEIGHT = 0.5          # fitting parts: penalty = weight × area ratio
+_OVERSIZE_BASE = 10.0           # flat floor applied to any part that overflows
+_OVERSIZE_SCALE = 8.0           # extra penalty per unit of worst linear overflow
+_UNKNOWN_DIM_PENALTY = 2.0      # candidate size unknown → can't confirm it fits
+_DIM_TOLERANCE = 1.02           # 2 % slack for rounding / termination spread
+
+
+def _footprint_penalty(
+    source_dims: tuple[float, float, float | None] | None,
+    cand_dims: tuple[float, float, float | None] | None,
+) -> float:
+    """Score how well a candidate fits the original's board space.
+
+    Orientation-agnostic on the footprint (a rotated part that still fits is not
+    penalised). Returns 0.0 when the source size is unknown (cannot enforce —
+    surfaced separately as a diagnostic), a small area-proportional penalty when
+    the candidate fits (smaller → lower), and a large finite penalty when it
+    overflows in any dimension.
+    """
+    if not source_dims:
+        return 0.0
+    if not cand_dims:
+        return _UNKNOWN_DIM_PENALTY
+    s_l, s_w, s_h = source_dims
+    c_l, c_w, c_h = cand_dims
+    if s_l is None or s_w is None or c_l is None or c_w is None:
+        return _UNKNOWN_DIM_PENALTY
+    s_long, s_short = max(s_l, s_w), min(s_l, s_w)
+    c_long, c_short = max(c_l, c_w), min(c_l, c_w)
+    if s_long <= 0 or s_short <= 0:
+        return _UNKNOWN_DIM_PENALTY
+    fits = c_long <= s_long * _DIM_TOLERANCE and c_short <= s_short * _DIM_TOLERANCE
+    if s_h is not None and c_h is not None:
+        fits = fits and c_h <= s_h * _DIM_TOLERANCE
+    if fits:
+        area_ratio = (c_long * c_short) / (s_long * s_short)
+        return _FIT_AREA_WEIGHT * area_ratio
+    overflow = max(
+        c_long / s_long,
+        c_short / s_short,
+        (c_h / s_h) if (s_h and c_h) else 1.0,
+    ) - 1.0
+    return _OVERSIZE_BASE + _OVERSIZE_SCALE * max(overflow, 0.0)
 
 
 VOLTAGE_DERATING_FACTOR = 1.25
@@ -443,7 +668,7 @@ def _capacitor_technology_family(technology: str | None) -> str | None:
     if "thin-film" in t or "thin film" in t:
         return "thin-film-silicon"
     if "ceramic" in t or "mlcc" in t or any(
-        c.lower() in t for c in _eia_dielectric_codes()):
+        len(c) >= 3 and c.lower() in t for c in _eia_dielectric_codes()):
         return "ceramic"
     if "tantal" in t:
         return "tantalum"
@@ -536,6 +761,9 @@ def _rank_candidates(
 
     value_str = str(comp.get("value", ""))
     package = str(comp.get("package", "")).lower()
+    # Physical footprint the substitute must fit into (the original's board
+    # space). Resolved in stage 1 from the source envelope / BOM case code.
+    source_dims = comp.get("_source_dims_m")
 
     target_val: float | None = None
     if category == "capacitor" and value_str:
@@ -549,6 +777,9 @@ def _rank_candidates(
     elif category == "varistor" and value_str:
         from heaviside.pipeline.value_parse import parse_voltage
         target_val = parse_voltage(value_str)
+    elif category == "connector" and value_str:
+        from heaviside.pipeline.value_parse import parse_current
+        target_val = parse_current(value_str)
 
     if target_val is None:
         return all_candidates[:max_results]
@@ -695,6 +926,30 @@ def _rank_candidates(
                     cv = cand_elec.get("clampingVoltage")
                     if cv and stress.v_peak and float(cv) < stress.v_peak:
                         stress_penalty += 3.0
+                elif category == "chipBead":
+                    cand_elec = _magnetic_elec(
+                        cand.get("magnetic", {})
+                        .get("manufacturerInfo", {})
+                        .get("datasheetInfo", {})
+                        .get("electrical")
+                    )
+                    rc = cand_elec.get("ratedCurrents")
+                    rated_i = rc[0] if isinstance(rc, list) and rc else None
+                    if rated_i and stress.i_rms and float(rated_i) < stress.i_rms:
+                        stress_penalty += 3.0
+                elif category == "connector":
+                    cand_elec = (
+                        cand.get("connector", {})
+                        .get("manufacturerInfo", {})
+                        .get("datasheetInfo", {})
+                        .get("electrical", {})
+                    )
+                    i_per_contact = cand_elec.get("ratedCurrentPerContact")
+                    if i_per_contact and stress.i_peak and float(i_per_contact) < stress.i_peak:
+                        stress_penalty += 5.0
+                    v_rated = cand_elec.get("ratedVoltage")
+                    if v_rated and stress.v_peak and float(v_rated) < stress.v_peak:
+                        stress_penalty += 3.0
             except (KeyError, TypeError, ValueError):
                 pass
 
@@ -715,7 +970,21 @@ def _rank_candidates(
             if cand_fam is not None and cand_fam != source_cap_family:
                 tech_penalty = 6.0
 
-        score = val_dist + pkg_penalty + voltage_penalty + stress_penalty + tech_penalty
+        # Footprint fit (all categories): the substitute must occupy no more
+        # board space than the original. Smaller is better; oversize is heavily
+        # penalised but still finite-scored so it can win when nothing fits.
+        footprint_penalty = _footprint_penalty(
+            source_dims, _extract_dimensions(cand, category)
+        )
+
+        score = (
+            val_dist
+            + pkg_penalty
+            + voltage_penalty
+            + stress_penalty
+            + tech_penalty
+            + footprint_penalty
+        )
         scored.append((score, cand))
 
     scored.sort(key=lambda x: x[0])
@@ -820,11 +1089,17 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
         if ref in state.preclassified:
             continue
         entry = dict(comp)
+        cat = comp.get("component_type", "")
+        source_dims = comp.get("_source_dims_m")
+        src_mm = _source_dims_mm(source_dims)
+        if src_mm:
+            entry["_source_dimensions_mm"] = src_mm
         candidates = state.candidates_by_ref.get(ref, [])
         if candidates:
-            entry["_tas_candidates"] = [
-                _summarize_candidate(c, comp.get("component_type", "")) for c in candidates[:10]
-            ]
+            entry["_tas_candidates"] = _candidate_summaries_for_llm(
+                candidates, cat, source_dims, limit=10
+            )
+        entry.pop("_source_dims_m", None)  # internal-only: don't leak to the LLM
         # Inject simulation stress data into the LLM prompt
         stress = state.stress_by_ref.get(ref)
         if stress:
@@ -889,6 +1164,8 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
                 "vds": elec.get("drainSourceVoltage"),
                 "rds_on": elec.get("onResistance"),
                 "id": elec.get("continuousDrainCurrent"),
+                "qg": elec.get("totalGateCharge"),
+                "rth_jc": elec.get("thermalResistanceJunctionCase"),
                 "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
             }
         except (KeyError, TypeError):
@@ -903,6 +1180,8 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
                 "vrrm": elec.get("reverseVoltage"),
                 "vf": elec.get("forwardVoltage"),
                 "if_avg": elec.get("forwardCurrent"),
+                "qrr": elec.get("reverseRecoveryCharge"),
+                "trr": elec.get("reverseRecoveryTime"),
                 "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
             }
         except (KeyError, TypeError):
@@ -921,6 +1200,7 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
                 "voltage": elec.get("ratedVoltage"),
                 "technology": part.get("technology"),
                 "esr": elec.get("esr"),
+                "ripple_current": elec.get("rippleCurrent"),
                 "package": part.get("case", ""),
             }
         except (KeyError, TypeError):
@@ -937,6 +1217,7 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
                 "resistance": res_val,
                 "tolerance": elec.get("tolerance"),
                 "power_rating": elec.get("powerRating"),
+                "tcr": elec.get("temperatureCoefficient"),
                 "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
             }
         except (KeyError, TypeError):
@@ -954,6 +1235,10 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             # and tell the reviewer which basis the number came from.
             real_isat = elec.get("saturationCurrentPeak")
             isat = _effective_saturation_current(elec)
+            dcr = elec.get("dcResistance")
+            dcr_val = (dcr.get("typical") or dcr.get("maximum")) if isinstance(dcr, dict) else dcr
+            rc = elec.get("ratedCurrents")
+            rated_current = rc[0] if isinstance(rc, list) and rc else None
             summary = {
                 "mpn": mi.get("reference", "?"),
                 "inductance": ind_val,
@@ -965,7 +1250,8 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
                     if isat is not None
                     else "unavailable"
                 ),
-                "dcr": elec.get("dcResistance"),
+                "rated_current": rated_current,
+                "dcr": dcr_val,
                 "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
             }
         except (KeyError, TypeError):
@@ -1007,7 +1293,78 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             }
         except (KeyError, TypeError):
             pass
+    elif category == "connector":
+        try:
+            conn = env["connector"]
+            mi = conn["manufacturerInfo"]
+            ds = mi["datasheetInfo"]
+            elec = ds["electrical"]
+            mech = ds.get("mechanical", {})
+            part = ds.get("part", {})
+            fd = ds.get("familyDetails", {})
+            summary = {
+                "mpn": mi.get("reference", "?"),
+                "family": fd.get("family"),
+                "positions": mech.get("positions"),
+                "pitch_mm": round(mech["pitch"] * 1e3, 2) if mech.get("pitch") else None,
+                "rated_current_A": elec.get("ratedCurrentPerContact"),
+                "rated_voltage_V": elec.get("ratedVoltage"),
+                "mounting": mech.get("mountingStyle"),
+                "polarity": part.get("matingPolarity"),
+            }
+        except (KeyError, TypeError):
+            pass
+    # Physical body size for every category, so the LLM (and the reader) can
+    # see whether a substitute fits the original's board space.
+    if summary:
+        dims = _extract_dimensions(env, category)
+        if dims and dims[0] and dims[1]:
+            summary["dimensions_mm"] = {
+                "length": round(dims[0] * 1e3, 2),
+                "width": round(dims[1] * 1e3, 2),
+                **({"height": round(dims[2] * 1e3, 2)} if dims[2] else {}),
+            }
     return summary
+
+
+def _source_dims_mm(
+    source_dims: tuple[float, float, float | None] | None,
+) -> dict[str, float] | None:
+    """Render resolved source dimensions (metres) as an mm dict for the LLM."""
+    if source_dims and source_dims[0] and source_dims[1]:
+        out = {
+            "length": round(source_dims[0] * 1e3, 2),
+            "width": round(source_dims[1] * 1e3, 2),
+        }
+        if source_dims[2]:
+            out["height"] = round(source_dims[2] * 1e3, 2)
+        return out
+    return None
+
+
+def _candidate_summaries_for_llm(
+    candidates: list[dict[str, Any]],
+    category: str,
+    source_dims: tuple[float, float, float | None] | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Summarise candidates for the LLM, tagging each with an explicit
+    ``fits_original`` verdict (True / False / "unknown") so the cross-referencer
+    doesn't have to compare dimensions by hand. The substitute must occupy no
+    more board space than the original."""
+    out: list[dict[str, Any]] = []
+    for c in candidates[:limit]:
+        summ = _summarize_candidate(c, category)
+        if source_dims:
+            cand_dims = _extract_dimensions(c, category)
+            if cand_dims is None or cand_dims[0] is None or cand_dims[1] is None:
+                summ["fits_original"] = "unknown"
+            else:
+                summ["fits_original"] = (
+                    _footprint_penalty(source_dims, cand_dims) < _OVERSIZE_BASE
+                )
+        out.append(summ)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1059,11 +1416,17 @@ def _stage4b_retry_hallucinations(
         if ref not in failed_refs:
             continue
         entry = dict(comp)
+        cat = comp.get("component_type", "")
+        source_dims = comp.get("_source_dims_m")
+        src_mm = _source_dims_mm(source_dims)
+        if src_mm:
+            entry["_source_dimensions_mm"] = src_mm
         candidates = state.candidates_by_ref.get(ref, [])
         if candidates:
-            entry["_tas_candidates"] = [
-                _summarize_candidate(c, comp.get("component_type", "")) for c in candidates[:10]
-            ]
+            entry["_tas_candidates"] = _candidate_summaries_for_llm(
+                candidates, cat, source_dims, limit=10
+            )
+        entry.pop("_source_dims_m", None)  # internal-only: don't leak to the LLM
         retry_bom.append(entry)
 
     if not retry_bom:
@@ -1312,11 +1675,15 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
                 "otto_diagnosis": ov.get("diagnosis", ""),
                 "otto_suggestion": ov.get("counter_proposal", ""),
             }
+            source_dims = comp.get("_source_dims_m")
+            src_mm = _source_dims_mm(source_dims)
+            if src_mm:
+                entry["_source_dimensions_mm"] = src_mm
             candidates = state.candidates_by_ref.get(ref, [])
             if candidates:
-                entry["_tas_candidates"] = [
-                    _summarize_candidate(c, comp.get("component_type", "")) for c in candidates[:15]
-                ]
+                entry["_tas_candidates"] = _candidate_summaries_for_llm(
+                    candidates, comp.get("component_type", ""), source_dims, limit=15
+                )
             hints.append(entry)
 
         hint_msg = json.dumps(
@@ -1499,7 +1866,7 @@ def _humanize_value(value: str, category: str) -> str:
         return value
 
     units = {"capacitor": "F", "resistor": "Ω", "magnetic": "H", "inductor": "H",
-             "chipBead": "Ω", "varistor": "V"}
+             "chipBead": "Ω", "varistor": "V", "connector": "A"}
     unit = units.get(category, "")
     if not unit:
         return value
@@ -1539,6 +1906,12 @@ def _infer_component_type(row: dict[str, Any]) -> str:
         return "chipBead"
     if any(w in text for w in ("VARISTOR", "MOV ", " MOV", "VDR ")):
         return "varistor"
+    if any(w in text for w in ("CONNECTOR", "CONN ", "TERMINAL BLOCK", "SCREW TERMINAL",
+                               "PIN HEADER", "SOCKET HEADER", "WIRE-TO-BOARD",
+                               "BOARD-TO-BOARD", "CRIMP", "SKEDD", "WR-TBL",
+                               "WR-PHD", "WR-WTB", "WR-BTB", "WR-MPC", "SMA CONN",
+                               "BNC CONN", "M12 CONN")):
+        return "connector"
     if any(w in text for w in ("INDUCTOR", "IND ", "CHOKE", "FERRITE", "TRANSFORMER",
                                "XFMR", "COIL", "UH ", "MH ")):
         return "magnetic"
@@ -1547,7 +1920,7 @@ def _infer_component_type(row: dict[str, Any]) -> str:
     if any(w in text for w in ("CAP CER", "CAPACITOR", "MLCC", "CER CAP", "CAP ",
                                "UF", "NF", "PF")):
         return "capacitor"
-    return ""  # IC / connector / diode / etc. — not a substitutable passive
+    return ""  # IC / diode / etc. — not a substitutable passive
 
 
 def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1718,11 +2091,15 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
                 "original_package": comp.get("package", ""),
                 "original_voltage": comp.get("rated_voltage", ""),
             }
+            source_dims = comp.get("_source_dims_m")
+            src_mm = _source_dims_mm(source_dims)
+            if src_mm:
+                entry["_source_dimensions_mm"] = src_mm
             candidates = state.candidates_by_ref.get(ref, [])
             if candidates:
-                entry["_tas_candidates"] = [
-                    _summarize_candidate(c, row.get("component_type", "")) for c in candidates[:15]
-                ]
+                entry["_tas_candidates"] = _candidate_summaries_for_llm(
+                    candidates, row.get("component_type", ""), source_dims, limit=15
+                )
             to_fix.append(entry)
 
     if not to_fix:
@@ -1963,6 +2340,7 @@ def _ondemand_candidates(
         "magnetic": "magnetics.ndjson",
         "chipBead": "magnetics.ndjson",
         "varistor": "varistors.ndjson",
+        "connector": "connectors.ndjson",
     }
     if category not in files:
         return []

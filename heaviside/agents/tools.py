@@ -375,6 +375,7 @@ def _crossref_search_impl(
     max_results: int = 50,
     technology: str | None = None,
     min_voltage: float | None = None,
+    max_esr: float | None = None,
 ) -> str:
     """Shared TAS query behind the per-category crossref tools.
 
@@ -400,6 +401,7 @@ def _crossref_search_impl(
         "capacitor": "capacitors.ndjson",
         "resistor": "resistors.ndjson",
         "magnetic": "magnetics.ndjson",
+        "connector": "connectors.ndjson",
     }
     if category not in category_files:
         raise ValueError(
@@ -438,6 +440,13 @@ def _crossref_search_impl(
             cand_v = _extract_capacitor_voltage(env)
             if cand_v is not None and cand_v < min_voltage:
                 continue
+        if max_esr is not None and category == "capacitor":
+            try:
+                cand_esr = env["capacitor"]["manufacturerInfo"]["datasheetInfo"]["electrical"].get("esr")
+                if cand_esr is not None and float(cand_esr) > max_esr:
+                    continue
+            except (KeyError, TypeError, ValueError):
+                pass  # keep candidates whose ESR is unknown
         matches.append((cand_value, env))
 
     if value is not None:
@@ -464,6 +473,7 @@ def _crossref_capacitor_impl(
     max_results: int = 50,
     technology: str | None = None,
     min_voltage: float | None = None,
+    max_esr: float | None = None,
 ) -> str:
     """Query TAS capacitors from a target manufacturer.
 
@@ -486,10 +496,18 @@ def _crossref_capacitor_impl(
             what prevents ceramic queries returning supercaps.
         min_voltage: Optional minimum rated voltage (V). Candidates below
             it are dropped (a substitute must meet the working voltage).
+        max_esr: Optional maximum ESR in ohms (SI). Candidates whose ESR
+            is known and exceeds this limit are dropped. Candidates with
+            no ESR data are kept (never silently exclude unknowns).
+            Derive this from the original part: look up the original MPN
+            via ``component_exists``, read its ``esr`` field, then pass
+            ``max_esr = original_esr * 1.2`` (20% headroom per the
+            cross-reference spec).
 
     Returns:
         JSON string with ``total_matches``, ``candidates`` (mpn,
-        capacitance, voltage, esr, package) and a ``truncated`` flag.
+        capacitance, voltage, esr, package, technology) and a
+        ``truncated`` flag.
     """
     return _crossref_search_impl(
         "capacitor",
@@ -499,6 +517,7 @@ def _crossref_capacitor_impl(
         max_results=max_results,
         technology=technology,
         min_voltage=min_voltage,
+        max_esr=max_esr,
     )
 
 
@@ -566,6 +585,116 @@ def _crossref_magnetic_impl(
     )
 
 
+def _crossref_connector_impl(
+    target_manufacturer: str,
+    rated_current_a: float | None = None,
+    value_tolerance_pct: float = 50.0,
+    max_results: int = 50,
+    min_voltage: float | None = None,
+    family: str | None = None,
+) -> str:
+    """Query the internal connector DB from a target manufacturer.
+
+    Args:
+        target_manufacturer: Manufacturer to search (substring match,
+            case/punctuation-insensitive — "Würth", "wurth elektronik"
+            and "WURTH" all hit the same rows).
+        rated_current_a: Optional rated current per contact in amperes
+            (SI). When given, results are limited to ±``value_tolerance_pct``
+            and sorted by proximity.
+        value_tolerance_pct: Half-width of the current window, percent.
+        max_results: Cap on returned candidates (truncation is flagged
+            in the response, never silent).
+        min_voltage: Optional minimum rated voltage (V). Candidates
+            rated below this are dropped.
+        family: Optional connector family filter — one of "terminalBlock",
+            "pinHeaderSocket", "boardToBoard", "wireToBoard", "fpcFfc",
+            "cardEdge", "circular", "rf", "dataInterface", "power".
+            When given, only that family is returned.
+
+    Returns:
+        JSON string with ``total_matches``, ``candidates`` (mpn, family,
+        positions, pitch_mm, rated_current_A, rated_voltage_V, mounting,
+        polarity) and a ``truncated`` flag.
+    """
+    import json as _json
+    import os
+    from pathlib import Path
+
+    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.pipeline.crossref_pipeline import (
+        _extract_manufacturer,
+        _extract_value,
+        _normalize_manufacturer,
+        _summarize_candidate,
+    )
+
+    tas_dir = Path(
+        os.environ.get(
+            "HEAVISIDE_TAS_DATA_DIR",
+            str(Path(__file__).resolve().parents[2] / "TAS" / "data"),
+        )
+    )
+    path = tas_dir / "connectors.ndjson"
+
+    target = _normalize_manufacturer(target_manufacturer)
+    matches: list[tuple[float | None, dict]] = []
+    for _lineno, env in iter_envelopes(path):
+        mfr = _extract_manufacturer(env, "connector")
+        if not mfr or target not in _normalize_manufacturer(mfr):
+            continue
+        # Family filter
+        if family is not None:
+            try:
+                cand_family = (
+                    env["connector"]["manufacturerInfo"]["datasheetInfo"]
+                    ["familyDetails"]["family"]
+                )
+                if cand_family != family:
+                    continue
+            except (KeyError, TypeError):
+                pass
+        # Voltage filter
+        if min_voltage is not None:
+            try:
+                cand_v = float(
+                    env["connector"]["manufacturerInfo"]["datasheetInfo"]
+                    ["electrical"]["ratedVoltage"]
+                )
+                if cand_v < min_voltage:
+                    continue
+            except (KeyError, TypeError, ValueError):
+                pass
+        # Current window filter
+        cand_current = _extract_value(env, "connector")
+        if rated_current_a is not None and cand_current is not None:
+            lo = rated_current_a * (1.0 - value_tolerance_pct / 100.0)
+            hi = rated_current_a * (1.0 + value_tolerance_pct / 100.0)
+            if not (lo <= cand_current <= hi):
+                continue
+        matches.append((cand_current, env))
+
+    if rated_current_a is not None:
+        matches.sort(
+            key=lambda m: abs(m[0] - rated_current_a)
+            if m[0] is not None
+            else float("inf")
+        )
+
+    n = max(1, min(int(max_results), 200))
+    summaries = [_summarize_candidate(env, "connector") for _v, env in matches[:n]]
+    return _json.dumps(
+        {
+            "category": "connector",
+            "target_manufacturer": target_manufacturer,
+            "total_matches": len(matches),
+            "returned": len(summaries),
+            "truncated": len(matches) > n,
+            "candidates": summaries,
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Strands decoration (the agent-facing surface)
 # ---------------------------------------------------------------------------
@@ -583,6 +712,7 @@ get_pareto_magnetics = tool(_get_pareto_magnetics_impl, name="get_pareto_magneti
 crossref_capacitor = tool(_crossref_capacitor_impl, name="crossref_capacitor")
 crossref_resistor = tool(_crossref_resistor_impl, name="crossref_resistor")
 crossref_magnetic = tool(_crossref_magnetic_impl, name="crossref_magnetic")
+crossref_connector = tool(_crossref_connector_impl, name="crossref_connector")
 
 
 # ---------------------------------------------------------------------------
@@ -606,6 +736,7 @@ TOOL_REGISTRY: dict[str, Any] = {
     "crossref_capacitor": crossref_capacitor,
     "crossref_resistor": crossref_resistor,
     "crossref_magnetic": crossref_magnetic,
+    "crossref_connector": crossref_connector,
 }
 
 
@@ -625,6 +756,7 @@ RAW_FUNCTIONS: dict[str, Any] = {
     "crossref_capacitor": _crossref_capacitor_impl,
     "crossref_resistor": _crossref_resistor_impl,
     "crossref_magnetic": _crossref_magnetic_impl,
+    "crossref_connector": _crossref_connector_impl,
 }
 
 

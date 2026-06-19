@@ -564,6 +564,9 @@ def _design_converter_job(spec: dict[str, Any], topology: str | None, update: An
                 update.start_stage(stage)
         update(f"{pct}% — {msg}")
 
+    # Proxy check_cancelled so the pipeline can honour user-requested cancellation.
+    cb.check_cancelled = update.check_cancelled  # type: ignore[attr-defined]
+
     design = design_converter(topo, spec, use_llm=True, with_reviewers=True, progress=cb)
     return {
         "topology": topo,

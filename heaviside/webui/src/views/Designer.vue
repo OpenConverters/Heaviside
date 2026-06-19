@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import InputNumber from 'primevue/inputnumber'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
-import { api } from '../api.js'
+import { api, myJobs } from '../api.js'
 
 const advanced = ref(false)
 const d = ref({
@@ -50,6 +50,7 @@ async function run() {
     const body = { spec: buildSpec(), candidates_per_topology: 3 }
     if (d.value.topology) body.topologies = [d.value.topology]
     const { job_id } = await api.submitDesignClosedLoop(body)
+    myJobs.add(job_id)
     location.hash = `#/jobs/${job_id}`
   } catch (e) { error.value = String(e) }
   finally { running.value = false }

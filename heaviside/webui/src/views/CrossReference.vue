@@ -6,7 +6,7 @@ import Textarea from 'primevue/textarea'
 import InputText from 'primevue/inputtext'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
-import { api } from '../api.js'
+import { api, myJobs } from '../api.js'
 
 const target = ref('Würth Elektronik')
 const manufacturers = ref([])
@@ -54,6 +54,7 @@ async function run() {
       try { bom = JSON.parse(bomText.value) } catch (e) { throw new Error('BOM is not valid JSON') }
       ;({ job_id } = await api.submitCrossref({ source_bom: bom, target_manufacturer: target.value }))
     }
+    myJobs.add(job_id)
     location.hash = `#/jobs/${job_id}`
   } catch (e) { error.value = String(e) }
   finally { running.value = false }

@@ -1,5 +1,26 @@
 // Thin fetch wrapper around the Heaviside FastAPI server.
 
+// ---------------------------------------------------------------------------
+// Per-browser job ownership — stored in localStorage so each user only sees
+// their own jobs in the Jobs tab. Deep-linked jobs are adopted on first visit.
+// ---------------------------------------------------------------------------
+const _LS_KEY = 'hv_my_jobs'
+export const myJobs = {
+  all() {
+    try { return new Set(JSON.parse(localStorage.getItem(_LS_KEY) || '[]')) }
+    catch { return new Set() }
+  },
+  add(id) {
+    const s = myJobs.all(); s.add(id)
+    localStorage.setItem(_LS_KEY, JSON.stringify([...s]))
+  },
+  remove(id) {
+    const s = myJobs.all(); s.delete(id)
+    localStorage.setItem(_LS_KEY, JSON.stringify([...s]))
+  },
+  has(id) { return myJobs.all().has(id) },
+}
+
 async function jget(url) {
   const r = await fetch(url)
   if (!r.ok) throw new Error(`${url} → ${r.status}`)

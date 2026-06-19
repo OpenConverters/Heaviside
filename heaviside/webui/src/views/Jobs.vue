@@ -6,7 +6,7 @@ import Tag from 'primevue/tag'
 import Button from 'primevue/button'
 import ResultViewer from '../components/ResultViewer.vue'
 import PipelineFlow from '../components/PipelineFlow.vue'
-import { api } from '../api.js'
+import { api, myJobs } from '../api.js'
 import { jobSeverity } from '../status.js'
 
 // open-job: a job_id from a #/jobs/<id> deep link — auto-opened on mount.
@@ -26,7 +26,10 @@ const trackedJob = ref(null)
 async function load() {
   loading.value = true
   try {
-    jobs.value = (await api.jobs()).jobs
+    const all = (await api.jobs()).jobs
+    // Only show jobs this browser submitted (or deep-linked into).
+    const mine = myJobs.all()
+    jobs.value = all.filter((j) => mine.has(j.job_id))
     // Auto-expand the tracked job as soon as it appears in the list.
     if (trackedJob.value) {
       const job = jobs.value.find((j) => j.job_id === trackedJob.value)
@@ -38,7 +41,7 @@ async function load() {
 const isActive = (s) => s === 'queued' || s === 'running'
 async function act(job) {
   if (isActive(job.status)) await api.cancelJob(job.job_id)
-  else await api.deleteJob(job.job_id)
+  else { await api.deleteJob(job.job_id); myJobs.remove(job.job_id) }
   load()
 }
 // Open a result viewer for a finished job.
@@ -59,8 +62,10 @@ const view = (job) => viewById(job.job_id, job.kind)
 
 // Track the job from a deep link: expand it in the table (not the viewer —
 // it may still be running). The viewer is opened by the user via "View".
+// Also adopts the job into this browser's "mine" set so it stays visible.
 function trackJob(id) {
   if (!id) return
+  myJobs.add(id)
   trackedJob.value = id
   if (location.hash !== `#/jobs/${id}`) location.hash = `#/jobs/${id}`
   // Expand immediately if the job is already in the list.
