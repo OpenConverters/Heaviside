@@ -592,6 +592,13 @@ _OVERSIZE_SCALE = 8.0           # extra penalty per unit of worst linear overflo
 _UNKNOWN_DIM_PENALTY = 2.0      # candidate size unknown → can't confirm it fits
 _DIM_TOLERANCE = 1.02           # 2 % slack for rounding / termination spread
 
+# Weight applied to the value-distance term so the primary electrical value
+# (resistance/inductance/capacitance) dominates package/footprint when ranking
+# passives. Sized so even a small value error outranks the largest fitting-
+# footprint penalty (_FIT_AREA_WEIGHT) — i.e. an exact-value part always beats a
+# near-value part regardless of package.
+_VALUE_MATCH_WEIGHT = 4.0
+
 
 def _footprint_penalty(
     source_dims: tuple[float, float, float | None] | None,
@@ -827,19 +834,28 @@ def _rank_candidates(
         if cand_val is None or cand_val == 0.0:
             continue
         ratio = cand_val / target_val if target_val else 0.0
-        # For capacitors: higher is OK (bypass/bulk), lower is bad
+        # Value is the DEFINING spec for a passive — a 47Ω part must beat a 39Ω
+        # one regardless of package. Weight the value distance so it dominates
+        # the package/footprint terms (those decide only between same-value
+        # parts). Without this, a same-package wrong-value part used to outrank
+        # an exact-value part in a smaller footprint (CAY16470J4LF 47Ω → 39Ω bug).
+        # Capacitors: a HIGHER value is usually fine (bypass/bulk), so keep
+        # overcap a mild, unweighted penalty.
         if category == "capacitor" and ratio >= 1.0:
             val_dist = (ratio - 1.0) * 0.3  # mild penalty for overcap
         else:
-            val_dist = abs(1.0 - ratio)
-        # Package: same=0.0, one size up=0.3, two sizes up=0.8
+            val_dist = abs(1.0 - ratio) * _VALUE_MATCH_WEIGHT
+        # Package string match is now only a minor tie-breaker between equally
+        # good candidates: the real physical fit is handled by footprint_penalty
+        # below (orientation-aware, dimension-based). Keep these small so they
+        # never override a value difference.
         cand_pkg = _extract_package(cand, category).lower()
         if package and package in cand_pkg:
             pkg_penalty = 0.0
         elif _is_one_size_up(package, cand_pkg):
-            pkg_penalty = 0.3
+            pkg_penalty = 0.05
         else:
-            pkg_penalty = 0.8
+            pkg_penalty = 0.15
         # Voltage: for capacitors, reject candidates below target voltage
         voltage_penalty = 0.0
         if target_voltage and target_voltage > 0 and category == "capacitor":

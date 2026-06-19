@@ -160,3 +160,52 @@ def test_summary_tags_fits_original_verdict() -> None:
     assert by_mpn["SMALL-22u"]["fits_original"] is True
     assert by_mpn["NO-DIMS"]["fits_original"] == "unknown"
     assert by_mpn["744771122"]["dimensions_mm"] == {"length": 12.0, "width": 12.0, "height": 5.8}
+
+
+def _res(ref, ohms, case):
+    return {
+        "resistor": {
+            "manufacturerInfo": {
+                "name": "Würth Elektronik",
+                "reference": ref,
+                "datasheetInfo": {
+                    "part": {"case": case},
+                    "electrical": {"resistance": {"nominal": ohms}},
+                },
+            }
+        }
+    }
+
+
+def test_exact_value_resistor_outranks_near_value_same_package():
+    """Regression (CAY16470J4LF 47Ω → 39Ω bug): the value is the defining spec,
+    so an EXACT-value part must rank above a near-value part even when the
+    near-value one shares the original's package and the exact one is in a
+    smaller (but fitting) footprint."""
+    exact_0603 = _res("EXACT-47-0603", 47.0, "0603")   # exact value, smaller pkg
+    near_1206 = _res("NEAR-39-1206", 39.0, "1206")     # 17% off, same pkg as source
+    comp = {"value": "47", "component_type": "resistor", "package": "1206"}
+    ranked = _rank_candidates(comp, "resistor", [near_1206, exact_0603], max_results=10)
+    assert _envelope_reference(ranked[0], "resistor") == "EXACT-47-0603"
+
+
+def test_resistor_value_dominates_footprint_smaller_is_better():
+    """Among EXACT-value parts, smaller fitting footprint wins; a wrong-value
+    tiny part still loses to the exact-value parts."""
+    exact_0402 = _res("EXACT-47-0402", 47.0, "0402")
+    exact_0603 = _res("EXACT-47-0603", 47.0, "0603")
+    wrong_0402 = _res("WRONG-33-0402", 33.0, "0402")
+    # 1206 source footprint (set by stage 1 from the package) enables the
+    # smaller-is-better tie-break between the two exact-value parts.
+    comp = {
+        "value": "47",
+        "component_type": "resistor",
+        "package": "1206",
+        "_source_dims_m": (0.0032, 0.0016, None),
+    }
+    ranked = _rank_candidates(
+        comp, "resistor", [wrong_0402, exact_0603, exact_0402], max_results=10
+    )
+    order = [_envelope_reference(c, "resistor") for c in ranked]
+    assert order[0] == "EXACT-47-0402"          # exact value, smallest fitting
+    assert order[-1] == "WRONG-33-0402"          # wrong value ranks last
