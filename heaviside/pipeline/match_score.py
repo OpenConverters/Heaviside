@@ -136,6 +136,23 @@ def _lookup_mpn(mpn: str, tas_data_dir: Path | None = None) -> dict[str, Any] | 
     return None
 
 
+def _normalize_electrical(elec_raw: Any) -> dict[str, Any]:
+    """Coerce a TAS ``electrical`` field to a single dict.
+
+    TAS v2 stores magnetics electrical as a *list* of subtype items (inductor,
+    bead, …); v1 and all other categories use a plain dict. For a list, return
+    the first item carrying inductance / saturationCurrentPeak (the inductor
+    item), else the first dict. This mirrors ``crossref_pipeline._magnetic_elec``
+    — without it, ``elec.get(...)`` blows up with
+    "'list' object has no attribute 'get'" on every magnetic match score."""
+    if isinstance(elec_raw, list):
+        for item in elec_raw:
+            if isinstance(item, dict) and ("inductance" in item or "saturationCurrentPeak" in item):
+                return item
+        return elec_raw[0] if elec_raw and isinstance(elec_raw[0], dict) else {}
+    return elec_raw if isinstance(elec_raw, dict) else {}
+
+
 def _extract_electrical(env: dict[str, Any]) -> dict[str, Any]:
     """Drill into a TAS envelope and return the ``electrical`` sub-dict."""
     for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
@@ -149,7 +166,7 @@ def _extract_electrical(env: dict[str, Any]) -> dict[str, Any]:
             mi = record.get("manufacturerInfo")
             if isinstance(mi, dict):
                 di = mi.get("datasheetInfo") or {}
-                return di.get("electrical") or {}
+                return _normalize_electrical(di.get("electrical"))
     return {}
 
 

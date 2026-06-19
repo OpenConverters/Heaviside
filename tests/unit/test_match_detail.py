@@ -54,3 +54,38 @@ def test_unparseable_values_are_na_not_crash():
         "original_value": "?", "substitute_value": "10uF",
     })
     assert _params(d)["value"] == "n/a"
+
+
+def test_magnetic_electrical_list_does_not_break_match_score():
+    """Regression: TAS v2 stores magnetic `electrical` as a LIST. The match
+    scorer used to call `.get()` on it directly, raising "'list' object has no
+    attribute 'get'" and failing match scoring for every inductor crossref
+    (surfaced live on the LPS5030-223MRC → Würth run)."""
+    from heaviside.pipeline.match_score import _extract_electrical, compute_match_score
+
+    env = {
+        "magnetic": {
+            "manufacturerInfo": {
+                "reference": "7847709220",
+                "datasheetInfo": {
+                    "part": {"caseCode": "x"},
+                    "electrical": [
+                        {
+                            "subtype": "inductor",
+                            "inductance": {"nominal": 22e-6},
+                            "saturationCurrentPeak": 3.0,
+                            "ratedCurrents": [2.0],
+                        }
+                    ],
+                },
+            }
+        }
+    }
+    elec = _extract_electrical(env)
+    assert isinstance(elec, dict)
+    assert elec.get("inductance") == {"nominal": 22e-6}
+    # full scorer must not raise on the list-shaped electrical
+    comp = {"ref_des": "L1", "type": "magnetic", "substitute_pn": "7847709220"}
+    src = {"ref_des": "L1", "type": "magnetic", "value": "22uH"}
+    score = compute_match_score(comp, src, env)
+    assert isinstance(score, dict)
