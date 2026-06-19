@@ -64,6 +64,7 @@ _HEADER_ALIASES: dict[str, str] = {
     "brand": "manufacturer",
     "manufacturer name": "manufacturer",
     "category": "component_type",
+    "part category": "component_type",
     "type": "component_type",
     "component type": "component_type",
     "component_type": "component_type",
@@ -85,6 +86,7 @@ _HEADER_ALIASES: dict[str, str] = {
     "qty": "quantity",
     "quantity": "quantity",
     "description": "description",
+    "description (part)": "description",
     "desc": "description",
     "notes": "notes",
     "note": "notes",
@@ -99,13 +101,36 @@ def _canon_header(raw: str) -> str:
     key = " ".join(str(raw).strip().lower().replace("_", " ").split())
     if not key:
         return ""
-    if key in _HEADER_ALIASES:
-        return _HEADER_ALIASES[key]
-    # Also try the un-spaced form (e.g. "part#") and underscored fallback.
-    compact = key.replace(" ", "")
-    if compact in _HEADER_ALIASES:
-        return _HEADER_ALIASES[compact]
-    return key.replace(" ", "_")
+
+    def _alias(k: str) -> str | None:
+        if not k:
+            return None
+        if k in _HEADER_ALIASES:
+            return _HEADER_ALIASES[k]
+        # Also try the un-spaced form (e.g. "part#").
+        return _HEADER_ALIASES.get(k.replace(" ", ""))
+
+    # 1) Exact match first, so aliases that intentionally carry punctuation
+    #    ("part#", "mfr part #") still resolve.
+    hit = _alias(key)
+    if hit:
+        return hit
+    # 2) Drop decorative punctuation BOM/quote exporters add — LumiQuote marks
+    #    required columns with a trailing "*" ("Offered MPN*"); others use
+    #    ":" / "#" / "." / "-". Retry on the cleaned key.
+    cleaned = key.strip(" *:#.-")
+    hit = _alias(cleaned)
+    if hit:
+        return hit
+    # 3) Quote/ERP exporters prefix the real column with a qualifier word
+    #    ("Offered MPN", "Supplier MPN"). Retry without a leading qualifier so
+    #    the underlying alias ("mpn", "manufacturer", …) still resolves.
+    for prefix in ("offered ", "supplier ", "vendor "):
+        if cleaned.startswith(prefix):
+            hit = _alias(cleaned[len(prefix):].strip())
+            if hit:
+                return hit
+    return (cleaned or key).replace(" ", "_")
 
 
 def _rows_to_components(

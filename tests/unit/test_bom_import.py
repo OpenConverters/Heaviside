@@ -170,3 +170,32 @@ def test_blank_rows_skipped():
     raw = b"MPN,Mfr\nA1,X\n\n  ,\nA2,Y\n"
     bom = parse_bom_file(raw, "x.csv")
     assert [c["original_mpn"] for c in bom] == ["A1", "A2"]
+
+
+def test_lumiquote_decorated_headers_resolve():
+    """Regression: LumiQuote BOM export decorates headers — a qualifier prefix
+    and a trailing '*' on required columns ('Offered MPN*', 'Offered
+    manufacturer*'). These must map to original_mpn / manufacturer instead of
+    raising _NoPartNumberColumn (live prod failure on 'Test BOM -V2.xlsx')."""
+    raw = (
+        b"LumiQuote-ID,Description (IPN),Description (Part),Part category,"
+        b"Offered MPN*,Offered manufacturer*\n"
+        b"123,S SELF 15UH,Inductor Power Shielded 15uH,Fixed Inductors,"
+        b"SRR1260-150M,Bourns\n"
+    )
+    bom = parse_bom_file(raw, "bom.csv")
+    assert len(bom) == 1
+    assert bom[0]["original_mpn"] == "SRR1260-150M"
+    assert bom[0]["manufacturer"] == "Bourns"
+    assert bom[0]["description"] == "Inductor Power Shielded 15uH"
+
+
+def test_canon_header_preserves_punctuation_aliases():
+    """The decoration-stripping must not break aliases that intentionally carry
+    punctuation."""
+    from heaviside.pipeline.bom_import import _canon_header
+
+    assert _canon_header("part#") == "original_mpn"
+    assert _canon_header("mfr part #") == "original_mpn"
+    assert _canon_header("Offered MPN*") == "original_mpn"
+    assert _canon_header("Supplier Manufacturer Part Number") == "original_mpn"
