@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from heaviside.pipeline.bom_import import parse_bom_file
 from heaviside.pipeline.crossref import CrossRefState
 from heaviside.pipeline.crossref_pipeline import (
@@ -34,17 +36,21 @@ _MODEL_TOKEN_LIMIT = 262_144
 # chars/token); use 2.0 so the test OVER-estimates tokens and stays strict.
 _CHARS_PER_TOKEN = 2.0
 
-_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "lumiquote_bom_v2.xlsx"
+_FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures"
+# Two real LumiQuote exports: v2 = 847 rows, v1 = the 2101-row "final boss".
+# Both must parse, enrich, and batch under the token limit deterministically.
+_FIXTURES = ["lumiquote_bom_v2.xlsx", "lumiquote_bom_v1.xlsx"]
 
 
-def _load_normalized():
-    raw = _FIXTURE.read_bytes()
-    return _normalize_bom(parse_bom_file(raw, _FIXTURE.name))
+def _load_normalized(fixture: str):
+    path = _FIXTURE_DIR / fixture
+    return _normalize_bom(parse_bom_file(path.read_bytes(), path.name))
 
 
-def test_fixture_parses_to_full_bom():
-    nb = _load_normalized()
-    # The export has 847 component rows.
+@pytest.mark.parametrize("fixture", _FIXTURES)
+def test_fixture_parses_to_full_bom(fixture):
+    nb = _load_normalized(fixture)
+    # Both exports are large (v2 ≈ 847, v1 ≈ 2101 rows).
     assert len(nb) > 800
     # Component types were inferred from the description (no category column maps
     # cleanly): the BOM is mostly passives.
@@ -52,8 +58,9 @@ def test_fixture_parses_to_full_bom():
     assert {"capacitor", "magnetic"} <= cats
 
 
-def test_value_and_package_recovered_for_most_rows():
-    nb = _load_normalized()
+@pytest.mark.parametrize("fixture", _FIXTURES)
+def test_value_and_package_recovered_for_most_rows(fixture):
+    nb = _load_normalized(fixture)
     with_value = sum(1 for c in nb if c.get("value"))
     with_pkg = sum(1 for c in nb if c.get("package"))
     # Values/packages live in the free-text description; we must recover the
@@ -62,8 +69,8 @@ def test_value_and_package_recovered_for_most_rows():
     assert with_pkg > 0.5 * len(nb)
 
 
-def _batches_for_fixture():
-    nb = _load_normalized()
+def _batches_for_fixture(fixture: str):
+    nb = _load_normalized(fixture)
     state = _stage1_prefetch(
         CrossRefState(source_bom=nb, target_manufacturer="Würth Elektronik")
     )
@@ -71,26 +78,30 @@ def _batches_for_fixture():
     return entries, _batch_for_llm(entries)
 
 
-def test_large_bom_is_split_into_multiple_batches():
-    entries, batches = _batches_for_fixture()
-    # Unbatched this BOM is far over the limit, so it MUST split.
+@pytest.mark.parametrize("fixture", _FIXTURES)
+def test_large_bom_is_split_into_multiple_batches(fixture):
+    entries, batches = _batches_for_fixture(fixture)
+    # Unbatched these BOMs are far over the limit, so they MUST split.
     assert len(batches) > 1
     # Every component is covered exactly once across the batches (none dropped).
     assert sum(len(b) for b in batches) == len(entries)
 
 
-def test_no_batch_exceeds_part_cap():
+@pytest.mark.parametrize("fixture", _FIXTURES)
+def test_no_batch_exceeds_part_cap(fixture):
     """Each batch is capped at ≤50 components so every LLM call stays small and
     fast (and can run concurrently)."""
-    _entries, batches = _batches_for_fixture()
+    _entries, batches = _batches_for_fixture(fixture)
     for b in batches:
         assert len(b) <= _CROSSREF_BATCH_MAX_PARTS
 
 
-def test_every_batch_stays_under_model_token_limit():
+@pytest.mark.parametrize("fixture", _FIXTURES)
+def test_every_batch_stays_under_model_token_limit(fixture):
     """The core guard: no single cross-referencer request exceeds the context
-    window, so the prod 400 ("exceeded model token limit") cannot recur."""
-    _entries, batches = _batches_for_fixture()
+    window, so the prod 400 ("exceeded model token limit") cannot recur — even
+    for the 2101-row "final boss" BOM."""
+    _entries, batches = _batches_for_fixture(fixture)
     assert batches, "expected at least one batch"
     for i, batch in enumerate(batches, 1):
         payload = json.dumps(
@@ -102,7 +113,7 @@ def test_every_batch_stays_under_model_token_limit():
         )
         est_tokens = len(payload) / _CHARS_PER_TOKEN
         assert est_tokens < _MODEL_TOKEN_LIMIT, (
-            f"batch {i} ~{est_tokens:.0f} tokens exceeds {_MODEL_TOKEN_LIMIT}"
+            f"{fixture} batch {i} ~{est_tokens:.0f} tokens exceeds {_MODEL_TOKEN_LIMIT}"
         )
 
 
@@ -126,10 +137,11 @@ def test_batch_helper_respects_part_cap():
     assert sum(len(b) for b in batches) == 125
 
 
-def test_prefetch_finds_candidates_for_enriched_passives():
+@pytest.mark.parametrize("fixture", _FIXTURES)
+def test_prefetch_finds_candidates_for_enriched_passives(fixture):
     """With value recovered, the deterministic prefetch returns real Würth
     candidates for the common passives (the precondition for referencing)."""
-    nb = _load_normalized()
+    nb = _load_normalized(fixture)
     sub = [c for c in nb if c.get("component_type") in ("capacitor", "magnetic")][:20]
     state = _stage1_prefetch(
         CrossRefState(source_bom=sub, target_manufacturer="Würth Elektronik")
