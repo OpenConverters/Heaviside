@@ -100,39 +100,59 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TAS_DATA_DEFAULT = _REPO_ROOT / "TAS" / "data"
 
 
+# Per-file MPN -> envelope index, built once and cached. A brute-force linear
+# scan per MPN (the old behaviour) was fine for ~a dozen parts but, on a large
+# BOM (hundreds of substitutes each re-scanning every NDJSON file), it pinned
+# the CPU long enough to starve the API event loop and get the worker restarted
+# by the healthcheck mid-scoring. Indexing makes lookups O(1) after one pass.
+_MPN_ENV_INDEX_CACHE: dict[str, dict[str, dict]] = {}
+
+
+def _mpn_env_index(path: Path) -> dict[str, dict]:
+    cached = _MPN_ENV_INDEX_CACHE.get(path.name)
+    if cached is not None:
+        return cached
+    index: dict[str, dict] = {}
+    try:
+        from heaviside.catalogue._reader import iter_envelopes
+
+        for _lineno, env in iter_envelopes(path):
+            for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
+                sub = env.get(top_key)
+                if not isinstance(sub, dict):
+                    continue
+                for inner_key in (None, "mosfet", "diode", "igbt"):
+                    record = sub if inner_key is None else sub.get(inner_key)
+                    if not isinstance(record, dict):
+                        continue
+                    mi = record.get("manufacturerInfo")
+                    if isinstance(mi, dict):
+                        ref = mi.get("reference")
+                        if isinstance(ref, str) and ref.strip():
+                            index.setdefault(ref.strip().lower(), env)
+    except Exception:
+        pass
+    _MPN_ENV_INDEX_CACHE[path.name] = index
+    return index
+
+
 def _lookup_mpn(mpn: str, tas_data_dir: Path | None = None) -> dict[str, Any] | None:
     """Find the raw TAS envelope for *mpn* across all category NDJSON files.
 
-    Returns the first matching envelope dict, or ``None``.  This is a
-    brute-force linear scan — fine for the ~dozen parts in a single
-    crossref batch, not for bulk queries.
+    Returns the first matching envelope dict, or ``None``. Uses a per-file MPN
+    index (built once, cached) so bulk scoring doesn't re-scan multi-megabyte
+    files per part.
     """
     if not mpn:
         return None
     root = tas_data_dir or _TAS_DATA_DEFAULT
     if not root.is_dir():
         return None
-
-    from heaviside.catalogue._reader import iter_envelopes
-
+    mpn_l = mpn.strip().lower()
     for ndjson_file in root.glob("*.ndjson"):
-        try:
-            for _lineno, env in iter_envelopes(ndjson_file):
-                # Walk common TAS envelope shapes to find the MPN.
-                for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
-                    sub = env.get(top_key)
-                    if not isinstance(sub, dict):
-                        continue
-                    # Semiconductors nest one level deeper.
-                    for inner_key in (None, "mosfet", "diode", "igbt"):
-                        record = sub if inner_key is None else sub.get(inner_key)
-                        if not isinstance(record, dict):
-                            continue
-                        mi = record.get("manufacturerInfo")
-                        if isinstance(mi, dict) and mi.get("reference") == mpn:
-                            return env
-        except Exception:
-            continue
+        hit = _mpn_env_index(ndjson_file).get(mpn_l)
+        if hit is not None:
+            return hit
     return None
 
 
