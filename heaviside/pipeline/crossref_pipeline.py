@@ -1103,7 +1103,7 @@ def _merge_preclassified(state: CrossRefState) -> None:
 # the char cap is a safety net while the part cap is the primary control.
 _CROSSREF_BATCH_MAX_PARTS = 50          # primary: ≤50 components per LLM call
 _CROSSREF_BATCH_CHARS = 200_000         # safety net: ~85k tokens, well under limit
-_CROSSREF_MAX_CONCURRENCY = 5           # batches run in parallel (I/O-bound calls)
+_CROSSREF_MAX_CONCURRENCY = 12          # batches run in parallel (I/O-bound calls)
 
 
 def _batch_for_llm(
