@@ -273,7 +273,13 @@ def _stage1_5_librarian(state: CrossRefState) -> CrossRefState:
         creds = load_credentials()
         dk = DigiKeyClient(creds.digikey)
     except Exception as exc:
-        state.diagnostics.append(f"librarian: cannot init Digi-Key client: {exc}")
+        # Optional best-effort stage: with no Digi-Key credentials configured we
+        # simply skip distributor gap-filling (the internal DB still drives the
+        # crossref). Phrase it as a skipped optional step, not an error.
+        logger.info("CR stage 1.5: Digi-Key gap-fill unavailable (%s) — skipping", exc)
+        state.diagnostics.append(
+            f"librarian gap-fill skipped (Digi-Key not configured): {exc}"
+        )
         return state
 
     target_mfr = state.target_manufacturer
@@ -1091,9 +1097,41 @@ def _merge_preclassified(state: CrossRefState) -> None:
             )
 
 
-def _stage3_crossref(state: CrossRefState) -> CrossRefState:
-    """Call the cross-referencer agent with constrained candidates."""
-    bom_for_llm = []
+# Max JSON characters of BOM payload per cross-referencer LLM call. The model
+# context is 262144 tokens; at ~4 chars/token that is ~1M chars, but we must
+# leave room for the system prompt and the response (max_tokens=16384). ~480k
+# chars ≈ 120k input tokens keeps every batch comfortably under the limit.
+_CROSSREF_BATCH_CHARS = 480_000
+
+
+def _batch_for_llm(
+    entries: list[dict[str, Any]], max_chars: int
+) -> list[list[dict[str, Any]]]:
+    """Split BOM entries into batches whose serialized size stays under
+    ``max_chars``, so no single LLM request exceeds the model token limit. A
+    single entry larger than the budget still goes out alone (better an oversized
+    request that may fail than dropping the component silently)."""
+    batches: list[list[dict[str, Any]]] = []
+    cur: list[dict[str, Any]] = []
+    cur_len = 0
+    for e in entries:
+        elen = len(json.dumps(e))
+        if cur and cur_len + elen > max_chars:
+            batches.append(cur)
+            cur, cur_len = [], 0
+        cur.append(e)
+        cur_len += elen
+    if cur:
+        batches.append(cur)
+    return batches
+
+
+def _build_bom_for_llm(state: CrossRefState) -> list[dict[str, Any]]:
+    """Assemble the per-component entries (with candidate summaries, source
+    dimensions and sim stress) that get sent to the cross-referencer. Pulled out
+    of :func:`_stage3_crossref` so the batching can be exercised in tests against
+    a real BOM without invoking the LLM."""
+    bom_for_llm: list[dict[str, Any]] = []
     for comp in state.source_bom:
         ref = comp.get("ref_des", comp.get("name", "?"))
         if ref in state.preclassified:
@@ -1127,6 +1165,12 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
                 entry["_sim_stress"] = stress_info
 
         bom_for_llm.append(entry)
+    return bom_for_llm
+
+
+def _stage3_crossref(state: CrossRefState) -> CrossRefState:
+    """Call the cross-referencer agent with constrained candidates."""
+    bom_for_llm = _build_bom_for_llm(state)
 
     if not bom_for_llm:
         # Every component was pre-classified (already target-mfr / not-fitted).
@@ -1137,22 +1181,45 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
         _merge_preclassified(state)
         return state
 
-    user_msg = json.dumps(
-        {
-            "source_bom": bom_for_llm,
-            "target_manufacturer": state.target_manufacturer,
-            "circuit_context": state.circuit_context,
-        },
-        indent=2,
-    )
+    # Batch the BOM so each LLM call stays within the model's context window.
+    # A large BOM (hundreds of parts, each with a candidate list) otherwise
+    # produces a single multi-hundred-K-token request that the API rejects
+    # (400 "exceeded model token limit"), which previously failed the entire
+    # crossref and returned zero substitutes. Batching lets every component get
+    # referenced; one bad batch only loses its own rows, not the whole run.
+    batches = _batch_for_llm(bom_for_llm, _CROSSREF_BATCH_CHARS)
+    if len(batches) > 1:
+        logger.info(
+            "CR stage 3: BOM split into %d batches (%d components) for the LLM",
+            len(batches),
+            len(bom_for_llm),
+        )
+    results: list[dict[str, Any]] = []
+    failed_batches = 0
+    for bi, batch in enumerate(batches, 1):
+        user_msg = json.dumps(
+            {
+                "source_bom": batch,
+                "target_manufacturer": state.target_manufacturer,
+                "circuit_context": state.circuit_context,
+            },
+            indent=2,
+        )
+        try:
+            data = call_agent_json(
+                "cross-referencer", user_msg, max_tokens=16384, max_retries=2
+            )
+            results.extend(data.get("crossref", []))
+        except LLMCallError as exc:
+            failed_batches += 1
+            state.diagnostics.append(
+                f"cross-referencer batch {bi}/{len(batches)} failed after retries: {exc}"
+            )
+    if failed_batches == len(batches):
+        # Nothing came back at all — surface it as a single clear diagnostic.
+        state.diagnostics.append("cross-referencer produced no results (all batches failed)")
 
-    try:
-        data = call_agent_json("cross-referencer", user_msg, max_tokens=16384, max_retries=2)
-    except LLMCallError as exc:
-        state.diagnostics.append(f"cross-referencer agent failed after retries: {exc}")
-        return state
-
-    state.crossref_result = data.get("crossref", [])
+    state.crossref_result = results
 
     # Merge pre-classified rows back in
     _merge_preclassified(state)
