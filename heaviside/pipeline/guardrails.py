@@ -49,6 +49,81 @@ _TAS_DATA_DEFAULT = _REPO_ROOT / "TAS" / "data"
 # ---------------------------------------------------------------------------
 
 _TAS_LOOKUP_CACHE: dict[tuple[str, str], dict | None] = {}
+# Per-file MPN index: filename -> {mpn_lower: flat_record}. Built once on first
+# access and reused, so validating N substitutes is O(file) total instead of
+# O(N × file) — the latter made a large BOM (hundreds of magnetic substitutes,
+# each previously scanning the whole 50 MB magnetics.ndjson) take ~20 min.
+_TAS_INDEX_CACHE: dict[str, dict[str, dict]] = {}
+
+_TAS_KIND_TO_FILES = {
+    "capacitor": ["capacitors.ndjson"],
+    "resistor": ["resistors.ndjson"],
+    "inductor": ["magnetics.ndjson"],
+    "magnetic": ["magnetics.ndjson"],
+    "chipBead": ["magnetics.ndjson"],
+    "mosfet": ["mosfets.ndjson"],
+    "diode": ["diodes.ndjson"],
+}
+
+
+def _flat_record_from_env(env: dict, mi: dict) -> dict:
+    """Extract the commonly-needed fields from an envelope's manufacturerInfo.
+    Handles ``electrical`` as either a dict (caps/resistors) or a LIST (magnetics
+    v2) — reading it as a bare dict used to throw and abort the whole lookup."""
+    di = mi.get("datasheetInfo") or {}
+    elec_raw = di.get("electrical")
+    if isinstance(elec_raw, list):
+        elec = next((x for x in elec_raw if isinstance(x, dict)), {})
+    elif isinstance(elec_raw, dict):
+        elec = elec_raw
+    else:
+        elec = {}
+    part_info = di.get("part") or {}
+    cap_obj = elec.get("capacitance")
+    cap_val = (cap_obj.get("nominal") if isinstance(cap_obj, dict) else cap_obj)
+    res_obj = elec.get("resistance")
+    res_val = (res_obj.get("nominal") if isinstance(res_obj, dict) else res_obj)
+    return {
+        "capacitance": cap_val,
+        "voltage": elec.get("ratedVoltage"),
+        "resistance_Ohm": res_val,
+        "package": part_info.get("caseCode") or part_info.get("case"),
+        "manufacturer": mi.get("name"),
+        "family": mi.get("family") or part_info.get("series"),
+        "status": mi.get("status"),
+        "raw_envelope": env,
+    }
+
+
+def _tas_file_index(path: Path) -> dict[str, dict]:
+    """Return (building+caching once) an mpn_lower -> flat_record index for an
+    NDJSON catalogue file."""
+    cached = _TAS_INDEX_CACHE.get(path.name)
+    if cached is not None:
+        return cached
+    index: dict[str, dict] = {}
+    try:
+        from heaviside.catalogue._reader import iter_envelopes
+
+        for _lineno, env in iter_envelopes(path):
+            for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
+                sub = env.get(top_key)
+                if not isinstance(sub, dict):
+                    continue
+                for inner_key in (None, "mosfet", "diode", "igbt"):
+                    record = sub if inner_key is None else sub.get(inner_key)
+                    if not isinstance(record, dict):
+                        continue
+                    mi = record.get("manufacturerInfo")
+                    if not isinstance(mi, dict):
+                        continue
+                    ref = mi.get("reference")
+                    if isinstance(ref, str) and ref.strip():
+                        index.setdefault(ref.strip().lower(), _flat_record_from_env(env, mi))
+    except Exception:
+        pass
+    _TAS_INDEX_CACHE[path.name] = index
+    return index
 
 
 def _lookup_tas_part(
@@ -60,8 +135,9 @@ def _lookup_tas_part(
     """Look up a part's parsed specs in TAS NDJSON files.
 
     Returns a flat dict of commonly-needed fields (capacitance, voltage,
-    resistance, etc.), or ``None`` if the part is not found. Cached to
-    avoid re-scanning multi-megabyte NDJSON files.
+    resistance, etc.), or ``None`` if the part is not found. Uses a per-file
+    MPN index (built once) so repeated lookups don't re-scan multi-megabyte
+    NDJSON files.
     """
     if not part_number or part_number == "no_substitute":
         return None
@@ -70,80 +146,24 @@ def _lookup_tas_part(
         return _TAS_LOOKUP_CACHE[key]
 
     root = tas_data_dir or _TAS_DATA_DEFAULT
-    result: dict | None = None
-
-    # Map component kind to likely NDJSON filenames.
-    kind_to_files = {
-        "capacitor": ["capacitors.ndjson"],
-        "resistor": ["resistors.ndjson"],
-        "inductor": ["magnetics.ndjson"],
-        "magnetic": ["magnetics.ndjson"],
-        "mosfet": ["mosfets.ndjson"],
-        "diode": ["diodes.ndjson"],
-    }
-    filenames = kind_to_files.get(component_kind, [])
+    filenames = _TAS_KIND_TO_FILES.get(component_kind)
     # Fall back to all NDJSON files if kind is unknown.
     if not filenames:
         filenames = [f.name for f in root.glob("*.ndjson")]
 
-    try:
-        from heaviside.catalogue._reader import iter_envelopes
+    mpn_l = part_number.strip().lower()
+    result: dict | None = None
+    for fname in filenames:
+        path = root / fname
+        if not path.is_file():
+            continue
+        hit = _tas_file_index(path).get(mpn_l)
+        if hit is not None:
+            result = hit
+            break
 
-        for fname in filenames:
-            path = root / fname
-            if not path.is_file():
-                continue
-            for _lineno, env in iter_envelopes(path):
-                # Walk the envelope to find the MPN.
-                for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
-                    sub = env.get(top_key)
-                    if not isinstance(sub, dict):
-                        continue
-                    for inner_key in (None, "mosfet", "diode", "igbt"):
-                        record = sub if inner_key is None else sub.get(inner_key)
-                        if not isinstance(record, dict):
-                            continue
-                        mi = record.get("manufacturerInfo")
-                        if not isinstance(mi, dict):
-                            continue
-                        if mi.get("reference") != part_number.strip():
-                            continue
-                        # Found it. Extract commonly needed fields.
-                        di = mi.get("datasheetInfo") or {}
-                        elec = di.get("electrical") or {}
-                        part_info = di.get("part") or {}
-
-                        cap_obj = elec.get("capacitance")
-                        cap_val = (
-                            (cap_obj.get("nominal") if isinstance(cap_obj, dict) else cap_obj)
-                            if cap_obj is not None
-                            else None
-                        )
-
-                        res_obj = elec.get("resistance")
-                        res_val = (
-                            (res_obj.get("nominal") if isinstance(res_obj, dict) else res_obj)
-                            if res_obj is not None
-                            else None
-                        )
-
-                        result = {
-                            "capacitance": cap_val,
-                            "voltage": elec.get("ratedVoltage"),
-                            "resistance_Ohm": res_val,
-                            "package": part_info.get("caseCode") or part_info.get("case"),
-                            "manufacturer": mi.get("name"),
-                            "family": mi.get("family") or part_info.get("series"),
-                            "status": mi.get("status"),
-                            "raw_envelope": env,
-                        }
-                        _TAS_LOOKUP_CACHE[key] = result
-                        return result
-    except Exception:
-        pass
-
-    _TAS_LOOKUP_CACHE[key] = None
-    return None
+    _TAS_LOOKUP_CACHE[key] = result
+    return result
 
 
 def _mpn_exists_in_tas(
@@ -159,15 +179,15 @@ def _mpn_exists_in_tas(
     root = tas_data_dir or _TAS_DATA_DEFAULT
     if not root.is_dir():
         return False
+    if not mpn or not mpn.strip():
+        return False
 
-    # Fast path: substring grep across all NDJSON files.
+    # Use the per-file MPN index (built once, cached) so checking N substitutes
+    # is O(total catalogue) rather than re-reading every NDJSON file per MPN.
+    mpn_l = mpn.strip().lower()
     for ndjson_file in root.glob("*.ndjson"):
-        try:
-            text = ndjson_file.read_text(encoding="utf-8", errors="ignore")
-            if mpn in text:
-                return True
-        except OSError:
-            continue
+        if mpn_l in _tas_file_index(ndjson_file):
+            return True
     return False
 
 
