@@ -2019,12 +2019,27 @@ def _infer_component_type(row: dict[str, Any]) -> str:
     'CAP CER 10UF', 'RES 10K', 'IND 4.7UH'). Returns "" when it isn't a
     substitutable passive — those rows are correctly left for keep_original
     rather than mis-classified. Manufacturer-agnostic, keyword-based."""
+    # Read ALL free-text columns (any "desc"-named column, plus jedec/value), so
+    # the type signal isn't missed when it lives in a secondary column the main
+    # description doesn't carry (e.g. LumiQuote's "Description (IPN)").
     text = " ".join(
-        str(row.get(k, "")) for k in ("description", "jedec_type", "value")
+        str(v)
+        for k, v in row.items()
+        if v and ("desc" in k.lower() or k in ("jedec_type", "value"))
     ).upper()
+    # Does the part declare an inductance (henries)? Used to disambiguate a
+    # ferrite *bead* (rated in ohms at 100 MHz) from a ferrite-core *inductor*.
+    _has_inductance = any(
+        w in text for w in ("INDUCTOR", "CHOKE", "COIL", "UH", "MH ", "NH", " H ")
+    )
     # Order matters: check the more specific magnetic/resistor words before the
     # capacitor 'CAP' (which also appears in unrelated words rarely).
     if any(w in text for w in ("FERRITE BEAD", "CHIP BEAD", "BEAD", "EMI FILTER")):
+        return "chipBead"
+    # "Ferrite chip" / "chip ferrite" with NO inductance spec is a ferrite bead
+    # (e.g. Murata BLM "Ferrite Chip … 100MHz 3A"), not an inductor — the bare
+    # "FERRITE" keyword below would otherwise mis-file it as magnetic.
+    if any(w in text for w in ("FERRITE CHIP", "CHIP FERRITE")) and not _has_inductance:
         return "chipBead"
     if any(w in text for w in ("VARISTOR", "MOV ", " MOV", "VDR ")):
         return "varistor"
@@ -2061,6 +2076,13 @@ _VALUE_FROM_DESC_RE = {
 # first (unambiguous), then the shorthand.
 _RES_OHM_RE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*([kKmMgG]?)\s*(?:Ω|ohms?)\b", re.I)
 _RES_SHORT_RE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*([kKMGR])\b")
+# Chip-bead impedance (at 100 MHz). Written as "600 Ohm", "1KOhm", or in terse
+# IPN shorthand "50H" / "50R". Accept Ω/ohm and the R/H suffixes, but the H must
+# NOT be the "H" of "MHz" — so it can't be followed by a letter (the (?![A-Za-z])
+# guard rejects "100MHz" while allowing "50H ").
+_BEAD_Z_RE = re.compile(
+    r"(?<![\w.])(\d+(?:\.\d+)?)\s*([kKmMgG]?)\s*(?:Ω|ohms?|[RH])(?![A-Za-z])", re.I
+)
 
 
 def _value_from_description(desc: str, category: str) -> str | None:
@@ -2068,6 +2090,14 @@ def _value_from_description(desc: str, category: str) -> str | None:
     from a part description for a given category. Returns None if not found."""
     if not desc:
         return None
+    if category == "chipBead":
+        # chipBead "value" is its impedance at 100 MHz, in ohms — so ranking can
+        # value-match the closest bead instead of returning the catalogue in
+        # arbitrary order. Prefer the explicit-ohm form, then the R/H shorthand.
+        m = _RES_OHM_RE.search(desc) or _BEAD_Z_RE.search(desc)
+        if not m:
+            return None
+        return f"{m.group(1)}{(m.group(2) or '').strip()}".strip()
     if category == "resistor":
         m = _RES_OHM_RE.search(desc) or _RES_SHORT_RE.search(desc)
         if not m:
@@ -2145,6 +2175,16 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
             row["component_type"] = cat
         else:
             row.pop("component_type", None)  # drop a bogus package-code value
+        # All free-text columns combined, so value/package recovery doesn't miss
+        # data that lives in a secondary description column (e.g. LumiQuote's
+        # "Description (IPN)" carries "50H 100MHZ" when the main "Description
+        # (Part)" only says "Ferrite Chip, 3A, 2 Pin"). Any column whose name
+        # contains "desc" (plus notes) contributes.
+        desc_text = " ".join(
+            str(v)
+            for k, v in row.items()
+            if v and ("desc" in k.lower() or k in ("notes", "jedec_type"))
+        )
         # Convert raw SI values to human-readable for the LLM
         val = row.get("value", "")
         if val and cat:
@@ -2153,13 +2193,13 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
             # No value column — recover the part's declared value from its
             # description so ranking can value-filter candidates (else the LLM
             # sees the first 50 unranked parts and matches nothing).
-            ev = _value_from_description(str(row.get("description", "")), cat)
+            ev = _value_from_description(desc_text, cat)
             if ev:
                 row["value"] = ev
         # No package column — recover a chip case code from the description so
         # footprint-fit has a source size (and stops warning on every row).
         if not row.get("package"):
-            pkg = _package_from_description(str(row.get("description", "")))
+            pkg = _package_from_description(desc_text)
             if pkg:
                 row["package"] = pkg
         # Extract rated_voltage from notes if not explicitly set
