@@ -1097,26 +1097,31 @@ def _merge_preclassified(state: CrossRefState) -> None:
             )
 
 
-# Max JSON characters of BOM payload per cross-referencer LLM call. The model
-# context is 262144 tokens; at ~4 chars/token that is ~1M chars, but we must
-# leave room for the system prompt and the response (max_tokens=16384). ~480k
-# chars ≈ 120k input tokens keeps every batch comfortably under the limit.
-_CROSSREF_BATCH_CHARS = 480_000
+# Cross-referencer batching. Small batches keep each LLM call fast and reliable
+# (less truncation, no token-limit risk) and let us run them concurrently. The
+# model context is 262144 tokens; the BOM payload is dense (~2.3 chars/token), so
+# the char cap is a safety net while the part cap is the primary control.
+_CROSSREF_BATCH_MAX_PARTS = 50          # primary: ≤50 components per LLM call
+_CROSSREF_BATCH_CHARS = 200_000         # safety net: ~85k tokens, well under limit
+_CROSSREF_MAX_CONCURRENCY = 5           # batches run in parallel (I/O-bound calls)
 
 
 def _batch_for_llm(
-    entries: list[dict[str, Any]], max_chars: int
+    entries: list[dict[str, Any]],
+    max_chars: int = _CROSSREF_BATCH_CHARS,
+    max_parts: int = _CROSSREF_BATCH_MAX_PARTS,
 ) -> list[list[dict[str, Any]]]:
-    """Split BOM entries into batches whose serialized size stays under
-    ``max_chars``, so no single LLM request exceeds the model token limit. A
-    single entry larger than the budget still goes out alone (better an oversized
-    request that may fail than dropping the component silently)."""
+    """Split BOM entries into batches capped by BOTH a component count and a
+    serialized-size budget (whichever is hit first), so no single LLM request
+    exceeds the model token limit and each call stays small/fast. A single entry
+    larger than the char budget still goes out alone (better an oversized request
+    that may fail than dropping the component silently)."""
     batches: list[list[dict[str, Any]]] = []
     cur: list[dict[str, Any]] = []
     cur_len = 0
     for e in entries:
         elen = len(json.dumps(e))
-        if cur and cur_len + elen > max_chars:
+        if cur and (len(cur) >= max_parts or cur_len + elen > max_chars):
             batches.append(cur)
             cur, cur_len = [], 0
         cur.append(e)
@@ -1187,16 +1192,18 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
     # (400 "exceeded model token limit"), which previously failed the entire
     # crossref and returned zero substitutes. Batching lets every component get
     # referenced; one bad batch only loses its own rows, not the whole run.
-    batches = _batch_for_llm(bom_for_llm, _CROSSREF_BATCH_CHARS)
+    batches = _batch_for_llm(bom_for_llm)
     if len(batches) > 1:
         logger.info(
-            "CR stage 3: BOM split into %d batches (%d components) for the LLM",
+            "CR stage 3: BOM split into %d batches (%d components, ≤%d each) "
+            "run %d-way concurrently",
             len(batches),
             len(bom_for_llm),
+            _CROSSREF_BATCH_MAX_PARTS,
+            _CROSSREF_MAX_CONCURRENCY,
         )
-    results: list[dict[str, Any]] = []
-    failed_batches = 0
-    for bi, batch in enumerate(batches, 1):
+
+    def _run_batch(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
         user_msg = json.dumps(
             {
                 "source_bom": batch,
@@ -1209,13 +1216,35 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
             data = call_agent_json(
                 "cross-referencer", user_msg, max_tokens=16384, max_retries=2
             )
-            results.extend(data.get("crossref", []))
+            return data.get("crossref", []), None
         except LLMCallError as exc:
-            failed_batches += 1
-            state.diagnostics.append(
-                f"cross-referencer batch {bi}/{len(batches)} failed after retries: {exc}"
-            )
-    if failed_batches == len(batches):
+            return [], str(exc)
+
+    # Batches are independent network-bound calls — run them concurrently so a
+    # large BOM finishes in roughly one batch's time rather than the sum. Order
+    # is preserved for a stable report.
+    results: list[dict[str, Any]] = []
+    failed_batches = 0
+    if len(batches) == 1:
+        rows, err = _run_batch(batches[0])
+        results.extend(rows)
+        if err:
+            failed_batches = 1
+            state.diagnostics.append(f"cross-referencer failed after retries: {err}")
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        workers = min(_CROSSREF_MAX_CONCURRENCY, len(batches))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            outcomes = list(pool.map(_run_batch, batches))
+        for bi, (rows, err) in enumerate(outcomes, 1):
+            results.extend(rows)
+            if err:
+                failed_batches += 1
+                state.diagnostics.append(
+                    f"cross-referencer batch {bi}/{len(batches)} failed after retries: {err}"
+                )
+    if batches and failed_batches == len(batches):
         # Nothing came back at all — surface it as a single clear diagnostic.
         state.diagnostics.append("cross-referencer produced no results (all batches failed)")
 

@@ -20,7 +20,7 @@ from pathlib import Path
 from heaviside.pipeline.bom_import import parse_bom_file
 from heaviside.pipeline.crossref import CrossRefState
 from heaviside.pipeline.crossref_pipeline import (
-    _CROSSREF_BATCH_CHARS,
+    _CROSSREF_BATCH_MAX_PARTS,
     _batch_for_llm,
     _build_bom_for_llm,
     _normalize_bom,
@@ -30,8 +30,9 @@ from heaviside.pipeline.crossref_pipeline import (
 # The cross-referencer model context window (tokens). Every batch must stay
 # under this or the API returns 400 and the crossref produces nothing.
 _MODEL_TOKEN_LIMIT = 262_144
-# Rough chars→tokens ratio used to estimate request size.
-_CHARS_PER_TOKEN = 4
+# Conservative chars→tokens ratio. The real BOM payload is dense (~2.3
+# chars/token); use 2.0 so the test OVER-estimates tokens and stays strict.
+_CHARS_PER_TOKEN = 2.0
 
 _FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "lumiquote_bom_v2.xlsx"
 
@@ -67,7 +68,7 @@ def _batches_for_fixture():
         CrossRefState(source_bom=nb, target_manufacturer="Würth Elektronik")
     )
     entries = _build_bom_for_llm(state)
-    return entries, _batch_for_llm(entries, _CROSSREF_BATCH_CHARS)
+    return entries, _batch_for_llm(entries)
 
 
 def test_large_bom_is_split_into_multiple_batches():
@@ -76,6 +77,14 @@ def test_large_bom_is_split_into_multiple_batches():
     assert len(batches) > 1
     # Every component is covered exactly once across the batches (none dropped).
     assert sum(len(b) for b in batches) == len(entries)
+
+
+def test_no_batch_exceeds_part_cap():
+    """Each batch is capped at ≤50 components so every LLM call stays small and
+    fast (and can run concurrently)."""
+    _entries, batches = _batches_for_fixture()
+    for b in batches:
+        assert len(b) <= _CROSSREF_BATCH_MAX_PARTS
 
 
 def test_every_batch_stays_under_model_token_limit():
@@ -102,11 +111,19 @@ def test_batch_helper_respects_char_budget():
     oversized entry (which still goes out alone rather than being dropped)."""
     entries = [{"i": i, "pad": "x" * 1000} for i in range(50)]
     budget = 5000
-    batches = _batch_for_llm(entries, budget)
+    batches = _batch_for_llm(entries, max_chars=budget, max_parts=1000)
     assert sum(len(b) for b in batches) == len(entries)  # nothing dropped
     for b in batches:
         if len(b) > 1:
             assert len(json.dumps(b)) <= budget + len(json.dumps(b[0]))
+
+
+def test_batch_helper_respects_part_cap():
+    """Unit-level: the part cap splits even when the char budget is huge."""
+    entries = [{"i": i} for i in range(125)]
+    batches = _batch_for_llm(entries, max_chars=10_000_000, max_parts=50)
+    assert [len(b) for b in batches] == [50, 50, 25]
+    assert sum(len(b) for b in batches) == 125
 
 
 def test_prefetch_finds_candidates_for_enriched_passives():
