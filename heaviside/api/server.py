@@ -883,6 +883,7 @@ async def submit_crossref_from_bom(
     component list. The BOM is parsed up front so a malformed file fails fast
     with 422 instead of inside the background job."""
     import asyncio
+    import hashlib
 
     from heaviside.api.jobs import registry
     from heaviside.api.telemetry import wrap_job
@@ -890,17 +891,27 @@ async def submit_crossref_from_bom(
 
     raw = await file.read()
     orig_name = file.filename or "bom.csv"
+    # Stamp the input's identity onto the job so "is this the same BOM?" is a
+    # one-glance check, not a forensic diff of two result sets. The SHA-256 is of
+    # the raw uploaded bytes — two uploads of the same file share a hash; an
+    # edited/re-exported file (even at the same path) does not.
+    input_sha256 = hashlib.sha256(raw).hexdigest()
     try:
         source_bom = await asyncio.to_thread(parse_bom_file, raw, orig_name)
     except BomImportError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    input_bom_rows = len(source_bom)
 
     def run(update: Any) -> dict[str, Any]:
         from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
 
         cb = _crossref_progress_cb(update, _CROSSREF_CORE_STAGES)
         outcome = run_crossref_pipeline(source_bom, target_manufacturer, progress=cb)
-        return _crossref_outcome_dict(outcome)
+        result = _crossref_outcome_dict(outcome)
+        result["input_file_name"] = orig_name
+        result["input_sha256"] = input_sha256
+        result["input_bom_rows"] = input_bom_rows
+        return result
 
     return {"job_id": registry.submit("crossref_bom", wrap_job(
         run,
@@ -1024,6 +1035,13 @@ def _job_summary(job: Any) -> dict[str, Any]:
                 f"{r['coverage_substituted']}/{r['coverage_total']} "
                 f"({r['coverage_pct']}%) → {r.get('target_manufacturer')}"
             )
+            # Append the input's identity so two runs of the "same" BOM are
+            # distinguishable at a glance: name, parsed row count, short hash.
+            name = r.get("input_file_name")
+            sha = r.get("input_sha256")
+            rows = r.get("input_bom_rows")
+            if name and sha:
+                summary += f" · {name} ({rows} rows, {sha[:12]})"
     elif job.status == "error":
         summary = job.error
     elif job.status in ("running", "queued"):

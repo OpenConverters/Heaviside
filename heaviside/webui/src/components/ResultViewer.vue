@@ -51,6 +51,8 @@ function dsOpen(mpn, componentType) {
            :value="(result.passed ? 'PASS' : 'REVIEW') + ' → ' + result.target_manufacturer" />
       <Tag v-if="result.coverage_pct != null" severity="info" style="margin-left:.5rem"
            :value="'coverage ' + result.coverage_substituted + '/' + result.coverage_total + ' (' + result.coverage_pct + '%)'" />
+      <Tag v-if="result.input_sha256" severity="secondary" style="margin-left:.5rem"
+           :value="(result.input_file_name || 'BOM') + ' · ' + result.input_bom_rows + ' rows · ' + result.input_sha256.slice(0, 12)" />
       <DataTable :value="result.components" size="small" stripedRows removableSort
                  style="margin-top:.6rem" v-model:expandedRows="expanded" dataKey="ref_des"
                  @rowClick="(e) => (expanded[e.data.ref_des] = expanded[e.data.ref_des] ? undefined : e.data)"
