@@ -1,6 +1,6 @@
 ---
 name: bom-header-mapper
-description: Maps the messy header row of an uploaded BOM (CSV/Excel export from a PLM, distributor cart, or reference-design tab) onto the canonical field names the cross-reference pipeline understands. Single-shot, no tools. Picks WHICH existing column is the manufacturer part number, the manufacturer, the value, etc. — it never invents values; it only selects among the headers it is given. Runs on every BOM parse (best-effort): its per-column mapping wins and deterministic aliasing fills the rest, so non-standard headers aren't missed.
+description: Maps the messy header row of an uploaded BOM (CSV/Excel export from a PLM, distributor cart, or reference-design tab) onto the canonical field names the cross-reference pipeline understands. Single-shot, no tools. Picks WHICH existing column is the manufacturer part number, the manufacturer, the value, etc. — it never invents values; it only selects among the headers it is given. Runs on every BOM parse as a best-effort step — its per-column mapping wins and deterministic aliasing fills the rest, so non-standard headers aren't missed.
 allowed_tools: []
 ---
 

@@ -1952,36 +1952,53 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
     # cannot produce a verdict (LLM unreachable/timeout/unparseable even after
     # retries) is a HARD failure — a cross-reference without its Ray+Nicola
     # review is not a valid result, so raise rather than appending a diagnostic.
+    _batch_list = batches or [[]]
+
+    def _review_one(reviewer_name: str, bi: int, batch: list[dict[str, Any]]):
+        refs = {r.get("ref_des") for r in batch}
+        review_input = {
+            "crossref": batch,
+            "target_manufacturer": state.target_manufacturer,
+            "total_components": len(state.source_bom),
+            "batch": f"{bi}/{len(_batch_list)}" if len(_batch_list) > 1 else "1/1",
+            "guardrail_fires": [f for r in refs for f in fires_by_ref.get(r, [])],
+        }
+        review_tokens = min(8192 + len(batch) * 128, 16384)
+        try:
+            vd = call_agent_json(
+                reviewer_name,
+                f"{_SCOPE}CROSS-REFERENCE REVIEW\n\n{json.dumps(review_input, indent=2)}",
+                max_tokens=review_tokens,
+                max_retries=max_attempts,
+                json_mode=True,
+            )
+            return normalize_reviewer_verdict(vd, reviewer_name), None
+        except LLMCallError as exc:
+            return None, exc
+
     for reviewer_name in ("ray", "nicola"):
-        chunk_verdicts: list[dict[str, Any]] = []
-        for bi, batch in enumerate(batches or [[]], 1):
-            refs = {r.get("ref_des") for r in batch}
-            review_input = {
-                "crossref": batch,
-                "target_manufacturer": state.target_manufacturer,
-                "total_components": len(state.source_bom),
-                "batch": f"{bi}/{len(batches)}" if len(batches) > 1 else "1/1",
-                "guardrail_fires": [
-                    f for r in refs for f in fires_by_ref.get(r, [])
-                ],
-            }
-            review_tokens = min(8192 + len(batch) * 128, 16384)
-            try:
-                vd = call_agent_json(
-                    reviewer_name,
-                    f"{_SCOPE}CROSS-REFERENCE REVIEW\n\n{json.dumps(review_input, indent=2)}",
-                    max_tokens=review_tokens,
-                    max_retries=max_attempts,
-                    json_mode=True,
+        # Review batches run concurrently (independent I/O-bound calls) so a
+        # large BOM's review finishes in ~one batch's time, not the sum.
+        if len(_batch_list) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            workers = min(_CROSSREF_MAX_CONCURRENCY, len(_batch_list))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                outcomes = list(
+                    pool.map(lambda a: _review_one(reviewer_name, a[0], a[1]),
+                             list(enumerate(_batch_list, 1)))
                 )
-                vd = normalize_reviewer_verdict(vd, reviewer_name)
-            except LLMCallError as exc:
+        else:
+            outcomes = [_review_one(reviewer_name, 1, _batch_list[0])]
+        chunk_verdicts: list[dict[str, Any]] = []
+        for bi, (vd, err) in enumerate(outcomes, 1):
+            if err is not None:
                 raise CrossRefPipelineError(
                     f"CR stage 7: reviewer {reviewer_name!r} could not produce a "
-                    f"valid verdict for batch {bi}/{len(batches)} ({exc}). A "
+                    f"valid verdict for batch {bi}/{len(_batch_list)} ({err}). A "
                     f"cross-reference without its Ray+Nicola review is not a valid "
                     f"result — aborting (no silent fallback)."
-                ) from exc
+                ) from err
             chunk_verdicts.append(vd)
         # Aggregate the per-batch verdicts into one reviewer verdict.
         approved = all(
