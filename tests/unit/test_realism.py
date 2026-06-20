@@ -305,6 +305,34 @@ class TestOrchestratorVerdict:
         assert r.verdict is RealismVerdict.PASS
         assert any(c.name == "duty_cycle_bounds" and c.status is CheckStatus.PASS for c in r.checks)
 
+    def test_metadata_only_pass_does_not_carry_verdict(self):
+        """Regression: a design whose ONLY passing check is the audit/meta
+        ``selection_provenance_complete`` (every physics check UNAVAILABLE
+        because sim/BOM never produced inputs) must be INCOMPLETE, not PASS.
+
+        This is the fail-open hole that let a degraded TAS read as realistic on
+        bookkeeping alone. ``stage3_realize`` now raises before emitting such a
+        TAS; this pins the gate's own defence-in-depth regardless of producer.
+        """
+        from heaviside import provenance
+
+        tas = _buck_shaped_tas()
+        # Stamp Q1 with a complete provenance envelope but NO ratings/stress and
+        # NO simulation_results — so provenance PASSes and every physics check
+        # stays UNAVAILABLE.
+        q1 = tas["topology"]["stages"][0]["circuit"]["components"][0]
+        q1["mpn"] = "FAKE-FET-100V"
+        q1["selection_provenance"] = provenance.make(
+            producer="test", method="manual", source_ref="unit-test", inputs={"x": 1}
+        )
+        r = evaluate_tas(tas, topology="buck")
+        prov = next(c for c in r.checks if c.name == "selection_provenance_complete")
+        assert prov.status is CheckStatus.PASS  # the only PASS, and it's meta
+        assert not any(
+            c.status is CheckStatus.PASS and c.name in ALL_CHECKS for c in r.checks
+        )
+        assert r.verdict is RealismVerdict.INCOMPLETE  # NOT pass
+
     def test_any_fail_is_fail(self):
         tas = _buck_shaped_tas()
         tas["duty"] = 0.99  # buck max is 0.95 → FAIL

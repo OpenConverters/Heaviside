@@ -38,11 +38,10 @@ source of truth for the design logic.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
@@ -84,6 +83,20 @@ logger = logging.getLogger(__name__)
 class FullDesignError(RuntimeError):
     """Raised when the orchestrator cannot proceed (e.g. no viable
     topology survives Stage 1)."""
+
+
+class RealizeError(FullDesignError):
+    """Raised when a Stage 3 realize step (component design, decompose,
+    attach, BOM assembly, enrichment, simulation, analyst) fails.
+
+    Per CLAUDE.md "no fallbacks, no silent shortcuts — throw": a realize
+    step that cannot produce its output is a HARD failure, not a diagnostic
+    to swallow. Swallowing it lets a degraded TAS reach the realism gate,
+    where missing physics inputs become ``UNAVAILABLE`` (never ``FAIL``) and
+    a non-physics check (e.g. selection_provenance_complete) can carry a
+    PASS verdict — i.e. a design whose physics was never evaluated reads as
+    realistic. So every failed step raises, carrying which step and which
+    topology failed and chaining the native exception."""
 
 
 # ---------------------------------------------------------------------------
@@ -404,21 +417,22 @@ def stage2_pick_magnetics(
 
 
 # ---------------------------------------------------------------------------
-# Stages 3 & 4 — placeholders, wired in a follow-up
+# Stage 3 — realize (decompose → BOM → simulate → realism gate)
 # ---------------------------------------------------------------------------
 #
-# Stage 3 needs:
-#   - Ideal-component ngspice deck (existing decomposer + generate_netlist)
-#   - simulate_closed_loop → tuned duty
-#   - fsw sweep around the spec's nominal, minimising total magnetic +
-#     switch losses (Steinmetz core + I²·R copper + (1/2)·Coss·Vds²·fsw FET)
-#   - design_magnetics (slow mode) seeded with the tuned operating point
-#   - extras_components for outputInductor / resonant tank etc.
-#   - heaviside.pipeline.realism.evaluate_tas for the final verdict
+# stage3_realize takes a Stage 2 TopologyPick and runs it end to end:
+#   - design_converter_components (MKF magnetic + extras)
+#   - decompose_from_spec → TAS + ideal netlist
+#   - assemble_bom_from_tas → real FET/diode/cap/controller from the internal DB
+#   - enrich_tas_for_realism + inject_parasitics
+#   - simulate_closed_loop (or steady_state) + run_analyst
+#   - realism_gate.evaluate → verdict
+# Every step is a hard failure: it raises RealizeError rather than returning a
+# degraded outcome (a degraded TAS would slip a non-physics PASS past the gate).
 #
-# Stage 4 ranks survivors by a composite of (efficiency, total volume,
-# part count, BOM cost). The composite weighting belongs in the
-# design-orchestrator agent prompt — Python here only assembles inputs.
+# Stage 3b (stage3b_gatekeeper) is the analytical tight-margin gate; Stage 4
+# (_stage4_adversarial_review) is the Ray + Nicola LLM panel run on the best
+# ranked survivor.
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,6 +492,7 @@ def stage3_realize(
     from heaviside.decomposer import decompose_from_spec
     from heaviside.decomposer.api import DecomposerError
     from heaviside.pipeline import enrich_tas_for_realism
+    from heaviside.pipeline.extract import EnrichmentError
     from heaviside.pipeline.analyst import AnalystError, run_analyst
     from heaviside.sim import (
         SimError,
@@ -490,16 +505,12 @@ def stage3_realize(
 
     topology = pick.topology.name
     spec_dict = _augment_converter_spec(dict(spec), topology)
-    diagnostics: list[str] = []
 
     # Bridge / resonant families model their switching cell as a single
     # behavioural PULSE source by default, which leaves no real MOSFETs for
     # the TAS decomposer's bridge stencils to bind (they require SA/SB/SC/SD,
     # S1/S2, etc.). Request the "switch" deck so MKF emits real switches.
-    try:
-        _fam = pick.topology.family
-    except Exception:
-        _fam = ""
+    _fam = pick.topology.family
     bridge_mode = "switch" if _fam in ("isolated_bridge", "resonant") else ""
 
     try:
@@ -510,11 +521,8 @@ def stage3_realize(
             use_ngspice=False,
             pinned_main=pinned_main,
         )
-    except (BridgeError, Exception) as exc:
-        return DesignOutcome(
-            pick=pick,
-            diagnostics=(f"component design failed: {exc}",),
-        )
+    except BridgeError as exc:
+        raise RealizeError(f"component design failed for {topology}: {exc}") from exc
 
     magnetizing_inductance = components.L_authoritative
     spec_dict["desiredInductance"] = magnetizing_inductance
@@ -544,62 +552,55 @@ def stage3_realize(
             spice_config=dict(spice_config) if spice_config else None,
         )
     except DecomposerError as exc:
-        return DesignOutcome(
-            pick=pick,
-            diagnostics=(f"decompose failed: {exc}",),
-        )
+        raise RealizeError(f"decompose failed for {topology}: {exc}") from exc
 
     try:
         _bridge.attach_components_to_tas(tas, components, topology=topology)
-    except Exception as exc:
-        diagnostics.append(f"attach failed: {exc}")
+    except BridgeError as exc:
+        raise RealizeError(f"attach failed for {topology}: {exc}") from exc
 
     # --- Component selection: stamp real FET/diode/cap from TAS DB ---
+    # A partial BOM is a hard failure: it leaves the realism gate without the
+    # ratings/stress its physics checks need (they go UNAVAILABLE, not FAIL),
+    # so a degraded design can pass on metadata alone. Surface it, don't note it.
     try:
         assemble_bom_from_tas(tas, topology=topology, spec=spec_dict)
     except SelectionError as exc:
-        diagnostics.append(f"BOM selection partial: {exc}")
-    except Exception as exc:
-        diagnostics.append(f"BOM assembly skipped: {exc}")
+        raise RealizeError(f"BOM selection failed for {topology}: {exc}") from exc
 
     try:
         tas = enrich_tas_for_realism(tas, topology=topology, spec=spec_dict)
-    except Exception as exc:
-        return DesignOutcome(
-            pick=pick,
-            tas=tas,
-            diagnostics=(*diagnostics, f"enrichment failed: {exc}"),
-        )
+    except EnrichmentError as exc:
+        raise RealizeError(f"enrichment failed for {topology}: {exc}") from exc
 
     # --- Inject real parasitics into the netlist ---
     realistic_netlist = inject_parasitics(netlist, tas)
 
+    ops = spec_dict.get("operatingPoints") or [{}]
+    first_op = ops[0] if isinstance(ops[0], dict) else {}
+    vouts = first_op.get("outputVoltages")
+    vout_target = (
+        float(vouts[0])
+        if isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))
+        else None
+    )
+    # A vout target ⇒ closed-loop sim is the right model; if it fails, that is
+    # a hard failure — do NOT silently fall back to the open-loop steady-state
+    # sim (which measures a different, unregulated quantity). Only run the
+    # steady-state path when there is genuinely no regulation target.
     try:
-        ops = spec_dict.get("operatingPoints") or [{}]
-        first_op = ops[0] if isinstance(ops[0], dict) else {}
-        vouts = first_op.get("outputVoltages")
-        vout_target = (
-            float(vouts[0])
-            if isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))
-            else None
-        )
-        sim_result = None
         if vout_target is not None:
-            with contextlib.suppress(SimError):
-                sim_result = simulate_closed_loop(
-                    realistic_netlist,
-                    vout_target=vout_target,
-                )
-        if sim_result is None:
+            sim_result = simulate_closed_loop(realistic_netlist, vout_target=vout_target)
+        else:
             sim_result = simulate_steady_state(realistic_netlist)
         stamp_simulation_results(tas, sim_result)
     except (SimError, DecomposerError) as exc:
-        diagnostics.append(f"sim skipped: {exc}")
+        raise RealizeError(f"simulation failed for {topology}: {exc}") from exc
 
     try:
         run_analyst(topology, tas, spec_dict)
     except AnalystError as exc:
-        diagnostics.append(f"analyst skipped: {exc}")
+        raise RealizeError(f"analyst failed for {topology}: {exc}") from exc
 
     report = evaluate_tas(tas, topology=topology, spec=spec_dict)
     verdict_dict = {
@@ -615,7 +616,6 @@ def stage3_realize(
         pick=pick,
         tas=tas,
         verdict_dict=verdict_dict,
-        diagnostics=tuple(diagnostics),
     )
 
 
@@ -828,25 +828,33 @@ def full_design(
         category="design_failure", severity="error", max_age_days=30
     )
     training_topo = load_lessons(category="training_topology_match", max_age_days=90)
-    # TODO(training-loop): training_verdict lessons are loaded but not yet
-    # applied to topology ordering/selection — the verdict feedback signal
-    # is unfinished (see project-next-steps / docs/BACKLOG). `_`-prefixed to
-    # mark intentionally-unused until it is wired in (do not silently drop).
-    _training_verdict = load_lessons(category="training_verdict", max_age_days=90)
+    # training_verdict: severity "info" = the designer produced a PASS design
+    # for this topology against a real reference (strong prefer signal);
+    # "error" = it could not (deprioritise). Both are applied to ordering below.
+    training_verdict = load_lessons(category="training_verdict", max_age_days=90)
     training_eta = load_lessons(category="training_efficiency_gap", max_age_days=90)
 
-    # Build topology preference from training: topologies that matched
-    # reference designs AND passed verdict get priority
+    # Build topology preference from training. Positive signals (prefer):
+    #   * training_topology_match (info) — matched a reference design;
+    #   * training_verdict (info)        — designer PASSed it vs a reference.
+    # Negative signals (deprioritise): recent realism/design failures, or a
+    # training_verdict error (designer could not pass this topology).
     preferred_topos: list[str] = []
     warned_topos: set[str] = set()
     for l in training_topo:
         if l.severity == "info" and l.topology:  # info = matched
             preferred_topos.append(l.topology)
+    for l in training_verdict:
+        if not l.topology:
+            continue
+        if l.severity == "info":
+            preferred_topos.append(l.topology)
+        elif l.severity == "error":
+            warned_topos.add(l.topology)
     for l in (*prior_failures, *prior_design_failures):
         if l.topology in stage1.reconciliation.chosen:
             warned_topos.add(l.topology)
 
-    # Reorder: preferred topologies first, warned last
     chosen = list(stage1.reconciliation.chosen)
     # Hard restriction (opt-in): a caller that pins specific topologies wants
     # ONLY those designed, not the screen's union. `selector_fn` merely
@@ -859,27 +867,19 @@ def full_design(
         chosen = (
             restricted if restricted else [t.lower().replace(" ", "_") for t in restrict_topologies]
         )
+
+    # Reorder by teacher lessons: preferred first, warned last (see helper).
+    chosen = _order_topologies_by_lessons(
+        chosen, preferred=preferred_topos, warned=warned_topos
+    )
     if preferred_topos:
-        seen = set()
-        reordered = []
-        for t in preferred_topos:
-            t_norm = t.lower().replace(" ", "_")
-            for c in chosen:
-                if c == t_norm and c not in seen:
-                    reordered.append(c)
-                    seen.add(c)
-        for c in chosen:
-            if c not in seen:
-                reordered.append(c)
-                seen.add(c)
-        chosen = reordered
         logger.info(
             "Teacher: reordered topologies from training lessons — preferred: %s",
             ", ".join(preferred_topos[:5]),
         )
     if warned_topos:
         logger.warning(
-            "Teacher: %d topologies have recent failure lessons: %s",
+            "Teacher: %d topologies deprioritised (recent failure lessons): %s",
             len(warned_topos),
             ", ".join(sorted(warned_topos)),
         )
@@ -906,7 +906,16 @@ def full_design(
         pct = 25 + int(65 * i / n_picks)
         _emit(f"Realizing & simulating {pick.topology.name} ({i + 1}/{len(stage2.picks)})", pct)
         logger.info("Stage 3: realizing %s", pick.topology.name)
-        outcome = stage3_realize(pick, spec)
+        try:
+            outcome = stage3_realize(pick, spec)
+        except RealizeError as exc:
+            # Multi-topology screen: one topology that cannot be realized must
+            # not abort the whole batch, but it is NOT silently dropped either —
+            # it is recorded with no verdict (sorts last via _outcome_sort_key)
+            # and surfaced in diagnostics so the failure stays visible.
+            logger.warning("Stage 3: %s → realize FAILED: %s", pick.topology.name, exc)
+            outcomes.append(DesignOutcome(pick=pick, diagnostics=(f"realize failed: {exc}",)))
+            continue
         v = outcome.verdict_dict
         verdict = v["verdict"] if v else "no_verdict"
         logger.info("Stage 3: %s → %s", pick.topology.name, verdict)
@@ -1013,6 +1022,40 @@ def _stage4_adversarial_review(outcome: DesignOutcome, *, progress: Any = None) 
         fsw_optimal=outcome.fsw_optimal,
         diagnostics=(*outcome.diagnostics, f"ray+nicola: {len(panel.verdicts)} reviews"),
     )
+
+
+def _order_topologies_by_lessons(
+    chosen: Sequence[str],
+    *,
+    preferred: Sequence[str],
+    warned: Iterable[str],
+) -> list[str]:
+    """Reorder ``chosen`` topologies by teacher lessons: preferred first, warned
+    last, neutral in between.
+
+    Topology names are matched case-insensitively with spaces normalised to
+    underscores. A topology that is BOTH preferred and warned (a recent pass AND
+    a recent failure) keeps neutral priority — the mixed signal cancels. The
+    sort is stable, so ``preferred`` order is preserved within the prefer bucket
+    and ``chosen`` order is preserved within the neutral and warned buckets. No
+    topology is added or dropped — this is a pure reordering of ``chosen``."""
+
+    def _norm(t: str) -> str:
+        return t.lower().replace(" ", "_")
+
+    pref_rank = {_norm(t): i for i, t in enumerate(preferred)}
+    warned_norm = {_norm(t) for t in warned}
+
+    def _priority(c: str) -> tuple[int, int]:
+        is_pref = c in pref_rank
+        is_warned = c in warned_norm
+        if is_pref and not is_warned:
+            return (0, pref_rank[c])
+        if is_warned and not is_pref:
+            return (2, 0)
+        return (1, 0)
+
+    return sorted(chosen, key=_priority)
 
 
 def _outcome_sort_key(o: DesignOutcome) -> tuple[int, float]:

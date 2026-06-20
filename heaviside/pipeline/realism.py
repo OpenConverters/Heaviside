@@ -939,14 +939,30 @@ def _check_selection_provenance(tas: Mapping[str, Any]) -> CheckResult:
     )
 
 
+# The audit/meta checks (provenance envelope completeness, independent-estimator
+# agreement) can FAIL a design, but must NOT by themselves carry a PASS. They
+# describe how trustworthy the *bookkeeping* is, not whether the *physics* holds.
+# A PASS therefore requires at least one genuine physics check (a member of
+# ``ALL_CHECKS``) to have passed — otherwise a design whose every physics check
+# is UNAVAILABLE (sim/BOM never produced its inputs) could read as realistic on
+# metadata alone. See ``stage3_realize``: it now raises rather than emitting such
+# a degraded TAS, and this is the defence-in-depth that catches it regardless of
+# how the TAS was produced.
+_PHYSICS_CHECK_NAMES: frozenset[str] = frozenset(ALL_CHECKS)
+
+
 def _verdict_from(checks: tuple[CheckResult, ...]) -> RealismReport:
     has_fail = any(c.status is CheckStatus.FAIL for c in checks)
-    has_pass = any(c.status is CheckStatus.PASS for c in checks)
+    has_physics_pass = any(
+        c.status is CheckStatus.PASS and c.name in _PHYSICS_CHECK_NAMES for c in checks
+    )
     if has_fail:
         verdict = RealismVerdict.FAIL
-    elif has_pass:
+    elif has_physics_pass:
         verdict = RealismVerdict.PASS
     else:
+        # Either nothing ran, or the only passing checks were audit/meta — in
+        # both cases the physics is not yet established, so be honest: INCOMPLETE.
         verdict = RealismVerdict.INCOMPLETE
     return RealismReport(verdict=verdict, checks=checks)
 

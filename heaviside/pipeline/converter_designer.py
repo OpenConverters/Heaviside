@@ -259,17 +259,12 @@ def design_converter(
         for o in (base.get("operatingPoints") or [])
     ]
 
-    # B7 — cross-OP reconcile of the chosen (magnetic, fsw*) (don't raise; record).
+    # B7 — cross-OP reconcile of the chosen (magnetic, fsw*). A single-topology
+    # designer returns ONE design; if that design saturates or overheats at any
+    # operating point it is not a valid result, so reconcile raises
+    # (InfeasibleAtOP) rather than returning an infeasible design with a note.
     _say("Reconciling the magnetic across all operating points", 64)
-    try:
-        recon = op_reconcile.reconcile(
-            topology, spec_at, chosen.mas, min_isat_ratio=1.2, raise_on_infeasible=False
-        )
-        if not recon.feasible_all_ops:
-            notes.append(f"op_reconcile: infeasible at OP(s) — feedback={recon.constraint_feedback}")
-    except op_reconcile.InfeasibleAtOP as exc:
-        recon = exc.report
-        notes.append(f"op_reconcile: {exc}")
+    recon = op_reconcile.reconcile(topology, spec_at, chosen.mas, min_isat_ratio=1.2)
 
     # --- realize the real converter around the PINNED magnetic ---
     _say("Realizing converter: selecting real TAS parts + MKF SPICE netlist", 70)
@@ -281,18 +276,14 @@ def design_converter(
     # Re-simulate with PyOM's ngspice knobs driven by the REAL selected parts
     # (switchRON ← FET, diodeRS ← rectifier) — the BOM is only known after the
     # first realize (decompose precedes selection), so configure-everything-but-
-    # the-magnetic happens on this second pass. Magnetic stays pinned. Guarded:
-    # if the configured pass fails, keep the first (no silent regression).
+    # the-magnetic happens on this second pass. Magnetic stays pinned. If the
+    # configured pass fails it raises (stage3_realize no longer swallows): a
+    # failed re-sim is a real failure, not a silently-discarded refinement.
     knobs = spice_config_from_bom(outcome.tas)
     if knobs:
         _say("Re-simulating with SPICE knobs from the real parts (FET RON, diode RS)", 80)
-        try:
-            tuned = stage3_realize(pick, spec_at, pinned_main=md, spice_config=knobs)
-            if tuned.tas is not None:
-                outcome = tuned
-                notes.append(f"sim configured from BOM: {knobs}")
-        except Exception as exc:  # keep the first realize
-            notes.append(f"BOM-configured re-sim skipped: {str(exc)[:120]}")
+        outcome = stage3_realize(pick, spec_at, pinned_main=md, spice_config=knobs)
+        notes.append(f"sim configured from BOM: {knobs}")
     _say("Realism gate + gatekeeper on the simulated waveforms", 86)
     outcome = replace(outcome, gatekeeper=stage3b_gatekeeper(outcome),
                       fsw_optimal=float(result.fsw_star_hz))
