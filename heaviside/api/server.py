@@ -23,6 +23,30 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
+
+def _configure_heaviside_logging() -> None:
+    """Route the ``heaviside.*`` loggers to stderr at INFO so the pipeline's
+    progress lines (CR stage N, correction loops, per-batch timing, …) are
+    actually recorded — there was no logging config, so every ``logger.info``
+    was silently dropped and prod runs were unobservable. stderr is captured by
+    supervisor (heaviside.err.log). Honour HEAVISIDE_LOG_LEVEL if set."""
+    import os
+
+    level = getattr(logging, os.environ.get("HEAVISIDE_LOG_LEVEL", "INFO").upper(), logging.INFO)
+    hlog = logging.getLogger("heaviside")
+    if not any(getattr(h, "_heaviside", False) for h in hlog.handlers):
+        handler = logging.StreamHandler()  # stderr
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        handler._heaviside = True  # type: ignore[attr-defined]
+        hlog.addHandler(handler)
+    hlog.setLevel(level)
+    hlog.propagate = False
+
+
+_configure_heaviside_logging()
+
 app = FastAPI(
     title="Heaviside",
     description="Power converter auto-design API",

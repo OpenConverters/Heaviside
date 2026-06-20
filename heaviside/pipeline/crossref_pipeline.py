@@ -1117,9 +1117,15 @@ def _merge_preclassified(state: CrossRefState) -> None:
 # (less truncation, no token-limit risk) and let us run them concurrently. The
 # model context is 262144 tokens; the BOM payload is dense (~2.3 chars/token), so
 # the char cap is a safety net while the part cap is the primary control.
-_CROSSREF_BATCH_MAX_PARTS = 50          # primary: ≤50 components per LLM call
-_CROSSREF_BATCH_CHARS = 200_000         # safety net: ~85k tokens, well under limit
-_CROSSREF_MAX_CONCURRENCY = 12          # batches run in parallel (I/O-bound calls)
+# Bigger batches = FEWER calls = less repeated system-prompt/instruction overhead
+# (the per-component data is sent once regardless of batch size, so the only cost
+# that scales with batch COUNT is the system prompt repeated per call). 120 parts
+# ≈ 175k tokens — comfortably under the 262k limit (with room for the system
+# prompt + a 16k response) — while still giving several batches to run
+# concurrently. The char cap is the real safety net.
+_CROSSREF_BATCH_MAX_PARTS = 120         # ≈175k tokens/call; ~2.4× fewer calls than 50
+_CROSSREF_BATCH_CHARS = 400_000         # safety net: ~175k tokens, under limit
+_CROSSREF_MAX_CONCURRENCY = 12          # batches run in parallel (I/O-bound, cost-neutral)
 # Review (Ray/Nicola) batching: the rows are TRIMMED (small), so larger batches
 # are fine; the reviewer verdict is aggregated across batches. Keep well under
 # the 262k limit incl. the per-batch guardrail fires + reviewer system prompt.
@@ -1182,6 +1188,9 @@ def _crossref_llm_batched(
         except LLMCallError as exc:
             return [], str(exc)
 
+    import time
+
+    t0 = time.monotonic()
     if concurrent and len(batches) > 1:
         from concurrent.futures import ThreadPoolExecutor
 
@@ -1196,6 +1205,12 @@ def _crossref_llm_batched(
         rows.extend(r)
         if err:
             errors.append(f"batch {bi}/{len(batches)}: {err}")
+    logger.info(
+        "cross-referencer: %d item(s) in %d batch(es) %s -> %d rows, %d error(s) in %.0fs",
+        len(items), len(batches),
+        "concurrent" if (concurrent and len(batches) > 1) else "sequential",
+        len(rows), len(errors), time.monotonic() - t0,
+    )
     return rows, errors
 
 
