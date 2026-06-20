@@ -129,6 +129,12 @@ class JobRegistry:
         self._lock = threading.Lock()
         self._queue: Queue[tuple[str, Callable[[], Any]]] = Queue()
         self._persist_dir = Path(persist_dir) if persist_dir is not None else _DEFAULT_JOBS_DIR
+        # Optional hook called (best-effort) with the job_id right after a job
+        # finishes successfully — used to pre-render the report PDF so the first
+        # download is instant. Must be cheap/non-blocking (it runs on the worker
+        # thread before the next job starts); the callback should offload heavy
+        # work to its own thread.
+        self.on_job_done: Callable[[str], None] | None = None
         self._load_persisted()
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
@@ -339,6 +345,12 @@ class JobRegistry:
                 )
             finally:
                 self._persist_job(job_id)  # done/error → survive a restart
+                done_job = self.get(job_id)
+                if done_job is not None and done_job.status == "done" and self.on_job_done:
+                    try:
+                        self.on_job_done(job_id)  # e.g. pre-render the report PDF
+                    except Exception:  # noqa: BLE001 - best-effort, never fail the job
+                        logger.exception("on_job_done hook failed for %s", job_id)
                 self._queue.task_done()
 
 

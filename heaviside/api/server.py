@@ -625,19 +625,84 @@ def _pdf_cache_path(job_id: str):
     return base / f"{job_id}.report.pdf"
 
 
+def _build_job_pdf(job: Any, job_id: str) -> bytes | None:
+    """Render a finished job's report HTML → PDF bytes, or None if it has no
+    renderable report. Raises ReporterError if the PDF backend fails."""
+    from heaviside.stages.reporter import html_to_pdf
+
+    result = job.result if isinstance(job.result, dict) else {}
+    html = result.get("html")
+    if not html and "components" in result:
+        from heaviside.report.crossref_html import render_crossref_html
+
+        html = render_crossref_html(result, title=f"{job.kind} · {job_id}")
+    if not html:
+        return None
+    import time as _t
+
+    t0 = _t.monotonic()
+    pdf = html_to_pdf(html)
+    logger.info("rendered PDF for job %s (%d bytes) in %.0fs", job_id, len(pdf), _t.monotonic() - t0)
+    return pdf
+
+
+def _ensure_pdf_cached(job_id: str) -> "Path | None":  # noqa: F821
+    """Render + cache a finished job's PDF if not already cached. Returns the
+    cache path (or None if the job has no report). Used by the pre-render hook
+    and as the on-demand fallback."""
+    from heaviside.api.jobs import registry
+
+    cache = _pdf_cache_path(job_id)
+    if cache.is_file():
+        return cache
+    job = registry.get(job_id)
+    if job is None or job.status != "done":
+        return None
+    pdf = _build_job_pdf(job, job_id)
+    if pdf is None:
+        return None
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(pdf)
+    return cache
+
+
+def _prerender_report_pdf(job_id: str) -> None:
+    """on_job_done hook: render + cache the report PDF in a background thread so
+    the FIRST download is instant (WeasyPrint on a large report takes minutes).
+    Best-effort — never affects the job itself."""
+    import threading
+
+    def _work() -> None:
+        try:
+            if _ensure_pdf_cached(job_id) is not None:
+                logger.info("pre-rendered report PDF cache for job %s", job_id)
+        except Exception as exc:  # noqa: BLE001 - best-effort
+            logger.warning("pre-render PDF for job %s failed: %s", job_id, exc)
+
+    threading.Thread(target=_work, daemon=True).start()
+
+
+# Register the pre-render hook so finished jobs cache their PDF up front.
+try:
+    from heaviside.api.jobs import registry as _registry
+
+    _registry.on_job_done = _prerender_report_pdf
+except Exception:  # noqa: BLE001 - registry import is optional at import time
+    pass
+
+
 @app.get("/jobs/{job_id}/report.pdf")
 def job_report_pdf(job_id: str):
-    """Render a finished job's report to a deliverable PDF — a design report for
-    design jobs, a full cross-reference report (coverage, per-category crossing
-    tables, the per-parameter rationale, reviewer verdicts) for crossref jobs.
+    """Serve a finished job's report PDF — design report for design jobs, full
+    cross-reference report for crossref jobs.
 
-    The PDF is cached on disk: WeasyPrint on a large report (thousands of rows)
-    takes minutes, so we render once and serve the cached bytes thereafter
-    (otherwise every download re-renders and trips the nginx gateway timeout)."""
+    The PDF is cached on disk (rendered once, by the on_job_done pre-render hook
+    or on first request): WeasyPrint on a large report takes minutes, which would
+    otherwise re-render on every download and trip the gateway timeout."""
     from fastapi.responses import Response
 
     from heaviside.api.jobs import registry
-    from heaviside.stages.reporter import ReporterError, html_to_pdf
+    from heaviside.stages.reporter import ReporterError
 
     job = registry.get(job_id)
     if job is None or job.status != "done":
@@ -649,29 +714,14 @@ def job_report_pdf(job_id: str):
     cache = _pdf_cache_path(job_id)
     if cache.is_file():
         return Response(content=cache.read_bytes(), media_type="application/pdf", headers=headers)
-
-    # Design jobs carry pre-rendered HTML; crossref jobs render from the outcome.
-    html = result.get("html")
-    if not html and "components" in result:
-        from heaviside.report.crossref_html import render_crossref_html
-
-        html = render_crossref_html(result, title=f"{job.kind} · {job_id}")
-    if not html:
-        raise HTTPException(status_code=409, detail="job has no report to render")
-    import time as _t
-
-    t0 = _t.monotonic()
+    # Not cached yet (pre-render still running or an older job) — render on demand.
     try:
-        pdf = html_to_pdf(html)
+        path = _ensure_pdf_cached(job_id)
     except ReporterError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    logger.info("rendered PDF for job %s (%d bytes) in %.0fs", job_id, len(pdf), _t.monotonic() - t0)
-    try:  # cache best-effort so repeat downloads are instant
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_bytes(pdf)
-    except OSError as exc:
-        logger.warning("could not cache PDF for job %s: %s", job_id, exc)
-    return Response(content=pdf, media_type="application/pdf", headers=headers)
+    if path is None:
+        raise HTTPException(status_code=409, detail="job has no report to render")
+    return Response(content=path.read_bytes(), media_type="application/pdf", headers=headers)
 
 
 # Cross-reference pipeline stages, mirrored into the Jobs view so the run shows
