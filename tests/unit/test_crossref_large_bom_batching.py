@@ -149,3 +149,56 @@ def test_prefetch_finds_candidates_for_enriched_passives(fixture):
     with_cands = sum(1 for c in sub if state.candidates_by_ref.get(c["ref_des"]))
     # The overwhelming majority of common passives should have candidates.
     assert with_cands >= 0.8 * len(sub)
+
+
+def test_review_payload_batches_under_token_limit():
+    """Regression: Ray/Nicola review of a large BOM must batch so no single
+    request exceeds the model context (prod 400 on the 2101-row BOM)."""
+    from heaviside.pipeline.crossref_pipeline import (
+        _REVIEW_BATCH_CHARS,
+        _REVIEW_BATCH_MAX_PARTS,
+    )
+
+    rows = [
+        {
+            "ref_des": f"R{i}",
+            "component_type": "resistor",
+            "original_pn": f"MPN-{i}",
+            "substitute_pn": f"WUR-{i}",
+            "status": "recommended",
+            "notes": "matches value; deviates on package — verify board space " * 2,
+        }
+        for i in range(2500)
+    ]
+    batches = _batch_for_llm(
+        rows, max_chars=_REVIEW_BATCH_CHARS, max_parts=_REVIEW_BATCH_MAX_PARTS
+    )
+    assert len(batches) > 1
+    assert sum(len(b) for b in batches) == len(rows)
+    for b in batches:
+        assert len(b) <= _REVIEW_BATCH_MAX_PARTS
+        payload = json.dumps({"crossref": b, "guardrail_fires": []})
+        assert len(payload) / _CHARS_PER_TOKEN < _MODEL_TOKEN_LIMIT
+
+
+def test_crossref_llm_batched_splits_and_merges(monkeypatch):
+    """The shared batched-crossref helper (used by retry / Otto / correction)
+    must split a large item list across calls and concatenate the rows."""
+    import heaviside.pipeline.crossref_pipeline as cp
+
+    seen_batch_sizes = []
+
+    def _fake_call_agent_json(agent, msg, **kw):
+        import json as _j
+        payload = _j.loads(msg)
+        items = payload.get("components_to_fix") or payload.get("source_bom") or []
+        seen_batch_sizes.append(len(items))
+        return {"crossref": [{"ref_des": it["ref_des"], "status": "recommended"} for it in items]}
+
+    monkeypatch.setattr(cp, "call_agent_json", _fake_call_agent_json)
+    items = [{"ref_des": f"C{i}", "pad": "x" * 8000} for i in range(120)]  # forces >1 batch
+    rows, errors = cp._crossref_llm_batched(items, lambda b: {"source_bom": b})
+    assert errors == []
+    assert len(rows) == len(items)  # every item came back
+    assert len(seen_batch_sizes) > 1  # split into multiple calls
+    assert max(seen_batch_sizes) <= cp._CROSSREF_BATCH_MAX_PARTS

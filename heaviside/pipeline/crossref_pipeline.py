@@ -1120,6 +1120,11 @@ def _merge_preclassified(state: CrossRefState) -> None:
 _CROSSREF_BATCH_MAX_PARTS = 50          # primary: ≤50 components per LLM call
 _CROSSREF_BATCH_CHARS = 200_000         # safety net: ~85k tokens, well under limit
 _CROSSREF_MAX_CONCURRENCY = 12          # batches run in parallel (I/O-bound calls)
+# Review (Ray/Nicola) batching: the rows are TRIMMED (small), so larger batches
+# are fine; the reviewer verdict is aggregated across batches. Keep well under
+# the 262k limit incl. the per-batch guardrail fires + reviewer system prompt.
+_REVIEW_BATCH_MAX_PARTS = 200
+_REVIEW_BATCH_CHARS = 200_000
 
 
 def _batch_for_llm(
@@ -1145,6 +1150,53 @@ def _batch_for_llm(
     if cur:
         batches.append(cur)
     return batches
+
+
+def _crossref_llm_batched(
+    items: list[dict[str, Any]],
+    build_payload: Any,
+    *,
+    max_tokens: int = 8192,
+    max_retries: int = 1,
+    concurrent: bool = False,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Send a per-component ``items`` list to the cross-referencer in token-safe
+    batches and collect the returned crossref rows. ``build_payload(batch)`` -> a
+    dict (the user message for that batch). Returns ``(rows, errors)`` — rows are
+    the concatenated ``crossref``/``components`` from every successful batch;
+    errors lists per-batch failures. Used by every stage that re-sends scaling
+    per-component data to the LLM (retry, Otto re-crossref, correction) so none
+    can blow the 262k token limit."""
+    batches = _batch_for_llm(items)
+
+    def _run(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
+        try:
+            data = call_agent_json(
+                "cross-referencer",
+                json.dumps(build_payload(batch), indent=2),
+                max_tokens=max_tokens,
+                max_retries=max_retries,
+            )
+            r = data.get("crossref", data.get("components", []))
+            return (r if isinstance(r, list) else []), None
+        except LLMCallError as exc:
+            return [], str(exc)
+
+    if concurrent and len(batches) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(_CROSSREF_MAX_CONCURRENCY, len(batches))) as pool:
+            outcomes = list(pool.map(_run, batches))
+    else:
+        outcomes = [_run(b) for b in batches]
+
+    rows: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for bi, (r, err) in enumerate(outcomes, 1):
+        rows.extend(r)
+        if err:
+            errors.append(f"batch {bi}/{len(batches)}: {err}")
+    return rows, errors
 
 
 def _build_bom_for_llm(state: CrossRefState) -> list[dict[str, Any]]:
@@ -1554,9 +1606,10 @@ def _stage4b_retry_hallucinations(
     if not retry_bom:
         return state
 
-    retry_msg = json.dumps(
-        {
-            "source_bom": retry_bom,
+    retried, errors = _crossref_llm_batched(
+        retry_bom,
+        lambda batch: {
+            "source_bom": batch,
             "target_manufacturer": state.target_manufacturer,
             "circuit_context": state.circuit_context,
             "IMPORTANT": (
@@ -1568,21 +1621,10 @@ def _stage4b_retry_hallucinations(
                 "or construct MPN strings."
             ),
         },
-        indent=2,
+        concurrent=True,
     )
-
-    try:
-        data = call_agent_json(
-            "cross-referencer",
-            retry_msg,
-            max_tokens=8192,
-            max_retries=1,
-        )
-    except LLMCallError as exc:
-        state.diagnostics.append(f"G5 retry failed: {exc}")
-        return state
-
-    retried = data.get("crossref", [])
+    for e in errors:
+        state.diagnostics.append(f"G5 retry {e}")
     logger.info(
         "CR stage 4b: retried %d G5-failed components, got %d results",
         len(failed_refs),
@@ -1751,29 +1793,39 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
         for row in no_subs
     ]
     try:
-        otto_tokens = 8192 + len(trimmed) * 256
-        raw = call_agent(
-            "otto",
-            json.dumps(
-                {
-                    "target_manufacturer": state.target_manufacturer,
-                    "no_substitute_items": trimmed,
-                },
-                indent=2,
-            ),
-            max_tokens=min(otto_tokens, 16384),
-        )
-        data = extract_json_block(raw)
+        # Batch the no_substitute list so a large BOM (hundreds of no-subs)
+        # doesn't blow the model context. Otto is best-effort: a failed batch
+        # just yields no challenges for its items.
+        challenges: list[dict[str, Any]] = []
+        raws: list[str] = []
+        for batch in _batch_for_llm(trimmed):
+            otto_tokens = min(8192 + len(batch) * 256, 16384)
+            try:
+                raw = call_agent(
+                    "otto",
+                    json.dumps(
+                        {
+                            "target_manufacturer": state.target_manufacturer,
+                            "no_substitute_items": batch,
+                        },
+                        indent=2,
+                    ),
+                    max_tokens=otto_tokens,
+                )
+                raws.append(raw)
+                challenges.extend(extract_json_block(raw).get("challenges", []))
+            except Exception as exc:  # noqa: BLE001 - Otto is best-effort
+                state.diagnostics.append(f"otto challenge batch failed: {exc}")
 
         state.otto_log = {
-            "raw_response": raw,
-            "challenges": data.get("challenges", []),
-            "summary": data.get("summary", {}),
+            "raw_response": "\n---\n".join(raws),
+            "challenges": challenges,
+            "summary": {},
         }
 
         # Collect Otto's diagnoses as hints for the cross-referencer
-        overturned = [c for c in data.get("challenges", []) if c.get("verdict") == "OVERTURNED"]
-        confirmed = [c for c in data.get("challenges", []) if c.get("verdict") == "CONFIRMED"]
+        overturned = [c for c in challenges if c.get("verdict") == "OVERTURNED"]
+        confirmed = [c for c in challenges if c.get("verdict") == "CONFIRMED"]
 
         state.otto_log["confirmed"] = [
             {"ref_des": c["ref_des"], "diagnosis": c.get("diagnosis", "")} for c in confirmed
@@ -1808,8 +1860,9 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
                 )
             hints.append(entry)
 
-        hint_msg = json.dumps(
-            {
+        retried, errors = _crossref_llm_batched(
+            hints,
+            lambda batch: {
                 "task": "OTTO CHALLENGE — re-search with broader criteria",
                 "instructions": (
                     "Otto (Würth sales agent) challenged these no_substitute verdicts. "
@@ -1820,30 +1873,13 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
                     "If no suitable candidate exists even with broader criteria, "
                     "keep status as no_substitute."
                 ),
-                "components_to_retry": hints,
+                "components_to_retry": batch,
                 "target_manufacturer": state.target_manufacturer,
             },
-            indent=2,
+            concurrent=True,
         )
-
-        try:
-            retry_data = call_agent_json(
-                "cross-referencer",
-                hint_msg,
-                max_tokens=8192,
-                max_retries=1,
-            )
-        except LLMCallError as exc:
-            state.diagnostics.append(f"Otto re-crossref failed: {exc}")
-            logger.info(
-                "CR stage 6: Otto challenged %d items but re-crossref failed", len(overturned)
-            )
-            return state
-
-        # Apply successful re-crossrefs
-        retried = retry_data.get("crossref", retry_data.get("components", []))
-        if not isinstance(retried, list):
-            retried = []
+        for e in errors:
+            state.diagnostics.append(f"Otto re-crossref {e}")
 
         applied = 0
         for fix in retried:
@@ -1893,45 +1929,76 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
         "guardrail_fires",
     )
     trimmed_xref = [{k: row[k] for k in _REVIEW_KEYS if k in row} for row in state.crossref_result]
-    review_input = {
-        "crossref": trimmed_xref,
-        "target_manufacturer": state.target_manufacturer,
-        "total_components": len(state.source_bom),
-        "guardrail_fires": state.guardrail_log,
-    }
+    # Batch the rows so a large BOM doesn't exceed the model context (the prod
+    # 400 "exceeded model token limit" on Ray's review). Each batch is reviewed
+    # independently and the verdicts are aggregated: a reviewer APPROVES overall
+    # only if it approves EVERY batch; objections are merged. guardrail fires are
+    # filtered to each batch's components.
+    fires_by_ref: dict[str, list[Any]] = {}
+    for f in state.guardrail_log or []:
+        fires_by_ref.setdefault(f.get("ref_des"), []).append(f)
+    batches = _batch_for_llm(trimmed_xref, max_chars=_REVIEW_BATCH_CHARS, max_parts=_REVIEW_BATCH_MAX_PARTS)
+    if len(batches) > 1:
+        logger.info("CR stage 7: review split into %d batches (%d rows)", len(batches), len(trimmed_xref))
+
+    _SCOPE = (
+        "[SCOPE: CROSS-REFERENCE — component substitution validity only "
+        "(electrical/thermal equivalence, footprint, ratings of the proposed "
+        "replacements vs the originals). Full converter design phases — control "
+        "loop, gate drive, protection, EMI, PCB — are OUT OF SCOPE.]\n\n"
+    )
 
     # Run both reviewers. Per CLAUDE.md "no silent fallbacks": a reviewer that
     # cannot produce a verdict (LLM unreachable/timeout/unparseable even after
     # retries) is a HARD failure — a cross-reference without its Ray+Nicola
-    # review is not a valid result, so raise rather than appending a diagnostic
-    # and proceeding. A reviewer that runs and returns NOT_APPROVED is a valid
-    # review (recorded below, drives state.passed), not a failure.
-    review_tokens = min(8192 + len(trimmed_xref) * 128, 16384)
+    # review is not a valid result, so raise rather than appending a diagnostic.
     for reviewer_name in ("ray", "nicola"):
-        try:
-            verdict_data = call_agent_json(
-                reviewer_name,
-                "[SCOPE: CROSS-REFERENCE — component substitution validity only "
-                "(electrical/thermal equivalence, footprint, ratings of the "
-                "proposed replacements vs the originals). Full converter design "
-                "phases — control loop, gate drive, protection, EMI, PCB — are "
-                "OUT OF SCOPE.]\n\n"
-                f"CROSS-REFERENCE REVIEW\n\n{json.dumps(review_input, indent=2)}",
-                max_tokens=review_tokens,
-                max_retries=max_attempts,
-                json_mode=True,
-            )
-            verdict_data = normalize_reviewer_verdict(verdict_data, reviewer_name)
-        except LLMCallError as exc:
-            raise CrossRefPipelineError(
-                f"CR stage 7: reviewer {reviewer_name!r} could not produce a "
-                f"valid verdict ({exc}). A cross-reference without its Ray+Nicola "
-                f"review is not a valid result — aborting (no silent fallback)."
-            ) from exc
-        verdict_data["reviewer"] = reviewer_name
+        chunk_verdicts: list[dict[str, Any]] = []
+        for bi, batch in enumerate(batches or [[]], 1):
+            refs = {r.get("ref_des") for r in batch}
+            review_input = {
+                "crossref": batch,
+                "target_manufacturer": state.target_manufacturer,
+                "total_components": len(state.source_bom),
+                "batch": f"{bi}/{len(batches)}" if len(batches) > 1 else "1/1",
+                "guardrail_fires": [
+                    f for r in refs for f in fires_by_ref.get(r, [])
+                ],
+            }
+            review_tokens = min(8192 + len(batch) * 128, 16384)
+            try:
+                vd = call_agent_json(
+                    reviewer_name,
+                    f"{_SCOPE}CROSS-REFERENCE REVIEW\n\n{json.dumps(review_input, indent=2)}",
+                    max_tokens=review_tokens,
+                    max_retries=max_attempts,
+                    json_mode=True,
+                )
+                vd = normalize_reviewer_verdict(vd, reviewer_name)
+            except LLMCallError as exc:
+                raise CrossRefPipelineError(
+                    f"CR stage 7: reviewer {reviewer_name!r} could not produce a "
+                    f"valid verdict for batch {bi}/{len(batches)} ({exc}). A "
+                    f"cross-reference without its Ray+Nicola review is not a valid "
+                    f"result — aborting (no silent fallback)."
+                ) from exc
+            chunk_verdicts.append(vd)
+        # Aggregate the per-batch verdicts into one reviewer verdict.
+        approved = all(
+            cv.get("verdict", "").upper() in ("APPROVED", "PROCEED") for cv in chunk_verdicts
+        )
+        merged_obj: list[Any] = []
+        for cv in chunk_verdicts:
+            merged_obj.extend(cv.get("objections") or [])
+        verdict_data = {
+            "reviewer": reviewer_name,
+            "verdict": "APPROVED" if approved else "REJECTED",
+            "objections": merged_obj,
+            "batches": len(batches),
+        }
         state.review_verdicts.append(verdict_data)
         state.reviewer_log += f"\n--- {reviewer_name.upper()} ---\n{json.dumps(verdict_data)}\n"
-        logger.info("CR stage 7: %s %s", reviewer_name, verdict_data.get("verdict", "?"))
+        logger.info("CR stage 7: %s %s (%d batches)", reviewer_name, verdict_data["verdict"], len(batches))
 
     # Pipeline passes only if both reviewers approved
     ray_approved = any(
@@ -2328,11 +2395,12 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
     if not to_fix:
         return state
 
-    user_msg = json.dumps(
-        {
+    corrections, errors = _crossref_llm_batched(
+        to_fix,
+        lambda batch: {
             "task": "CORRECTION — fix reviewer objections",
             "objections": objections,
-            "components_to_fix": to_fix,
+            "components_to_fix": batch,
             "target_manufacturer": state.target_manufacturer,
             "instructions": (
                 "The reviewer rejected these substitutions. For each component, "
@@ -2342,17 +2410,11 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
                 "Respond with the same JSON crossref format."
             ),
         },
-        indent=2,
+        concurrent=True,
     )
-
-    try:
-        data = call_agent_json("cross-referencer", user_msg, max_tokens=8192, max_retries=1)
-    except LLMCallError as exc:
-        state.diagnostics.append(f"correction crossref failed: {exc}")
-        return state
-
-    corrections = data.get("crossref", data.get("components", []))
-    if not isinstance(corrections, list):
+    for e in errors:
+        state.diagnostics.append(f"correction crossref {e}")
+    if not corrections:
         return state
 
     # Apply corrections back into crossref_result
