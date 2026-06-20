@@ -616,11 +616,24 @@ def submit_design_closed_loop(req: DesignRequest) -> dict[str, str]:
     )}
 
 
+def _pdf_cache_path(job_id: str):
+    """Where a rendered report PDF is cached (alongside the persisted job)."""
+    import os
+    from pathlib import Path
+
+    base = Path(os.environ.get("HEAVISIDE_JOBS_DIR", str(Path.home() / ".heaviside" / "jobs")))
+    return base / f"{job_id}.report.pdf"
+
+
 @app.get("/jobs/{job_id}/report.pdf")
 def job_report_pdf(job_id: str):
     """Render a finished job's report to a deliverable PDF — a design report for
     design jobs, a full cross-reference report (coverage, per-category crossing
-    tables, the per-parameter rationale, reviewer verdicts) for crossref jobs."""
+    tables, the per-parameter rationale, reviewer verdicts) for crossref jobs.
+
+    The PDF is cached on disk: WeasyPrint on a large report (thousands of rows)
+    takes minutes, so we render once and serve the cached bytes thereafter
+    (otherwise every download re-renders and trips the nginx gateway timeout)."""
     from fastapi.responses import Response
 
     from heaviside.api.jobs import registry
@@ -630,26 +643,35 @@ def job_report_pdf(job_id: str):
     if job is None or job.status != "done":
         raise HTTPException(status_code=404, detail="no finished job with that id")
     result = job.result if isinstance(job.result, dict) else {}
-    # Design jobs carry pre-rendered HTML; crossref jobs are rendered on demand
-    # from the outcome dict (same data the GUI shows).
+    prefix = "crossref" if (not result.get("html") and "components" in result) else "design"
+    headers = {"Content-Disposition": f'attachment; filename="{prefix}_{job_id}.pdf"'}
+
+    cache = _pdf_cache_path(job_id)
+    if cache.is_file():
+        return Response(content=cache.read_bytes(), media_type="application/pdf", headers=headers)
+
+    # Design jobs carry pre-rendered HTML; crossref jobs render from the outcome.
     html = result.get("html")
     if not html and "components" in result:
         from heaviside.report.crossref_html import render_crossref_html
 
         html = render_crossref_html(result, title=f"{job.kind} · {job_id}")
-        prefix = "crossref"
-    else:
-        prefix = "design"
     if not html:
         raise HTTPException(status_code=409, detail="job has no report to render")
+    import time as _t
+
+    t0 = _t.monotonic()
     try:
         pdf = html_to_pdf(html)
     except ReporterError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return Response(
-        content=pdf, media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{prefix}_{job_id}.pdf"'},
-    )
+    logger.info("rendered PDF for job %s (%d bytes) in %.0fs", job_id, len(pdf), _t.monotonic() - t0)
+    try:  # cache best-effort so repeat downloads are instant
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(pdf)
+    except OSError as exc:
+        logger.warning("could not cache PDF for job %s: %s", job_id, exc)
+    return Response(content=pdf, media_type="application/pdf", headers=headers)
 
 
 # Cross-reference pipeline stages, mirrored into the Jobs view so the run shows
