@@ -181,6 +181,59 @@ def test_review_payload_batches_under_token_limit():
         assert len(payload) / _CHARS_PER_TOKEN < _MODEL_TOKEN_LIMIT
 
 
+def test_stage3_reconciles_dropped_rows(monkeypatch):
+    """If the cross-referencer omits rows (its JSON reply hit the output-token
+    cap and truncated the array), the pipeline must detect the gap, retry the
+    missing components in small batches, and recover EVERY component — no silent
+    loss. Models the prod bug where a 2101-row BOM came back with 1715 rows."""
+    import heaviside.pipeline.crossref_pipeline as cp
+
+    def _fake(agent, msg, **kw):
+        batch = json.loads(msg).get("source_bom") or []
+        # Truncation: a large (first-pass) batch silently loses its tail; a small
+        # (retry-sized) batch fits and returns everything.
+        if len(batch) > cp._CROSSREF_RETRY_MAX_PARTS:
+            batch = batch[:-3]
+        return {"crossref": [{"ref_des": it["ref_des"], "status": "recommended"}
+                             for it in batch]}
+
+    monkeypatch.setattr(cp, "call_agent_json", _fake)
+    bom = _normalize_bom([{"original_mpn": f"PART{i}", "value": f"{i}nF",
+                           "component_type": "capacitor"} for i in range(150)])
+    state = CrossRefState(source_bom=bom, target_manufacturer="Würth Elektronik")
+
+    cp._stage3_crossref(state)
+
+    got = {r.get("ref_des") for r in state.crossref_result}
+    want = {c["ref_des"] for c in bom}
+    assert got == want                                  # every component present
+    assert len(state.crossref_result) == len(bom)       # exactly one row each
+    assert any("omitted" in d for d in state.diagnostics)  # the drop was surfaced
+
+
+def test_stage3_raises_when_rows_never_return(monkeypatch):
+    """If components stay missing even after the small-batch retry, the pipeline
+    must RAISE — a crossref with dropped components is not a valid result (fail
+    loud, no silent fallback)."""
+    import heaviside.pipeline.crossref_pipeline as cp
+    from heaviside.pipeline.crossref_pipeline import CrossRefPipelineError
+
+    bom = _normalize_bom([{"original_mpn": f"PART{i}", "value": f"{i}nF",
+                           "component_type": "capacitor"} for i in range(30)])
+    doomed = bom[5]["ref_des"]
+
+    def _fake_always_drops(agent, msg, **kw):
+        batch = json.loads(msg).get("source_bom") or []
+        return {"crossref": [{"ref_des": it["ref_des"], "status": "recommended"}
+                             for it in batch if it["ref_des"] != doomed]}
+
+    monkeypatch.setattr(cp, "call_agent_json", _fake_always_drops)
+    state = CrossRefState(source_bom=bom, target_manufacturer="Würth Elektronik")
+
+    with pytest.raises(CrossRefPipelineError, match="never came back"):
+        cp._stage3_crossref(state)
+
+
 def test_crossref_llm_batched_splits_and_merges(monkeypatch):
     """The shared batched-crossref helper (used by retry / Otto / correction)
     must split a large item list across calls and concatenate the rows."""

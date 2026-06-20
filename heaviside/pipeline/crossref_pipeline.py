@@ -1113,18 +1113,20 @@ def _merge_preclassified(state: CrossRefState) -> None:
             )
 
 
-# Cross-referencer batching. Small batches keep each LLM call fast and reliable
-# (less truncation, no token-limit risk) and let us run them concurrently. The
-# model context is 262144 tokens; the BOM payload is dense (~2.3 chars/token), so
-# the char cap is a safety net while the part cap is the primary control.
-# Bigger batches = FEWER calls = less repeated system-prompt/instruction overhead
-# (the per-component data is sent once regardless of batch size, so the only cost
-# that scales with batch COUNT is the system prompt repeated per call). 120 parts
-# ≈ 175k tokens — comfortably under the 262k limit (with room for the system
-# prompt + a 16k response) — while still giving several batches to run
-# concurrently. The char cap is the real safety net.
-_CROSSREF_BATCH_MAX_PARTS = 120         # ≈175k tokens/call; ~2.4× fewer calls than 50
-_CROSSREF_BATCH_CHARS = 400_000         # safety net: ~175k tokens, under limit
+# Cross-referencer batching. The binding constraint is the RESPONSE, not the
+# request: the model context is 262144 tokens (so a big INPUT batch fits fine),
+# but the reply is capped at 16k tokens (see _run_crossref_batches). Each output
+# row (original+substitute mpn/value/voltage/package + a match_detail rationale +
+# notes) runs ~150-250 tokens, so a batch of ~120 parts OVERFLOWS 16k and the
+# model silently truncates its JSON array — dropping the overflow rows with no
+# error (this caused an observed 386/2101 loss). Size the part cap so the worst-
+# case response fits the reply budget with margin: 60 parts × ~250 tok ≈ 15k <
+# 16k. _reconcile_crossref_coverage is the backstop that retries (and ultimately
+# raises on) any rows that still don't come back. The char cap stays a request-
+# side safety net.
+_CROSSREF_BATCH_MAX_PARTS = 60          # sized to the 16k REPLY budget, not the request
+_CROSSREF_RETRY_MAX_PARTS = 20          # retry dropped rows in tiny batches that can't truncate
+_CROSSREF_BATCH_CHARS = 400_000         # request-side safety net: ~175k tokens, under limit
 _CROSSREF_MAX_CONCURRENCY = 12          # batches run in parallel (I/O-bound, cost-neutral)
 # Review (Ray/Nicola) batching: the rows are TRIMMED (small), so larger batches
 # are fine; the reviewer verdict is aggregated across batches. Keep well under
@@ -1269,21 +1271,49 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
         _merge_preclassified(state)
         return state
 
-    # Batch the BOM so each LLM call stays within the model's context window.
-    # A large BOM (hundreds of parts, each with a candidate list) otherwise
-    # produces a single multi-hundred-K-token request that the API rejects
-    # (400 "exceeded model token limit"), which previously failed the entire
-    # crossref and returned zero substitutes. Batching lets every component get
-    # referenced; one bad batch only loses its own rows, not the whole run.
-    batches = _batch_for_llm(bom_for_llm)
+    results, _failed = _run_crossref_batches(state, bom_for_llm)
+    state.crossref_result = results
+
+    # Merge pre-classified rows back in
+    _merge_preclassified(state)
+
+    # The cross-referencer must return one row per component it was handed. It can
+    # silently OMIT rows when its JSON reply hits the output-token cap (truncated
+    # array) — trusting the returned count then drops components with no error.
+    # Detect any missing refs, retry them in tiny batches, and raise if they still
+    # don't come back (no silent data loss).
+    _reconcile_crossref_coverage(state, bom_for_llm)
+
+    logger.info("CR stage 3: crossref produced %d rows", len(state.crossref_result))
+    return state
+
+
+def _ref_of(entry: dict[str, Any]) -> Any:
+    """The unique ref designator a BOM entry / crossref row is keyed on."""
+    return entry.get("ref_des", entry.get("name", "?"))
+
+
+def _run_crossref_batches(
+    state: CrossRefState,
+    entries: list[dict[str, Any]],
+    *,
+    max_parts: int = _CROSSREF_BATCH_MAX_PARTS,
+) -> tuple[list[dict[str, Any]], int]:
+    """Cross-reference ``entries`` via the LLM, batched and run concurrently.
+
+    Returns ``(rows, failed_batch_count)``. ``rows`` is the raw concatenation of
+    each batch's output — it is NOT guaranteed to be one row per input (the model
+    can omit rows on output truncation), so callers MUST reconcile against the
+    input via :func:`_reconcile_crossref_coverage`. Batching keeps each request
+    under the model context window AND each reply under the output-token cap; one
+    failed batch only loses its own rows, surfaced as a diagnostic.
+    """
+    batches = _batch_for_llm(entries, max_parts=max_parts)
     if len(batches) > 1:
         logger.info(
-            "CR stage 3: BOM split into %d batches (%d components, ≤%d each) "
+            "CR stage 3: %d components split into %d batches (≤%d each) "
             "run %d-way concurrently",
-            len(batches),
-            len(bom_for_llm),
-            _CROSSREF_BATCH_MAX_PARTS,
-            _CROSSREF_MAX_CONCURRENCY,
+            len(entries), len(batches), max_parts, _CROSSREF_MAX_CONCURRENCY,
         )
 
     def _run_batch(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
@@ -1330,14 +1360,55 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
     if batches and failed_batches == len(batches):
         # Nothing came back at all — surface it as a single clear diagnostic.
         state.diagnostics.append("cross-referencer produced no results (all batches failed)")
+    return results, failed_batches
 
-    state.crossref_result = results
 
-    # Merge pre-classified rows back in
-    _merge_preclassified(state)
+def _reconcile_crossref_coverage(
+    state: CrossRefState, bom_for_llm: list[dict[str, Any]]
+) -> None:
+    """Guarantee every component sent to the cross-referencer comes back.
 
-    logger.info("CR stage 3: crossref produced %d rows", len(state.crossref_result))
-    return state
+    The LLM can silently omit rows when its reply hits the output-token cap, so
+    the raw result may have fewer rows than the input. Find the missing refs,
+    retry them in tiny batches (which can't truncate), append whatever returns,
+    and raise :class:`CrossRefPipelineError` if any are STILL missing — a
+    cross-reference with dropped components is not a valid result (no silent
+    fallback, per the fail-loud policy)."""
+    expected = {_ref_of(e): e for e in bom_for_llm}
+    present = {r.get("ref_des") for r in state.crossref_result}
+    missing = [e for ref, e in expected.items() if ref not in present]
+    if not missing:
+        return
+
+    logger.warning(
+        "CR stage 3: cross-referencer omitted %d/%d component row(s) "
+        "(likely output truncation) — retrying in small batches",
+        len(missing), len(bom_for_llm),
+    )
+    state.diagnostics.append(
+        f"cross-referencer omitted {len(missing)} row(s); retried dropped components"
+    )
+    retry_rows, _ = _run_crossref_batches(
+        state, missing, max_parts=_CROSSREF_RETRY_MAX_PARTS
+    )
+    retry_by_ref = {r.get("ref_des"): r for r in retry_rows}
+    for entry in missing:
+        ref = _ref_of(entry)
+        row = retry_by_ref.get(ref)
+        if row is not None and ref not in present:
+            state.crossref_result.append(row)
+            present.add(ref)
+
+    still_missing = [ref for ref in expected if ref not in present]
+    if still_missing:
+        sample = ", ".join(str(r) for r in still_missing[:10])
+        more = f" (+{len(still_missing) - 10} more)" if len(still_missing) > 10 else ""
+        raise CrossRefPipelineError(
+            f"CR stage 3: cross-referencer dropped {len(still_missing)} component(s) "
+            f"that never came back even after a small-batch retry: {sample}{more}. "
+            f"A cross-reference missing components is not a valid result — aborting "
+            f"(no silent data loss)."
+        )
 
 
 def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
