@@ -466,6 +466,6 @@ def sweep(
             "golden_iters": golden_iters,
             "top_k": top_k,
             "max_candidates_per_fsw": max_candidates_per_fsw,
-            "seam": "slow-base-path",  # swap to fast-base when abt #11 lands
+            "seam": "fast-path",  # design_magnetics_fast (calculate_advised_magnetics_fast)
         },
     )

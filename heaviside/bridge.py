@@ -626,8 +626,15 @@ def design_magnetics_at_fsw(
         {**op, "switchingFrequency": float(fsw_hz)} if isinstance(op, Mapping) else op
         for op in ops
     ]
+    if fast:
+        # The pip package's design_magnetics ignores fast=True (only the vendor
+        # .so honours it). Route through design_magnetics_fast which calls
+        # calculate_advised_magnetics_fast directly — ~12 s vs ~120 s per sweep
+        # point. The loss reader (_loss_at_output) already handles the fast-path
+        # scalar windingLosses format.
+        return design_magnetics_fast(topology, spec_f, max_results=max_results, core_mode=core_mode)
     return design_magnetics(
-        topology, spec_f, max_results=max_results, core_mode=core_mode, fast=fast
+        topology, spec_f, max_results=max_results, core_mode=core_mode, fast=False
     )
 
 
