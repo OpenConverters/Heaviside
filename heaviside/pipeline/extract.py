@@ -461,8 +461,12 @@ def _mas_isat_inputs(
     *,
     winding_index: int = 0,
 ) -> tuple[float, int, float]:
-    """Return ``(A_e, N, B_sat)`` from a MAS document for the Faraday
-    Isat closed form ``Isat = B_sat · N · A_e / L``.
+    """Return ``(A_e, N, B_sat)`` from a MAS document — provenance inputs
+    for :func:`_compute_isat_authoritative`.
+
+    These are passed to PyOM's ``calculate_saturation_current`` as context;
+    they are NOT used to compute Isat analytically (the ``B_sat·N·A_e/L``
+    formula is forbidden — magnetics math lives in MKF).
 
     ``winding_index`` lets multi-winding transformers point at the
     correct primary turns (default 0 = first winding, the convention
@@ -506,7 +510,7 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
       * ``ΔIL_worst = Vout · (1 − D_min) / (0.8·L · fsw)`` (the −20 %
         inductance tolerance from PROTEUS.md design rules)
       * ``Ipeak_worst = Iout + ΔIL_worst / 2``
-      * ``Isat = B_sat · N · A_e / L`` (from ``L · I = N · Φ = N · B · A_e``)
+      * ``Isat`` — from ``PyOM.calculate_saturation_current`` (accounts for gap)
 
     The duty stamped on TAS is ``D_max`` because the duty-cycle bounds
     check fails on the upper bound first (D > 0.95).  If a design also
@@ -546,68 +550,11 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
             f"buck enrichment: TAS magnetic component {comp.get('name')!r} has no MAS "
             "payload — bridge attach phase must run before enrichment"
         )
-    # Effective core area
-    A_e = _require(
-        mas,
-        ("core", "processedDescription", "effectiveParameters", "effectiveArea"),
-        "buck inductor MAS",
+    A_e, N, b_sat = _mas_isat_inputs(mas, "buck inductor MAS")
+    isat, isat_prov = _compute_isat_authoritative(
+        mas, L, b_sat=b_sat, N=N, A_e=A_e,
+        temperature_c=_ISAT_DESIGN_TEMP_C, topology_label="buck",
     )
-    if not isinstance(A_e, (int, float)) or A_e <= 0:
-        raise EnrichmentError(f"buck inductor MAS: effectiveArea must be positive, got {A_e!r}")
-    # Primary turns (buck has a single winding)
-    fd = _require(mas, ("coil", "functionalDescription"), "buck inductor MAS")
-    if not isinstance(fd, list) or not fd:
-        raise EnrichmentError(
-            "buck inductor MAS: coil.functionalDescription must be a non-empty list"
-        )
-    primary = fd[0]
-    N = primary.get("numberTurns") if isinstance(primary, Mapping) else None
-    if not isinstance(N, (int, float)) or N <= 0:
-        raise EnrichmentError(f"buck inductor MAS: primary numberTurns must be positive, got {N!r}")
-    # Saturation flux density (conservative across temperature) — retained
-    # for provenance + as the analytical fallback if PyOM's authoritative
-    # calculate_saturation_current is unavailable.
-    sat = _require(
-        mas,
-        ("core", "functionalDescription", "material", "saturation"),
-        "buck inductor MAS",
-    )
-    b_sat = _conservative_bsat(sat)
-
-    # Worst-case operating temperature for Isat (ferrite B_sat falls with T).
-    # The spec's per-op ambientTemperature is a lower bound on Tj; PyOM's
-    # design loop targets a hot-junction case so we ask for Isat at 100 °C
-    # by default. (A future analyst stage will compute a real Tj from loss
-    # + Rth and re-query at that temperature.)
-    op = _require(spec, ("operatingPoints",), "buck spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
-    # Evaluate Isat at the worst-case HOT junction (ferrite B_sat falls with T),
-    # NOT the 25 °C ambient. The ambient over-states Isat and let a
-    # saturation-marginal core PASS this gate while the frequency sweep (which
-    # checks at 100 °C via bridge._isat_from_mas) rejected it — the sweep/gate
-    # saturation disagreement. This matches the sweep + this function's own
-    # documented intent ("Isat at 100 °C by default"). max() keeps the hotter of
-    # the two for high-ambient (e.g. automotive 125 °C) specs.
-    t_isat = max(t_amb, _ISAT_DESIGN_TEMP_C)
-    # Authoritative Isat from PyOM. No analytical fallback: if PyOM
-    # rejects the MAS we raise rather than feed the realism gate a
-    # fabricated B_sat·N·A_e/L scalar (magnetics math lives in MKF).
-    isat_method = "PyOM.calculate_saturation_current"
-    isat: float
-    try:
-        from heaviside.bridge import _import_pyom
-
-        isat = float(_import_pyom().calculate_saturation_current(dict(mas), t_isat))
-    except Exception as exc:
-        raise EnrichmentError(
-            f"buck inductor MAS: PyOM could not compute saturation current: "
-            f"{type(exc).__name__}: {exc}. Refusing the analytical "
-            f"B_sat·N·A_e/L fallback — magnetics math must come from MKF."
-        ) from exc
-    if not (isat > 0):
-        raise EnrichmentError(
-            f"buck inductor MAS: PyOM returned non-positive saturation current {isat!r}"
-        )
 
     # Stamp results
     tas["duty"] = round(d_max, 6)
@@ -618,18 +565,7 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     enriched_comp = dict(comp)
     enriched_comp["isat"] = round(isat, 6)
     enriched_comp["ipeak_worst"] = round(ipeak_worst, 6)
-    enriched_comp["isat_provenance"] = {
-        "method": isat_method,
-        "temperature_c": t_isat,
-        # ``b_sat_T`` is the conservative material B_sat (lowest across
-        # the temperature curve), recorded for provenance only. The Isat
-        # itself comes from PyOM, which uses this curve internally but
-        # also adjusts for the air gap.
-        "b_sat_T": round(b_sat, 6),
-        "n_turns": int(N),
-        "effective_area_m2": float(A_e),
-        "inductance_H": L,
-    }
+    enriched_comp["isat_provenance"] = isat_prov
     enriched_comp["ipeak_provenance"] = {
         "method": "Iout + ripple_worst/2 at Vin_max, L*0.8",
         "iout_A": iout,
@@ -738,7 +674,7 @@ def _enrich_boost(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(N),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="boost",
     )
 
@@ -904,7 +840,7 @@ def _enrich_flyback(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(Np),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="flyback",
     )
 
@@ -1052,7 +988,7 @@ def _enrich_non_isolated_buckboost(
         b_sat=b_sat1,
         N=int(N1),
         A_e=float(A_e1),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label=f"{topology_name} L1",
     )
 
@@ -1086,7 +1022,7 @@ def _enrich_non_isolated_buckboost(
         b_sat=b_sat2,
         N=int(N2),
         A_e=float(A_e2),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label=f"{topology_name} L2",
     )
     isat_prov_L2["inductance_source"] = l2_source
@@ -1515,7 +1451,7 @@ def _enrich_forward_family(
             b_sat=b_sat,
             N=int(N_lout),
             A_e=float(A_e),
-            temperature_c=t_amb,
+            temperature_c=_ISAT_DESIGN_TEMP_C,
             topology_label=topology_name,
         )
 
@@ -1638,7 +1574,7 @@ def _enrich_isolated_buck(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(N_pri),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="isolated_buck",
     )
 
@@ -1749,7 +1685,7 @@ def _enrich_isolated_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(N_pri),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="isolated_buck_boost",
     )
 
@@ -1880,7 +1816,7 @@ def _enrich_push_pull(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(N_lout),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="push_pull",
     )
 
@@ -2015,7 +1951,7 @@ def _enrich_asymmetric_half_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(N_lout),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="asymmetric_half_bridge",
     )
 
@@ -2160,7 +2096,7 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(N_l1),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="weinberg",
     )
 
@@ -2303,7 +2239,7 @@ def _enrich_four_switch_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(N),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="four_switch_buck_boost",
     )
 
@@ -2444,7 +2380,7 @@ def _enrich_llc(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(N_lr),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="llc (series-resonant inductor)",
     )
 
@@ -2624,7 +2560,7 @@ def _enrich_phase_shifted_full_bridge(tas: dict, spec: Mapping[str, Any]) -> Non
             b_sat=b_sat,
             N=int(N_lout),
             A_e=float(A_e),
-            temperature_c=t_amb,
+            temperature_c=_ISAT_DESIGN_TEMP_C,
             topology_label="phase_shifted_full_bridge (output choke)",
         )
 
@@ -2793,7 +2729,7 @@ def _enrich_dual_active_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(N_lr),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="dual_active_bridge (series commutation inductor)",
     )
 
@@ -2897,7 +2833,7 @@ def _enrich_cllc(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(N_pri),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="cllc (transformer magnetizing)",
     )
 
@@ -3043,7 +2979,7 @@ def _enrich_clllc(tas: dict, spec: Mapping[str, Any]) -> None:
         b_sat=b_sat,
         N=int(N_lr1),
         A_e=float(A_e),
-        temperature_c=t_amb,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
         topology_label="clllc (primary tank inductor)",
     )
 

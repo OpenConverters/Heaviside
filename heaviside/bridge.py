@@ -1436,7 +1436,15 @@ def _ipeak_worst_magnetizing(
     the flux → tightens the gate → never passes a saturating core). ``Lm`` is the
     candidate's magnetizing inductance, which the caller stamps as
     ``desiredInductance`` (``_isat_margin_inputs`` sets it to the harvested L).
-    Returns ``None`` when the spec lacks Vin / duty / Lm / fsw."""
+    Returns ``None`` when the spec lacks Vin / duty / Lm / fsw.
+
+    NOTE (ABT #16): This is an analytical formula in Heaviside, which violates the
+    "all magnetics math lives in MKF" rule. It is kept as a fallback for the fast
+    path where MKF provides no winding-current waveform. PyOM exposes
+    ``calculate_induced_current(excitation, Lm)`` (wraps
+    ``Inputs::calculate_magnetizing_current``) but that requires a voltage waveform
+    we don't have on the fast path. Remove this function once ABT #16 lands a
+    ``calculate_peak_winding_current(magnetic, operatingPoint)`` Python binding."""
     try:
         iv = spec.get("inputVoltage") or {}
         vmax = (iv.get("maximum") or iv.get("nominal")) if isinstance(iv, Mapping) else None
@@ -1453,6 +1461,9 @@ def _ipeak_worst_magnetizing(
         return None
 
 
+# ABT #16: this entire registry is a rule violation — analytical magnetics math
+# in Heaviside. It is a fallback for the fast MKF path that returns no winding
+# current waveform. Remove once PyOM exposes calculate_peak_winding_current().
 _IPEAK_WORST: dict[str, Any] = {
     # Buck stays on the L-derived ripple formula (Vout * (1 - Dmin) /
     # (0.8 * L * fsw) / 2) so the post-filter and realism extract.py

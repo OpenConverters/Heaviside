@@ -125,9 +125,9 @@ class TestBoostMath:
         out = enrich_tas_for_realism(_boost_tas(), topology="boost", spec=_boost_spec())
         l1 = out["topology"]["stages"][0]["circuit"]["components"][2]
         # Ground truth = MKF: the stamped Isat must equal PyOM's saturation
-        # current for the L1 magnetic at the op-point ambient (25 °C),
+        # current for the L1 magnetic at 100 °C (_ISAT_DESIGN_TEMP_C),
         # NOT an analytical B_sat·N·A_e/L formula.
-        expected = isat_of(_boost_inductor_mas(), temperature_c=25.0)
+        expected = isat_of(_boost_inductor_mas(), temperature_c=100.0)
         assert l1["isat"] == pytest.approx(expected, rel=1e-3)
         assert "PyOM" in l1["isat_provenance"]["method"]
 
@@ -155,7 +155,7 @@ class TestBoostMath:
         )
         assert 0.2 < p["b_sat_T"] < 0.6
         # isat is PyOM ground truth, not the analytical formula.
-        assert l1["isat"] == pytest.approx(isat_of(mas, temperature_c=25.0), rel=1e-3)
+        assert l1["isat"] == pytest.approx(isat_of(mas, temperature_c=100.0), rel=1e-3)
 
 
 class TestBoostFailureModes:
@@ -250,7 +250,7 @@ class TestFlybackMath:
         # current for the T1 magnetic at the op-point ambient (25 °C), NOT
         # an analytical formula. The provenance records the PRIMARY turns
         # (60) and the magnetizing inductance (1 mH) as the harvest source.
-        expected = isat_of(_flyback_mas(), temperature_c=25.0)
+        expected = isat_of(_flyback_mas(), temperature_c=100.0)
         assert t1["isat"] == pytest.approx(expected, rel=1e-3)
         assert "PyOM" in t1["isat_provenance"]["method"]
         assert t1["isat_provenance"]["n_turns"] == 60

@@ -240,7 +240,7 @@ class TestPushPullMath:
             spec=_pp_spec(),
         )
         l = _get_lout(out)
-        expected = isat_of(_lout_mas(), temperature_c=25.0)
+        expected = isat_of(_lout_mas(), temperature_c=100.0)
         assert l["isat"] == pytest.approx(expected, rel=1e-3)
         assert "PyOM" in l["isat_provenance"]["method"]
         b_sat_T = l["isat_provenance"]["b_sat_T"]

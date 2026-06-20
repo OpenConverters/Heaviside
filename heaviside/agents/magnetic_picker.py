@@ -296,27 +296,23 @@ def pick_best_pareto(
 
         return min(range(len(designs)), key=lambda i: _vol(designs[i]))
     if criteria == "highest_isat_headroom":
-        # Headroom proxy: more turns + larger A_e at the same target L
-        # means more Bsat headroom. Use the product N × A_e as a rough
-        # ranking — exact isat lives in MKF; we just rank candidates.
-        def _headroom_proxy(d: MagneticDesign) -> float:
-            ep = (
-                d.magnetic.get("core", {})
-                .get("processedDescription", {})
-                .get("effectiveParameters", {})
-            )
-            a_e = ep.get("effectiveArea")
-            fd_coil = d.magnetic.get("coil", {}).get("functionalDescription")
-            n_turns = (
-                fd_coil[0].get("numberTurns") if isinstance(fd_coil, list) and fd_coil else None
-            )
-            if not isinstance(a_e, (int, float)) or not isinstance(n_turns, int):
-                raise MagneticPickerError(
-                    f"candidate missing N/A_e for headroom proxy: shape={d.core_shape_name!r}"
-                )
-            return float(n_turns) * float(a_e)
+        from heaviside.bridge import _isat_from_mas, _harvest_authoritative_inductance
 
-        return max(range(len(designs)), key=lambda i: _headroom_proxy(designs[i]))
+        def _isat_for(d: MagneticDesign) -> float:
+            try:
+                L = float(_harvest_authoritative_inductance(d.mas))
+            except Exception:
+                raise MagneticPickerError(
+                    f"candidate has no harvestable inductance: shape={d.core_shape_name!r}"
+                )
+            isat = _isat_from_mas(d.magnetic, L)
+            if isat is None:
+                raise MagneticPickerError(
+                    f"PyOM could not compute isat for candidate: shape={d.core_shape_name!r}"
+                )
+            return isat
+
+        return max(range(len(designs)), key=lambda i: _isat_for(designs[i]))
     # Unreachable per the PARETO_CRITERIA guard above.
     raise MagneticPickerError(f"criteria {criteria!r} not implemented")
 

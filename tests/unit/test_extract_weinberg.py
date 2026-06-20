@@ -279,7 +279,7 @@ class TestIsat:
         # (25 °C), NOT an analytical formula. Computing it here on the
         # same L1 MAS the extractor harvested also proves L1 (not T1) was
         # the source.
-        expected = isat_of(_l1_mas(), temperature_c=25.0)
+        expected = isat_of(_l1_mas(), temperature_c=100.0)
         assert l["isat"] == pytest.approx(expected, rel=1e-3)
         assert "PyOM" in l["isat_provenance"]["method"]
         assert "weinberg" in l["isat_provenance"]["method"]

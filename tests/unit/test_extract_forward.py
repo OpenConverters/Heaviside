@@ -230,7 +230,7 @@ class TestForwardMath:
         # current for the L_out magnetic at the op-point ambient (25 °C),
         # NOT an analytical formula.  Computing it here on the same L_out
         # MAS the extractor harvested also proves L_out (not T1) was used.
-        expected = isat_of(_lout_mas(), temperature_c=25.0)
+        expected = isat_of(_lout_mas(), temperature_c=100.0)
         assert l["isat"] == pytest.approx(expected, rel=1e-3)
         # Confirm extractor used the L_out MAS, NOT T1's (different A_e),
         # by reading the real shape's effective area and material B_sat back
