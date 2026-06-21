@@ -923,24 +923,29 @@ def _gfoot_footprint_compatibility(
             )
             continue
 
-        # SMD class jump check.
+        # SMD class jump check. A larger-package substitute is a REAL part that
+        # exists — it is a partial substitution (works electrically, needs a
+        # footprint/board-space check), NOT a no_substitute. Reserving
+        # no_substitute for "no electrically-valid part exists" keeps the label
+        # honest and avoids discarding a usable Würth equivalent just because it
+        # is a size or more bigger (the engineer decides if the board has room).
         si, ti = _smd_class_idx(src_pkg), _smd_class_idx(sub_pkg)
         if si is not None and ti is not None:
             jump = abs(ti - si)
             if jump >= 4:
                 prev = comp.get("status")
-                comp["status"] = "no_substitute"
-                comp["substitute_pn"] = "no_substitute"
+                comp["status"] = "partial" if prev == "recommended" else prev
                 comp["notes"] = (
                     f"GUARDRAIL GFoot: {src_pkg} -> {sub_pkg} "
-                    f"({jump} size classes — redesign required). " + (comp.get("notes") or "")
+                    f"({jump} size classes — board redesign required for footprint). "
+                    + (comp.get("notes") or "")
                 )
                 fires.append(
                     _make_fire(
                         "Foot",
                         ref,
                         prev,
-                        "no_substitute",
+                        comp["status"],
                         f"footprint redesign (>=4 classes): {src_pkg} -> {sub_pkg}",
                     )
                 )
@@ -969,9 +974,12 @@ def _gstack_multiple_caveats(
 ) -> None:
     """GStack: Multiple concurrent caveats on a single row.
 
-    When a row has accumulated >= 2 independent guardrail warnings, it
-    is no longer a minor caveat — it is a redesign. Demote to
-    no_substitute.
+    When a row has accumulated >= 2 independent guardrail warnings it is no
+    longer a clean drop-in — but a real part still EXISTS, so it is a *partial*
+    substitution flagged "MULTIPLE COMPROMISES" for the engineer to weigh, NOT a
+    no_substitute. no_substitute must mean "no electrically-valid part exists";
+    relabeling a found-but-caveated part as no_substitute hides a usable option
+    and is the wrong signal (it also wrongly tanked coverage vs Proteus).
     """
     for comp in comps:
         if comp.get("status") not in ("recommended", "partial"):
@@ -985,18 +993,18 @@ def _gstack_multiple_caveats(
         if guardrail_hits >= 2:
             ref = str(comp.get("ref_des", "") or "").split(",")[0].strip()
             prev = comp.get("status")
-            comp["status"] = "no_substitute"
-            comp["substitute_pn"] = "no_substitute"
+            comp["status"] = "partial"
             comp["notes"] = (
-                f"GUARDRAIL GStack: {guardrail_hits} concurrent caveats — "
-                f"this is a redesign, not a substitution. " + (comp.get("notes") or "")
+                f"GUARDRAIL GStack: MULTIPLE COMPROMISES — {guardrail_hits} "
+                f"concurrent caveats; verify carefully before use. "
+                + (comp.get("notes") or "")
             )
             fires.append(
                 _make_fire(
                     "Stack",
                     ref,
                     prev,
-                    "no_substitute",
+                    "partial",
                     f"{guardrail_hits} concurrent caveats stacked",
                 )
             )
