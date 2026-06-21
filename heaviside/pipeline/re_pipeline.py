@@ -807,7 +807,8 @@ def _stage2_65_extract_rdson(state: REState) -> REState:
     # Ask LLM to extract Rds_on from the IC datasheet
     try:
         data = call_agent_json(
-            "competitor",
+            "spec-extract",  # renamed from "competitor" (commit 85c9864); the
+            #                  prompt is the same datasheet/claims extractor.
             f"Extract ONLY the internal MOSFET Rds(on) specifications from this "
             f"IC datasheet for {ic_mpn}. Look in the Electrical Characteristics "
             f"table for RDS(ON) high-side and low-side values.\n\n"
@@ -877,7 +878,8 @@ def _stage2_7_extract_claims(state: REState) -> REState:
 
     try:
         data = call_agent_json(
-            "competitor",
+            "spec-extract",  # renamed from "competitor" (commit 85c9864); the
+            #                  prompt is the same datasheet/claims extractor.
             f"Extract ONLY the performance claims from this reference design PDF. "
             f"Focus on: efficiency at various load points, output ripple, thermal rise, "
             f"regulation specs, waveform descriptions.{rdson_prompt}\n\n"
