@@ -42,9 +42,15 @@ tr.total-row td { border-top: 1.5px solid #111; border-bottom: 1.5px solid #111;
 .sub-tbl col.c-conf { width: 9%;  }
 .sub-tbl col.c-note { width: 30%; }
 /* Engineering compare table */
-.cmp-tbl col.c-param { width: 30%; }
-.cmp-tbl col.c-orig2 { width: 35%; }
-.cmp-tbl col.c-sub2  { width: 35%; }
+.cmp-tbl col.c-param { width: 28%; }
+.cmp-tbl col.c-orig2 { width: 33%; }
+.cmp-tbl col.c-sub2  { width: 33%; }
+.cmp-tbl col.c-verdict { width: 6%; }
+.cmp-tbl td.verdict { text-align: center; font-weight: 700; }
+.cmp-tbl td.v-fail { color: #c0392b; }
+.cmp-tbl td.v-warn, .cmp-tbl td.v-lower, .cmp-tbl td.v-differs { color: #d68910; }
+.cmp-tbl td.v-pass, .cmp-tbl td.v-same, .cmp-tbl td.v-exact, .cmp-tbl td.v-exceeds { color: #1e8449; }
+.cmp-tbl td.v-unverified { color: #7f8c8d; }
 /* Not-replaced table */
 .nr-tbl col.c-ref2  { width: 10%; }
 .nr-tbl col.c-orig2 { width: 30%; }
@@ -156,15 +162,23 @@ def _engineering_notes(comps: list[dict[str, Any]], target: str) -> str:
         sub  = comp.get("substitute_mpn", "?")
         note = (comp.get("notes") or "").strip()
         cat  = comp.get("component_type", "")
-        # Build compare table
+        # Build compare table. The verdict marker makes a parameter that falls
+        # outside the allowed margin (e.g. ESR/ripple/Isat) visible at a glance.
+        _MARK = {"pass": "✓", "same": "✓", "exact": "✓", "exceeds": "✓",
+                 "warn": "⚠", "lower": "⚠", "differs": "⚠",
+                 "fail": "✗", "unverified": "?"}
         rows: list[str] = []
         for p in params:
             o = _e(p.get("original") or "—")
             s = _e(p.get("substitute") or "—")
             nm = _e(p.get("name") or "")
+            verd = p.get("verdict", "")
+            mark = _MARK.get(verd, "")
+            title = _e(p.get("note") or "")
             rows.append(
                 f'<tr class="data-row"><td>{nm}</td>'
-                f'<td class="mpn">{o}</td><td class="mpn">{s}</td></tr>'
+                f'<td class="mpn">{o}</td><td class="mpn">{s}</td>'
+                f'<td class="verdict v-{_e(verd)}" title="{title}">{mark}</td></tr>'
             )
         if not rows:
             continue
@@ -178,9 +192,10 @@ def _engineering_notes(comps: list[dict[str, Any]], target: str) -> str:
         parts.append(
             '<table class="cmp-tbl"><colgroup>'
             '<col class="c-param"><col class="c-orig2"><col class="c-sub2">'
+            '<col class="c-verdict">'
             '</colgroup>'
             f'<tr><th>Parameter</th><th>Original ({_e(orig)})</th>'
-            f'<th>Substitute ({_e(sub)})</th></tr>'
+            f'<th>Substitute ({_e(sub)})</th><th></th></tr>'
         )
         parts.extend(rows)
         parts.append('</table>')

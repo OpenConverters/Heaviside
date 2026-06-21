@@ -1419,12 +1419,16 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             m = env["semiconductor"]["mosfet"]
             mi = m["manufacturerInfo"]
             elec = mi["datasheetInfo"]["electrical"]
+            gth = elec.get("gateThresholdVoltage")
+            vgs_th_max = gth.get("maximum") if isinstance(gth, dict) else gth
             summary = {
                 "mpn": mi.get("reference", "?"),
                 "vds": elec.get("drainSourceVoltage"),
                 "rds_on": elec.get("onResistance"),
                 "id": elec.get("continuousDrainCurrent"),
                 "qg": elec.get("totalGateCharge"),
+                "coss": elec.get("outputCapacitance"),
+                "vgs_threshold_max": vgs_th_max,
                 "rth_jc": elec.get("thermalResistanceJunctionCase"),
                 "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
             }
@@ -1512,6 +1516,7 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
                 ),
                 "rated_current": rated_current,
                 "dcr": dcr_val,
+                "srf": elec.get("selfResonantFrequency"),
                 "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
             }
         except (KeyError, TypeError):
@@ -2633,10 +2638,24 @@ def build_match_detail(row: dict[str, Any]) -> dict[str, Any]:
         params.append({"name": "package", "original": row.get("original_package", ""),
                        "substitute": row.get("substitute_package", ""), "verdict": verdict})
 
+    # Spec-driven electrical parameters (ESR, ripple, dielectric, Rds_on, Qg,
+    # Coss, Vf, Qrr, TCR, Isat, DCR, SRF, …) resolved from the internal DB by
+    # _stage_param_check. The report renders these generically alongside the
+    # core value/voltage/package params above.
+    for pr in row.get("_param_results", []):
+        params.append({
+            "name": pr.get("label") or pr["name"],
+            "original": pr.get("original", ""),
+            "substitute": pr.get("substitute", ""),
+            "verdict": pr.get("verdict", ""),
+            "note": pr.get("note", ""),
+        })
+
     # derive a one-line "why" from the parameter verdicts + status
-    deviations = [p["name"] for p in params if p["verdict"] in ("differs", "lower")]
+    deviations = [p.get("name") for p in params if p["verdict"] in ("differs", "lower", "fail")]
+    warns = [p.get("name") for p in params if p["verdict"] == "warn"]
     exceeds = [p["name"] for p in params if p["verdict"] == "exceeds"]
-    exacts = [p["name"] for p in params if p["verdict"] in ("exact", "same")]
+    exacts = [p["name"] for p in params if p["verdict"] in ("exact", "same", "pass")]
     if status == "exact":
         why = "identical part from the target manufacturer"
     elif status == "keep_original":
@@ -2647,6 +2666,8 @@ def build_match_detail(row: dict[str, Any]) -> dict[str, Any]:
         bits = []
         if deviations:
             bits.append("deviates on " + ", ".join(deviations))
+        if warns:
+            bits.append("marginal on " + ", ".join(warns))
         if exceeds:
             bits.append("exceeds on " + ", ".join(exceeds))
         if exacts:
@@ -2659,6 +2680,107 @@ def _annotate_match_detail(state: CrossRefState) -> None:
     """Attach a deterministic per-parameter match_detail to every result row."""
     for row in state.crossref_result:
         row["match_detail"] = build_match_detail(row)
+
+
+def _stage_param_check(state: CrossRefState) -> None:
+    """Resolve original + substitute *electrical* parameters from the internal DB
+    and attach a per-parameter verdict (ESR, ripple, dielectric, Rds(on), Qg,
+    Coss, Vf, Qrr, TCR, Isat, DCR, SRF, …) to every row.
+
+    These parameters are never in the source BOM, so both sides are looked up by
+    MPN. A substitute that FAILs a critical parameter is demoted from
+    ``recommended`` to ``partial`` and the reason is surfaced (fail loud — a
+    silently-worse ESR/ripple/Isat part is not a clean equivalent). Missing data
+    is reported as ``unverified``, never silently treated as a pass.
+    """
+    from heaviside.catalogue._reader import CatalogueReadError, iter_envelopes
+    from heaviside.catalogue.selector import _tas_data_dir
+    from heaviside.pipeline.param_check import (
+        FAIL,
+        PARAM_SPECS,
+        evaluate_params,
+    )
+
+    category_files = {
+        "mosfet": "mosfets.ndjson",
+        "diode": "diodes.ndjson",
+        "capacitor": "capacitors.ndjson",
+        "resistor": "resistors.ndjson",
+        "magnetic": "magnetics.ndjson",
+        "chipBead": "magnetics.ndjson",
+    }
+    rows = state.crossref_result
+
+    # Collect the (category, mpn) pairs to resolve — original and substitute,
+    # for spec'd categories only.
+    needed: dict[str, set[str]] = {}
+    for row in rows:
+        cat = row.get("component_type", "")
+        if cat not in PARAM_SPECS or cat not in category_files:
+            continue
+        for key in ("original_pn", "substitute_pn"):
+            mpn = str(row.get(key) or "").strip().lower()
+            if mpn:
+                needed.setdefault(cat, set()).add(mpn)
+    if not needed:
+        return
+
+    tas_dir = _tas_data_dir()
+    # Scan each NDJSON once, summarising only the parts we need. magnetics.ndjson
+    # serves both magnetic + chipBead, so group categories by file.
+    cats_by_file: dict[str, list[str]] = {}
+    for cat in needed:
+        cats_by_file.setdefault(category_files[cat], []).append(cat)
+
+    params_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for fname, cats in cats_by_file.items():
+        path = tas_dir / fname
+        if not path.exists():
+            continue
+        try:
+            for _lineno, env in iter_envelopes(path):
+                for cat in cats:
+                    refs = needed.get(cat, set())
+                    if not refs:
+                        continue
+                    ref = str(_envelope_reference(env, cat) or "").strip().lower()
+                    if ref and ref in refs and (cat, ref) not in params_by_key:
+                        summ = _summarize_candidate(env, cat)
+                        if summ:
+                            params_by_key[(cat, ref)] = summ
+        except CatalogueReadError:
+            continue
+
+    for row in rows:
+        cat = row.get("component_type", "")
+        if cat not in PARAM_SPECS:
+            continue
+        o_mpn = str(row.get("original_pn") or "").strip().lower()
+        s_mpn = str(row.get("substitute_pn") or "").strip().lower()
+        results = evaluate_params(
+            cat,
+            params_by_key.get((cat, o_mpn)),
+            params_by_key.get((cat, s_mpn)),
+        )
+        if not results:
+            continue
+        row["_param_results"] = results
+
+        fails = [r for r in results if r["verdict"] == FAIL]
+        # Only demote an actively-recommended substitute; 'exact' (identical
+        # part) and 'partial'/'no_substitute' don't move. This keeps the
+        # parameter check a tightening, never a loosening, of the verdict.
+        if fails and row.get("status") == "recommended":
+            row["status"] = "partial"
+        if fails:
+            note = "; ".join(r["note"] for r in fails)
+            existing = row.get("notes") or ""
+            row["notes"] = (existing + " | " if existing else "") + f"parameter check: {note}"
+            fires = row.setdefault("guardrail_fires", [])
+            for r in fails:
+                tag = f"PARAM:{r['name']}"
+                if tag not in fires:
+                    fires.append(tag)
 
 
 def _best_inkind_candidate(
@@ -2882,6 +3004,11 @@ def run_crossref_pipeline(
     _say("Learning from this run (persisting accepted substitutions)", 95)
     _stage8_learn(state)
 
+    # Electrical-parameter check (ESR, ripple, Rds_on, Qrr, Isat, …): resolve
+    # original + substitute values from the internal DB, flag/demote substitutes
+    # that fall outside the allowed margin. Runs before match_detail so its
+    # verdicts are rendered, and after the review loop so it sees final picks.
+    _stage_param_check(state)
     # Deterministic per-parameter rationale (why exact/recommended/partial) for
     # every row, computed from the original-vs-substitute fields already present.
     _annotate_match_detail(state)
