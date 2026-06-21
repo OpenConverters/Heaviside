@@ -117,18 +117,17 @@ def test_pick_smallest_volume_returns_index_of_smallest_v_e() -> None:
     assert pick_best_pareto(designs, criteria="smallest_volume") == 1
 
 
-def test_pick_highest_isat_headroom_returns_index_of_max_NxAe() -> None:
+def test_pick_highest_isat_headroom_returns_index_of_max_isat(monkeypatch) -> None:
     designs = [
-        _design(
-            scoring=1.0, shape="A", material="X", n_turns=10, a_e=1e-5, v_e=1e-7
-        ),  # NxAe = 1e-4
-        _design(
-            scoring=2.0, shape="B", material="Y", n_turns=20, a_e=2e-5, v_e=1e-7
-        ),  # NxAe = 4e-4  ← winner
-        _design(
-            scoring=3.0, shape="C", material="Z", n_turns=15, a_e=1.5e-5, v_e=1e-7
-        ),  # NxAe = 2.25e-4
+        _design(scoring=1.0, shape="A", material="X", n_turns=10, a_e=1e-5, v_e=1e-7),
+        _design(scoring=2.0, shape="B", material="Y", n_turns=20, a_e=2e-5, v_e=1e-7),  # ← winner
+        _design(scoring=3.0, shape="C", material="Z", n_turns=15, a_e=1.5e-5, v_e=1e-7),
     ]
+    # Stub out PyOM calls so the unit test only verifies the "pick highest" logic,
+    # not the PyOM integration (covered by the integration suite).
+    _isat_values = {id(d.magnetic): v for d, v in zip(designs, [5.0, 12.0, 8.0])}
+    monkeypatch.setattr("heaviside.bridge._harvest_authoritative_inductance", lambda mas: 10e-6)
+    monkeypatch.setattr("heaviside.bridge._isat_from_mas", lambda mag, L: _isat_values[id(mag)])
     assert pick_best_pareto(designs, criteria="highest_isat_headroom") == 1
 
 
