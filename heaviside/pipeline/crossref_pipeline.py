@@ -1008,6 +1008,9 @@ def _rank_candidates(
         footprint_penalty = _footprint_penalty(
             source_dims, _extract_dimensions(cand, category)
         )
+        # A candidate that overflows the original's board space (footprint
+        # penalty hit the oversize floor) is a LAST RESORT — see filter below.
+        is_oversize = footprint_penalty >= _OVERSIZE_BASE
 
         score = (
             val_dist
@@ -1017,10 +1020,18 @@ def _rank_candidates(
             + tech_penalty
             + footprint_penalty
         )
-        scored.append((score, cand))
+        scored.append((score, cand, is_oversize))
 
     scored.sort(key=lambda x: x[0])
-    return [c for _, c in scored[:max_results]]
+    # Larger-package parts are considered ONLY when no fitting part was found:
+    # if any candidate fits the original's board space, drop the oversize ones
+    # entirely so they neither pre-empt a real drop-in nor churn the downstream
+    # LLM/Otto/scoring stages. When NOTHING fits, keep the oversize candidates
+    # (they're the only option — surfaced later as a `partial` with a footprint
+    # caveat, not silently dropped).
+    fitting = [(s, c) for s, c, oversize in scored if not oversize]
+    ranked = fitting if fitting else [(s, c) for s, c, _ in scored]
+    return [c for _, c in ranked[:max_results]]
 
 
 _PKG_ORDER = ["0201", "0402", "0603", "0805", "1206", "1210", "1812", "2010", "2220"]
