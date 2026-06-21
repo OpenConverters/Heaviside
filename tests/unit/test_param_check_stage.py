@@ -10,12 +10,18 @@ from heaviside.pipeline import crossref_pipeline as cp
 from heaviside.pipeline.crossref import CrossRefState
 
 
-def _cap_env(mpn, *, esr, ripple, tech, cap=1e-5, v=25.0, case="0805"):
+def _cap_env(mpn, *, esr, ripple, tech, cap=1e-5, v=25.0, case="0805",
+             sat_mlcc=None, vth_mlcc=None):
+    elec = {"capacitance": {"nominal": cap}, "ratedVoltage": v,
+            "esr": esr, "rippleCurrent": ripple}
+    if sat_mlcc is not None:
+        elec["capacitanceSaturationMLCC"] = sat_mlcc
+    if vth_mlcc is not None:
+        elec["vthMLCC"] = vth_mlcc
     return {"capacitor": {"manufacturerInfo": {
         "reference": mpn, "name": "TestMfr", "status": "active",
         "datasheetInfo": {
-            "electrical": {"capacitance": {"nominal": cap}, "ratedVoltage": v,
-                           "esr": esr, "rippleCurrent": ripple},
+            "electrical": elec,
             "part": {"technology": tech, "case": case},
         }}}}
 
@@ -80,6 +86,54 @@ def test_stage_keeps_good_substitute(tmp_path, monkeypatch):
     assert verdicts["esr"] == "pass"
     assert verdicts["ripple_current"] == "pass"
     assert verdicts["technology"] == "pass"
+
+
+def test_stage_mlcc_bias_uses_operating_voltage(tmp_path, monkeypatch):
+    # Both pass ESR/ripple/dielectric, but the substitute derates hard under
+    # bias. With a 10V operating point (from sim stress) the effective-C check
+    # fires and demotes the substitute.
+    _write_caps(tmp_path, [
+        _cap_env("ORIGM", esr=0.05, ripple=2.0, tech="X7R", v=6.3, sat_mlcc=0.9, vth_mlcc=50),
+        _cap_env("SUBSM", esr=0.05, ripple=2.0, tech="X7R", v=6.3, sat_mlcc=0.6, vth_mlcc=8),
+    ])
+    monkeypatch.setattr(cp, "_tas_data_dir", lambda: tmp_path, raising=False)
+    monkeypatch.setattr("heaviside.catalogue.selector._tas_data_dir", lambda: tmp_path)
+
+    from heaviside.pipeline.crossref import SimDerivedStress
+    state = CrossRefState(source_bom=[], target_manufacturer="TestMfr")
+    state.stress_by_ref = {"C9": SimDerivedStress(ref_des="C9", role="output", v_peak=10.0)}
+    state.crossref_result = [{
+        "ref_des": "C9", "component_type": "capacitor",
+        "original_pn": "ORIGM", "substitute_pn": "SUBSM",
+        "status": "recommended", "notes": "",
+    }]
+    cp._stage_param_check(state)
+    row = state.crossref_result[0]
+    verdicts = {r["name"]: r["verdict"] for r in row["_param_results"]}
+    assert verdicts["c_bias"] == "fail"
+    assert row["status"] == "partial"
+
+
+def test_stage_mlcc_bias_skipped_without_stress(tmp_path, monkeypatch):
+    # Same parts but no operating voltage → bias not computed (no estimate).
+    _write_caps(tmp_path, [
+        _cap_env("ORIGN", esr=0.05, ripple=2.0, tech="X7R", v=6.3, sat_mlcc=0.9, vth_mlcc=50),
+        _cap_env("SUBSN", esr=0.05, ripple=2.0, tech="X7R", v=6.3, sat_mlcc=0.6, vth_mlcc=8),
+    ])
+    monkeypatch.setattr(cp, "_tas_data_dir", lambda: tmp_path, raising=False)
+    monkeypatch.setattr("heaviside.catalogue.selector._tas_data_dir", lambda: tmp_path)
+
+    state = CrossRefState(source_bom=[], target_manufacturer="TestMfr")
+    state.crossref_result = [{
+        "ref_des": "C10", "component_type": "capacitor",
+        "original_pn": "ORIGN", "substitute_pn": "SUBSN",
+        "status": "recommended", "notes": "",
+    }]
+    cp._stage_param_check(state)
+    row = state.crossref_result[0]
+    names = {r["name"] for r in row.get("_param_results", [])}
+    assert "c_bias" not in names
+    assert row["status"] == "recommended"
 
 
 def test_stage_missing_substitute_esr_fails(tmp_path, monkeypatch):

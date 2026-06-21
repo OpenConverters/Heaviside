@@ -245,6 +245,71 @@ def evaluate_params(
     return results
 
 
+def effective_capacitance_at_bias(
+    c_nom: float | None,
+    v_rated: float | None,
+    sat_ratio: float | None,
+    vth: float | None,
+    v_op: float,
+) -> float | None:
+    """Effective capacitance of a class-2 MLCC at DC operating voltage ``v_op``.
+
+    Class-2 ceramics lose capacitance under DC bias — a "10 µF" X5R can measure
+    3-4 µF at its operating voltage — so the nameplate value is misleading for a
+    substitution. We model the bias curve as ``C(V) = C_nom / (1 + (V/vth)^k)``
+    and fit ``k`` from the two REAL anchors in the DB (no estimation):
+
+      * 50% loss at ``vthMLCC``          → C(vth)   = C_nom/2 (automatic)
+      * ``capacitanceSaturationMLCC``    → C(v_rated) = sat·C_nom
+
+    Returns None (→ "unverified", never an estimate) if any anchor is missing or
+    out of range, or for class-1 (C0G/NP0) parts which don't bias-derate.
+    """
+    import math
+
+    if c_nom is None or c_nom <= 0 or v_op < 0:
+        return None
+    if not (isinstance(vth, (int, float)) and vth > 0):
+        return None
+    if not (isinstance(sat_ratio, (int, float)) and 0 < sat_ratio < 1):
+        return None
+    if not (isinstance(v_rated, (int, float)) and v_rated > 0) or v_rated == vth:
+        return None
+    # Fit k from the rated-voltage anchor: sat = 1/(1+(v_rated/vth)^k).
+    ratio = (1.0 - sat_ratio) / sat_ratio  # = (v_rated/vth)^k, must be > 0
+    if ratio <= 0:
+        return None
+    k = math.log(ratio) / math.log(v_rated / vth)
+    if k <= 0:
+        return None
+    return c_nom / (1.0 + (v_op / vth) ** k)
+
+
+def mlcc_bias_param(
+    orig: dict[str, Any], sub: dict[str, Any], v_op: float | None
+) -> dict[str, Any] | None:
+    """Compare original vs substitute EFFECTIVE capacitance at the operating
+    voltage. Returns a render-ready param dict (higher_better, 10% margin) or
+    None when it can't be computed (no operating voltage / not class-2 MLCC /
+    model anchors absent — surfaced elsewhere as the nominal-value check)."""
+    if v_op is None or v_op <= 0:
+        return None
+    oc = effective_capacitance_at_bias(
+        _as_float(orig.get("capacitance")), _as_float(orig.get("voltage")),
+        _as_float(orig.get("capacitance_saturation_mlcc")), _as_float(orig.get("vth_mlcc")),
+        v_op,
+    )
+    sc = effective_capacitance_at_bias(
+        _as_float(sub.get("capacitance")), _as_float(sub.get("voltage")),
+        _as_float(sub.get("capacitance_saturation_mlcc")), _as_float(sub.get("vth_mlcc")),
+        v_op,
+    )
+    if oc is None and sc is None:
+        return None
+    spec = ParamSpec("c_bias", f"C @ {v_op:g}V", "F", HIGHER_BETTER, 0.9)
+    return compare_param(spec, oc, sc)
+
+
 def worst_verdict(results: list[dict[str, Any]]) -> str:
     """The most severe verdict across a parameter result list."""
     order = {PASS: 0, UNVERIFIED: 1, WARN: 2, FAIL: 3}

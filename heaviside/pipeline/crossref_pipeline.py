@@ -1465,6 +1465,10 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
                 "technology": part.get("technology"),
                 "esr": elec.get("esr"),
                 "ripple_current": elec.get("rippleCurrent"),
+                # MLCC DC-bias model anchors (nullable for non-MLCC) — used to
+                # compare effective capacitance at the operating voltage.
+                "capacitance_saturation_mlcc": elec.get("capacitanceSaturationMLCC"),
+                "vth_mlcc": elec.get("vthMLCC"),
                 "package": part.get("case", ""),
             }
         except (KeyError, TypeError):
@@ -2699,6 +2703,7 @@ def _stage_param_check(state: CrossRefState) -> None:
         FAIL,
         PARAM_SPECS,
         evaluate_params,
+        mlcc_bias_param,
     )
 
     category_files = {
@@ -2757,11 +2762,21 @@ def _stage_param_check(state: CrossRefState) -> None:
             continue
         o_mpn = str(row.get("original_pn") or "").strip().lower()
         s_mpn = str(row.get("substitute_pn") or "").strip().lower()
-        results = evaluate_params(
-            cat,
-            params_by_key.get((cat, o_mpn)),
-            params_by_key.get((cat, s_mpn)),
-        )
+        orig_params = params_by_key.get((cat, o_mpn))
+        sub_params = params_by_key.get((cat, s_mpn))
+        results = evaluate_params(cat, orig_params, sub_params)
+
+        # MLCC DC-bias: compare effective capacitance at the component's
+        # operating voltage (from sim stress, when available). Only meaningful
+        # for capacitors with a known bias and class-2 model anchors.
+        if cat == "capacitor":
+            ref = row.get("ref_des", "")
+            stress = state.stress_by_ref.get(ref)
+            v_op = stress.v_peak if stress is not None else None
+            bias = mlcc_bias_param(orig_params or {}, sub_params or {}, v_op)
+            if bias is not None:
+                results.append(bias)
+
         if not results:
             continue
         row["_param_results"] = results

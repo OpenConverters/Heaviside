@@ -9,7 +9,9 @@ from heaviside.pipeline.param_check import (
     PASS,
     UNVERIFIED,
     WARN,
+    effective_capacitance_at_bias,
     evaluate_params,
+    mlcc_bias_param,
     worst_verdict,
 )
 
@@ -82,6 +84,34 @@ def test_magnetic_isat_dcr():
     # Isat shortfall below margin fails
     r2 = evaluate_params("magnetic", {"saturation_current": 5.0}, {"saturation_current": 3.0})
     assert r2[0]["verdict"] == FAIL
+
+
+# ── MLCC DC-bias effective capacitance ───────────────────────────────────────
+def test_mlcc_effective_capacitance_anchors():
+    # rated 6.3V (< vth 10V), 60% remains at rated, 50% loss at vth=10V.
+    assert abs(effective_capacitance_at_bias(10e-6, 6.3, 0.6, 10, 6.3) - 6e-6) < 1e-9
+    assert abs(effective_capacitance_at_bias(10e-6, 6.3, 0.6, 10, 10) - 5e-6) < 1e-9
+    # less bias → more capacitance retained
+    assert effective_capacitance_at_bias(10e-6, 6.3, 0.6, 10, 3) > 6e-6
+
+
+def test_mlcc_effective_capacitance_rejects_bad_data():
+    # physically inconsistent (rated>vth while sat>0.5) → None, not garbage
+    assert effective_capacitance_at_bias(10e-6, 25, 0.6, 10, 5) is None
+    # class-1 / missing anchors → None (no estimation)
+    assert effective_capacitance_at_bias(10e-6, 6.3, None, None, 5) is None
+    assert effective_capacitance_at_bias(10e-6, 6.3, 0.6, None, 5) is None
+
+
+def test_mlcc_bias_param_fail_and_gating():
+    # stable original vs hard-derating substitute at 10V bias → effective C
+    # collapses on the substitute → fail
+    o = {"capacitance": 10e-6, "voltage": 6.3, "capacitance_saturation_mlcc": 0.9, "vth_mlcc": 50}
+    s = {"capacitance": 10e-6, "voltage": 6.3, "capacitance_saturation_mlcc": 0.6, "vth_mlcc": 8}
+    res = mlcc_bias_param(o, s, 10.0)
+    assert res is not None and res["verdict"] == FAIL
+    # no operating voltage → not computed (None, surfaced as nominal check only)
+    assert mlcc_bias_param(o, s, None) is None
 
 
 def test_worst_verdict_ordering():
