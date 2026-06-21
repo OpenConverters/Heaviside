@@ -1196,28 +1196,52 @@ def _fmt_eng(value: float | None, unit: str) -> str | None:
     return f"{value / 1e-12:.3g} p{unit}"
 
 
-def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]:
-    from heaviside.catalogue._reader import iter_envelopes
-    from heaviside.catalogue.selector import (
-        Capacitor,
-        Diode,
-        Mosfet,
-        Resistor,
-        _tas_data_dir,
-    )
+# ---------------------------------------------------------------------------
+# Per-process caches: stats and facets are static for the lifetime of the
+# process (TAS data files don't change while the server is running).
+# ---------------------------------------------------------------------------
+_STATS_CACHE: dict[str, int] | None = None
+_FACETS_CACHE: dict[str, dict[str, Any]] = {}
+
+_CATALOG_FILES: dict[str, str] = {
+    "mosfets": "mosfets.ndjson",
+    "diodes": "diodes.ndjson",
+    "capacitors": "capacitors.ndjson",
+    "resistors": "resistors.ndjson",
+    "magnetics": "magnetics.ndjson",
+}
+
+_CATALOG_LABELS: dict[str, list[str]] = {
+    "mosfets":    ["Vds", "Rds(on)", "Id"],
+    "diodes":     ["Vrrm", "If(avg)", "Vf"],
+    "capacitors": ["C", "V", "ESR"],
+    "resistors":  ["R", "Tol", "P"],
+    "magnetics":  ["L", "Isat", "DCR"],
+}
+
+
+def _catalog_projectors() -> dict[str, Any]:
+    """Return per-category (filename, project_fn) pairs.
+
+    Each project_fn(env) returns a dict with string fields mpn/manufacturer/
+    tech/p1/p2/p3/status PLUS float|None fields _p1n/_p2n/_p3n used for
+    numeric filtering and sorting. Callers strip the _* fields before
+    returning to the API client.
+    """
+    from heaviside.catalogue._reader import iter_envelopes  # noqa: F401 (unused here, kept for type ref)
+    from heaviside.catalogue.selector import Capacitor, Diode, Mosfet, Resistor
 
     def _mosfet(env: dict[str, Any]) -> dict[str, Any] | None:
         m = Mosfet.from_envelope(env)
         if m is None:
             return None
         return {
-            "mpn": m.mpn,
-            "manufacturer": m.manufacturer,
-            "tech": m.technology,
+            "mpn": m.mpn, "manufacturer": m.manufacturer, "tech": m.technology,
             "p1": _fmt_eng(m.vds_rated, "V"),
             "p2": _fmt_eng(m.rds_on, "Ω"),
             "p3": _fmt_eng(m.id_continuous, "A"),
             "status": m.status,
+            "_p1n": m.vds_rated, "_p2n": m.rds_on, "_p3n": m.id_continuous,
         }
 
     def _diode(env: dict[str, Any]) -> dict[str, Any] | None:
@@ -1225,27 +1249,29 @@ def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]
         if d is None:
             return None
         return {
-            "mpn": d.mpn,
-            "manufacturer": d.manufacturer,
-            "tech": d.technology,
+            "mpn": d.mpn, "manufacturer": d.manufacturer, "tech": d.technology,
             "p1": _fmt_eng(d.vrrm_rated, "V"),
             "p2": _fmt_eng(d.if_avg_rated, "A"),
             "p3": _fmt_eng(d.vf_typ, "V"),
             "status": d.status,
+            "_p1n": d.vrrm_rated, "_p2n": d.if_avg_rated, "_p3n": d.vf_typ,
         }
 
     def _cap(env: dict[str, Any]) -> dict[str, Any] | None:
         c = Capacitor.from_envelope(env)
         if c is None:
             return None
+        try:
+            cap_tech = env["capacitor"]["manufacturerInfo"]["datasheetInfo"]["part"].get("technology") or ""
+        except (KeyError, TypeError):
+            cap_tech = ""
         return {
-            "mpn": c.mpn,
-            "manufacturer": c.manufacturer,
-            "tech": c.technology,
+            "mpn": c.mpn, "manufacturer": c.manufacturer, "tech": cap_tech,
             "p1": _fmt_eng(c.capacitance, "F"),
             "p2": _fmt_eng(c.v_rated, "V"),
             "p3": _fmt_eng(c.esr, "Ω"),
             "status": c.status,
+            "_p1n": c.capacitance, "_p2n": c.v_rated, "_p3n": c.esr if c.esr else None,
         }
 
     def _res(env: dict[str, Any]) -> dict[str, Any] | None:
@@ -1253,13 +1279,14 @@ def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]
         if r is None:
             return None
         return {
-            "mpn": r.mpn,
-            "manufacturer": r.manufacturer,
-            "tech": "",
+            "mpn": r.mpn, "manufacturer": r.manufacturer, "tech": "",
             "p1": _fmt_eng(r.resistance, "Ω"),
             "p2": f"{r.tolerance * 100:.3g}%",
             "p3": _fmt_eng(r.power_rating, "W"),
             "status": r.status,
+            "_p1n": r.resistance,
+            "_p2n": r.tolerance,
+            "_p3n": r.power_rating if r.power_rating else None,
         }
 
     def _mag(env: dict[str, Any]) -> dict[str, Any] | None:
@@ -1267,7 +1294,10 @@ def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]
             m = env["magnetic"]["manufacturerInfo"]
             el_raw = m["datasheetInfo"].get("electrical")
             if isinstance(el_raw, list):
-                el = next((i for i in el_raw if isinstance(i, dict) and "inductance" in i), el_raw[0] if el_raw else {})
+                el = next(
+                    (i for i in el_raw if isinstance(i, dict) and "inductance" in i),
+                    el_raw[0] if el_raw else {},
+                )
             else:
                 el = el_raw or {}
         except (KeyError, TypeError):
@@ -1281,32 +1311,63 @@ def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]
                 v = v.get("nominal", v.get("maximum", v.get("minimum")))
             return v if isinstance(v, (int, float)) else None
 
+        p1n = _scalar(el.get("inductance"))
+        p2n = _scalar(el.get("saturationCurrentPeak"))
+        p3n = _scalar(el.get("dcResistance"))
         return {
-            "mpn": ref,
-            "manufacturer": name,
-            "tech": m.get("family", ""),
-            "p1": _fmt_eng(_scalar(el.get("inductance")), "H"),
-            "p2": _fmt_eng(_scalar(el.get("saturationCurrentPeak")), "A"),
-            "p3": _fmt_eng(_scalar(el.get("dcResistance")), "Ω"),
+            "mpn": ref, "manufacturer": name, "tech": el.get("subtype") or "",
+            "p1": _fmt_eng(p1n, "H"),
+            "p2": _fmt_eng(p2n, "A"),
+            "p3": _fmt_eng(p3n, "Ω"),
             "status": m.get("status", ""),
+            "_p1n": p1n, "_p2n": p2n, "_p3n": p3n,
         }
 
-    catalog: dict[str, tuple[str, Any]] = {
-        "mosfets": ("mosfets.ndjson", _mosfet),
-        "diodes": ("diodes.ndjson", _diode),
+    return {
+        "mosfets":    ("mosfets.ndjson",    _mosfet),
+        "diodes":     ("diodes.ndjson",     _diode),
         "capacitors": ("capacitors.ndjson", _cap),
-        "resistors": ("resistors.ndjson", _res),
-        "magnetics": ("magnetics.ndjson", _mag),
+        "resistors":  ("resistors.ndjson",  _res),
+        "magnetics":  ("magnetics.ndjson",  _mag),
     }
-    if category not in catalog:
+
+
+def _catalog_scan(
+    category: str,
+    *,
+    query: str = "",
+    tech: str = "",
+    p1_min: float | None = None,
+    p1_max: float | None = None,
+    p2_min: float | None = None,
+    p2_max: float | None = None,
+    p3_min: float | None = None,
+    p3_max: float | None = None,
+    sort: str = "",
+    order: str = "asc",
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[int, list[dict[str, Any]]]:
+    """Full-scan a category NDJSON with all filters applied server-side.
+
+    Returns (total_matching, page_of_rows). Numeric fields _p1n/_p2n/_p3n are
+    stripped before returning.
+    """
+    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.catalogue.selector import _tas_data_dir
+
+    projectors = _catalog_projectors()
+    if category not in projectors:
         raise HTTPException(
             status_code=404,
-            detail=f"unknown category '{category}'; choose one of {sorted(catalog)}",
+            detail=f"unknown category '{category}'; choose one of {sorted(projectors)}",
         )
-    filename, project = catalog[category]
+    filename, project = projectors[category]
     path = _tas_data_dir() / filename
     q = query.strip().lower()
-    rows: list[dict[str, Any]] = []
+    tech_lo = tech.strip().lower()
+
+    matched: list[dict[str, Any]] = []
     for _lineno, env in iter_envelopes(path):
         try:
             row = project(env)
@@ -1314,16 +1375,129 @@ def _catalog_rows(category: str, query: str, limit: int) -> list[dict[str, Any]]
             continue
         if row is None:
             continue
-        if (
-            q
-            and q not in (row["mpn"] or "").lower()
-            and q not in (row["manufacturer"] or "").lower()
-        ):
+        if q and q not in (row["mpn"] or "").lower() and q not in (row["manufacturer"] or "").lower():
             continue
-        rows.append(row)
-        if len(rows) >= limit:
-            break
-    return rows
+        if tech_lo and tech_lo != (row["tech"] or "").lower():
+            continue
+        p1n: float | None = row["_p1n"]
+        p2n: float | None = row["_p2n"]
+        p3n: float | None = row["_p3n"]
+        if p1_min is not None and (p1n is None or p1n < p1_min):
+            continue
+        if p1_max is not None and (p1n is None or p1n > p1_max):
+            continue
+        if p2_min is not None and (p2n is None or p2n < p2_min):
+            continue
+        if p2_max is not None and (p2n is None or p2n > p2_max):
+            continue
+        if p3_min is not None and (p3n is None or p3n < p3_min):
+            continue
+        if p3_max is not None and (p3n is None or p3n > p3_max):
+            continue
+        matched.append(row)
+
+    # Sort on the numeric field (None values sort last regardless of direction).
+    if sort in ("p1", "p2", "p3"):
+        key_field = f"_{sort}n"
+        rev = order == "desc"
+        matched.sort(key=lambda r: (r[key_field] is None, -(r[key_field] or 0) if rev else (r[key_field] or 0)))
+    elif sort == "mpn":
+        matched.sort(key=lambda r: (r["mpn"] or "").lower(), reverse=(order == "desc"))
+    elif sort == "mfr":
+        matched.sort(key=lambda r: (r["manufacturer"] or "").lower(), reverse=(order == "desc"))
+
+    total = len(matched)
+    page = matched[offset: offset + limit]
+    for row in page:
+        row.pop("_p1n", None)
+        row.pop("_p2n", None)
+        row.pop("_p3n", None)
+    return total, page
+
+
+def _build_stats() -> dict[str, int]:
+    global _STATS_CACHE
+    if _STATS_CACHE is not None:
+        return _STATS_CACHE
+    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.catalogue.selector import _tas_data_dir
+
+    projectors = _catalog_projectors()
+    result: dict[str, int] = {}
+    for cat, (fname, project) in projectors.items():
+        path = _tas_data_dir() / fname
+        n = 0
+        for _, env in iter_envelopes(path):
+            try:
+                if project(env) is not None:
+                    n += 1
+            except Exception:
+                pass
+        result[cat] = n
+    _STATS_CACHE = result
+    return result
+
+
+def _build_facets(category: str) -> dict[str, Any]:
+    if category in _FACETS_CACHE:
+        return _FACETS_CACHE[category]
+    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.catalogue.selector import _tas_data_dir
+
+    projectors = _catalog_projectors()
+    if category not in projectors:
+        raise HTTPException(status_code=404, detail=f"unknown category '{category}'")
+    filename, project = projectors[category]
+    path = _tas_data_dir() / filename
+
+    techs: set[str] = set()
+    p1_vals: list[float] = []
+    p2_vals: list[float] = []
+    p3_vals: list[float] = []
+    total = 0
+    for _, env in iter_envelopes(path):
+        try:
+            row = project(env)
+        except Exception:
+            continue
+        if row is None:
+            continue
+        total += 1
+        t = row.get("tech") or ""
+        if t:
+            techs.add(t)
+        v1: float | None = row.get("_p1n")
+        v2: float | None = row.get("_p2n")
+        v3: float | None = row.get("_p3n")
+        if v1 is not None and v1 > 0:
+            p1_vals.append(v1)
+        if v2 is not None and v2 > 0:
+            p2_vals.append(v2)
+        if v3 is not None and v3 > 0:
+            p3_vals.append(v3)
+
+    result = {
+        "total": total,
+        "techs": sorted(techs),
+        "p1": {"min": min(p1_vals) if p1_vals else None, "max": max(p1_vals) if p1_vals else None},
+        "p2": {"min": min(p2_vals) if p2_vals else None, "max": max(p2_vals) if p2_vals else None},
+        "p3": {"min": min(p3_vals) if p3_vals else None, "max": max(p3_vals) if p3_vals else None},
+    }
+    _FACETS_CACHE[category] = result
+    return result
+
+
+@app.get("/catalog/stats")
+def catalog_stats() -> dict[str, Any]:
+    """Total valid component counts per category (cached for process lifetime)."""
+    counts = _build_stats()
+    return {"counts": counts, "total": sum(counts.values())}
+
+
+@app.get("/catalog/{category}/facets")
+def catalog_facets(category: str) -> dict[str, Any]:
+    """Available filter values and numeric ranges for a category (cached)."""
+    return _build_facets(category)
 
 
 @app.get("/catalog/{category}/{mpn}/detail")
@@ -1362,23 +1536,41 @@ def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
 
 
 @app.get("/catalog/{category}")
-def catalog(category: str, q: str = "", limit: int = 50) -> dict[str, Any]:
-    """Parametric browse of a TAS component category. `q` matches MPN or
-    manufacturer (case-insensitive substring). Columns p1/p2/p3 are the three
-    headline parameters for that category (units vary — see `param_labels`)."""
+def catalog(
+    category: str,
+    q: str = "",
+    limit: int = 50,
+    offset: int = 0,
+    tech: str = "",
+    sort: str = "",
+    order: str = "asc",
+    p1_min: float | None = None,
+    p1_max: float | None = None,
+    p2_min: float | None = None,
+    p2_max: float | None = None,
+    p3_min: float | None = None,
+    p3_max: float | None = None,
+) -> dict[str, Any]:
+    """Parametric browse with full filtering, sorting, and pagination.
+
+    Numeric range params (p1_min/p1_max etc.) are in SI units (V, Ω, A, F, H).
+    `sort` accepts p1|p2|p3|mpn|mfr; `order` accepts asc|desc.
+    Returns `total` (all matches before limit) alongside the `rows` page.
+    """
     limit = max(1, min(limit, 200))
-    labels = {
-        "mosfets": ["Vds", "Rds(on)", "Id"],
-        "diodes": ["Vrrm", "If(avg)", "Vf"],
-        "capacitors": ["C", "V", "ESR"],
-        "resistors": ["R", "Tol", "P"],
-        "magnetics": ["L", "Isat", "DCR"],
-    }
-    rows = _catalog_rows(category, q, limit)
+    offset = max(0, offset)
+    total, rows = _catalog_scan(
+        category, query=q, tech=tech, sort=sort, order=order,
+        p1_min=p1_min, p1_max=p1_max,
+        p2_min=p2_min, p2_max=p2_max,
+        p3_min=p3_min, p3_max=p3_max,
+        limit=limit, offset=offset,
+    )
     return {
         "category": category,
-        "count": len(rows),
-        "param_labels": labels.get(category, ["", "", ""]),
+        "total": total,
+        "offset": offset,
+        "param_labels": _CATALOG_LABELS.get(category, ["", "", ""]),
         "rows": rows,
     }
 

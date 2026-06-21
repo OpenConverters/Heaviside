@@ -15,7 +15,7 @@ const tabs = [
   { id: 'design', label: 'Converter Designer', icon: 'pi-cog' },
   { id: 'xref', label: 'Cross-Reference', icon: 'pi-sync' },
   { id: 'jobs', label: 'Jobs', icon: 'pi-server' },
-  { id: 'catalog', label: 'TAS Catalog', icon: 'pi-database' },
+  { id: 'catalog', label: 'Catalog', icon: 'pi-database' },
 ]
 const _ids = tabs.map((t) => t.id)
 

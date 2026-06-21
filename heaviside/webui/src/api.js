@@ -39,8 +39,24 @@ async function jpost(url, body) {
 export const api = {
   topologies: () => jget('/topologies'),
   manufacturers: () => jget('/manufacturers'),
-  catalog: (cat, q, limit = 50) =>
-    jget(`/catalog/${cat}?limit=${limit}&q=${encodeURIComponent(q || '')}`),
+  catalogStats: () => jget('/catalog/stats'),
+  catalogFacets: (cat) => jget(`/catalog/${cat}/facets`),
+  catalog: (cat, opts = {}) => {
+    const {
+      q = '', limit = 50, offset = 0,
+      tech = '', sort = '', order = 'asc',
+      p1Min, p1Max, p2Min, p2Max, p3Min, p3Max,
+    } = opts
+    const p = new URLSearchParams({ q: q || '', limit, offset, sort, order })
+    if (tech) p.set('tech', tech)
+    if (p1Min != null) p.set('p1_min', p1Min)
+    if (p1Max != null) p.set('p1_max', p1Max)
+    if (p2Min != null) p.set('p2_min', p2Min)
+    if (p2Max != null) p.set('p2_max', p2Max)
+    if (p3Min != null) p.set('p3_min', p3Min)
+    if (p3Max != null) p.set('p3_max', p3Max)
+    return jget(`/catalog/${cat}?${p}`)
+  },
   jobs: () => jget('/jobs'),
   job: (id) => jget(`/jobs/${id}`),
   cancelJob: (id) => fetch(`/jobs/${id}/cancel`, { method: 'POST' }),
