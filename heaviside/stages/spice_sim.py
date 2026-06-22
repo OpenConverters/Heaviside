@@ -85,6 +85,63 @@ def simulate(
     )
 
 
+def simulate_self_contained_deck(
+    deck: str,
+    *,
+    vout_target: float | None = None,
+    tolerance: float = 0.02,
+    timeout_s: float = 120.0,
+) -> SpiceResult:
+    """Run a SELF-CONTAINED deck — one that carries its own ``.tran`` plus a
+    ``.control``/``meas`` block and prints its output (e.g. a Kirchhoff
+    ``tas_to_ngspice`` deck) — and parse the measured ``vout``.
+
+    Unlike :func:`simulate`, this does NOT drive HS's duty-search runner: the
+    deck is open-loop and self-measuring (its switch duty is fixed by the
+    design), so it is run as-is via ``ngspice -b``. Parse/sim failures raise
+    ``SimError`` — never a silent fallback to a plausible number."""
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+
+    from heaviside.sim import SimError
+
+    if shutil.which("ngspice") is None:
+        raise SimError("ngspice not installed — cannot run a self-contained deck")
+    with tempfile.TemporaryDirectory() as d:
+        cir = os.path.join(d, "deck.cir")
+        with open(cir, "w", encoding="utf-8") as fh:
+            fh.write(deck)
+        proc = subprocess.run(
+            ["ngspice", "-b", cir], capture_output=True, text=True, timeout=timeout_s
+        )
+    vals: list[float] = []
+    for m in re.findall(r"vout\s*=\s*([0-9.eE+\-]+)", proc.stdout + proc.stderr):
+        try:
+            v = float(m)
+        except ValueError:
+            continue
+        if v == v and v > 1e-6:  # exclude NaN and ~0 sentinel measurements
+            vals.append(v)
+    if not vals:
+        raise SimError(
+            f"self-contained deck produced no parseable vout (ngspice rc={proc.returncode}): "
+            f"{(proc.stdout + proc.stderr)[-400:]}"
+        )
+    vout = max(vals)
+    converged = vout_target is None or (
+        vout_target != 0 and abs(vout - vout_target) / abs(vout_target) <= tolerance
+    )
+    return SpiceResult(
+        result={"vout": vout},
+        closed_loop=False,
+        vout_target=vout_target,
+        converged=converged,
+        deck=deck,
+    )
+
+
 def simulate_from_spec(
     topology: str,
     converter_json: Any,
@@ -92,11 +149,35 @@ def simulate_from_spec(
     magnetizing_inductance: float,
     *,
     vout_target: float | None = None,
+    backend: str = "mkf",
+    fidelity: str = "REQUIREMENTS",
     **sim_kwargs: Any,
 ) -> SpiceResult:
-    """Deterministic engine: decompose a converter spec into a deck via the
-    MKF/PyOM path, then ``simulate`` it. All magnetics math stays in MKF —
-    this only orchestrates (CLAUDE.md: no downstream magnetics math)."""
+    """Deterministic engine: turn a converter spec into a deck and ``simulate`` it.
+
+    ``backend`` selects the deck generator (the migration seam — see
+    ``docs/kirchhoff_migration_analysis.md``):
+
+    * ``"mkf"`` (default): ``decompose_from_spec`` via MKF/PyOM, run through HS's
+      duty-search runner. All magnetics math stays in MKF.
+    * ``"kirchhoff"``: design + assemble + emit via ``PyKirchhoff`` and run its
+      self-contained deck. Only topologies bound in the adapter are supported;
+      an unbound one raises ``KirchhoffTopologyUnsupported`` (no silent skip)."""
+    if backend == "kirchhoff":
+        from heaviside.decomposer import kirchhoff_adapter as _ka
+
+        tas = _ka.design_topology_tas(topology, converter_json)
+        deck = _ka.tas_to_ngspice(tas, fidelity)
+        return simulate_self_contained_deck(
+            deck,
+            vout_target=vout_target,
+            tolerance=sim_kwargs.get("tolerance", 0.02),
+            timeout_s=sim_kwargs.get("timeout_s", 120.0),
+        )
+    if backend != "mkf":
+        raise ValueError(
+            f"spice_sim: unknown backend {backend!r} (expected 'mkf' or 'kirchhoff')"
+        )
     from heaviside.decomposer import decompose_from_spec
 
     deck, _tas = decompose_from_spec(
