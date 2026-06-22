@@ -155,7 +155,8 @@ def test_digikey_distributor_block_populated() -> None:
     assert len(dist) == 1
     assert dist[0]["name"] == "Digi-Key"
     assert dist[0]["reference"] == "C3M0020075K-ND"
-    assert dist[0]["cost"] == pytest.approx(22.50)
+    assert dist[0]["cost"]["value"] == pytest.approx(22.50)
+    assert dist[0]["cost"]["currency"] == "USD"
     assert dist[0]["quantity"] == 1450
 
 
@@ -320,7 +321,8 @@ def test_mouser_mosfet_happy_path_validates() -> None:
     validate_component("mosfets", envelope)
     mosfet = envelope["semiconductor"]["mosfet"]
     assert mosfet["distributorsInfo"][0]["name"] == "Mouser"
-    assert mosfet["distributorsInfo"][0]["cost"] == pytest.approx(22.50)
+    assert mosfet["distributorsInfo"][0]["cost"]["value"] == pytest.approx(22.50)
+    assert mosfet["distributorsInfo"][0]["cost"]["currency"] == "USD"
     assert mosfet["distributorsInfo"][0]["quantity"] == 150
 
 
@@ -502,7 +504,8 @@ def test_mouser_diode_happy_path_validates() -> None:
     validate_component("diodes", envelope)
     diode = envelope["semiconductor"]["diode"]
     assert diode["distributorsInfo"][0]["name"] == "Mouser"
-    assert diode["distributorsInfo"][0]["cost"] == pytest.approx(3.50)
+    assert diode["distributorsInfo"][0]["cost"]["value"] == pytest.approx(3.50)
+    assert diode["distributorsInfo"][0]["cost"]["currency"] == "USD"
 
 
 def test_mouser_diode_thin_payload_raises() -> None:

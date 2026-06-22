@@ -46,6 +46,24 @@ from typing import Any
 
 from heaviside.librarian.fetcher.base import IncompleteSourceError
 
+# Distributor display name -> ISO 4217 currency it quotes in. The bumped PEAS
+# distributorsInfo[].cost is a currencyAmount ({value, currency}); Digi-Key and
+# Mouser both quote USD. Fail loud on an unknown distributor (no guessed currency).
+_DISTRIBUTOR_CURRENCY = {"digikey": "USD", "mouser": "USD"}
+
+
+def _cost_amount(value: float, distributor: str) -> dict[str, Any]:
+    """Wrap a unit price as a PEAS currencyAmount ({value, currency})."""
+    key = distributor.lower().replace("-", "").replace(" ", "")
+    currency = _DISTRIBUTOR_CURRENCY.get(key)
+    if currency is None:
+        raise ValueError(
+            "distributorsInfo.cost: no known quote currency for distributor "
+            f"{distributor!r} (add it to _DISTRIBUTOR_CURRENCY)"
+        )
+    return {"value": float(value), "currency": currency}
+
+
 __all__ = [
     "DIGIKEY_MOSFET_PARAM_MAP",
     "convert_digikey_to_tas_capacitor",
@@ -474,7 +492,7 @@ def convert_digikey_to_tas_mosfet(
                         "name": distributor,
                         "reference": distributor_ref,
                         "link": product.get("ProductUrl", ""),
-                        "cost": cost,
+                        "cost": _cost_amount(cost, distributor),
                         "quantity": int(product.get("QuantityAvailable", 0) or 0),
                         "updatedAt": date.today().strftime("%Y-%m-%d"),
                     }
@@ -609,7 +627,7 @@ def convert_mouser_to_tas_mosfet(product: dict[str, Any]) -> dict[str, Any]:
                         "name": "Mouser",
                         "reference": product.get("MouserPartNumber", ""),
                         "link": product.get("ProductDetailUrl", ""),
-                        "cost": cost,
+                        "cost": _cost_amount(cost, "Mouser"),
                         "quantity": quantity,
                         "updatedAt": date.today().strftime("%Y-%m-%d"),
                     }
@@ -782,7 +800,7 @@ def _digikey_distributor_block(
         "name": distributor,
         "reference": product.get("DigiKeyPartNumber") or "",
         "link": product.get("ProductUrl", ""),
-        "cost": cost,
+        "cost": _cost_amount(cost, distributor),
         "quantity": int(product.get("QuantityAvailable", 0) or 0),
         "updatedAt": date.today().strftime("%Y-%m-%d"),
     }
@@ -819,7 +837,7 @@ def _mouser_distributor_block(
         "name": "Mouser",
         "reference": product.get("MouserPartNumber", ""),
         "link": product.get("ProductDetailUrl", ""),
-        "cost": cost,
+        "cost": _cost_amount(cost, "Mouser"),
         "quantity": quantity,
         "updatedAt": date.today().strftime("%Y-%m-%d"),
     }
