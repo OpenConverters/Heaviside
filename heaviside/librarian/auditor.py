@@ -515,7 +515,11 @@ def _extract_electrical(component: dict[str, Any], category: str) -> dict[str, A
         or body.get("datasheetInfo")
         or {}
     )
-    elec: dict[str, Any] = dict(ds.get("electrical", {}) or {})
+    # A malformed row may carry a non-object ``electrical`` (e.g. a list); the
+    # auditor must then report that part as missing-fields rather than crash the
+    # whole category audit — it surfaces the bad row instead of aborting on it.
+    raw_electrical = ds.get("electrical")
+    elec: dict[str, Any] = dict(raw_electrical) if isinstance(raw_electrical, dict) else {}
 
     thermal = ds.get("thermal") or {}
     if thermal:
@@ -847,7 +851,20 @@ def audit_category(
             report.corrupt_lines.append(item)
             continue
         report.total += 1
-        result = audit_component(item, category, run_physics=run_physics)
+        try:
+            result = audit_component(item, category, run_physics=run_physics)
+        except (AttributeError, TypeError, KeyError) as exc:
+            # A row whose shape is malformed (e.g. a list where an object is
+            # expected) is SURFACED as a corrupt line, not allowed to abort the
+            # whole category audit. Strict mode (on_corruption='raise') still
+            # raises; report mode records it and moves on.
+            if on_corruption == "raise":
+                raise
+            report.total -= 1
+            report.corrupt_lines.append(
+                CorruptLine(lineno, f"malformed row shape: {type(exc).__name__}: {exc}")
+            )
+            continue
         result.line = lineno
         for gap in result.critical_failures:
             crit_misses[gap.field] += 1
