@@ -33,10 +33,11 @@ _EXPORTS: dict[str, str] = {
     "Coil": "_generated.mas.coil",
     "Wire": "_generated.mas.wire",
     "Bobbin": "_generated.mas.bobbin",
-    # PEAS
+    # PEAS — the PSMA "peas-family-consolidation" folded Controller into peas.json
+    # (it now $refs CTAS) and removed the standalone Terminal type, so both live
+    # in the single generated peas module (Terminal no longer exported by PEAS).
     "Peas": "_generated.peas.peas",
-    "Controller": "_generated.peas.controller",
-    "Terminal": "_generated.peas.terminal",
+    "Controller": "_generated.peas.peas",
     # CAS
     "Cas": "_generated.cas.cas",
     "Capacitor": "_generated.cas.capacitor",
@@ -87,9 +88,8 @@ if TYPE_CHECKING:
     from heaviside.types._generated.mas.magnetic import Magnetic as Magnetic
     from heaviside.types._generated.mas.mas import Mas as Mas
     from heaviside.types._generated.mas.wire import Wire as Wire
-    from heaviside.types._generated.peas.controller import Controller as Controller
+    from heaviside.types._generated.peas.peas import Controller as Controller
     from heaviside.types._generated.peas.peas import Peas as Peas
-    from heaviside.types._generated.peas.terminal import Terminal as Terminal
     from heaviside.types._generated.ras.ras import Ras as Ras
     from heaviside.types._generated.ras.resistor import Resistor as Resistor
     from heaviside.types._generated.ras.varistor import Varistor as Varistor

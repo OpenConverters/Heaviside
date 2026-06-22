@@ -75,11 +75,20 @@ REPO_MAP: dict[str, Path] = {
     "cas": ROOT / "CAS" / "schemas",
     "ras": ROOT / "RAS" / "schemas",
     "sas": ROOT / "SAS" / "schemas",
+    # PEAS family consolidation (PSMA main) split controller -> CTAS and the
+    # analog parts -> AAS, and PEAS now $refs them; the rest are present so any
+    # cross-repo $ref resolves locally. Only the SOURCES below generate types;
+    # these extra entries exist purely for offline $ref resolution.
+    "ctas": ROOT / "CTAS" / "schemas",
+    "aas": ROOT / "AAS" / "schemas",
+    "conas": ROOT / "CONAS" / "schemas",
+    "tas": ROOT / "TAS" / "schemas",
+    "cias": ROOT / "CIAS" / "schemas",
 }
 
 #: Bump when the quicktype invocation or bundling changes, so existing
 #: checkouts regenerate even though the schemas themselves are unchanged.
-GENERATOR_VERSION = 4
+GENERATOR_VERSION = 6
 
 # Source schema roots. Each entry: (repo key in REPO_MAP, subdir, output
 # bucket). Directories are scanned non-recursively (top-level *.json only).
@@ -256,6 +265,54 @@ def _normalise_top_level(out_file: Path, desired: str) -> None:
         out_file.write_text(re.sub(rf"\b{re.escape(upper)}\b", desired, src), encoding="utf-8")
 
 
+_FIELD_DECL_RE = re.compile(r"^    ([A-Za-z_]\w*): (.+)$")
+
+
+def _fix_dataclass_field_order(out_file: Path) -> None:
+    """Append ``= None`` to any dataclass field with no default that follows a
+    defaulted one.
+
+    quicktype renders an open-schema property (``"temperature": {}`` in CAS's
+    ``thermal`` allOf-extension) as a required ``Any`` field, and can emit it
+    *after* the optional fields — which is invalid Python (``non-default
+    argument follows default argument``). Defaulting the trailing field (rather
+    than reordering) keeps quicktype's positional ``from_dict`` constructor
+    calls correct, since the value is still passed explicitly there.
+    """
+    lines = out_file.read_text(encoding="utf-8").splitlines()
+    out: list[str] = []
+    in_dataclass = False
+    seen_default = False
+    changed = False
+    for line in lines:
+        if line.startswith("@dataclass"):
+            in_dataclass, seen_default = True, False
+            out.append(line)
+            continue
+        if in_dataclass:
+            if line.startswith("class "):
+                # The ``class X:`` header right after @dataclass — stay in the
+                # field section (it is non-indented but not the end).
+                out.append(line)
+                continue
+            # A method/decorator or any dedented (module-level) line ends the
+            # field section; blank lines and field docstrings do not.
+            if line.startswith(("    def ", "    @")) or (line and not line.startswith(" ")):
+                in_dataclass = False
+            else:
+                m = _FIELD_DECL_RE.match(line)
+                if m:
+                    if " = " in m.group(2):
+                        seen_default = True
+                    elif seen_default:
+                        out.append(line + " = None")
+                        changed = True
+                        continue
+        out.append(line)
+    if changed:
+        out_file.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
 def _gen_one(quicktype: list[str], schema: Path, out_dir: Path) -> None:
     top_level = _top_level_name(schema.stem)
     bundle = _Bundler(schema).bundle()
@@ -282,6 +339,7 @@ def _gen_one(quicktype: list[str], schema: Path, out_dir: Path) -> None:
         print(f"FAIL {schema.name}:\n{res.stderr}", file=sys.stderr)
         raise SystemExit(res.returncode)
     _normalise_top_level(out_file, top_level)
+    _fix_dataclass_field_order(out_file)
 
 
 def _iter_schemas() -> list[tuple[Path, str]]:

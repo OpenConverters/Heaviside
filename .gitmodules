@@ -12,19 +12,19 @@
 	branch = main
 [submodule "SAS"]
 	path = SAS
-	url = git@github.com:OpenConverters/SAS.git
+	url = git@github.com:Power-Supply-Manufacturers-Association/SAS.git
 	branch = main
 [submodule "CAS"]
 	path = CAS
-	url = git@github.com:OpenConverters/CAS.git
+	url = git@github.com:Power-Supply-Manufacturers-Association/CAS.git
 	branch = main
 [submodule "RAS"]
 	path = RAS
-	url = git@github.com:OpenConverters/RAS.git
+	url = git@github.com:Power-Supply-Manufacturers-Association/RAS.git
 	branch = main
 [submodule "TAS"]
 	path = TAS
-	url = git@github.com:OpenConverters/TAS.git
+	url = git@github.com:Power-Supply-Manufacturers-Association/TAS.git
 	branch = main
 [submodule "CIAS"]
 	path = CIAS
@@ -33,3 +33,9 @@
 	path = CONAS
 	url = git@github.com:Power-Supply-Manufacturers-Association/CONAS.git
 	branch = main
+[submodule "CTAS"]
+	path = CTAS
+	url = git@github.com:Power-Supply-Manufacturers-Association/CTAS.git
+[submodule "AAS"]
+	path = AAS
+	url = git@github.com:Power-Supply-Manufacturers-Association/AAS.git
