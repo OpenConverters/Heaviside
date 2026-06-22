@@ -132,8 +132,13 @@ def test_ranking_demotes_oversize_inductor_below_fitting_ones() -> None:
     }
     ranked = _rank_candidates(comp, "magnetic", [big, fit_perfect, fit_close], max_results=10)
     order = [_envelope_reference(c, "magnetic") for c in ranked]
-    assert order[0] == "SMALL-22u"
-    assert order[-1] == "744771122"  # oversize ranked last
+    assert order[0] == "SMALL-22u"  # best fit: exact value, smallest fitting body
+    # Oversize substitutes are dropped as a last resort when fitting parts exist
+    # (crossref: "larger-package substitutes are a last resort", 7c00cac), so the
+    # oversize 744771122 must NOT appear here; cf.
+    # test_oversize_still_selectable_when_nothing_fits below.
+    assert "744771122" not in order
+    assert set(order) == {"SMALL-22u", "SMALL-20u"}
 
 
 def test_oversize_still_selectable_when_nothing_fits() -> None:

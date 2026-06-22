@@ -200,7 +200,10 @@ class TestValidateAgainstRealSchemas:
 
     def test_missing_required_field_raises_with_path(self):
         bad = json.loads(json.dumps(_VALID_RECORDS["mosfets"]))  # deep copy
-        del bad["semiconductor"]["mosfet"]["manufacturerInfo"]
+        # manufacturerInfo is optional at the top level in the current SAS schema,
+        # but 'name' is required within it — delete a still-required sub-field to
+        # exercise the validation gate (and its error-path reporting).
+        del bad["semiconductor"]["mosfet"]["manufacturerInfo"]["name"]
         with pytest.raises(tas.ValidationError) as exc_info:
             tas.validate_component("mosfets", bad)
         # Error list is exposed for programmatic inspection.
