@@ -373,6 +373,7 @@ def guard_component(
     component: dict[str, Any],
     *,
     validate_schema: bool = True,
+    validate_physics: bool = True,
     require_mpn: bool = True,
 ) -> None:
     """Reject ``component`` loudly if any integrity check fails.
@@ -385,14 +386,25 @@ def guard_component(
        payloads for the auditor to inspect; the pattern checks below
        still apply there because a placeholder MPN can never become
        valid.
-    2. Telemetry shape + every pattern check (:func:`integrity_issues`).
+    2. **Physics** validation via the canonical C++ ``tas_validator``
+       (:func:`heaviside.librarian.physics_validator.validate_physics`) when
+       ``validate_physics=True`` — rejects a part that is schema-valid but
+       physically impossible (e.g. inverted temperature bounds, impossible
+       DCR/ESR/Isat). Staging passes ``False`` for the same partial-payload
+       reason. Not silently skipped: if the validator is unavailable this
+       raises ``PhysicsValidatorUnavailable``.
+    3. Telemetry shape + every pattern check (:func:`integrity_issues`).
 
     Raises
     ------
     ValidationError, SchemaNotFoundError, UnknownCategoryError
         Propagated unchanged from schema validation.
+    PhysicsValidatorUnavailable
+        If ``validate_physics`` is requested but the compiled validator is
+        absent (build it — never a silent skip).
     GuardRejectionError
-        If any pattern check fails (all reasons listed).
+        If any pattern check fails, or the part carries an IMPOSSIBLE physics
+        finding (all reasons listed).
     """
     _sa._validate_category(category)
     if not isinstance(component, dict):
@@ -408,6 +420,17 @@ def guard_component(
         from heaviside.librarian.tas import validate_component
 
         validate_component(category, component)
+
+    if validate_physics:
+        from heaviside.librarian.physics_validator import validate_physics as _vp
+
+        impossible = _vp(component).impossible
+        if impossible:
+            raise GuardRejectionError(
+                category,
+                _guard_mpn(component),
+                [f"physics {f.code}: {f.message}" for f in impossible],
+            )
 
     issues = integrity_issues(component, require_mpn=require_mpn)
     if issues:

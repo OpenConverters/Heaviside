@@ -61,6 +61,7 @@ from pathlib import Path
 from typing import Any
 
 from heaviside.librarian import safe_access as _sa
+from heaviside.librarian.physics_validator import PhysicsFinding
 from heaviside.librarian.safe_access import LibrarianError
 
 __all__ = [
@@ -609,10 +610,18 @@ class ComponentAudit:
     line: int | None = None
     critical_failures: list[FieldGap] = field(default_factory=list)
     required_failures: list[FieldGap] = field(default_factory=list)
+    #: Findings from the canonical C++ physics validator (only populated when
+    #: ``run_physics=True``); empty otherwise so field-only audits are unchanged.
+    physics_findings: list[PhysicsFinding] = field(default_factory=list)
+
+    @property
+    def physically_invalid(self) -> bool:
+        """True iff the canonical validator flagged an IMPOSSIBLE finding."""
+        return any(f.severity == "IMPOSSIBLE" for f in self.physics_findings)
 
     @property
     def passed(self) -> bool:
-        return not self.critical_failures
+        return not self.critical_failures and not self.physically_invalid
 
 
 @dataclass(frozen=True)
@@ -674,11 +683,21 @@ def _applicable_critical_fields(component: dict[str, Any], category: str) -> lis
     return fields
 
 
-def audit_component(component: dict[str, Any], category: str) -> ComponentAudit:
+def audit_component(
+    component: dict[str, Any], category: str, *, run_physics: bool = False
+) -> ComponentAudit:
     """Audit a single component against the pipeline-critical field map.
 
     Raises :class:`LibrarianError` for unknown categories — never
     returns silent pass/fail for an unrecognised one (strict-mode).
+
+    When ``run_physics=True`` the part is also checked by the canonical C++
+    ``tas_validator`` (physics: are the *values* physically possible, distinct
+    from the field-presence audit). Any ``IMPOSSIBLE`` finding fails the audit.
+    Physics is opt-in so field-only callers keep their exact behaviour; the
+    production auditor entrypoints enable it. If physics is requested but the
+    validator is unavailable, :func:`physics_validator.validate_physics` raises
+    loudly — the gate is never silently skipped.
     """
     if category not in AUDITABLE_CATEGORIES:
         raise LibrarianError(
@@ -698,11 +717,18 @@ def audit_component(component: dict[str, Any], category: str) -> ComponentAudit:
         if _field_status(elec, f) != FieldStatus.PRESENT
     ]
 
+    physics_findings: list[PhysicsFinding] = []
+    if run_physics:
+        from heaviside.librarian import physics_validator as _pv
+
+        physics_findings = list(_pv.validate_physics(component).findings)
+
     return ComponentAudit(
         mpn=_get_mpn(component, category),
         category=category,
         critical_failures=crit_fail,
         required_failures=req_fail,
+        physics_findings=physics_findings,
     )
 
 
@@ -772,6 +798,7 @@ def audit_category(
     *,
     sample: int | None = None,
     on_corruption: str = "raise",
+    run_physics: bool = False,
 ) -> CategoryAudit:
     """Audit every row of ``TAS/data/<category>.ndjson`` (or first ``sample``).
 
@@ -820,7 +847,7 @@ def audit_category(
             report.corrupt_lines.append(item)
             continue
         report.total += 1
-        result = audit_component(item, category)
+        result = audit_component(item, category, run_physics=run_physics)
         result.line = lineno
         for gap in result.critical_failures:
             crit_misses[gap.field] += 1
@@ -842,6 +869,7 @@ def audit_all(
     *,
     sample: int | None = None,
     on_corruption: str = "raise",
+    run_physics: bool = False,
 ) -> dict[str, CategoryAudit]:
     """Run :func:`audit_category` for every auditable category.
 
@@ -852,6 +880,8 @@ def audit_all(
     ``on_corruption`` is forwarded to every per-category audit.
     """
     return {
-        cat: audit_category(cat, sample=sample, on_corruption=on_corruption)
+        cat: audit_category(
+            cat, sample=sample, on_corruption=on_corruption, run_physics=run_physics
+        )
         for cat in AUDITABLE_CATEGORIES
     }

@@ -169,13 +169,15 @@ def stage_fetch(
     if not isinstance(component, dict) or not component:
         raise StagingError("component must be a non-empty dict")
 
-    # Insert-time integrity guard, pattern checks only.  Schema
-    # validation AND the anonymous-row check are deliberately deferred
-    # to apply_staged → add_component because staging accepts partial
-    # payloads for the auditor by contract.  A synthetic series,
-    # placeholder MPN, or junk datasheet URL can never become valid,
-    # so those are rejected before they even reach staging.
-    guard_component(category, component, validate_schema=False, require_mpn=False)
+    # Insert-time integrity guard, pattern checks only.  Schema AND physics
+    # validation AND the anonymous-row check are deliberately deferred to
+    # apply_staged → add_component because staging accepts partial payloads for
+    # the auditor by contract (a partial part has no values to physics-check
+    # yet).  A synthetic series, placeholder MPN, or junk datasheet URL can
+    # never become valid, so those are rejected before they even reach staging.
+    guard_component(
+        category, component, validate_schema=False, validate_physics=False, require_mpn=False
+    )
 
     root = staging_root if staging_root is not None else STAGING_DIR
     target_dir = root / category
