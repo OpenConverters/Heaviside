@@ -86,6 +86,36 @@ def test_hs_spec_to_kirchhoff_maps_fields():
     assert op["outputs"] == [{"power": 36.0}]  # 24 V * 1.5 A
 
 
+_BOOST_SPEC = {
+    "designRequirements": {
+        "efficiency": 1.0,
+        "inputVoltage": {"nominal": 12},
+        "switchingFrequency": {"nominal": 100000},
+        "outputs": [{"name": "out", "voltage": {"nominal": 24}}],
+    },
+    "operatingPoints": [{"inputVoltage": 12, "outputs": [{"power": 24}]}],
+}
+
+
+def test_component_requirements_are_the_bom_to_fill():
+    """Kirchhoff emits per-component requirements (the BOM HS fills): a MOSFET's
+    Rds_on/Id, a diode's Vf, a cap's C/ESR, the magnetic's inductance."""
+    reqs = ka.kirchhoff_component_requirements(ka.design_topology_tas("boost", _BOOST_SPEC))
+    by_name = {r["name"]: r for r in reqs}
+    assert by_name["Q1"]["family"] == "semiconductor" and by_name["Q1"]["kind"] == "mosfet"
+    assert "maximumOnResistance" in by_name["Q1"]["requirements"]
+    assert "ratedContinuousDrainCurrent" in by_name["Q1"]["requirements"]
+    assert by_name["D1"]["kind"] == "diode" and "maximumForwardVoltage" in by_name["D1"]["requirements"]
+    assert by_name["L1"]["family"] == "magnetic"
+    assert "magnetizingInductance" in by_name["L1"]["requirements"]
+    assert by_name["Cout"]["family"] == "capacitor" and "maximumEsr" in by_name["Cout"]["requirements"]
+
+
+def test_component_requirements_malformed_tas_raises():
+    with pytest.raises(ka.KirchhoffSpecError):
+        ka.kirchhoff_component_requirements({"no": "topology"})
+
+
 def test_hs_spec_to_kirchhoff_fail_loud():
     import copy
 

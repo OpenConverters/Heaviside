@@ -228,6 +228,53 @@ def design_from_hs_spec(topology: str, hs_spec: dict[str, Any]) -> dict[str, Any
     return design_topology_tas(topology, hs_spec_to_kirchhoff(hs_spec))
 
 
+_COMPONENT_FAMILIES = ("semiconductor", "magnetic", "capacitor", "resistor", "analog", "controller")
+
+
+def kirchhoff_component_requirements(tas: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract Kirchhoff's per-component design requirements — the *BOM to fill*.
+
+    Kirchhoff emits each TAS component as a SEED: an empty family slot
+    (``data.semiconductor.mosfet={}``, ``data.magnetic={}``, ``data.capacitor``…)
+    plus the requirements that slot must satisfy in
+    ``data.inputs.designRequirements`` — a MOSFET's ``maximumOnResistance`` /
+    ``ratedContinuousDrainCurrent``, a diode's ``maximumForwardVoltage``, a
+    capacitor's ``capacitance`` / ``maximumEsr`` / ``ratedVoltage``, a magnetic's
+    ``magnetizingInductance``. This is the "Kirchhoff returns a list of design
+    requirements as a BOM" contract: HS fills each by selecting a real part
+    (librarian, for semis/passives) or designing the magnetic (MKF, della-Pollock
+    magnetic-first) and stamping it back into the component's family slot — at
+    which point Kirchhoff's per-component fidelity inference promotes it to
+    DATASHEET / MKF_MODEL.
+
+    Returns one dict per component: ``{stage, name, family, kind, requirements}``
+    (``kind`` is mosfet/diode for semiconductors, ``None`` for passives/magnetics).
+    Fail-loud: a malformed TAS (no ``topology.stages``) raises ``KirchhoffSpecError``.
+    """
+    topo = tas.get("topology")
+    if not isinstance(topo, dict) or not isinstance(topo.get("stages"), list):
+        raise KirchhoffSpecError("TAS has no topology.stages[] to read component requirements from")
+    out: list[dict[str, Any]] = []
+    for st in topo["stages"]:
+        for comp in st.get("circuit", {}).get("components", []):
+            data = comp.get("data", {})
+            family = next((f for f in _COMPONENT_FAMILIES if f in data), None)
+            if family is None:
+                continue
+            slot = data.get(family)
+            kind = next(iter(slot), None) if isinstance(slot, dict) and slot else None
+            out.append(
+                {
+                    "stage": st.get("role") or st.get("name"),
+                    "name": comp.get("name"),
+                    "family": family,
+                    "kind": kind,
+                    "requirements": data.get("inputs", {}).get("designRequirements", {}),
+                }
+            )
+    return out
+
+
 def tas_to_ngspice(tas: dict[str, Any], fidelity: str | dict[str, Any] = "REQUIREMENTS") -> str:
     """Assemble any TAS document into a runnable ngspice deck.
 
