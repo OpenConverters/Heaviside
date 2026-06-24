@@ -12,7 +12,11 @@ import shutil
 
 import pytest
 
-from heaviside.catalogue.kirchhoff_fill import KirchhoffFillError, fill_kirchhoff_bom
+from heaviside.catalogue.kirchhoff_fill import (
+    KirchhoffFillError,
+    fill_kirchhoff_bom,
+    stamp_mkf_magnetic,
+)
 from heaviside.decomposer import kirchhoff_adapter as ka
 from heaviside.stages.spice_sim import simulate_self_contained_deck
 
@@ -51,6 +55,79 @@ def test_fill_selects_and_stamps_real_parts():
 def test_fill_malformed_tas_raises():
     with pytest.raises(KirchhoffFillError):
         fill_kirchhoff_bom({"nope": 1})
+
+
+_SUBCKT = (
+    "* Magnetic model made with OpenMagnetics\n"
+    ".subckt PQ_3F3_TURNS_5 P1+ P1-\n"
+    "Rdc1 P1+ n1 0.01\n"
+    "Lmag_1 n1 P1- 150u\n"
+    ".ends\n"
+)
+
+
+class _StubPyom:
+    """Test double for the PyOM export (we are testing the stamp, not MKF physics)."""
+
+    def export_magnetic_as_subcircuit(self, magnetic):
+        return _SUBCKT
+
+
+def test_stamp_mkf_magnetic_places_subcircuit_object():
+    tas = ka.design_topology_tas("boost", _BOOST)
+    rec = stamp_mkf_magnetic(tas, {"any": "magnetic"}, pyom=_StubPyom())
+    assert rec == {"reference": "PQ_3F3_TURNS_5", "stamped": 1}
+    sub = _comp(tas, "L1")["data"]["magnetic"]["modelOutputs"]["spiceSubcircuit"]
+    assert sub == {"text": _SUBCKT, "reference": "PQ_3F3_TURNS_5"}  # {text,reference}, not a bare str
+
+
+def test_stamp_mkf_magnetic_fail_loud():
+    class _Bad:
+        def export_magnetic_as_subcircuit(self, m):
+            return "no subckt line here"
+
+    with pytest.raises(KirchhoffFillError):
+        stamp_mkf_magnetic(ka.design_topology_tas("boost", _BOOST), {}, pyom=_Bad())
+
+
+@pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")
+def test_full_cutover_real_semis_and_mkf_magnetic():
+    """End-to-end: della-Pollock MKF magnetic (MKF_MODEL) + Kirchhoff-requirement
+    BOM-fill (DATASHEET semis/caps) -> a real deck that delivers the spec."""
+    from heaviside import bridge
+
+    try:
+        pyom = bridge._import_pyom_vendor()
+    except Exception as exc:  # noqa: BLE001 - native dep optional in some envs
+        pytest.skip(f"PyOM vendor not available: {exc}")
+    conv = {
+        "inputVoltage": {"nominal": 12.0},
+        "efficiency": 0.9,
+        "diodeVoltageDrop": 0.7,
+        "currentRippleRatio": 0.4,
+        "operatingPoints": [
+            {
+                "inputVoltage": 12.0,
+                "switchingFrequency": 100000.0,
+                "ambientTemperature": 25.0,
+                "currentRippleRatio": 0.4,
+                "outputVoltages": [24.0],
+                "outputCurrents": [1.0],
+            }
+        ],
+    }
+    designed = pyom.design_magnetics_from_converter("boost", conv, 1, "available cores", False, None)
+    magnetic = designed["data"][0]["mas"]["magnetic"]
+
+    tas = ka.design_topology_tas("boost", _BOOST)
+    fill_kirchhoff_bom(tas)
+    rec = stamp_mkf_magnetic(tas, magnetic, pyom=pyom)
+    assert rec["stamped"] >= 1
+
+    deck = ka.tas_to_ngspice(tas, "MKF_MODEL")
+    assert rec["reference"][:12] in deck  # the MKF subckt was hoisted into the deck
+    r = simulate_self_contained_deck(deck, vout_target=24.0, tolerance=0.05)
+    assert 22.0 <= r.result["vout"] <= 26.0, r.result
 
 
 @pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")

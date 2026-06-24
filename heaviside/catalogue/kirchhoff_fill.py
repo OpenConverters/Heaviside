@@ -19,6 +19,7 @@ Fail-loud: a requirement with no satisfying part raises ``KirchhoffFillError``
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,57 @@ def _capacitor_constraints(req: dict[str, Any]) -> CapacitorConstraints:
         v_rated_min=float(req["ratedVoltage"]),
         ripple_current_min=float(ripple) if isinstance(ripple, (int, float)) else None,
     )
+
+
+def stamp_mkf_magnetic(
+    tas: dict[str, Any],
+    magnetic: dict[str, Any],
+    *,
+    pyom: Any,
+    component_name: str | None = None,
+) -> dict[str, Any]:
+    """Stamp an MKF-designed magnetic into the Kirchhoff TAS as MKF_MODEL.
+
+    This is the della-Pollock magnetic path: MKF designs the magnetic (the
+    ``magnetic`` object — core + coil), here it is exported as a SPICE subcircuit
+    (``pyom.export_magnetic_as_subcircuit``) and stamped into the TAS magnetic
+    slot as ``magnetic.modelOutputs.spiceSubcircuit = {text, reference}`` — the
+    shape Kirchhoff's assembler hoists + instantiates, and which ``infer_fidelity``
+    promotes to MKF_MODEL (real Rdc + AC ladder + magnetizing L). The slot's
+    ``inputs.designRequirements`` (turnsRatios) is preserved for winding/port
+    wiring.
+
+    ``pyom`` is the imported PyOpenMagnetics module (injected by the caller, e.g.
+    ``bridge._import_pyom_vendor()``). Fail-loud ``KirchhoffFillError`` on a bad
+    export or if there is no magnetic component to stamp.
+    """
+    subckt = pyom.export_magnetic_as_subcircuit(magnetic)
+    if not isinstance(subckt, str) or ".subckt" not in subckt.lower():
+        raise KirchhoffFillError("export_magnetic_as_subcircuit returned no .subckt text")
+    m = re.search(r"(?mi)^\.subckt\s+(\S+)", subckt)
+    if m is None:
+        raise KirchhoffFillError("exported subcircuit has no '.subckt <name>' line")
+    ref = m.group(1)
+
+    stamped = 0
+    for st in tas.get("topology", {}).get("stages", []):
+        for comp in st.get("circuit", {}).get("components", []):
+            data = comp.get("data")
+            if not isinstance(data, dict) or "magnetic" not in data:
+                continue
+            if component_name is not None and comp.get("name") != component_name:
+                continue
+            # Replace the magnetic seed's family slot; keep data.inputs (turnsRatios)
+            # which the assembler needs to wire the subcircuit's P<i>± ports.
+            data["magnetic"] = {"modelOutputs": {"spiceSubcircuit": {"text": subckt, "reference": ref}}}
+            stamped += 1
+
+    if stamped == 0:
+        raise KirchhoffFillError(
+            f"no magnetic component to stamp"
+            + (f" (name={component_name!r})" if component_name else "")
+        )
+    return {"reference": ref, "stamped": stamped}
 
 
 def fill_kirchhoff_bom(
