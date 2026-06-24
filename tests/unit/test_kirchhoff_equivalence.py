@@ -81,7 +81,7 @@ _NEEDS_RICHER_SPEC = {"isolated_buck", "isolated_buck_boost"}
 # not silenced). four_switch_buck_boost: at 12->12 (unity) the emitted deck
 # settles to ~3.3 V, not 12 V — a Kirchhoff fsbb duty/design issue, reported.
 _KNOWN_GAPS = {
-    "four_switch_buck_boost": "Kirchhoff fsbb 12->12 deck settles to ~3.3V, not 12V (duty/design)",
+    "four_switch_buck_boost": "abt #26: Kirchhoff fsbb 12->12 deck settles to ~3.3V, not 12V (duty/design)",
 }
 
 
