@@ -57,6 +57,60 @@ def test_unsupported_topology_raises():
         ka.design_topology_tas("common_mode_choke", _SPEC)
 
 
+# 12 V -> 24 V boost in the *Heaviside* converter-spec shape (top-level
+# inputVoltage + operatingPoints with outputVoltages/outputCurrents).
+_HS_SPEC = {
+    "inputVoltage": {"minimum": 11.4, "nominal": 12, "maximum": 12.6},
+    "efficiency": 0.9,
+    "operatingPoints": [
+        {
+            "inputVoltage": 12,
+            "switchingFrequency": 100000,
+            "ambientTemperature": 25,
+            "outputVoltages": [24.0],
+            "outputCurrents": [1.5],
+        }
+    ],
+}
+
+
+def test_hs_spec_to_kirchhoff_maps_fields():
+    k = ka.hs_spec_to_kirchhoff(_HS_SPEC)
+    dr = k["designRequirements"]
+    assert dr["efficiency"] == 0.9
+    assert dr["inputVoltage"] == {"minimum": 11.4, "nominal": 12.0, "maximum": 12.6}
+    assert dr["switchingFrequency"] == {"nominal": 100000.0}
+    assert dr["outputs"] == [{"name": "out0", "voltage": {"nominal": 24.0}}]
+    op = k["operatingPoints"][0]
+    assert op["inputVoltage"] == 12.0
+    assert op["outputs"] == [{"power": 36.0}]  # 24 V * 1.5 A
+
+
+def test_hs_spec_to_kirchhoff_fail_loud():
+    import copy
+
+    # missing efficiency
+    s = copy.deepcopy(_HS_SPEC)
+    del s["efficiency"]
+    with pytest.raises(ka.KirchhoffSpecError):
+        ka.hs_spec_to_kirchhoff(s)
+    # output lists mismatched in length
+    s = copy.deepcopy(_HS_SPEC)
+    s["operatingPoints"][0]["outputCurrents"] = [1.0, 2.0]
+    with pytest.raises(ka.KirchhoffSpecError):
+        ka.hs_spec_to_kirchhoff(s)
+    # no operating points
+    s = copy.deepcopy(_HS_SPEC)
+    s["operatingPoints"] = []
+    with pytest.raises(ka.KirchhoffSpecError):
+        ka.hs_spec_to_kirchhoff(s)
+    # missing switching frequency
+    s = copy.deepcopy(_HS_SPEC)
+    del s["operatingPoints"][0]["switchingFrequency"]
+    with pytest.raises(ka.KirchhoffSpecError):
+        ka.hs_spec_to_kirchhoff(s)
+
+
 @pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")
 def test_flyback_deck_simulates_to_target():
     """The self-contained deck runs in ngspice and regulates near the 12 V target."""

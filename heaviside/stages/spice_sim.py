@@ -167,7 +167,14 @@ def simulate_from_spec(
     if backend == "kirchhoff":
         from heaviside.decomposer import kirchhoff_adapter as _ka
 
-        tas = _ka.design_topology_tas(topology, converter_json)
+        # Accept either shape: a Kirchhoff-native spec (designRequirements.outputs)
+        # is used as-is; a Heaviside converter spec (top-level inputVoltage +
+        # operatingPoints[].outputVoltages, what the real pipeline passes) is
+        # translated. No silent guessing — translation is fail-loud.
+        if isinstance(converter_json, dict) and "designRequirements" in converter_json:
+            tas = _ka.design_topology_tas(topology, converter_json)
+        else:
+            tas = _ka.design_from_hs_spec(topology, converter_json)
         deck = _ka.tas_to_ngspice(tas, fidelity)
         return simulate_self_contained_deck(
             deck,

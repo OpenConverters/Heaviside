@@ -83,6 +83,10 @@ class KirchhoffTopologyUnsupported(RuntimeError):
     """The requested topology has no PyKirchhoff Python binding."""
 
 
+class KirchhoffSpecError(ValueError):
+    """A Heaviside converter spec could not be translated to a Kirchhoff spec."""
+
+
 def _candidate_build_dirs() -> list[Path]:
     dirs: list[Path] = []
     env = os.environ.get("KIRCHHOFF_BUILD")
@@ -154,6 +158,74 @@ def design_topology_tas(topology: str, spec: dict[str, Any]) -> dict[str, Any]:
             f"bound: {available_topologies()}. Add an m.def in Kirchhoff/src/bindings.cpp."
         )
     return getattr(mod, _design_fn(base))(spec)
+
+
+def hs_spec_to_kirchhoff(hs_spec: dict[str, Any]) -> dict[str, Any]:
+    """Translate a Heaviside converter spec into a Kirchhoff design spec.
+
+    HS specs (what ``decomposer.inputs_mapper`` consumes) carry a top-level
+    ``inputVoltage`` (a dimensionWithTolerance ``{nominal,minimum,maximum}``),
+    a scalar ``efficiency``, and ``operatingPoints[]`` with per-op scalar
+    ``inputVoltage``, ``switchingFrequency`` and parallel ``outputVoltages`` /
+    ``outputCurrents`` lists. Kirchhoff wants ``designRequirements`` (efficiency,
+    inputVoltage, switchingFrequency, outputs[].voltage) + ``operatingPoints``
+    whose outputs carry ``power`` (= V·I).
+
+    Fail-loud: every missing/malformed required field raises
+    :class:`KirchhoffSpecError` — values are read, never fabricated.
+    """
+    iv = hs_spec.get("inputVoltage")
+    if not isinstance(iv, dict) or not any(k in iv for k in ("nominal", "minimum", "maximum")):
+        raise KirchhoffSpecError("spec.inputVoltage must be a {nominal/minimum/maximum} dict")
+    eff = hs_spec.get("efficiency")
+    if not isinstance(eff, (int, float)):
+        raise KirchhoffSpecError("spec.efficiency is required (numeric)")
+    ops = hs_spec.get("operatingPoints")
+    if not isinstance(ops, list) or not ops:
+        raise KirchhoffSpecError("spec.operatingPoints must be a non-empty list")
+    op0 = ops[0]
+    fsw = op0.get("switchingFrequency")
+    if not isinstance(fsw, (int, float)):
+        raise KirchhoffSpecError("operatingPoints[0].switchingFrequency is required (numeric)")
+    v0 = op0.get("outputVoltages")
+    i0 = op0.get("outputCurrents")
+    if not isinstance(v0, list) or not v0:
+        raise KirchhoffSpecError("operatingPoints[0].outputVoltages must be a non-empty list")
+    if not isinstance(i0, list) or len(i0) != len(v0):
+        raise KirchhoffSpecError("operatingPoints[0].outputCurrents must match outputVoltages length")
+
+    dr_iv = {k: float(iv[k]) for k in ("minimum", "nominal", "maximum") if isinstance(iv.get(k), (int, float))}
+    outputs = [{"name": f"out{i}", "voltage": {"nominal": float(v)}} for i, v in enumerate(v0)]
+    iv_default = dr_iv.get("nominal") or dr_iv.get("minimum") or dr_iv.get("maximum")
+
+    k_ops: list[dict[str, Any]] = []
+    for n, op in enumerate(ops):
+        vs = op.get("outputVoltages", v0)
+        cs = op.get("outputCurrents", i0)
+        if not isinstance(vs, list) or not isinstance(cs, list) or len(vs) != len(cs) or not vs:
+            raise KirchhoffSpecError(f"operatingPoints[{n}] output lists missing/mismatched")
+        vin = op.get("inputVoltage", iv_default)
+        if not isinstance(vin, (int, float)):
+            raise KirchhoffSpecError(f"operatingPoints[{n}].inputVoltage unresolved (no scalar, no spec default)")
+        k_ops.append(
+            {"inputVoltage": float(vin), "outputs": [{"power": float(v) * float(c)} for v, c in zip(vs, cs)]}
+        )
+
+    return {
+        "designRequirements": {
+            "efficiency": float(eff),
+            "inputVoltage": dr_iv,
+            "switchingFrequency": {"nominal": float(fsw)},
+            "outputs": outputs,
+        },
+        "operatingPoints": k_ops,
+    }
+
+
+def design_from_hs_spec(topology: str, hs_spec: dict[str, Any]) -> dict[str, Any]:
+    """Translate a Heaviside converter spec (see :func:`hs_spec_to_kirchhoff`)
+    and design the topology's TAS — the HS-pipeline entry point to Kirchhoff."""
+    return design_topology_tas(topology, hs_spec_to_kirchhoff(hs_spec))
 
 
 def tas_to_ngspice(tas: dict[str, Any], fidelity: str | dict[str, Any] = "REQUIREMENTS") -> str:

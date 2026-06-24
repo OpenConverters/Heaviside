@@ -76,13 +76,12 @@ def _kirchhoff_spec(inp: dict) -> dict:
 # failure (the design never runs).
 _NEEDS_RICHER_SPEC = {"isolated_buck", "isolated_buck_boost"}
 
-# Known delivers-spec gaps owned by Kirchhoff (surfaced via strict xfail so a
-# fix flips the test to XPASS and forces removing the marker — signal preserved,
-# not silenced). four_switch_buck_boost: at 12->12 (unity) the emitted deck
-# settles to ~3.3 V, not 12 V — a Kirchhoff fsbb duty/design issue, reported.
-_KNOWN_GAPS = {
-    "four_switch_buck_boost": "abt #26: Kirchhoff fsbb 12->12 deck settles to ~3.3V, not 12V (duty/design)",
-}
+# Known delivers-spec gaps owned by Kirchhoff, surfaced via strict xfail so a fix
+# flips the test to XPASS and forces removing the marker (signal preserved, not
+# silenced). Empty now: abt #26 (fsbb 12->12 emitted L=0 -> output collapsed) was
+# fixed upstream in Kirchhoff 0f1fdde — the strict xfail caught the fix, so the
+# marker was removed and fsbb is a normal passing delivers-spec case again.
+_KNOWN_GAPS: dict[str, str] = {}
 
 
 def _topology_params():
