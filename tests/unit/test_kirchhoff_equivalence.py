@@ -1,21 +1,22 @@
-"""Cross-backend equivalence: HS's Kirchhoff backend vs MKF's reference design+sim.
+"""HS Kirchhoff-backend "delivers-spec" gate — mirrors Kirchhoff's requirements gate.
 
-The Kirchhoff repo ships ``tests/reference/<topology>.mkf.json`` — MKF's *own*
-design + ideal-component ngspice settled outputs for each topology (the
-ground-truth contract Kirchhoff is built against, see Kirchhoff's
-test_mkf_equivalence). This harness drives HS's Kirchhoff backend
-(``spice_sim.simulate_from_spec(..., backend="kirchhoff")``) on the same inputs
-and asserts the settled output voltage reproduces MKF's reference within
-tolerance — i.e. swapping in the Kirchhoff backend yields the same converter
-MKF would design and the same operating point it would simulate.
+Kirchhoff added closed-loop control + a *requirements gate*: every topology must
+DELIVER ITS SPEC (simulated steady-state Vout within ±5% of the requirement),
+which is stronger than (and supersedes) the older "agree with MKF's open-loop
+reference" check — Kirchhoff now regulates/designs to the target rather than
+reproducing MKF's open-loop operating point (see Kirchhoff commits
+"Requirements gate GREEN + MKF-equivalence reconciled", "AC control hardening").
 
-This deliberately compares against the MKF *reference fixtures* rather than HS's
-own MKF deck path: the latter (``decompose_from_spec``) needs the full realize-
-chain spec (diodeVoltageDrop, ambientTemperature, …) that only ``stage3_realize``
-assembles, so a fair standalone comparison uses MKF's captured reference.
+This harness drives HS's Kirchhoff backend (``spice_sim.simulate_from_spec(...,
+backend="kirchhoff")``) on each bound topology and asserts the settled output
+voltage delivers the spec within the same ±5% the Kirchhoff requirements gate
+uses (``kReqTol``). It reads the spec inputs from Kirchhoff's reference fixtures
+(``Kirchhoff/tests/reference/<topo>.mkf.json``) purely as a convenient,
+canonical source of per-topology design requirements.
 
 Real PyKirchhoff + ngspice only (never mocked); skips when either, or the
-Kirchhoff reference fixtures, are unavailable.
+Kirchhoff reference fixtures, are unavailable. Auto-parametrises over every
+PyKirchhoff-bound topology with a fixture, so it grows as more designers bind.
 """
 
 from __future__ import annotations
@@ -30,6 +31,9 @@ import pytest
 from heaviside.decomposer import kirchhoff_adapter as ka
 from heaviside.stages import spice_sim
 
+#: Kirchhoff's requirements-gate tolerance on Vout (tests/test_requirements.cpp kReqTol).
+_REQ_TOL = 0.05
+
 
 def _reference_dir() -> Path | None:
     env = os.environ.get("KIRCHHOFF_ROOT")
@@ -42,20 +46,19 @@ def _reference_dir() -> Path | None:
 
 
 _REF_DIR = _reference_dir()
-# Topologies bound in PyKirchhoff that also have an MKF reference fixture.
 _TOPOLOGIES = sorted(set(ka.available_topologies()) if ka.available() else set())
 
 pytestmark = pytest.mark.skipif(
     not ka.available() or _REF_DIR is None or shutil.which("ngspice") is None,
-    reason="needs PyKirchhoff, ngspice, and the Kirchhoff MKF-reference fixtures",
+    reason="needs PyKirchhoff, ngspice, and the Kirchhoff reference fixtures",
 )
 
 
 def _kirchhoff_spec(inp: dict) -> dict:
-    """Build a Kirchhoff design spec from an MKF-reference 'inputs' block."""
+    """Build a Kirchhoff design spec from a reference 'inputs' block."""
     return {
         "designRequirements": {
-            "efficiency": 1.0,  # ideal (REQUIREMENTS fidelity), matching the reference deck
+            "efficiency": 1.0,  # ideal (REQUIREMENTS fidelity)
             "inputVoltage": {"nominal": inp["inputVoltage"]},
             "switchingFrequency": {"nominal": inp["switchingFrequency"]},
             "outputs": [{"name": "out", "voltage": {"nominal": inp["outputVoltage"]}}],
@@ -67,25 +70,26 @@ def _kirchhoff_spec(inp: dict) -> dict:
 
 
 @pytest.mark.parametrize("topology", _TOPOLOGIES)
-def test_kirchhoff_backend_matches_mkf_reference(topology: str):
+def test_kirchhoff_backend_delivers_spec(topology: str):
+    """HS's Kirchhoff backend must deliver each topology's spec Vout within ±5%
+    (the same contract Kirchhoff's closed-loop requirements gate enforces)."""
     ref_path = _REF_DIR / f"{topology}.mkf.json"
     if not ref_path.exists():
-        pytest.skip(f"no MKF reference fixture for {topology}")
-    ref = json.loads(ref_path.read_text())
-    ref_vout = ref["sim"]["voutMean"]
-    spec = _kirchhoff_spec(ref["inputs"])
+        pytest.skip(f"no reference fixture for {topology}")
+    inp = json.loads(ref_path.read_text())["inputs"]
+    target_vout = float(inp["outputVoltage"])
+    spec = _kirchhoff_spec(inp)
 
     result = spice_sim.simulate_from_spec(
         topology,
         spec,
         turns_ratios=[],
         magnetizing_inductance=0.0,  # Kirchhoff designs its own magnetic from the spec
-        vout_target=ref["inputs"]["outputVoltage"],
+        vout_target=target_vout,
         backend="kirchhoff",
     )
     vout = result.result["vout"]
-    # MKF-equivalence tolerance (Kirchhoff's own contract is Vout 2% / eff 3%).
-    assert vout == pytest.approx(ref_vout, rel=0.03), (
-        f"{topology}: HS-Kirchhoff vout {vout:.4f} V vs MKF reference {ref_vout:.4f} V "
-        f"(rel diff {abs(vout - ref_vout) / ref_vout:.3%})"
+    assert vout == pytest.approx(target_vout, rel=_REQ_TOL), (
+        f"{topology}: HS-Kirchhoff vout {vout:.4f} V does not deliver spec "
+        f"{target_vout:.4f} V within {_REQ_TOL:.0%} (rel err {abs(vout - target_vout) / target_vout:.3%})"
     )
