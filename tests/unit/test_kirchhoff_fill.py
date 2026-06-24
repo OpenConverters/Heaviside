@@ -131,6 +131,20 @@ def test_full_cutover_real_semis_and_mkf_magnetic():
 
 
 @pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")
+def test_operating_point_adapter_returns_full_op():
+    """simulate_self_contained_deck(compute_operating_point=True) returns the full
+    operating point the realism gate consumes; on the ideal deck efficiency is
+    plausible (~96%), which validates the input-current measurement."""
+    deck = ka.tas_to_ngspice(ka.design_topology_tas("boost", _BOOST), "REQUIREMENTS")
+    r = simulate_self_contained_deck(deck, vout_target=24.0, tolerance=0.05, compute_operating_point=True)
+    op = r.result
+    assert set(op) >= {"vin", "iin", "vout", "iout", "pin", "pout", "total_losses", "efficiency"}
+    assert op["pout"] == pytest.approx(abs(op["vout"]) * op["iout"], rel=1e-6)
+    assert op["pin"] == pytest.approx(op["vin"] * op["iin"], rel=1e-6)
+    assert 0.90 <= op["efficiency"] <= 1.0  # ideal-component deck
+
+
+@pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")
 def test_filled_tas_emits_real_deck_and_delivers_spec():
     tas = ka.design_topology_tas("boost", _BOOST)
     fill_kirchhoff_bom(tas)

@@ -91,6 +91,7 @@ def simulate_self_contained_deck(
     vout_target: float | None = None,
     tolerance: float = 0.02,
     timeout_s: float = 120.0,
+    compute_operating_point: bool = False,
 ) -> SpiceResult:
     """Run a SELF-CONTAINED deck — one that carries its own ``.tran`` plus a
     ``.control``/``meas`` block and prints its output (e.g. a Kirchhoff
@@ -99,7 +100,15 @@ def simulate_self_contained_deck(
     Unlike :func:`simulate`, this does NOT drive HS's duty-search runner: the
     deck is open-loop and self-measuring (its switch duty is fixed by the
     design), so it is run as-is via ``ngspice -b``. Parse/sim failures raise
-    ``SimError`` — never a silent fallback to a plausible number."""
+    ``SimError`` — never a silent fallback to a plausible number.
+
+    With ``compute_operating_point=True`` the deck is augmented with an input-
+    current measurement so the FULL steady-state operating point
+    (``vin, iin, vout, iout, pin, pout, total_losses, efficiency``) is returned
+    in ``result`` — what the realism gate consumes via ``stamp_simulation_results``.
+    This is REQUIRED when feeding the gate (a vout-only result would leave its
+    efficiency/loss checks UNAVAILABLE); it fails loud if the deck's input
+    source / load / input current cannot be resolved."""
     import re
     import shutil
     import subprocess
@@ -109,6 +118,11 @@ def simulate_self_contained_deck(
 
     if shutil.which("ngspice") is None:
         raise SimError("ngspice not installed — cannot run a self-contained deck")
+
+    src_name = vin = load_r = None
+    if compute_operating_point:
+        deck, src_name, vin, load_r = _augment_deck_for_operating_point(deck)
+
     with tempfile.TemporaryDirectory() as d:
         cir = os.path.join(d, "deck.cir")
         with open(cir, "w", encoding="utf-8") as fh:
@@ -116,31 +130,86 @@ def simulate_self_contained_deck(
         proc = subprocess.run(
             ["ngspice", "-b", cir], capture_output=True, text=True, timeout=timeout_s
         )
-    vals: list[float] = []
-    for m in re.findall(r"vout\s*=\s*([0-9.eE+\-]+)", proc.stdout + proc.stderr):
-        try:
-            v = float(m)
-        except ValueError:
-            continue
-        if v == v and abs(v) > 1e-6:  # exclude NaN/~0 sentinels; accept inverting (negative) outputs
-            vals.append(v)
+    out = proc.stdout + proc.stderr
+
+    def _meas(name: str) -> list[float]:
+        vals_: list[float] = []
+        for m in re.findall(rf"{name}\s*=\s*([0-9.eE+\-]+)", out):
+            try:
+                v_ = float(m)
+            except ValueError:
+                continue
+            if v_ == v_ and abs(v_) > 1e-12:
+                vals_.append(v_)
+        return vals_
+
+    vals = [v for v in _meas("vout") if abs(v) > 1e-6]
     if not vals:
         raise SimError(
             f"self-contained deck produced no parseable vout (ngspice rc={proc.returncode}): "
-            f"{(proc.stdout + proc.stderr)[-400:]}"
+            f"{out[-400:]}"
         )
     vout = max(vals, key=abs)  # settled output (signed; inverting topologies are negative)
+
+    result: dict[str, float] = {"vout": vout}
+    if compute_operating_point:
+        iin_vals = _meas("iin")
+        if not iin_vals or vin is None or load_r is None:
+            raise SimError(
+                "operating-point requested but could not resolve input current / source "
+                f"({src_name}) / load from the deck (rc={proc.returncode}): {out[-300:]}"
+            )
+        iin = abs(max(iin_vals, key=abs))  # supplied input current (sign-agnostic)
+        iout = abs(vout) / load_r
+        pout = abs(vout) * iout
+        pin = vin * iin
+        if pin <= 0:
+            raise SimError(f"non-physical input power pin={pin} (vin={vin}, iin={iin})")
+        result.update(
+            vin=vin, iin=iin, iout=iout, pin=pin, pout=pout,
+            total_losses=pin - pout, efficiency=pout / pin,
+        )
+
     converged = vout_target is None or (
         vout_target != 0
         and abs(abs(vout) - abs(vout_target)) / abs(vout_target) <= tolerance
     )
     return SpiceResult(
-        result={"vout": vout},
+        result=result,
         closed_loop=False,
         vout_target=vout_target,
         converged=converged,
         deck=deck,
     )
+
+
+def _augment_deck_for_operating_point(deck: str) -> tuple[str, str, float, float]:
+    """Inject an input-current ``.meas`` into a Kirchhoff deck and resolve the
+    input source name + voltage and the load resistance from it.
+
+    Returns ``(augmented_deck, src_name, vin, load_r)``. The deck's testbench is
+    ``V<src> <in> 0 DC <vin>`` (the only DC source — gate drivers are PULSE) and
+    ``Rload <out> 0 <R>``. Fails loud via :class:`SimError` if either is absent
+    (the operating point would otherwise be silently incomplete)."""
+    import re
+
+    from heaviside.sim import SimError
+
+    m_src = re.search(r"(?m)^(V\w+)\s+\S+\s+\S+\s+DC\s+([0-9.eE+\-]+)", deck)
+    m_load = re.search(r"(?m)^(R\w*load)\s+\S+\s+\S+\s+([0-9.eE+\-]+)", deck, re.IGNORECASE)
+    if m_src is None or m_load is None:
+        raise SimError(
+            "cannot resolve input DC source / Rload from the self-contained deck — "
+            "operating-point (efficiency) measurement is unavailable; refusing to "
+            "produce a vout-only result for the realism gate"
+        )
+    src_name, vin, load_r = m_src.group(1), float(m_src.group(2)), float(m_load.group(2))
+    win = re.search(r"from=([0-9.eE+\-]+)\s+to=([0-9.eE+\-]+)", deck)
+    window = f" from={win.group(1)} to={win.group(2)}" if win else ""
+    inject = f"meas tran iin AVG i({src_name}){window}\nprint iin\n"
+    if ".endc" in deck:
+        return deck.replace(".endc", inject + ".endc", 1), src_name, vin, load_r
+    raise SimError("self-contained deck has no .control/.endc block to augment for the operating point")
 
 
 def simulate_from_spec(
