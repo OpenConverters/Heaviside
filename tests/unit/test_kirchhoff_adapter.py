@@ -51,9 +51,10 @@ def test_design_and_emit_flyback():
 
 
 def test_unsupported_topology_raises():
-    # A C++ topology with no Python binding must fail loud, not degrade.
+    # A topology with no Kirchhoff converter designer must fail loud, not degrade.
+    # (common_mode_choke is a filter magnetic, not a power converter Kirchhoff designs.)
     with pytest.raises(ka.KirchhoffTopologyUnsupported):
-        ka.design_topology_tas("llc", _SPEC)
+        ka.design_topology_tas("common_mode_choke", _SPEC)
 
 
 @pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")

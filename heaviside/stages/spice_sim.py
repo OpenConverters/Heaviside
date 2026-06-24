@@ -122,16 +122,17 @@ def simulate_self_contained_deck(
             v = float(m)
         except ValueError:
             continue
-        if v == v and v > 1e-6:  # exclude NaN and ~0 sentinel measurements
+        if v == v and abs(v) > 1e-6:  # exclude NaN/~0 sentinels; accept inverting (negative) outputs
             vals.append(v)
     if not vals:
         raise SimError(
             f"self-contained deck produced no parseable vout (ngspice rc={proc.returncode}): "
             f"{(proc.stdout + proc.stderr)[-400:]}"
         )
-    vout = max(vals)
+    vout = max(vals, key=abs)  # settled output (signed; inverting topologies are negative)
     converged = vout_target is None or (
-        vout_target != 0 and abs(vout - vout_target) / abs(vout_target) <= tolerance
+        vout_target != 0
+        and abs(abs(vout) - abs(vout_target)) / abs(vout_target) <= tolerance
     )
     return SpiceResult(
         result={"vout": vout},

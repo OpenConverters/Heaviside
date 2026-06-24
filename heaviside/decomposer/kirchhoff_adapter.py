@@ -29,12 +29,48 @@ import sys
 from pathlib import Path
 from typing import Any
 
-#: Heaviside topology name -> the PyKirchhoff ``design_*_tas`` function name.
-#: Extend as more designers are bound in ``Kirchhoff/src/bindings.cpp``.
-_TOPOLOGY_FUNCS: dict[str, str] = {
-    "flyback": "design_flyback_tas",
-    "boost": "design_boost_tas",
+#: Heaviside topology name -> Kirchhoff base name. The PyKirchhoff designer is
+#: ``design_<base>_tas`` (e.g. phase_shifted_full_bridge -> psfb -> design_psfb_tas).
+#: Covers every topology bound in ``Kirchhoff/src/bindings.cpp``; HS filter
+#: magnetics (common/differential-mode chokes, current transformer) have no
+#: Kirchhoff converter designer and are intentionally absent.
+_HS_TO_KIRCHHOFF: dict[str, str] = {
+    "flyback": "flyback",
+    "boost": "boost",
+    "buck": "buck",
+    "single_switch_forward": "forward",
+    "two_switch_forward": "two_switch_forward",
+    "sepic": "sepic",
+    "cuk": "cuk",
+    "zeta": "zeta",
+    "push_pull": "push_pull",
+    "phase_shifted_full_bridge": "psfb",
+    "phase_shifted_half_bridge": "pshb",
+    "asymmetric_half_bridge": "ahb",
+    "active_clamp_forward": "acf",
+    "four_switch_buck_boost": "fsbb",
+    "llc": "llc",
+    "cllc": "cllc",
+    "clllc": "clllc",
+    "series_resonant": "src",
+    "dual_active_bridge": "dab",
+    "isolated_buck": "isolated_buck",
+    "isolated_buck_boost": "isolated_buck_boost",
+    "weinberg": "weinberg",
+    "power_factor_correction": "pfc",
+    "vienna": "vienna",
 }
+
+
+def _design_fn(base: str) -> str:
+    return f"design_{base}_tas"
+
+
+def kirchhoff_base(topology: str) -> str | None:
+    """Kirchhoff base name for a Heaviside topology (e.g. ``series_resonant`` ->
+    ``src``), or ``None`` if Kirchhoff has no designer for it. Handy for callers
+    that key off Kirchhoff's own artifacts (e.g. reference fixtures)."""
+    return _HS_TO_KIRCHHOFF.get(topology)
 
 _MODULE: Any = None
 
@@ -102,7 +138,7 @@ def available() -> bool:
 def available_topologies() -> tuple[str, ...]:
     """Heaviside topology names that PyKirchhoff currently has a binding for."""
     mod = _load()
-    return tuple(t for t, fn in _TOPOLOGY_FUNCS.items() if hasattr(mod, fn))
+    return tuple(t for t, base in _HS_TO_KIRCHHOFF.items() if hasattr(mod, _design_fn(base)))
 
 
 def design_topology_tas(topology: str, spec: dict[str, Any]) -> dict[str, Any]:
@@ -111,13 +147,13 @@ def design_topology_tas(topology: str, spec: dict[str, Any]) -> dict[str, Any]:
     Raises :class:`KirchhoffTopologyUnsupported` if the topology is not bound.
     """
     mod = _load()
-    fn = _TOPOLOGY_FUNCS.get(topology)
-    if fn is None or not hasattr(mod, fn):
+    base = _HS_TO_KIRCHHOFF.get(topology)
+    if base is None or not hasattr(mod, _design_fn(base)):
         raise KirchhoffTopologyUnsupported(
             f"Kirchhoff has no Python binding for topology {topology!r}; "
             f"bound: {available_topologies()}. Add an m.def in Kirchhoff/src/bindings.cpp."
         )
-    return getattr(mod, fn)(spec)
+    return getattr(mod, _design_fn(base))(spec)
 
 
 def tas_to_ngspice(tas: dict[str, Any], fidelity: str | dict[str, Any] = "REQUIREMENTS") -> str:
