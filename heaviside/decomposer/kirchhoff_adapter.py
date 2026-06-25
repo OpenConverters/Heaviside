@@ -211,15 +211,21 @@ def hs_spec_to_kirchhoff(hs_spec: dict[str, Any]) -> dict[str, Any]:
             {"inputVoltage": float(vin), "outputs": [{"power": float(v) * float(c)} for v, c in zip(vs, cs)]}
         )
 
-    return {
-        "designRequirements": {
-            "efficiency": float(eff),
-            "inputVoltage": dr_iv,
-            "switchingFrequency": {"nominal": float(fsw)},
-            "outputs": outputs,
-        },
-        "operatingPoints": k_ops,
+    dr: dict[str, Any] = {
+        "efficiency": float(eff),
+        "inputVoltage": dr_iv,
+        "switchingFrequency": {"nominal": float(fsw)},
+        "outputs": outputs,
     }
+    # della-Pollock "design around the magnetic": when HS has already designed the
+    # magnetic (magnetics-first), pass its inductance so Kirchhoff sizes the rest of
+    # the stage around it instead of computing its own L (Kirchhoff honours this as
+    # of abt #30). Keeps the design consistent with the stamped MKF_MODEL magnetic.
+    desired_l = hs_spec.get("desiredInductance") or hs_spec.get("desiredMagnetizingInductance")
+    if isinstance(desired_l, (int, float)) and desired_l > 0:
+        dr["magnetizingInductance"] = {"nominal": float(desired_l)}
+
+    return {"designRequirements": dr, "operatingPoints": k_ops}
 
 
 def design_from_hs_spec(topology: str, hs_spec: dict[str, Any]) -> dict[str, Any]:
