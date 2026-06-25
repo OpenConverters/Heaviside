@@ -114,6 +114,20 @@ def test_fill_skips_numerical_aids_and_defers_controller():
     assert recs["U1"]["filled"] is False and "topology" in recs["U1"]["deferred"]
 
 
+def test_fill_sources_controller_from_ctas_catalog():
+    """With converter context (topology/Vin/fsw), a controller seed sources a real
+    control IC from the CTAS-shaped controllers.ndjson (selector reads the nested
+    manufacturerInfo.datasheetInfo.function shape + normalizes intendedTopologies)."""
+    tas = {
+        "inputs": {"designRequirements": {"inputVoltage": {"nominal": 12.0},
+                                          "switchingFrequency": {"nominal": 100000.0}}},
+        "topology": {"stages": [{"circuit": {"components": [
+            {"name": "U1", "data": {"controller": {}}}]}}]}}
+    recs = fill_kirchhoff_bom(tas, topology="boost")
+    assert recs[0]["filled"] is True and recs[0]["mpn"]   # a real control IC was sourced
+    assert recs[0]["selection"].alternatives_considered > 0
+
+
 _SUBCKT = (
     "* Magnetic model made with OpenMagnetics\n"
     ".subckt PQ_3F3_TURNS_5 P1+ P1-\n"

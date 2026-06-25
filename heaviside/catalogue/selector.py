@@ -850,61 +850,95 @@ def select_capacitor(
 # Controller selector
 # ---------------------------------------------------------------------------
 #
-# TAS controllers.ndjson is a FLAT schema (not the nested CAS envelope used
-# by Q/D/C): top-level name, manufacturer, topologies[], vinRange{min,max}
-# (volts), switchingFrequencyRange{min,max} (kHz), integratedFET,
-# integratedDriver. No Vref/Vfb data is published — feedback-divider sizing
-# must come from datasheet extraction, not this selector.
+# TAS controllers.ndjson is the CTAS NESTED envelope:
+#   controller.manufacturerInfo.{name, reference, datasheetInfo.{function.{category,
+#   intendedTopologies[]}, part.partNumber, electrical{...}}}
+# The records carry NO Vin/fsw ranges (the electrical block is sparse: gateDrive,
+# currentMode, referenceVoltage, …), so selection matches on the function CATEGORY
+# (pwmController / gateDriver / llcController / pfcController / …) and the
+# intendedTopologies (converter-named: buckConverter, boostConverter, …), which we
+# normalize to HS short names. Vin/fsw are left permissive — we cannot filter on data
+# the catalog does not publish.
+
+# CTAS intendedTopologies use full converter names; map them to HS short topology names.
+_CTAS_TOPOLOGY = {
+    "buckConverter": "buck", "boostConverter": "boost", "buckBoostConverter": "buck_boost",
+    "flybackConverter": "flyback", "forwardConverter": "forward", "llcResonantConverter": "llc",
+    "powerFactorCorrection": "power_factor_correction", "sepicConverter": "sepic",
+    "cukConverter": "cuk", "zetaConverter": "zeta", "pushPullConverter": "push_pull",
+    "phaseShiftedFullBridge": "phase_shifted_full_bridge", "dualActiveBridge": "dual_active_bridge",
+}
+
+
+def _normalize_ctas_topology(name: str) -> str:
+    s = str(name)
+    if s in _CTAS_TOPOLOGY:
+        return _CTAS_TOPOLOGY[s]
+    if s.endswith("Converter"):
+        s = s[:-9]
+    out = []
+    for i, ch in enumerate(s):
+        if ch.isupper() and i > 0:
+            out.append("_")
+        out.append(ch.lower())
+    return "".join(out)
 
 
 @dataclass(frozen=True, slots=True)
 class Controller:
-    """Subset of a TAS controller envelope (flat schema)."""
+    """Subset of a CTAS controller envelope (nested schema)."""
 
     mpn: str
     manufacturer: str
-    topologies: tuple[str, ...]
+    category: str  # CTAS function.category: pwmController / gateDriver / llcController / …
+    topologies: tuple[str, ...]  # normalized HS short names from intendedTopologies
     vin_min: float
     vin_max: float
     fsw_min_khz: float
     fsw_max_khz: float
     integrated_fet: bool
     integrated_driver: bool
-    vref: float | None  # feedbackReferenceVoltage (volts), if known
+    vref: float | None  # referenceVoltage (volts), if published
     datasheet_url: str
     raw_envelope: Mapping[str, Any]
 
     @classmethod
     def from_envelope(cls, env: Mapping[str, Any]) -> Controller | None:
-        mpn = env.get("name")
-        manufacturer = env.get("manufacturer")
+        # CTAS nested: controller.manufacturerInfo.datasheetInfo.{function, electrical}.
+        ctrl = env.get("controller") if isinstance(env.get("controller"), Mapping) else env
+        mi = ctrl.get("manufacturerInfo") if isinstance(ctrl.get("manufacturerInfo"), Mapping) else {}
+        ds = mi.get("datasheetInfo") if isinstance(mi.get("datasheetInfo"), Mapping) else {}
+        fn = ds.get("function") if isinstance(ds.get("function"), Mapping) else {}
+        part = ds.get("part") if isinstance(ds.get("part"), Mapping) else {}
+        mpn = mi.get("reference") or part.get("partNumber")
+        manufacturer = mi.get("name")
         if not isinstance(mpn, str) or not isinstance(manufacturer, str):
             return None
-        topos = env.get("topologies")
-        if not isinstance(topos, list):
-            return None
-        vin = env.get("vinRange") or {}
-        fsw = env.get("switchingFrequencyRange") or {}
-        vmin, vmax = vin.get("min"), vin.get("max")
-        fmin, fmax = fsw.get("min"), fsw.get("max")
-        if not all(isinstance(x, (int, float)) for x in (vmin, vmax, fmin, fmax)):
-            return None
-        vref_raw = env.get("feedbackReferenceVoltage")
+        category = fn.get("category") if isinstance(fn.get("category"), str) else ""
+        topos = tuple(
+            _normalize_ctas_topology(t)
+            for t in (fn.get("intendedTopologies") or [])
+            if isinstance(t, str)
+        )
+        el = ds.get("electrical") if isinstance(ds.get("electrical"), Mapping) else {}
+        vref_blk = el.get("referenceVoltage") if isinstance(el.get("referenceVoltage"), Mapping) else {}
+        vref_raw = vref_blk.get("nominal")
         vref = float(vref_raw) if isinstance(vref_raw, (int, float)) and vref_raw > 0 else None
+        ds_url = ctrl.get("datasheetUrl") or mi.get("datasheetUrl")
         return cls(
             mpn=mpn,
             manufacturer=manufacturer,
-            topologies=tuple(str(t).lower() for t in topos),
-            vin_min=float(vmin),
-            vin_max=float(vmax),
-            fsw_min_khz=float(fmin),
-            fsw_max_khz=float(fmax),
-            integrated_fet=bool(env.get("integratedFET", False)),
-            integrated_driver=bool(env.get("integratedDriver", False)),
+            category=category,
+            topologies=topos,
+            # CTAS carries no Vin/fsw ranges -> permissive (cannot filter on absent data).
+            vin_min=0.0,
+            vin_max=1e12,
+            fsw_min_khz=0.0,
+            fsw_max_khz=1e12,
+            integrated_fet=bool(fn.get("integratedFet", False)),
+            integrated_driver=category == "gateDriver" or bool(fn.get("integratedDriver", False)),
             vref=vref,
-            datasheet_url=env.get("datasheetUrl")
-            if isinstance(env.get("datasheetUrl"), str)
-            else "",
+            datasheet_url=ds_url if isinstance(ds_url, str) else "",
             raw_envelope=env,
         )
 
@@ -950,8 +984,11 @@ def select_controller(
         if ctrl is None:
             rejection["unreadable_row"] += 1
             continue
+        # A part that lists intendedTopologies must include this one; a part that
+        # lists NONE is topology-agnostic (typical of gate drivers) and matches any.
         if (
-            topo not in ctrl.topologies
+            ctrl.topologies
+            and topo not in ctrl.topologies
             and "any" not in ctrl.topologies
             and "all" not in ctrl.topologies
         ):
@@ -978,14 +1015,14 @@ def select_controller(
     #  2. Controllers with a known Vref — we can fully specify the design
     #     (feedback divider) only when Vref is available. Both data-
     #     completeness and a valid engineering choice.
-    #  3. Target fsw sitting centrally in the range (max distance to the
-    #     nearest fsw edge) — most robust margin against fsw drift.
-    #  4. Widest Vin range as a final, deterministic discriminator.
-    def _key(x: Controller) -> tuple[int, int, float, float]:
-        real_ctrl = 1 if x.fsw_min_khz > 0 else 0
+    #  3. A topology-specific part (lists this topology) over a generic agnostic one.
+    def _key(x: Controller) -> tuple[int, int, int]:
+        # A real regulator over a bare gate driver (CTAS category is authoritative;
+        # the catalog carries no fsw range to use as the old proxy).
+        real_ctrl = 0 if x.category == "gateDriver" else 1
         has_vref = 1 if x.vref is not None else 0
-        edge_dist = min(c.fsw_khz - x.fsw_min_khz, x.fsw_max_khz - c.fsw_khz)
-        return (real_ctrl, has_vref, edge_dist, x.vin_max - x.vin_min)
+        topo_specific = 1 if c.topology.lower() in x.topologies else 0
+        return (real_ctrl, has_vref, topo_specific)
 
     winner = max(passing, key=_key)
     return ControllerSelection(
