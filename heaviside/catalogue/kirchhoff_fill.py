@@ -175,19 +175,19 @@ def fill_kirchhoff_bom(
                         _mosfet_constraints(req), tiebreaker=mosfet_tiebreaker, tas_data_dir=tas_data_dir
                     )
                     data["semiconductor"] = sel.chosen.raw_envelope["semiconductor"]
-                    rec.update(mpn=sel.chosen.mpn, filled=True)
+                    rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 elif family == "semiconductor" and kind == "diode":
                     sel = select_diode(
                         _diode_constraints(req), tiebreaker=diode_tiebreaker, tas_data_dir=tas_data_dir
                     )
                     data["semiconductor"] = sel.chosen.raw_envelope["semiconductor"]
-                    rec.update(mpn=sel.chosen.mpn, filled=True)
+                    rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 elif family == "capacitor":
                     sel = select_capacitor(
                         _capacitor_constraints(req), tiebreaker=capacitor_tiebreaker, tas_data_dir=tas_data_dir
                     )
                     data["capacitor"] = sel.chosen.raw_envelope["capacitor"]
-                    rec.update(mpn=sel.chosen.mpn, filled=True)
+                    rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 elif family == "magnetic":
                     # della-Pollock: the magnetic is MKF's (MKF_MODEL), wired by the caller.
                     rec.update(filled=False, deferred="MKF magnetic-first (MKF_MODEL)")
@@ -200,3 +200,58 @@ def fill_kirchhoff_bom(
             records.append(rec)
 
     return records
+
+
+def unify_hs_tas_semiconductors(
+    hs_tas: dict[str, Any], fill_records: list[dict[str, Any]]
+) -> int:
+    """Re-stamp HS's TAS power semiconductors (MOSFET/diode) with the parts the
+    Kirchhoff-requirement fill chose — so the realism gate validates exactly the
+    devices the Kirchhoff sim used. This makes Kirchhoff's per-component
+    requirement the SINGLE part-selection authority (no drift versus HS's parallel
+    analytical stress deriver). Stress for the gate's rating checks comes from the
+    Kirchhoff requirement's ratings. Matched by device kind in declaration order;
+    fail-loud if a Kirchhoff selection has no HS counterpart (TAS shapes diverge).
+
+    Returns the count re-stamped. Capacitors / synthesized aux parts are left to
+    HS's assemble_bom_from_tas for now — a documented follow-up."""
+    from heaviside.catalogue.assemble import _stamp_diode, _stamp_mosfet
+
+    by_kind: dict[str, list[dict[str, Any]]] = {"mosfet": [], "diode": []}
+    for r in fill_records:
+        if r.get("filled") and r.get("family") == "semiconductor" and r.get("kind") in by_kind:
+            by_kind[r["kind"]].append(r)
+
+    restamped = 0
+    for st in hs_tas.get("topology", {}).get("stages", []):
+        for comp in st.get("circuit", {}).get("components", []):
+            data = comp.get("data")
+            if not isinstance(data, dict) or not isinstance(data.get("semiconductor"), dict):
+                continue
+            semi = data["semiconductor"]
+            kind = "mosfet" if "mosfet" in semi else "diode" if "diode" in semi else None
+            if kind is None or not by_kind[kind]:
+                continue
+            rec = by_kind[kind].pop(0)
+            sel, req = rec["selection"], rec["requirement"]
+            if kind == "mosfet":
+                _stamp_mosfet(
+                    comp, sel,
+                    stress_vds=float(req["ratedDrainSourceVoltage"]),
+                    stress_id=float(req["ratedContinuousDrainCurrent"]),
+                )
+            else:
+                _stamp_diode(
+                    comp, sel,
+                    stress_vr=float(req["ratedReverseVoltage"]),
+                    stress_if_avg=float(req["ratedForwardCurrent"]),
+                )
+            restamped += 1
+
+    leftover = sum(len(v) for v in by_kind.values())
+    if leftover:
+        raise KirchhoffFillError(
+            f"BOM unification: {leftover} Kirchhoff semiconductor selection(s) had no "
+            f"matching HS-TAS component (re-stamped {restamped}); TAS shapes diverge"
+        )
+    return restamped

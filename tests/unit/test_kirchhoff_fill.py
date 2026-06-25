@@ -57,6 +57,24 @@ def test_fill_malformed_tas_raises():
         fill_kirchhoff_bom({"nope": 1})
 
 
+def test_unify_hs_tas_semiconductors_restamps_and_fails_loud():
+    from heaviside.catalogue.kirchhoff_fill import unify_hs_tas_semiconductors
+
+    records = fill_kirchhoff_bom(ka.design_topology_tas("boost", _BOOST))
+    hs_tas = {"topology": {"stages": [{"circuit": {"components": [
+        {"name": "Q1", "data": {"semiconductor": {"mosfet": {}}}},
+        {"name": "D1", "data": {"semiconductor": {"diode": {}}}},
+    ]}}]}}
+    assert unify_hs_tas_semiconductors(hs_tas, records) == 2
+    q1 = _comp(hs_tas, "Q1")
+    assert q1["selection_provenance"]["category"] == "mosfet"
+    assert q1["data"]["semiconductor"]["mosfet"]            # Kirchhoff-selected part stamped into HS TAS
+    assert q1["vds_stress"] == pytest.approx(30.0)          # stress from the Kirchhoff requirement rating
+    # Kirchhoff selections with no HS-TAS counterpart must fail loud, not silently drop.
+    with pytest.raises(KirchhoffFillError):
+        unify_hs_tas_semiconductors({"topology": {"stages": []}}, records)
+
+
 _SUBCKT = (
     "* Magnetic model made with OpenMagnetics\n"
     ".subckt PQ_3F3_TURNS_5 P1+ P1-\n"
@@ -118,7 +136,12 @@ def test_stage3_kirchhoff_backend_stamps_regulated_operating_point():
         "operatingPoints": [{"inputVoltage": 12.0, "switchingFrequency": 100000.0,
                              "outputVoltages": [24.0], "outputCurrents": [1.0]}],
     }
-    tas: dict = {}
+    # A minimal HS TAS with the boost's power semiconductors (as HS's decompose
+    # leaves them) — the backend must unify these with the Kirchhoff sim's parts.
+    tas: dict = {"topology": {"stages": [{"circuit": {"components": [
+        {"name": "Q1", "data": {"semiconductor": {"mosfet": {}}}},
+        {"name": "D1", "data": {"semiconductor": {"diode": {}}}},
+    ]}}]}}
     _simulate_kirchhoff_backend(
         tas, topology="boost", spec_dict=spec_dict, components=components,
         first_op=spec_dict["operatingPoints"][0], vout_target=24.0,
@@ -128,6 +151,11 @@ def test_stage3_kirchhoff_backend_stamps_regulated_operating_point():
     assert 0.85 <= op["efficiency"] <= 1.0               # realistic (not the open-loop artifact)
     assert op["pin"] > op["pout"] > 0                    # physical
     assert op["total_losses"] == pytest.approx(op["pin"] - op["pout"], rel=1e-6)
+    # unified: HS's gate semis now carry the Kirchhoff-selected parts + their stress
+    q1 = _comp(tas, "Q1")
+    assert q1["data"]["semiconductor"]["mosfet"]                       # real part stamped
+    assert q1["selection_provenance"]["category"] == "mosfet"
+    assert q1["vds_stress"] == pytest.approx(30.0)                     # boost Q1 requirement rating
 
 
 @pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")

@@ -484,6 +484,7 @@ def _simulate_kirchhoff_backend(
         KirchhoffFillError,
         fill_kirchhoff_bom,
         stamp_mkf_magnetic,
+        unify_hs_tas_semiconductors,
     )
     from heaviside.decomposer import kirchhoff_adapter as _ka
     from heaviside.decomposer.kirchhoff_adapter import (
@@ -508,8 +509,11 @@ def _simulate_kirchhoff_backend(
         raise RealizeError(f"kirchhoff backend: no MKF magnetic to stamp for {topology}")
     try:
         k_tas = _ka.design_from_hs_spec(topology, spec_dict)
-        fill_kirchhoff_bom(k_tas)
+        fill_records = fill_kirchhoff_bom(k_tas)
         stamp_mkf_magnetic(k_tas, magnetic_obj, pyom=_bridge._import_pyom_vendor())
+        # Unify: the gate validates exactly the semiconductors the Kirchhoff sim
+        # used (Kirchhoff's requirement is the single selection authority).
+        unify_hs_tas_semiconductors(tas, fill_records)
         op = _ka.simulate_regulated(k_tas, float(vout_target), topology, fidelity="DATASHEET")
     except (KirchhoffUnavailable, KirchhoffTopologyUnsupported, KirchhoffFillError, SimError) as exc:
         raise RealizeError(f"kirchhoff simulation failed for {topology}: {exc}") from exc
