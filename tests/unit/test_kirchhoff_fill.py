@@ -75,6 +75,23 @@ def test_unify_hs_tas_semiconductors_restamps_and_fails_loud():
         unify_hs_tas_semiconductors({"topology": {"stages": []}}, records)
 
 
+def test_unify_hs_tas_capacitors_restamps_output_cap_leaves_aux():
+    from heaviside.catalogue.kirchhoff_fill import unify_hs_tas_capacitors
+
+    records = fill_kirchhoff_bom(ka.design_topology_tas("boost", _BOOST))
+    hs_tas = {"topology": {"stages": [{"circuit": {"components": [
+        {"name": "C_out", "data": {"capacitor": {}}},   # outputFilter → must be re-stamped
+        {"name": "Cboot", "data": {"capacitor": {}}},    # synthesized aux → must NOT be touched
+    ]}}]}}
+    assert unify_hs_tas_capacitors(hs_tas, records) == 1   # only C_out matched
+    cout = _comp(hs_tas, "C_out")
+    assert cout["selection_provenance"]["category"] == "capacitor"
+    assert cout["data"]["capacitor"]                       # Kirchhoff-selected part stamped
+    assert cout["v_rated"] and cout["v_working"]           # gate-readable stress fields
+    assert _comp(hs_tas, "Cboot")["data"] == {"capacitor": {}}        # aux cap untouched
+    assert "selection_provenance" not in _comp(hs_tas, "Cboot")
+
+
 _SUBCKT = (
     "* Magnetic model made with OpenMagnetics\n"
     ".subckt PQ_3F3_TURNS_5 P1+ P1-\n"

@@ -255,3 +255,46 @@ def unify_hs_tas_semiconductors(
             f"matching HS-TAS component (re-stamped {restamped}); TAS shapes diverge"
         )
     return restamped
+
+
+# Kirchhoff power-capacitor role -> HS TAS designator. HS's synthesized aux caps
+# (Cboot/Cvcc/Css) are intentionally NOT listed — Kirchhoff doesn't emit them, so
+# they keep HS's own selection.
+_CAP_ROLE_TO_HS_NAME = {"outputFilter": "C_out", "inputFilter": "Cin"}
+
+
+def unify_hs_tas_capacitors(hs_tas: dict[str, Any], fill_records: list[dict[str, Any]]) -> int:
+    """Re-stamp HS's TAS power capacitors (output / input filter) with the parts
+    the Kirchhoff fill chose, matched by Kirchhoff role → HS designator
+    (``outputFilter``→``C_out``, ``inputFilter``→``Cin``). HS's synthesized aux
+    caps (Cboot/Cvcc/Css) are left untouched. Lenient (unlike the semiconductor
+    unifier): a Kirchhoff cap with no HS counterpart is left to HS's own
+    selection rather than fail-loud — cap designators vary by topology/TAS shape
+    and the output cap is lower-stress than the semis. Returns the count
+    re-stamped."""
+    from heaviside.catalogue.assemble import _stamp_capacitor
+
+    hs_caps: dict[str, dict[str, Any]] = {}
+    for st in hs_tas.get("topology", {}).get("stages", []):
+        for comp in st.get("circuit", {}).get("components", []):
+            data = comp.get("data")
+            if isinstance(data, dict) and "capacitor" in data:
+                hs_caps[comp.get("name")] = comp
+
+    restamped = 0
+    for r in fill_records:
+        if not (r.get("filled") and r.get("family") == "capacitor"):
+            continue
+        req = r.get("requirement") or {}
+        comp = hs_caps.get(_CAP_ROLE_TO_HS_NAME.get(req.get("role")))
+        if comp is None:  # no HS counterpart — leave HS's selection
+            continue
+        ripple = req.get("minimumRippleCurrent")
+        _stamp_capacitor(
+            comp,
+            r["selection"],
+            stress_v=float(req["ratedVoltage"]),
+            stress_ripple=float(ripple) if isinstance(ripple, (int, float)) else 0.0,
+        )
+        restamped += 1
+    return restamped

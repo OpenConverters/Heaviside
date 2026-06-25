@@ -485,6 +485,7 @@ def _simulate_kirchhoff_backend(
         KirchhoffFillError,
         fill_kirchhoff_bom,
         stamp_mkf_magnetic,
+        unify_hs_tas_capacitors,
         unify_hs_tas_semiconductors,
     )
     from heaviside.decomposer import kirchhoff_adapter as _ka
@@ -512,9 +513,11 @@ def _simulate_kirchhoff_backend(
         k_tas = _ka.design_from_hs_spec(topology, spec_dict)
         fill_records = fill_kirchhoff_bom(k_tas)
         stamp_mkf_magnetic(k_tas, magnetic_obj, pyom=_bridge._import_pyom_vendor())
-        # Unify: the gate validates exactly the semiconductors the Kirchhoff sim
-        # used (Kirchhoff's requirement is the single selection authority).
+        # Unify: the gate validates exactly the parts the Kirchhoff sim used
+        # (Kirchhoff's requirement is the single selection authority) — power
+        # semiconductors (fail-loud) + power capacitors (lenient; aux caps kept).
         unify_hs_tas_semiconductors(tas, fill_records)
+        unify_hs_tas_capacitors(tas, fill_records)
         op = _ka.simulate_regulated(k_tas, float(vout_target), topology, fidelity="DATASHEET")
     except (KirchhoffUnavailable, KirchhoffTopologyUnsupported, KirchhoffFillError, SimError) as exc:
         raise RealizeError(f"kirchhoff simulation failed for {topology}: {exc}") from exc
