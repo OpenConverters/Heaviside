@@ -95,6 +95,25 @@ def test_unify_hs_tas_capacitors_restamps_output_cap_leaves_aux():
     assert "selection_provenance" not in _comp(hs_tas, "Cboot")
 
 
+def test_fill_skips_numerical_aids_and_defers_controller():
+    """Phase 0: numerical convergence aids (Csn*/Rsn*/Csw*) are sim-only — the fill
+    must NOT source a real part for them even though they carry a capacitance
+    requirement. Phase 1: a controller seed is sourceable but defers cleanly when the
+    converter context (topology/Vin/fsw) is not supplied (rather than failing)."""
+    tas = {
+        "inputs": {"designRequirements": {"inputVoltage": {"nominal": 12.0},
+                                          "switchingFrequency": {"nominal": 100000.0}}},
+        "topology": {"stages": [{"circuit": {"components": [
+            {"name": "CsnA", "data": {"capacitor": {}, "inputs": {"designRequirements": {
+                "capacitance": {"nominal": 2.2e-9}, "ratedVoltage": 50.0}}}},   # numerical aid
+            {"name": "U1", "data": {"controller": {}}},                          # control IC seed
+        ]}}]}}
+    recs = {r["name"]: r for r in fill_kirchhoff_bom(tas)}   # no topology -> controller defers
+    assert recs["CsnA"]["filled"] is False and "numerical" in recs["CsnA"]["deferred"]
+    assert tas["topology"]["stages"][0]["circuit"]["components"][0]["data"]["capacitor"] == {}  # NOT sourced
+    assert recs["U1"]["filled"] is False and "topology" in recs["U1"]["deferred"]
+
+
 _SUBCKT = (
     "* Magnetic model made with OpenMagnetics\n"
     ".subckt PQ_3F3_TURNS_5 P1+ P1-\n"

@@ -26,17 +26,29 @@ from typing import Any
 from heaviside.catalogue.selector import (
     CapacitorConstraints,
     CapacitorTiebreaker,
+    ControllerConstraints,
     DiodeConstraints,
     DiodeTiebreaker,
     MosfetConstraints,
     MosfetTiebreaker,
     SelectionError,
     select_capacitor,
+    select_controller,
     select_diode,
     select_mosfet,
 )
 
 _FAMILIES = ("semiconductor", "magnetic", "capacitor", "resistor", "analog", "controller")
+
+# Numerical convergence aids the Kirchhoff assembler injects into the IDEAL-switch
+# deck (Csn*/Rsn*/Csw* — see Kirchhoff TasAssembler::is_numerical_snubber). They tame
+# an ideal switch's infinite dV/dt; they are NOT physical parts to source (a real
+# switch's Coss does the job). The fill must skip them even though they carry a
+# capacitance designRequirement — otherwise HS sources a real 2.2 nF part for a solver
+# aid. Same name convention as Kirchhoff's, so the two stay in lockstep.
+def _is_numerical_aid(name: str | None) -> bool:
+    n = name or ""
+    return n.startswith(("Csn", "Rsn", "Csw"))
 
 
 class KirchhoffFillError(RuntimeError):
@@ -135,6 +147,7 @@ def stamp_mkf_magnetic(
 def fill_kirchhoff_bom(
     tas: dict[str, Any],
     *,
+    topology: str | None = None,
     tas_data_dir: Path | None = None,
     # LOWEST_RDS_ON needs no operating-point fields (LOWEST_TOTAL_LOSS would require
     # op_i_rms/vds/duty/fsw, which Kirchhoff's rating-only requirement doesn't carry).
@@ -154,6 +167,16 @@ def fill_kirchhoff_bom(
     if not isinstance(topo, dict) or not isinstance(topo.get("stages"), list):
         raise KirchhoffFillError("TAS has no topology.stages[] to fill")
 
+    # Converter-level quantities the controller selector needs (Vin, fsw) — read from
+    # the TAS designRequirements so a controller seed can be sourced by topology+Vin+fsw.
+    _dr = tas.get("inputs", {}).get("designRequirements", {})
+    def _scalar(x: Any) -> float | None:
+        if isinstance(x, dict):
+            x = x.get("nominal") or x.get("minimum") or x.get("maximum")
+        return float(x) if isinstance(x, (int, float)) else None
+    _vin = _scalar(_dr.get("inputVoltage"))
+    _fsw = _scalar(_dr.get("switchingFrequency"))
+
     records: list[dict[str, Any]] = []
     for st in topo["stages"]:
         for comp in st.get("circuit", {}).get("components", []):
@@ -168,6 +191,12 @@ def fill_kirchhoff_bom(
             req = data.get("inputs", {}).get("designRequirements", {})
             name = comp.get("name")
             rec: dict[str, Any] = {"name": name, "family": family, "kind": kind}
+
+            # Phase 0: numerical convergence aids are sim-only, never sourced.
+            if _is_numerical_aid(name):
+                rec.update(filled=False, deferred="numerical convergence aid (sim-only, not sourced)")
+                records.append(rec)
+                continue
 
             try:
                 if family == "semiconductor" and kind == "mosfet":
@@ -191,6 +220,20 @@ def fill_kirchhoff_bom(
                 elif family == "magnetic":
                     # della-Pollock: the magnetic is MKF's (MKF_MODEL), wired by the caller.
                     rec.update(filled=False, deferred="MKF magnetic-first (MKF_MODEL)")
+                elif family == "controller":
+                    # Phase 1: source the control IC / gate driver (CTAS family) by
+                    # topology + Vin + fsw. Needs the converter context; if absent
+                    # (a bare BOM fill with no topology/spec) defer rather than fail.
+                    if topology is None or _vin is None or _fsw is None:
+                        rec.update(filled=False, deferred="controller: need topology + Vin + fsw to source")
+                    else:
+                        sel = select_controller(
+                            ControllerConstraints(
+                                topology=topology, vin_nom=_vin,
+                                fsw_khz=_fsw / 1000.0, integrated_fet=None),
+                            tas_data_dir=tas_data_dir)
+                        data["controller"] = sel.chosen.raw_envelope
+                        rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 else:
                     rec.update(filled=False, deferred=f"no filler for {family}/{kind}")
             except SelectionError as exc:
