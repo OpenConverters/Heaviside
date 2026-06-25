@@ -951,6 +951,7 @@ class ControllerConstraints:
     vin_nom: float  # nominal input voltage (volts) — must be in range
     fsw_khz: float  # switching frequency (kHz) — must be in range
     integrated_fet: bool | None  # True/False to require; None = don't care
+    category: str | None = None  # CTAS function.category to require (e.g. "pwmController"); None = any
 
 
 @dataclass(frozen=True, slots=True)
@@ -1002,6 +1003,9 @@ def select_controller(
             continue
         if c.integrated_fet is not None and ctrl.integrated_fet != c.integrated_fet:
             rejection["integrated_fet_mismatch"] += 1
+            continue
+        if c.category is not None and ctrl.category != c.category:
+            rejection["category_mismatch"] += 1
             continue
         passing.append(ctrl)
 

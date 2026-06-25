@@ -511,7 +511,7 @@ def _simulate_kirchhoff_backend(
         raise RealizeError(f"kirchhoff backend: no MKF magnetic to stamp for {topology}")
     try:
         k_tas = _ka.design_from_hs_spec(topology, spec_dict)
-        fill_records = fill_kirchhoff_bom(k_tas)
+        fill_records = fill_kirchhoff_bom(k_tas, topology=topology)
         stamp_mkf_magnetic(k_tas, magnetic_obj, pyom=_bridge._import_pyom_vendor())
         # Unify: the gate validates exactly the parts the Kirchhoff sim used
         # (Kirchhoff's requirement is the single selection authority) — power

@@ -224,16 +224,26 @@ def fill_kirchhoff_bom(
                     # Phase 1: source the control IC / gate driver (CTAS family) by
                     # topology + Vin + fsw. Needs the converter context; if absent
                     # (a bare BOM fill with no topology/spec) defer rather than fail.
+                    _cat = req.get("function", {}).get("category") if isinstance(req.get("function"), dict) else None
+                    _cat = _cat if isinstance(_cat, str) and _cat else None
                     if topology is None or _vin is None or _fsw is None:
                         rec.update(filled=False, deferred="controller: need topology + Vin + fsw to source")
                     else:
-                        sel = select_controller(
-                            ControllerConstraints(
-                                topology=topology, vin_nom=_vin,
-                                fsw_khz=_fsw / 1000.0, integrated_fet=None),
-                            tas_data_dir=tas_data_dir)
-                        data["controller"] = sel.chosen.raw_envelope
-                        rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
+                        # A missing control IC is a CATALOG GAP, surfaced (filled=False with the
+                        # reason) — NOT a hard failure that sinks an otherwise-valid power design
+                        # (unlike a missing power semi/cap, which stays fail-loud). The unfilled
+                        # record is visible to the gate/completeness check.
+                        try:
+                            sel = select_controller(
+                                ControllerConstraints(
+                                    topology=topology, vin_nom=_vin,
+                                    fsw_khz=_fsw / 1000.0, integrated_fet=None, category=_cat),
+                                tas_data_dir=tas_data_dir)
+                            data["controller"] = sel.chosen.raw_envelope
+                            rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
+                        except SelectionError:
+                            rec.update(filled=False,
+                                       deferred=f"no catalog control IC for {topology}/{_cat or 'any'}")
                 else:
                     rec.update(filled=False, deferred=f"no filler for {family}/{kind}")
             except SelectionError as exc:
