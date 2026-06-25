@@ -462,12 +462,91 @@ class DesignOutcome:
 # ---------------------------------------------------------------------------
 
 
+def _simulate_kirchhoff_backend(
+    tas: dict[str, Any],
+    *,
+    topology: str,
+    spec_dict: dict[str, Any],
+    components: Any,
+    first_op: Mapping[str, Any],
+    vout_target: float | None,
+) -> None:
+    """Kirchhoff backend (cutover Architecture A): Kirchhoff designs + simulates
+    the circuit from the real parts HS fills against Kirchhoff's per-component
+    requirements + the della-Pollock MKF magnetic (MKF_MODEL), closed-loop
+    REGULATED; the regulated operating point is stamped into HS's TAS so the
+    realism gate sees the same shape as the MKF path. Fail-loud throughout — an
+    unregulated / non-finite point is refused, never stamped."""
+    import math
+
+    from heaviside import bridge as _bridge
+    from heaviside.catalogue.kirchhoff_fill import (
+        KirchhoffFillError,
+        fill_kirchhoff_bom,
+        stamp_mkf_magnetic,
+    )
+    from heaviside.decomposer import kirchhoff_adapter as _ka
+    from heaviside.decomposer.kirchhoff_adapter import (
+        KirchhoffTopologyUnsupported,
+        KirchhoffUnavailable,
+    )
+    from heaviside.sim import SimError
+    from heaviside.sim.runner import SimResult, stamp_simulation_results
+
+    if vout_target is None:
+        raise RealizeError(f"kirchhoff backend requires a regulation target (vout) for {topology}")
+    vin = first_op.get("inputVoltage")
+    if not isinstance(vin, (int, float)):
+        iv = spec_dict.get("inputVoltage")
+        if isinstance(iv, Mapping):
+            vin = iv.get("nominal") or iv.get("minimum") or iv.get("maximum")
+    if not isinstance(vin, (int, float)) or vin <= 0:
+        raise RealizeError(f"kirchhoff backend: no input voltage resolved for {topology}")
+
+    magnetic_obj = (getattr(components.main_magnetic, "mas", None) or {}).get("magnetic")
+    if magnetic_obj is None:
+        raise RealizeError(f"kirchhoff backend: no MKF magnetic to stamp for {topology}")
+    try:
+        k_tas = _ka.design_from_hs_spec(topology, spec_dict)
+        fill_kirchhoff_bom(k_tas)
+        stamp_mkf_magnetic(k_tas, magnetic_obj, pyom=_bridge._import_pyom_vendor())
+        op = _ka.simulate_regulated(k_tas, float(vout_target), topology, fidelity="DATASHEET")
+    except (KirchhoffUnavailable, KirchhoffTopologyUnsupported, KirchhoffFillError, SimError) as exc:
+        raise RealizeError(f"kirchhoff simulation failed for {topology}: {exc}") from exc
+
+    if not op.get("regulated"):
+        raise RealizeError(
+            f"kirchhoff backend: {topology} did not regulate to {vout_target} V "
+            f"(converged={op.get('converged')}, vout={op.get('vout')}) — refusing an "
+            "unregulated operating point for the realism gate"
+        )
+    vout_m, pin, pout, eff = (
+        float(op["vout"]), float(op["pin"]), float(op["pout"]), float(op["efficiency"])
+    )
+    if not all(math.isfinite(x) for x in (vout_m, pin, pout, eff)) or pin <= 0:
+        raise RealizeError(f"kirchhoff backend: non-finite/zero operating point for {topology} (op={op})")
+    stamp_simulation_results(
+        tas,
+        SimResult(
+            vin=float(vin),
+            iin=pin / vin,
+            vout=vout_m,
+            iout=(pout / vout_m if vout_m else 0.0),
+            pin=pin,
+            pout=pout,
+            total_losses=pin - pout,
+            efficiency=eff,
+        ),
+    )
+
+
 def stage3_realize(
     pick: TopologyPick,
     spec: Mapping[str, Any],
     *,
     pinned_main: "MagneticDesign | None" = None,
     spice_config: Mapping[str, Any] | None = None,
+    sim_backend: str = "mkf",
 ) -> DesignOutcome:
     """Take a Stage 2 TopologyPick and run it through the full pipeline.
 
@@ -573,9 +652,6 @@ def stage3_realize(
     except EnrichmentError as exc:
         raise RealizeError(f"enrichment failed for {topology}: {exc}") from exc
 
-    # --- Inject real parasitics into the netlist ---
-    realistic_netlist = inject_parasitics(netlist, tas)
-
     ops = spec_dict.get("operatingPoints") or [{}]
     first_op = ops[0] if isinstance(ops[0], dict) else {}
     vouts = first_op.get("outputVoltages")
@@ -584,18 +660,33 @@ def stage3_realize(
         if isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))
         else None
     )
-    # A vout target ⇒ closed-loop sim is the right model; if it fails, that is
-    # a hard failure — do NOT silently fall back to the open-loop steady-state
-    # sim (which measures a different, unregulated quantity). Only run the
-    # steady-state path when there is genuinely no regulation target.
-    try:
-        if vout_target is not None:
-            sim_result = simulate_closed_loop(realistic_netlist, vout_target=vout_target)
-        else:
-            sim_result = simulate_steady_state(realistic_netlist)
-        stamp_simulation_results(tas, sim_result)
-    except (SimError, DecomposerError) as exc:
-        raise RealizeError(f"simulation failed for {topology}: {exc}") from exc
+    # Backend selection. "mkf" (default) = MKF netlist + parasitic injection + HS's
+    # duty-search sim — unchanged. "kirchhoff" = Kirchhoff designs+sims the circuit
+    # (real BOM HS fills + the della-Pollock MKF magnetic as MKF_MODEL), closed-loop
+    # regulated; HS keeps its TAS + realism gate. Either way the gate consumes the
+    # SAME stamped operating point. No silent fallback between backends.
+    if sim_backend == "mkf":
+        # --- Inject real parasitics into the netlist ---
+        realistic_netlist = inject_parasitics(netlist, tas)
+        # A vout target ⇒ closed-loop sim is the right model; if it fails, that is
+        # a hard failure — do NOT silently fall back to the open-loop steady-state
+        # sim (which measures a different, unregulated quantity). Only run the
+        # steady-state path when there is genuinely no regulation target.
+        try:
+            if vout_target is not None:
+                sim_result = simulate_closed_loop(realistic_netlist, vout_target=vout_target)
+            else:
+                sim_result = simulate_steady_state(realistic_netlist)
+            stamp_simulation_results(tas, sim_result)
+        except (SimError, DecomposerError) as exc:
+            raise RealizeError(f"simulation failed for {topology}: {exc}") from exc
+    elif sim_backend == "kirchhoff":
+        _simulate_kirchhoff_backend(
+            tas, topology=topology, spec_dict=spec_dict, components=components,
+            first_op=first_op, vout_target=vout_target,
+        )
+    else:
+        raise RealizeError(f"unknown sim_backend {sim_backend!r} (expected 'mkf' or 'kirchhoff')")
 
     try:
         run_analyst(topology, tas, spec_dict)

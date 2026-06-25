@@ -91,6 +91,46 @@ def test_stamp_mkf_magnetic_fail_loud():
 
 
 @pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")
+def test_stage3_kirchhoff_backend_stamps_regulated_operating_point():
+    """The stage3_realize Kirchhoff backend helper designs+fills+sims via Kirchhoff
+    (real semis + MKF_MODEL magnetic, closed-loop regulated) and stamps a realistic
+    regulated operating point into HS's TAS for the realism gate."""
+    import types
+
+    from heaviside import bridge
+    from heaviside.pipeline.full_design import _simulate_kirchhoff_backend
+
+    try:
+        pyom = bridge._import_pyom_vendor()
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"PyOM vendor not available: {exc}")
+    conv = {
+        "inputVoltage": {"nominal": 12.0}, "efficiency": 0.9, "diodeVoltageDrop": 0.7,
+        "currentRippleRatio": 0.4,
+        "operatingPoints": [{"inputVoltage": 12.0, "switchingFrequency": 100000.0,
+                             "ambientTemperature": 25.0, "currentRippleRatio": 0.4,
+                             "outputVoltages": [24.0], "outputCurrents": [1.0]}],
+    }
+    mag = pyom.design_magnetics_from_converter("boost", conv, 1, "available cores", False, None)["data"][0]["mas"]["magnetic"]
+    components = types.SimpleNamespace(main_magnetic=types.SimpleNamespace(mas={"magnetic": mag}))
+    spec_dict = {
+        "inputVoltage": {"nominal": 12.0}, "efficiency": 0.9,
+        "operatingPoints": [{"inputVoltage": 12.0, "switchingFrequency": 100000.0,
+                             "outputVoltages": [24.0], "outputCurrents": [1.0]}],
+    }
+    tas: dict = {}
+    _simulate_kirchhoff_backend(
+        tas, topology="boost", spec_dict=spec_dict, components=components,
+        first_op=spec_dict["operatingPoints"][0], vout_target=24.0,
+    )
+    op = tas["simulation_results"]["op0"]
+    assert abs(op["vout"] - 24.0) <= 1.5                 # regulated near target
+    assert 0.85 <= op["efficiency"] <= 1.0               # realistic (not the open-loop artifact)
+    assert op["pin"] > op["pout"] > 0                    # physical
+    assert op["total_losses"] == pytest.approx(op["pin"] - op["pout"], rel=1e-6)
+
+
+@pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")
 def test_full_cutover_real_semis_and_mkf_magnetic():
     """End-to-end: della-Pollock MKF magnetic (MKF_MODEL) + Kirchhoff-requirement
     BOM-fill (DATASHEET semis/caps) -> a real deck that delivers the spec."""

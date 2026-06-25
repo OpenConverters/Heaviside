@@ -284,3 +284,58 @@ def tas_to_ngspice(tas: dict[str, Any], fidelity: str | dict[str, Any] = "REQUIR
     mod = _load()
     fid = {"origin": fidelity} if isinstance(fidelity, str) else dict(fidelity)
     return mod.tas_to_ngspice(tas, fid)
+
+
+_REGULATE: Any = None
+
+
+def _load_regulate() -> Any:
+    """Load Kirchhoff's ``scripts/regulate.py`` (the closed-loop regulator, abt #28).
+
+    It lives beside the build dir (``<KIRCHHOFF>/scripts/regulate.py``) and does
+    ``import PyKirchhoff`` — which resolves because :func:`_load` registers the
+    compiled module in ``sys.modules`` first."""
+    global _REGULATE
+    if _REGULATE is not None:
+        return _REGULATE
+    _load()  # ensure `import PyKirchhoff` resolves inside regulate.py
+    for d in _candidate_build_dirs():
+        cand = d.parent / "scripts" / "regulate.py"
+        if cand.is_file():
+            spec = importlib.util.spec_from_file_location("kirchhoff_regulate", cand)
+            if spec is None or spec.loader is None:
+                continue
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _REGULATE = mod
+            return mod
+    raise KirchhoffUnavailable(
+        "Kirchhoff scripts/regulate.py not found (searched <build>/../scripts). It "
+        "provides the closed-loop REGULATED operating point the realism gate needs."
+    )
+
+
+def simulate_regulated(
+    tas: dict[str, Any],
+    target_vout: float,
+    topology: str,
+    *,
+    fidelity: str | dict[str, Any] = "DATASHEET",
+    tol: float = 0.01,
+) -> dict[str, Any]:
+    """Closed-loop REGULATED operating point (Kirchhoff ``regulate.simulate_regulated``).
+
+    Bisects the topology's control variable (duty / phase / frequency) until the
+    simulated Vout reaches ``target_vout``, then returns the regulated operating
+    point: ``{converged, regulated, control, value, vout, pin, pout, efficiency,
+    ...}``. This is what feeds the realism gate (a regulated point with a real
+    efficiency — not the open-loop fixed-duty artifact). ``topology`` is the HS
+    name (mapped to Kirchhoff's base). Raises
+    :class:`KirchhoffTopologyUnsupported` if Kirchhoff has no control mapping."""
+    mod = _load_regulate()
+    base = kirchhoff_base(topology) or topology
+    fid = {"origin": fidelity} if isinstance(fidelity, str) else dict(fidelity)
+    try:
+        return mod.simulate_regulated(tas, float(target_vout), base, fidelity=fid, tol=tol)
+    except ValueError as exc:  # "no control-variable mapping for topology '<x>'"
+        raise KirchhoffTopologyUnsupported(str(exc)) from exc
