@@ -225,7 +225,16 @@ def hs_spec_to_kirchhoff(hs_spec: dict[str, Any]) -> dict[str, Any]:
     if isinstance(desired_l, (int, float)) and desired_l > 0:
         dr["magnetizingInductance"] = {"nominal": float(desired_l)}
 
-    return {"designRequirements": dr, "operatingPoints": k_ops}
+    out: dict[str, Any] = {"designRequirements": dr, "operatingPoints": k_ops}
+    # Pass through an explicit caller config (e.g. vDerate) if provided; we do NOT
+    # force a tighter vDerate here — doing so (tried 0.6 to meet the gate's 1.5x FET
+    # derating) shifts the BOM-fill to higher-voltage parts that changed the deck and
+    # broke regulation (24V -> 16V). The gate-vs-Kirchhoff derating-policy mismatch
+    # (IPC-9592 0.8 / 1.25x vs Proteus 1.5x FET / 1.3x diode) is surfaced as an open
+    # decision, not papered over by over-rating that degrades the simulated design.
+    if isinstance(hs_spec.get("config"), dict):
+        out["config"] = hs_spec["config"]
+    return out
 
 
 def design_from_hs_spec(topology: str, hs_spec: dict[str, Any]) -> dict[str, Any]:

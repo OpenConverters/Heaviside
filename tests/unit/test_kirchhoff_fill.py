@@ -62,14 +62,17 @@ def test_unify_hs_tas_semiconductors_restamps_and_fails_loud():
 
     records = fill_kirchhoff_bom(ka.design_topology_tas("boost", _BOOST))
     hs_tas = {"topology": {"stages": [{"circuit": {"components": [
-        {"name": "Q1", "data": {"semiconductor": {"mosfet": {}}}},
+        # Q1 carries the OPERATING stress HS's assemble_bom_from_tas already stamped;
+        # D1 has none (exercises the conservative fallback to the requirement rating).
+        {"name": "Q1", "data": {"semiconductor": {"mosfet": {}}}, "vds_stress": 24.0},
         {"name": "D1", "data": {"semiconductor": {"diode": {}}}},
     ]}}]}}
     assert unify_hs_tas_semiconductors(hs_tas, records) == 2
     q1 = _comp(hs_tas, "Q1")
     assert q1["selection_provenance"]["category"] == "mosfet"
     assert q1["data"]["semiconductor"]["mosfet"]            # Kirchhoff-selected part stamped into HS TAS
-    assert q1["vds_stress"] == pytest.approx(30.0)          # stress from the Kirchhoff requirement rating
+    assert q1["vds_stress"] == pytest.approx(24.0)          # OPERATING stress PRESERVED, not the req rating (30)
+    assert _comp(hs_tas, "D1")["v_reverse"] == pytest.approx(30.0)  # no HS stress -> conservative fallback to req
     # Kirchhoff selections with no HS-TAS counterpart must fail loud, not silently drop.
     with pytest.raises(KirchhoffFillError):
         unify_hs_tas_semiconductors({"topology": {"stages": []}}, records)
@@ -156,7 +159,9 @@ def test_stage3_kirchhoff_backend_stamps_regulated_operating_point():
     # A minimal HS TAS with the boost's power semiconductors (as HS's decompose
     # leaves them) — the backend must unify these with the Kirchhoff sim's parts.
     tas: dict = {"topology": {"stages": [{"circuit": {"components": [
-        {"name": "Q1", "data": {"semiconductor": {"mosfet": {}}}},
+        # Q1 carries the operating Vds stress HS's assemble_bom_from_tas stamps (24 V
+        # for a 12->24 boost); the unify must preserve it, swapping only the part.
+        {"name": "Q1", "data": {"semiconductor": {"mosfet": {}}}, "vds_stress": 24.0},
         {"name": "D1", "data": {"semiconductor": {"diode": {}}}},
     ]}}]}}
     _simulate_kirchhoff_backend(
@@ -172,7 +177,7 @@ def test_stage3_kirchhoff_backend_stamps_regulated_operating_point():
     q1 = _comp(tas, "Q1")
     assert q1["data"]["semiconductor"]["mosfet"]                       # real part stamped
     assert q1["selection_provenance"]["category"] == "mosfet"
-    assert q1["vds_stress"] == pytest.approx(30.0)                     # boost Q1 requirement rating
+    assert q1["vds_stress"] == pytest.approx(24.0)                     # operating stress preserved (not the req rating)
 
 
 @pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")

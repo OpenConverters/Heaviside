@@ -234,17 +234,27 @@ def unify_hs_tas_semiconductors(
                 continue
             rec = by_kind[kind].pop(0)
             sel, req = rec["selection"], rec["requirement"]
+            # Swap only the PART (ratings/Rds_on/Qg from the Kirchhoff selection);
+            # PRESERVE the operating stress HS already stamped (vds_stress / v_reverse
+            # = the actual switch voltage at the operating point). The Kirchhoff
+            # requirement's ratedDrainSourceVoltage / ratedReverseVoltage are the
+            # REQUIRED ratings (operating / vDerate), NOT the operating stress — using
+            # them as the stress collapses the derating ratio to ~1.0 (stress==rating)
+            # and the gate spuriously fails a sound design. Fall back to the rating
+            # only if HS left no stress (then the check is conservative, not wrong).
+            def _pos(v: Any, fallback: float) -> float:
+                return float(v) if isinstance(v, (int, float)) and v > 0 else float(fallback)
             if kind == "mosfet":
                 _stamp_mosfet(
                     comp, sel,
-                    stress_vds=float(req["ratedDrainSourceVoltage"]),
-                    stress_id=float(req["ratedContinuousDrainCurrent"]),
+                    stress_vds=_pos(comp.get("vds_stress"), req["ratedDrainSourceVoltage"]),
+                    stress_id=_pos(comp.get("id_stress"), req["ratedContinuousDrainCurrent"]),
                 )
             else:
                 _stamp_diode(
                     comp, sel,
-                    stress_vr=float(req["ratedReverseVoltage"]),
-                    stress_if_avg=float(req["ratedForwardCurrent"]),
+                    stress_vr=_pos(comp.get("v_reverse"), req["ratedReverseVoltage"]),
+                    stress_if_avg=_pos(comp.get("if_avg_stress"), req["ratedForwardCurrent"]),
                 )
             restamped += 1
 
