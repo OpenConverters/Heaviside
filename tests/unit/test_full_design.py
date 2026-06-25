@@ -242,6 +242,22 @@ def _buck_pick() -> TopologyPick:
     )
 
 
+def test_sim_backend_selection(monkeypatch) -> None:
+    """Per-topology backend selection: default mkf (no behaviour change), opt-in
+    via the env var (list or '*')."""
+    from heaviside.pipeline.full_design import _sim_backend_for
+
+    monkeypatch.delenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", raising=False)
+    assert _sim_backend_for("boost") == "mkf"          # registry empty by default
+    monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "boost,flyback")
+    assert _sim_backend_for("boost") == "kirchhoff"
+    assert _sim_backend_for("buck") == "mkf"
+    monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "*")
+    assert _sim_backend_for("buck") == "kirchhoff"
+    monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "")
+    assert _sim_backend_for("boost") == "mkf"           # empty list → none enabled
+
+
 def test_stage3_realize_raises_on_component_design_failure(monkeypatch) -> None:
     """A component-design (bridge) failure is a HARD failure: stage3_realize
     raises RealizeError instead of returning a degraded outcome that would slip

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -879,6 +880,27 @@ def generate_report(outcome: DesignOutcome) -> str:
 # ---------------------------------------------------------------------------
 
 
+# Topologies whose converter sim runs through the Kirchhoff backend (closed-loop
+# regulated, real BOM HS fills + the della-Pollock MKF magnetic as MKF_MODEL).
+# EMPTY by default → every topology uses the MKF backend (zero behaviour change).
+# Opt in per topology via the HEAVISIDE_KIRCHHOFF_TOPOLOGIES env var (comma-
+# separated, "*" = all), or by adding to this set once a topology's full realize
+# path is validated end-to-end.
+_KIRCHHOFF_TOPOLOGIES: frozenset[str] = frozenset()
+
+
+def _sim_backend_for(topology: str) -> str:
+    """Pick the sim backend for ``topology`` — "kirchhoff" if opted in (env var or
+    the registry), else "mkf" (the default; unchanged pipeline)."""
+    env = os.environ.get("HEAVISIDE_KIRCHHOFF_TOPOLOGIES")
+    if env is not None:
+        enabled = {t.strip() for t in env.split(",") if t.strip()}
+        if "*" in enabled or topology in enabled:
+            return "kirchhoff"
+        return "mkf"
+    return "kirchhoff" if topology in _KIRCHHOFF_TOPOLOGIES else "mkf"
+
+
 def full_design(
     spec: Mapping[str, Any],
     *,
@@ -1002,7 +1024,9 @@ def full_design(
         _emit(f"Realizing & simulating {pick.topology.name} ({i + 1}/{len(stage2.picks)})", pct)
         logger.info("Stage 3: realizing %s", pick.topology.name)
         try:
-            outcome = stage3_realize(pick, spec)
+            outcome = stage3_realize(
+                pick, spec, sim_backend=_sim_backend_for(pick.topology.name)
+            )
         except RealizeError as exc:
             # Multi-topology screen: one topology that cannot be realized must
             # not abort the whole batch, but it is NOT silently dropped either —
