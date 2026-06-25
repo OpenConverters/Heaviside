@@ -81,7 +81,12 @@ _NEEDS_RICHER_SPEC = {"isolated_buck", "isolated_buck_boost"}
 # silenced). Empty now: abt #26 (fsbb 12->12 emitted L=0 -> output collapsed) was
 # fixed upstream in Kirchhoff 0f1fdde — the strict xfail caught the fix, so the
 # marker was removed and fsbb is a normal passing delivers-spec case again.
-_KNOWN_GAPS: dict[str, str] = {}
+_KNOWN_GAPS: dict[str, str] = {
+    # abt #29: acf's REQUIREMENTS deck went non-convergent (ngspice aborts) after the
+    # 2026-06-25 Kirchhoff rebuild (real-deck-strip/cshunt/snubber commits); it
+    # delivered before. Strict xfail flips to XPASS when Kirchhoff fixes it.
+    "active_clamp_forward": "abt #29: acf REQUIREMENTS deck non-convergent after 2026-06-25 Kirchhoff rebuild",
+}
 
 
 def _topology_params():

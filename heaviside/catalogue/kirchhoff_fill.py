@@ -62,11 +62,12 @@ def _diode_constraints(req: dict[str, Any]) -> DiodeConstraints:
     )
 
 
-# Cap upper bound: the requirement's capacitance is the *minimum* for ripple;
-# without an upper bound LOWEST_ESR picks the biggest low-ESR electrolytic it can
-# find (e.g. 3300 µF for a 21.5 µF need), which both misdesigns the filter and
-# breaks the fixed-window transient sim. Allow generous headroom, not absurdity.
-_CAP_OVERSIZE_MAX = 10.0
+# Cap upper bound: the requirement's capacitance is the *minimum* for ripple.
+# LOWEST_ESR otherwise picks the biggest low-ESR electrolytic it can find (3300 µF
+# for a 21.5 µF need) — which misdesigns the filter AND, via a huge output RC,
+# breaks the regulated transient sim's settle/measurement. Keep the part close to
+# the design value (modest ripple headroom), not a giant electrolytic.
+_CAP_OVERSIZE_MAX = 2.0
 
 
 def _capacitor_constraints(req: dict[str, Any]) -> CapacitorConstraints:
