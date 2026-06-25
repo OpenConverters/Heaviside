@@ -54,27 +54,33 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _kirchhoff_spec(inp: dict) -> dict:
-    """Build a Kirchhoff design spec from a reference 'inputs' block."""
+# Isolated-output topologies need a 2-output design spec (primary buck/boost rail
+# + isolated secondary). The DELIVERED/measured output is the primary (output 0);
+# we synthesize a plausible isolated secondary (half the primary voltage/power) so
+# the design has its required 2 outputs.
+_DUAL_OUTPUT = {"isolated_buck", "isolated_buck_boost"}
+
+
+def _kirchhoff_spec(inp: dict, topology: str) -> dict:
+    """Build a Kirchhoff design spec from a reference 'inputs' block. Isolated
+    topologies get a synthesized secondary rail; the delivers-spec check targets
+    the primary (output 0)."""
+    vout = inp["outputVoltage"]
+    p = inp["outputPower"]
+    outs_dr = [{"name": "out0", "voltage": {"nominal": vout}}]
+    outs_op = [{"power": p}]
+    if topology in _DUAL_OUTPUT:
+        outs_dr.append({"name": "out1", "voltage": {"nominal": vout / 2.0}})
+        outs_op.append({"power": p / 2.0})
     return {
         "designRequirements": {
             "efficiency": 1.0,  # ideal (REQUIREMENTS fidelity)
             "inputVoltage": {"nominal": inp["inputVoltage"]},
             "switchingFrequency": {"nominal": inp["switchingFrequency"]},
-            "outputs": [{"name": "out", "voltage": {"nominal": inp["outputVoltage"]}}],
+            "outputs": outs_dr,
         },
-        "operatingPoints": [
-            {"inputVoltage": inp["inputVoltage"], "outputs": [{"power": inp["outputPower"]}]}
-        ],
+        "operatingPoints": [{"inputVoltage": inp["inputVoltage"], "outputs": outs_op}],
     }
-
-
-# Topologies whose Kirchhoff designer needs a richer (multi-output) design spec
-# than this gate's generic single-output builder can express (the design raises
-# "needs 2 outputs (primary + isolated secondary)"). The topologies ARE bound;
-# they just need a dedicated multi-rail spec — a follow-up, not a delivers-spec
-# failure (the design never runs).
-_NEEDS_RICHER_SPEC = {"isolated_buck", "isolated_buck_boost"}
 
 # Known delivers-spec gaps owned by Kirchhoff, surfaced via strict xfail so a fix
 # flips the test to XPASS and forces removing the marker (signal preserved, not
@@ -99,15 +105,13 @@ def test_kirchhoff_backend_delivers_spec(topology: str):
     """HS's Kirchhoff backend must deliver each topology's spec Vout within ±5%
     (the same contract Kirchhoff's closed-loop requirements gate enforces).
     Magnitude is compared so inverting topologies (cuk) count as delivering."""
-    if topology in _NEEDS_RICHER_SPEC:
-        pytest.skip(f"{topology} needs a multi-output design spec (follow-up)")
     # Reference fixtures are named by Kirchhoff's base name (e.g. psfb, src, forward).
     ref_path = _REF_DIR / f"{ka.kirchhoff_base(topology)}.mkf.json"
     if not ref_path.exists():
         pytest.skip(f"no reference fixture for {topology} ({ka.kirchhoff_base(topology)})")
     inp = json.loads(ref_path.read_text())["inputs"]
-    target_vout = float(inp["outputVoltage"])
-    spec = _kirchhoff_spec(inp)
+    target_vout = float(inp["outputVoltage"])  # primary rail (output 0) for isolated topologies
+    spec = _kirchhoff_spec(inp, topology)
 
     result = spice_sim.simulate_from_spec(
         topology,
