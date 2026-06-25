@@ -128,6 +128,26 @@ def test_fill_sources_controller_from_ctas_catalog():
     assert recs[0]["selection"].alternatives_considered > 0
 
 
+def test_fill_sources_gate_driver_and_resistor():
+    """Phase 2/3: a gateDriver-category control seed sources a real gate driver, a real
+    resistor seed sources a real resistor, and an Rsn* numerical-aid resistor is skipped."""
+    gd = {"inputs": {"designRequirements": {"inputVoltage": {"nominal": 400.0},
+                                            "switchingFrequency": {"nominal": 100000.0}}},
+          "topology": {"stages": [{"circuit": {"components": [
+              {"name": "UDR", "data": {"controller": {}, "inputs": {"designRequirements":
+                  {"function": {"category": "gateDriver"}}}}}]}}]}}
+    r = fill_kirchhoff_bom(gd, topology="phase_shifted_full_bridge")[0]
+    assert r["filled"] is True and r["selection"].chosen.category == "gateDriver"
+
+    def _fill_resistor(name):
+        t = {"inputs": {"designRequirements": {}}, "topology": {"stages": [{"circuit": {"components": [
+            {"name": name, "data": {"resistor": {}, "inputs": {"designRequirements": {
+                "resistance": {"nominal": 100.0}, "powerRating": 1.0, "tolerance": 0.05}}}}]}}]}}
+        return fill_kirchhoff_bom(t)[0]
+    assert _fill_resistor("Rsense")["filled"] is True       # real resistor sourced
+    assert _fill_resistor("Rsn1")["filled"] is False        # numerical-aid resistor skipped
+
+
 _SUBCKT = (
     "* Magnetic model made with OpenMagnetics\n"
     ".subckt PQ_3F3_TURNS_5 P1+ P1-\n"

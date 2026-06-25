@@ -31,11 +31,13 @@ from heaviside.catalogue.selector import (
     DiodeTiebreaker,
     MosfetConstraints,
     MosfetTiebreaker,
+    ResistorConstraints,
     SelectionError,
     select_capacitor,
     select_controller,
     select_diode,
     select_mosfet,
+    select_resistor,
 )
 
 _FAMILIES = ("semiconductor", "magnetic", "capacitor", "resistor", "analog", "controller")
@@ -216,6 +218,16 @@ def fill_kirchhoff_bom(
                         _capacitor_constraints(req), tiebreaker=capacitor_tiebreaker, tas_data_dir=tas_data_dir
                     )
                     data["capacitor"] = sel.chosen.raw_envelope["capacitor"]
+                    rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
+                elif family == "resistor":
+                    # snubber damping R / current sense / bias / feedback divider.
+                    sel = select_resistor(
+                        ResistorConstraints(
+                            target_ohms=float(req["resistance"]["nominal"]),
+                            max_tolerance=float(req.get("tolerance", 0.05)),
+                            max_value_deviation=0.2),
+                        tas_data_dir=tas_data_dir)
+                    data["resistor"] = sel.chosen.raw_envelope["resistor"]
                     rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 elif family == "magnetic":
                     # della-Pollock: the magnetic is MKF's (MKF_MODEL), wired by the caller.
