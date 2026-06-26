@@ -660,6 +660,19 @@ def _design_ktas_magnetics(k_tas: dict[str, Any], *, bridge_mod: Any, pyom_vendo
             # The fast advise leaves the coil un-wound; autocomplete fills the coil
             # geometry so it can be exported as a SPICE subcircuit (MKF_MODEL).
             magnetic = pyom_vendor.magnetic_autocomplete(d.magnetic, dict(seed))
+            # Fail-loud: the MKF fast advise sizes the core on the primary area-product
+            # then sets inductance-driven turns AFTER, with no windability gate — so a
+            # high-Lm/low-current transformer can get a core whose window cannot hold the
+            # turns. autocomplete then SILENTLY returns a coil with no turnsDescription,
+            # which only blows up later in export. Surface it here, at the magnetic, with
+            # the core context. (Root fix is MKF-side; see the abt fast-advise issue.)
+            if not (magnetic.get("coil") or {}).get("turnsDescription"):
+                raise RealizeError(
+                    f"kirchhoff-native: magnetic {comp.get('name')!r} ({d.core_shape_name}) "
+                    f"could not be wound — MKF fast-advise picked a core whose window cannot "
+                    f"hold the inductance-driven turns (un-windable transformer). MKF fast-advise "
+                    f"needs a windability/fill-factor gate."
+                )
             stamp_fn(k_tas, magnetic, pyom=pyom_vendor, component_name=comp.get("name"))
             n += 1
     return n

@@ -489,10 +489,17 @@ def _advise_magnetics_fast(
             f"calculate_advised_magnetics_fast rejected inputs ({label}): {result['error']}"
         )
     data = result.get("data")
+    if isinstance(data, str):
+        # PyOM tunnels an MKF-internal exception through `data` as a STRING (not a list),
+        # e.g. "Exception: [GAP_INVALID_DIMENSIONS] Gap Area is not set". Surface it verbatim
+        # so the real MKF cause is diagnosable instead of an opaque "no data list".
+        raise BridgeError(
+            f"calculate_advised_magnetics_fast raised inside MKF ({label}): {data}"
+        )
     if not isinstance(data, list):
         raise BridgeError(
             f"calculate_advised_magnetics_fast response has no 'data' "
-            f"list (keys: {sorted(result)})"
+            f"list (keys: {sorted(result)}, data={type(data).__name__})"
         )
     if not data:
         raise BridgeError(
