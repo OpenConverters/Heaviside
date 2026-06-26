@@ -606,11 +606,32 @@ def _seed_worst_peak_current(seed: Mapping[str, Any]) -> float | None:
     return max(peaks) if peaks else None
 
 
+def _seed_with_isat_margin(seed: Mapping[str, Any], margin: float) -> dict[str, Any]:
+    """A copy of the magnetic seed with every winding's CURRENT PEAK scaled by ``margin``
+    so the advised core is sized for ``margin``×Ipeak — i.e. it has the saturation headroom
+    the realism gate requires (Isat >= margin·Ipeak). Only the peak (the saturation driver)
+    is scaled; rms/voltage (loss/flux) are left real so the core is not over-sized for loss.
+    The gate is still stamped with the REAL Ipeak (from the unscaled seed)."""
+    import copy
+    s = copy.deepcopy(dict(seed))
+    for op in s.get("operatingPoints", []):
+        if not isinstance(op, dict):
+            continue
+        for exc in op.get("excitationsPerWinding", []):
+            proc = ((exc or {}).get("current") or {}).get("processed")
+            if isinstance(proc, dict) and isinstance(proc.get("peak"), (int, float)):
+                proc["peak"] = abs(float(proc["peak"])) * margin
+    return s
+
+
 def _design_ktas_magnetics(k_tas: dict[str, Any], *, bridge_mod: Any, pyom_vendor: Any, stamp_fn: Any) -> int:
     """Design every magnetic GEOMETRY in ``k_tas`` from its own seed (topology-agnostic,
     ABT #34), wind the coil, stamp it MKF_MODEL, and stamp the gate's ``isat`` /
     ``ipeak_worst`` flat fields (isat from the designed core, ipeak from the seed
-    excitation). Returns the count designed. Fail-loud on a seed-less magnetic."""
+    excitation). The core is designed for a SATURATION MARGIN (Isat >= _GATE_ISAT_MARGIN·Ipeak)
+    so it passes the realism gate's isat check AND has the headroom to deliver full output
+    without saturating (a core sized right at Ipeak caps Vout below target). Returns the count
+    designed. Fail-loud on a seed-less magnetic."""
     n = 0
     for st in k_tas.get("topology", {}).get("stages", []):
         for comp in st.get("circuit", {}).get("components", []):
@@ -623,7 +644,8 @@ def _design_ktas_magnetics(k_tas: dict[str, Any], *, bridge_mod: Any, pyom_vendo
                     f"kirchhoff-native: magnetic {comp.get('name')!r} has no inputs seed "
                     f"(ABT #34 expects a complete magnetic_inputs envelope)."
                 )
-            designs = bridge_mod.design_magnetic_from_mas_inputs(seed, max_results=1)
+            designs = bridge_mod.design_magnetic_from_mas_inputs(
+                _seed_with_isat_margin(seed, _GATE_ISAT_MARGIN), max_results=1)
             d = designs[0]
             # isat from the designed core at its achieved L; ipeak from the seed excitation.
             try:
@@ -700,6 +722,12 @@ def _stamp_ktas_gate_stresses(
 # vds_rated >= 1.5*vds_stress, heaviside/pipeline/realism.check_fet_voltage_derating).
 # The Kirchhoff requirement vDerate is aligned to 1/this so filled parts meet the gate.
 _GATE_FET_DERATING_RATIO = 1.5
+
+# The realism gate's inductor saturation rule (Isat >= 1.2*Ipeak,
+# heaviside/pipeline/realism.check_inductor_isat_margin), with a little headroom so the
+# discrete core the advise picks clears 1.2x AND has room to deliver full output without
+# saturating. The magnetic is designed for this margin × the real peak current.
+_GATE_ISAT_MARGIN = 1.3
 
 
 def _harvest_magnetic_design_into_spec(k_tas: dict[str, Any], spec_dict: dict[str, Any]) -> dict[str, Any]:
