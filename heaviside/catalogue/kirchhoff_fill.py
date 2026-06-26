@@ -57,6 +57,11 @@ class KirchhoffFillError(RuntimeError):
     """A Kirchhoff component requirement could not be filled with a real part."""
 
 
+def _has_all(req: dict[str, Any], keys: tuple[str, ...]) -> bool:
+    """True iff ``req`` carries every rating key (as a number) needed to source the part."""
+    return isinstance(req, dict) and all(isinstance(req.get(k), (int, float)) for k in keys)
+
+
 def _mosfet_constraints(req: dict[str, Any]) -> MosfetConstraints:
     return MosfetConstraints(
         vds_min=float(req["ratedDrainSourceVoltage"]),
@@ -202,17 +207,30 @@ def fill_kirchhoff_bom(
 
             try:
                 if family == "semiconductor" and kind == "mosfet":
-                    sel = select_mosfet(
-                        _mosfet_constraints(req), tiebreaker=mosfet_tiebreaker, tas_data_dir=tas_data_dir
-                    )
-                    data["semiconductor"] = sel.chosen.raw_envelope["semiconductor"]
-                    rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
+                    # A switch with no rating requirement cannot be sourced. This is either an
+                    # unswept topology seed (surfaced, not faked) or a modelling artifact; defer
+                    # rather than crash. Real switches carry req::mosfet (rated Vds/Id + max Rds_on).
+                    if not _has_all(req, ("ratedDrainSourceVoltage", "ratedContinuousDrainCurrent", "maximumOnResistance")):
+                        rec.update(filled=False, deferred="mosfet seed carries no rating requirement (unswept topology)")
+                    else:
+                        sel = select_mosfet(
+                            _mosfet_constraints(req), tiebreaker=mosfet_tiebreaker, tas_data_dir=tas_data_dir
+                        )
+                        data["semiconductor"] = sel.chosen.raw_envelope["semiconductor"]
+                        rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 elif family == "semiconductor" and kind == "diode":
-                    sel = select_diode(
-                        _diode_constraints(req), tiebreaker=diode_tiebreaker, tas_data_dir=tas_data_dir
-                    )
-                    data["semiconductor"] = sel.chosen.raw_envelope["semiconductor"]
-                    rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
+                    # A diode with no reverse-voltage requirement is a BODY DIODE of a sourced
+                    # MOSFET (anti-parallel; carried by the FET and stripped at DATASHEET) — or an
+                    # unswept rectifier seed. Either way defer, don't crash; only real, independently
+                    # rectifying diodes carry req::diode.
+                    if not _has_all(req, ("ratedReverseVoltage", "ratedForwardCurrent")):
+                        rec.update(filled=False, deferred="diode seed carries no rating requirement (body diode / unswept)")
+                    else:
+                        sel = select_diode(
+                            _diode_constraints(req), tiebreaker=diode_tiebreaker, tas_data_dir=tas_data_dir
+                        )
+                        data["semiconductor"] = sel.chosen.raw_envelope["semiconductor"]
+                        rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 elif family == "capacitor":
                     sel = select_capacitor(
                         _capacitor_constraints(req), tiebreaker=capacitor_tiebreaker, tas_data_dir=tas_data_dir

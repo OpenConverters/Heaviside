@@ -297,3 +297,135 @@ def test_filled_tas_emits_real_deck_and_delivers_spec():
     r = simulate_self_contained_deck(deck, vout_target=24.0, tolerance=0.05)
     # real Rds_on/Vf/ESR + an ideal magnetic seed: still delivers the 24 V spec
     assert 22.0 <= r.result["vout"] <= 26.0, r.result
+
+
+def _kspec(vin, vout, power, fsw, vin_lo=None, vin_hi=None):
+    """A minimal Kirchhoff-shaped converter spec (designRequirements + one op)."""
+    iv = {"nominal": vin}
+    if vin_lo is not None:
+        iv["minimum"], iv["maximum"] = vin_lo, vin_hi
+    return {
+        "designRequirements": {
+            "efficiency": 0.9,
+            "inputVoltage": iv,
+            "switchingFrequency": {"nominal": fsw},
+            "outputs": [{"name": "out", "voltage": {"nominal": vout}}],
+        },
+        "operatingPoints": [{"inputVoltage": vin, "outputs": [{"power": power}]}],
+    }
+
+
+# ABT #34: the TOPOLOGY-AGNOSTIC magnetic path. Each topology's Kirchhoff magnetic
+# seed (designRequirements + excitation-per-winding) designs a real core/coil via
+# bridge.design_magnetic_from_mas_inputs -> calculate_advised_magnetics_fast, WITHOUT
+# any MKF topology-path (process_converter) call. sepic/cuk/zeta/fsbb are exactly the
+# topologies MKF's topology design cannot do — here they each produce a magnetic.
+@pytest.mark.parametrize(
+    "topo, spec",
+    [
+        ("boost", _kspec(12, 24, 24, 100_000, 11.4, 12.6)),
+        ("sepic", _kspec(5, 12, 6, 600_000, 4.5, 5.5)),
+        ("cuk", _kspec(12, 24, 24, 200_000, 10, 14)),
+        ("zeta", _kspec(12, 5, 5, 600_000, 10, 14)),
+        ("four_switch_buck_boost", _kspec(12, 24, 120, 200_000, 10, 14)),
+    ],
+)
+def test_magnetic_designed_from_kirchhoff_seed_topology_agnostic(topo, spec):
+    from heaviside import bridge
+
+    try:
+        bridge._import_pyom()
+    except Exception as exc:  # noqa: BLE001 - native dep optional in some envs
+        pytest.skip(f"PyOM not available: {exc}")
+
+    tas = ka.design_topology_tas(topo, spec)
+    mags = [
+        c
+        for st in tas["topology"]["stages"]
+        for c in st["circuit"].get("components", [])
+        if isinstance(c.get("data"), dict) and "magnetic" in c["data"]
+    ]
+    assert mags, f"{topo}: k_tas has no magnetic component"
+    for c in mags:
+        seed = c["data"].get("inputs")
+        # The complete seed the geometry designer needs (ABT #34).
+        assert seed and seed.get("designRequirements") and seed.get("operatingPoints"), (
+            f"{topo}/{c['name']}: incomplete magnetic seed {sorted(seed or {})}"
+        )
+        assert seed["operatingPoints"][0].get("excitationsPerWinding"), (
+            f"{topo}/{c['name']}: seed has no excitationsPerWinding"
+        )
+        designs = bridge.design_magnetic_from_mas_inputs(seed, max_results=1)
+        assert designs, f"{topo}/{c['name']}: no magnetic designed from seed"
+        assert designs[0].core_shape_name, f"{topo}/{c['name']}: designed magnetic has no core"
+
+
+def _boost_pick():
+    from heaviside.bridge import MagneticDesign
+    from heaviside.pipeline.full_design import TopologyPick
+    from heaviside.topologies.registry import get as get_topology
+
+    md = MagneticDesign(scoring=1.0, mas={}, elapsed_s=0.0)
+    return TopologyPick(
+        topology=get_topology("boost"),
+        main_magnetic=md,
+        candidates=(md,),
+        pick_reason="test",
+        pick_criteria="test",
+    )
+
+
+_BOOST_HS_SPEC = {
+    "inputVoltage": {"minimum": 11.4, "maximum": 12.6, "nominal": 12.0},
+    "currentRippleRatio": 0.4,
+    "operatingPoints": [
+        {
+            "outputVoltages": [24.0],
+            "outputCurrents": [1.0],
+            "switchingFrequency": 100_000.0,
+            "ambientTemperature": 25.0,
+        }
+    ],
+}
+
+
+@pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")
+def test_stage3_kirchhoff_native_single_tas_gate_passes():
+    """ABT #36: stage3_realize(sim_backend='kirchhoff') realizes ENTIRELY from k_tas —
+    Kirchhoff designs it, HS fills parts + designs the magnetic from its seed, the
+    realism gate reads it — with NO decompose/assemble/unify. boost end-to-end:
+    regulates 12->24 V and the gate does not FAIL."""
+    from heaviside import bridge
+    from heaviside.pipeline.full_design import stage3_realize
+
+    try:
+        bridge._import_pyom_vendor()
+    except Exception as exc:  # noqa: BLE001 - native dep optional in some envs
+        pytest.skip(f"PyOM vendor not available: {exc}")
+
+    outcome = stage3_realize(_boost_pick(), _BOOST_HS_SPEC, sim_backend="kirchhoff")
+
+    # 1. The returned TAS is the Kirchhoff k_tas (its boost switching cell names L1/Q1/D1),
+    #    NOT an HS-decompose TAS.
+    comps = {c["name"] for st in outcome.tas["topology"]["stages"]
+             for c in st.get("circuit", {}).get("components", [])}
+    assert {"L1", "Q1", "D1"} <= comps, comps
+
+    # 2. Regulated operating point stamped onto k_tas (~24 V, physical).
+    sim = outcome.tas["simulation_results"]
+    op = sim[next(iter(sim))]
+    assert abs(op["vout"] - 24.0) <= 1.5, op
+    assert op["pin"] > op["pout"] > 0
+
+    # 3. Gate-readable fields stamped onto k_tas: magnetic isat/ipeak, FET ratings/stress.
+    L1 = _comp(outcome.tas, "L1")
+    assert L1.get("isat", 0) > 0 and L1.get("ipeak_worst", 0) > 0
+    Q1 = _comp(outcome.tas, "Q1")
+    assert Q1.get("vds_rated", 0) > 0 and Q1.get("vds_stress", 0) > 0
+    assert Q1["vds_rated"] > Q1["vds_stress"]  # a real derating margin (not collapsed to ~1)
+
+    # 4. The realism gate ran on k_tas and did not FAIL; the FET derating check fired.
+    verdict = outcome.verdict_dict
+    assert verdict["verdict"] != "fail", verdict
+    fet = next((c for c in verdict["checks"] if c["name"] == "fet_voltage_derating"), None)
+    assert fet is not None and fet["status"] == "pass", verdict["checks"]

@@ -453,6 +453,131 @@ def design_magnetics(
             pyom.set_settings({"useOnlyCoresInStock": _prior_in_stock})
 
 
+def _advise_magnetics_fast(
+    pyom: Any,
+    inputs_raw: Mapping[str, Any],
+    label: str,
+    max_results: int,
+    core_mode: str,
+) -> list[MagneticDesign]:
+    """Topology-AGNOSTIC tail shared by the converter-spec path and the
+    MAS-inputs path: call ``calculate_advised_magnetics_fast`` on a ready
+    MAS ``Inputs`` envelope and parse the scored candidates into
+    ``MagneticDesign``. ``label`` only colours error messages.
+
+    This is the part that designs the magnetic GEOMETRY from a magnetic
+    REQUIREMENT — it never touches a topology model, so it works for every
+    converter (incl. sepic/cuk/zeta/fsbb, which MKF's topology-specific
+    ``process_converter`` cannot design). The envelope must already carry
+    ``designRequirements`` + ``operatingPoints`` (a complete excitation per
+    winding) — Kirchhoff's per-topology magnetic seed (ABT #34) provides it.
+    """
+    t0 = time.monotonic()
+    result = pyom.calculate_advised_magnetics_fast(
+        dict(inputs_raw),
+        int(max_results),
+        str(core_mode),
+    )
+    elapsed = time.monotonic() - t0
+
+    if not isinstance(result, dict):
+        raise BridgeError(
+            f"calculate_advised_magnetics_fast returned {type(result).__name__}, expected dict."
+        )
+    if result.get("error"):
+        raise BridgeError(
+            f"calculate_advised_magnetics_fast rejected inputs ({label}): {result['error']}"
+        )
+    data = result.get("data")
+    if not isinstance(data, list):
+        raise BridgeError(
+            f"calculate_advised_magnetics_fast response has no 'data' "
+            f"list (keys: {sorted(result)})"
+        )
+    if not data:
+        raise BridgeError(
+            f"calculate_advised_magnetics_fast returned zero candidates "
+            f"for {label}. Loosen constraints or check inputs."
+        )
+
+    designs: list[MagneticDesign] = []
+    for item in data:
+        if not isinstance(item, Mapping):
+            raise BridgeError(
+                f"calculate_advised_magnetics_fast entry is "
+                f"{type(item).__name__}, expected dict (mas + scoring)."
+            )
+        mas = item.get("mas")
+        scoring = item.get("scoring")
+        if not isinstance(mas, Mapping) or not isinstance(scoring, (int, float)):
+            raise BridgeError(
+                f"calculate_advised_magnetics_fast entry missing mas/scoring: "
+                f"{sorted(item) if isinstance(item, Mapping) else type(item).__name__}"
+            )
+        designs.append(
+            MagneticDesign(
+                scoring=float(scoring),
+                mas=dict(mas),
+                elapsed_s=float(elapsed) / max(1, len(data)),
+            )
+        )
+    # PyOM returns ascending losses; lower scoring = better magnetic.
+    return designs
+
+
+def design_magnetic_from_mas_inputs(
+    mas_inputs: Mapping[str, Any],
+    *,
+    max_results: int = 5,
+    core_mode: str = "standard cores",
+) -> list[MagneticDesign]:
+    """Design a magnetic GEOMETRY directly from a MAS ``Inputs`` envelope —
+    the topology-AGNOSTIC entry point (ABT #34).
+
+    Unlike :func:`design_magnetics_fast`, this skips
+    ``process_converter(topology, spec)`` entirely and hands the supplied
+    envelope straight to ``calculate_advised_magnetics_fast``. The envelope is
+    expected to come from a Kirchhoff per-component magnetic seed
+    (``data.magnetic`` component's ``data.inputs``), which already carries the
+    complete requirement: ``designRequirements`` (magnetizingInductance +
+    turnsRatios) and ``operatingPoints`` with one winding excitation per
+    winding. This is how the cutover keeps MKF "magnetics-geometry-only" and
+    designs sepic/cuk/zeta/fsbb that MKF's topology path cannot.
+
+    Raises
+    ------
+    BridgeError
+        If the envelope is malformed (missing designRequirements /
+        operatingPoints), or PyOM rejects/returns no candidates.
+    """
+    if not isinstance(mas_inputs, Mapping):
+        raise BridgeError(
+            f"design_magnetic_from_mas_inputs: expected a MAS Inputs dict, got "
+            f"{type(mas_inputs).__name__}."
+        )
+    missing = [k for k in ("designRequirements", "operatingPoints") if k not in mas_inputs]
+    if missing:
+        raise BridgeError(
+            f"design_magnetic_from_mas_inputs: envelope missing {missing} "
+            f"(keys={sorted(mas_inputs)}). A complete Kirchhoff magnetic seed has "
+            f"both — an inductance-only seed cannot be designed. See ABT #34."
+        )
+    ops = mas_inputs.get("operatingPoints")
+    if not isinstance(ops, list) or not ops:
+        raise BridgeError(
+            "design_magnetic_from_mas_inputs: operatingPoints is empty; the seed "
+            "must carry at least one operating point with excitationsPerWinding."
+        )
+    if not ops[0].get("excitationsPerWinding"):
+        raise BridgeError(
+            "design_magnetic_from_mas_inputs: operatingPoints[0] has no "
+            "excitationsPerWinding — the magnetic cannot be sized without a winding "
+            "excitation (ABT #34 requires one per winding)."
+        )
+    pyom = _import_pyom()
+    return _advise_magnetics_fast(pyom, mas_inputs, "mas-inputs seed", max_results, core_mode)
+
+
 def design_magnetics_fast(
     topology: str | TopologyEntry,
     converter_spec: Mapping[str, Any],
@@ -505,61 +630,11 @@ def design_magnetics_fast(
                 f"keys={sorted(inputs_raw)}"
             )
 
-        t0 = time.monotonic()
-        result = pyom.calculate_advised_magnetics_fast(
-            inputs_raw,
-            int(max_results),
-            str(core_mode),
-        )
-        elapsed = time.monotonic() - t0
-
-        if not isinstance(result, dict):
-            raise BridgeError(
-                f"calculate_advised_magnetics_fast returned {type(result).__name__}, expected dict."
-            )
-        if result.get("error"):
-            raise BridgeError(
-                f"calculate_advised_magnetics_fast rejected inputs: {result['error']}"
-            )
-        data = result.get("data")
-        if not isinstance(data, list):
-            raise BridgeError(
-                f"calculate_advised_magnetics_fast response has no 'data' "
-                f"list (keys: {sorted(result)})"
-            )
-        if not data:
-            raise BridgeError(
-                f"calculate_advised_magnetics_fast returned zero candidates "
-                f"for {variant!r}. Loosen constraints or check inputs."
-            )
-
-        designs: list[MagneticDesign] = []
-        for item in data:
-            if not isinstance(item, Mapping):
-                raise BridgeError(
-                    f"calculate_advised_magnetics_fast entry is "
-                    f"{type(item).__name__}, expected dict (mas + scoring)."
-                )
-            mas = item.get("mas")
-            scoring = item.get("scoring")
-            if not isinstance(mas, Mapping) or not isinstance(scoring, (int, float)):
-                raise BridgeError(
-                    f"calculate_advised_magnetics_fast entry missing mas/scoring: "
-                    f"{sorted(item) if isinstance(item, Mapping) else type(item).__name__}"
-                )
-            designs.append(
-                MagneticDesign(
-                    scoring=float(scoring),
-                    mas=dict(mas),
-                    elapsed_s=float(elapsed) / max(1, len(data)),
-                )
-            )
+        # Topology-AGNOSTIC tail (shared with design_magnetic_from_mas_inputs).
         # PyOM returns ascending losses; lower scoring = better magnetic.
-        # Heaviside's MagneticDesign convention (used by design_magnetics)
-        # is "higher scoring = better", so keep as-is and let callers
-        # disambiguate via this docstring. The fast-path raw scoring is
-        # ascending losses; callers using both paths should be aware.
-        return designs
+        # Heaviside's MagneticDesign convention (used by design_magnetics) is
+        # "higher scoring = better", so callers using both paths should be aware.
+        return _advise_magnetics_fast(pyom, inputs_raw, repr(variant), max_results, core_mode)
 
     raise BridgeError(
         f"All PyOM topology names for {entry.name!r} reported 'Unknown topology' "

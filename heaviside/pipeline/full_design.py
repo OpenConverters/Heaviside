@@ -468,16 +468,18 @@ def _simulate_kirchhoff_backend(
     *,
     topology: str,
     spec_dict: dict[str, Any],
-    components: Any,
+    components: Any,  # vestigial (ABT #34): the magnetic now comes from the k_tas seed,
+                      # not components.main_magnetic. Retired with the rest in ABT #36.
     first_op: Mapping[str, Any],
     vout_target: float | None,
 ) -> None:
     """Kirchhoff backend (cutover Architecture A): Kirchhoff designs + simulates
     the circuit from the real parts HS fills against Kirchhoff's per-component
-    requirements + the della-Pollock MKF magnetic (MKF_MODEL), closed-loop
-    REGULATED; the regulated operating point is stamped into HS's TAS so the
-    realism gate sees the same shape as the MKF path. Fail-loud throughout — an
-    unregulated / non-finite point is refused, never stamped."""
+    requirements + per-magnetic MKF GEOMETRY designed from Kirchhoff's own magnetic
+    seed (MKF_MODEL, topology-agnostic — ABT #34), closed-loop REGULATED; the
+    regulated operating point is stamped into HS's TAS so the realism gate sees the
+    same shape as the MKF path. Fail-loud throughout — an unregulated / non-finite
+    point is refused, never stamped."""
     import math
 
     from heaviside import bridge as _bridge
@@ -506,20 +508,51 @@ def _simulate_kirchhoff_backend(
     if not isinstance(vin, (int, float)) or vin <= 0:
         raise RealizeError(f"kirchhoff backend: no input voltage resolved for {topology}")
 
-    magnetic_obj = (getattr(components.main_magnetic, "mas", None) or {}).get("magnetic")
-    if magnetic_obj is None:
-        raise RealizeError(f"kirchhoff backend: no MKF magnetic to stamp for {topology}")
     try:
         k_tas = _ka.design_from_hs_spec(topology, spec_dict)
         fill_records = fill_kirchhoff_bom(k_tas, topology=topology)
-        stamp_mkf_magnetic(k_tas, magnetic_obj, pyom=_bridge._import_pyom_vendor())
+        # ABT #34: design every magnetic GEOMETRY from Kirchhoff's per-component
+        # magnetic seed (data.inputs = designRequirements + one excitation per winding),
+        # TOPOLOGY-AGNOSTICALLY via calculate_advised_magnetics_fast, and stamp each as
+        # MKF_MODEL. MKF is magnetics-GEOMETRY-only here — no topology-specific
+        # design_converter_components magnetic (which fails for sepic/cuk/zeta/fsbb,
+        # the topologies whose seeds Kirchhoff emits but MKF's topology path cannot
+        # design). One design+stamp per magnetic component (transformer, output/resonant
+        # inductors), targeted by name so each slot gets its own core.
+        _pyom_vendor = _bridge._import_pyom_vendor()
+        n_mag = 0
+        for st in k_tas.get("topology", {}).get("stages", []):
+            for comp in st.get("circuit", {}).get("components", []):
+                data = comp.get("data")
+                if not isinstance(data, dict) or "magnetic" not in data:
+                    continue
+                seed = data.get("inputs")
+                if not isinstance(seed, Mapping):
+                    raise RealizeError(
+                        f"kirchhoff backend: magnetic {comp.get('name')!r} in {topology} "
+                        f"carries no inputs seed to design from (ABT #34 expects a complete "
+                        f"magnetic_inputs envelope on every magnetic)."
+                    )
+                designs = _bridge.design_magnetic_from_mas_inputs(seed, max_results=1)
+                # The fast geometry-advise selects a core + turns but leaves the coil
+                # un-wound (no turnsDescription); autocomplete fills the derived coil
+                # geometry so MKF can export it as a SPICE subcircuit (MKF_MODEL).
+                magnetic = _pyom_vendor.magnetic_autocomplete(designs[0].magnetic, dict(seed))
+                stamp_mkf_magnetic(
+                    k_tas, magnetic, pyom=_pyom_vendor,
+                    component_name=comp.get("name"),
+                )
+                n_mag += 1
+        if n_mag == 0:
+            raise RealizeError(f"kirchhoff backend: {topology} k_tas has no magnetic to design")
         # Unify: the gate validates exactly the parts the Kirchhoff sim used
         # (Kirchhoff's requirement is the single selection authority) — power
         # semiconductors (fail-loud) + power capacitors (lenient; aux caps kept).
         unify_hs_tas_semiconductors(tas, fill_records)
         unify_hs_tas_capacitors(tas, fill_records)
         op = _ka.simulate_regulated(k_tas, float(vout_target), topology, fidelity="DATASHEET")
-    except (KirchhoffUnavailable, KirchhoffTopologyUnsupported, KirchhoffFillError, SimError) as exc:
+    except (KirchhoffUnavailable, KirchhoffTopologyUnsupported, KirchhoffFillError,
+            SimError, _bridge.BridgeError) as exc:
         raise RealizeError(f"kirchhoff simulation failed for {topology}: {exc}") from exc
 
     if not op.get("regulated"):
@@ -545,6 +578,289 @@ def _simulate_kirchhoff_backend(
             total_losses=pin - pout,
             efficiency=eff,
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stage 3 — Kirchhoff-native realize (ABT #36): k_tas is the SINGLE TAS the gate
+# consumes. No design_converter_components (MKF topology path) / decompose_from_spec
+# / assemble_bom_from_tas / unify. Kirchhoff designs k_tas; HS fills real parts +
+# designs the magnetics from k_tas's own seeds (ABT #34); the realism gate reads k_tas.
+# ---------------------------------------------------------------------------
+
+
+def _seed_worst_peak_current(seed: Mapping[str, Any]) -> float | None:
+    """Worst-case |peak| winding current from a Kirchhoff magnetic seed's
+    excitations (ABT #34) — the saturation driver for the isat gate."""
+    ops = seed.get("operatingPoints")
+    if not isinstance(ops, list) or not ops:
+        return None
+    excs = ops[0].get("excitationsPerWinding") if isinstance(ops[0], Mapping) else None
+    if not isinstance(excs, list) or not excs:
+        return None
+    peaks: list[float] = []
+    for e in excs:
+        p = (((e or {}).get("current") or {}).get("processed") or {}).get("peak")
+        if isinstance(p, (int, float)):
+            peaks.append(abs(float(p)))
+    return max(peaks) if peaks else None
+
+
+def _design_ktas_magnetics(k_tas: dict[str, Any], *, bridge_mod: Any, pyom_vendor: Any, stamp_fn: Any) -> int:
+    """Design every magnetic GEOMETRY in ``k_tas`` from its own seed (topology-agnostic,
+    ABT #34), wind the coil, stamp it MKF_MODEL, and stamp the gate's ``isat`` /
+    ``ipeak_worst`` flat fields (isat from the designed core, ipeak from the seed
+    excitation). Returns the count designed. Fail-loud on a seed-less magnetic."""
+    n = 0
+    for st in k_tas.get("topology", {}).get("stages", []):
+        for comp in st.get("circuit", {}).get("components", []):
+            data = comp.get("data")
+            if not isinstance(data, dict) or "magnetic" not in data:
+                continue
+            seed = data.get("inputs")
+            if not isinstance(seed, Mapping):
+                raise RealizeError(
+                    f"kirchhoff-native: magnetic {comp.get('name')!r} has no inputs seed "
+                    f"(ABT #34 expects a complete magnetic_inputs envelope)."
+                )
+            designs = bridge_mod.design_magnetic_from_mas_inputs(seed, max_results=1)
+            d = designs[0]
+            # isat from the designed core at its achieved L; ipeak from the seed excitation.
+            try:
+                L = float(bridge_mod._harvest_authoritative_inductance(d.mas))
+                isat = bridge_mod._isat_from_mas(d.magnetic, L)
+            except Exception:  # noqa: BLE001 - isat is best-effort; the gate marks it unavailable if absent
+                isat = None
+            ipk = _seed_worst_peak_current(seed)
+            if isinstance(isat, (int, float)) and isat > 0 and ipk is not None:
+                comp["isat"] = float(isat)
+                comp["ipeak_worst"] = float(ipk)
+            # The fast advise leaves the coil un-wound; autocomplete fills the coil
+            # geometry so it can be exported as a SPICE subcircuit (MKF_MODEL).
+            magnetic = pyom_vendor.magnetic_autocomplete(d.magnetic, dict(seed))
+            stamp_fn(k_tas, magnetic, pyom=pyom_vendor, component_name=comp.get("name"))
+            n += 1
+    return n
+
+
+def _stamp_ktas_gate_stresses(
+    k_tas: dict[str, Any],
+    fill_records: list[dict[str, Any]],
+    stresses: Any,
+) -> None:
+    """Stamp the realism gate's flat rating+stress fields onto k_tas power
+    semiconductors / capacitors: ratings from the Kirchhoff-fill SELECTION, operating
+    stress from the analytical worst-case ``ComponentStresses``. This replaces the
+    decompose→assemble→unify path. INTERIM stress source: ABT #35 will swap the
+    analytical stress for the per-component SIMULATED excitation (the correct source).
+    Falls back to the requirement's rated value (conservative: derating ratio→~1) when
+    a topology has no analytical stress for that class."""
+    from heaviside.catalogue.assemble import _stamp_capacitor, _stamp_diode, _stamp_mosfet
+
+    def _pick(stress: Any, rating: Any) -> float | None:
+        """Operating stress for the gate: prefer the analytical stress; fall back to the
+        Kirchhoff requirement's rated value (conservative — derating ratio→~1); None if
+        neither is a positive number (then the field is left unstamped and the gate
+        marks that derating check UNAVAILABLE rather than crashing on a bad value)."""
+        if isinstance(stress, (int, float)) and stress > 0:
+            return float(stress)
+        if isinstance(rating, (int, float)) and rating > 0:
+            return float(rating)
+        return None
+
+    by_name = {
+        r["name"]: r
+        for r in fill_records
+        if r.get("filled") and r.get("selection") is not None and r.get("requirement") is not None
+    }
+    for st in k_tas.get("topology", {}).get("stages", []):
+        for comp in st.get("circuit", {}).get("components", []):
+            rec = by_name.get(comp.get("name"))
+            if rec is None:
+                continue
+            sel, req, fam, kind = rec["selection"], rec["requirement"], rec["family"], rec["kind"]
+            if fam == "semiconductor" and kind == "mosfet":
+                vds = _pick(getattr(stresses, "vds_stress", None), req.get("ratedDrainSourceVoltage"))
+                ids = _pick(getattr(stresses, "id_stress", None), req.get("ratedContinuousDrainCurrent"))
+                if vds is not None and ids is not None:
+                    _stamp_mosfet(comp, sel, stress_vds=vds, stress_id=ids)
+            elif fam == "semiconductor" and kind == "diode":
+                vr = _pick(getattr(stresses, "vr_stress", None), req.get("ratedReverseVoltage"))
+                ifa = _pick(getattr(stresses, "if_avg_stress", None), req.get("ratedForwardCurrent"))
+                if vr is not None and ifa is not None:
+                    _stamp_diode(comp, sel, stress_vr=vr, stress_if_avg=ifa)
+            elif fam == "capacitor":
+                vw = _pick(getattr(stresses, "v_working", None), req.get("ratedVoltage"))
+                ir = _pick(getattr(stresses, "i_ripple", None), req.get("minimumRippleCurrent"))
+                if vw is not None and ir is not None:
+                    _stamp_capacitor(comp, sel, stress_v=vw, stress_ripple=ir)
+
+
+# The HS realism gate's tightest semiconductor voltage-derating rule (FET
+# vds_rated >= 1.5*vds_stress, heaviside/pipeline/realism.check_fet_voltage_derating).
+# The Kirchhoff requirement vDerate is aligned to 1/this so filled parts meet the gate.
+_GATE_FET_DERATING_RATIO = 1.5
+
+
+def _harvest_magnetic_design_into_spec(k_tas: dict[str, Any], spec_dict: dict[str, Any]) -> dict[str, Any]:
+    """Return spec_dict with desiredTurnsRatios / desiredMagnetizingInductance / desiredInductance
+    filled from k_tas's transformer magnetic seed (the one with turnsRatios — not a filter inductor),
+    if absent. The analytical stress deriver needs these for isolated topologies; in the native path
+    Kirchhoff's own seed is the source (no design_converter_components)."""
+    main_dr = None
+    for st in k_tas.get("topology", {}).get("stages", []):
+        for comp in st.get("circuit", {}).get("components", []):
+            data = comp.get("data")
+            if isinstance(data, dict) and "magnetic" in data:
+                dr = data.get("inputs", {}).get("designRequirements", {})
+                if isinstance(dr, dict) and dr.get("turnsRatios"):
+                    main_dr = dr
+                    break
+        if main_dr is not None:
+            break
+    if main_dr is None:
+        return spec_dict   # non-isolated: no turns ratio to supply
+    out = dict(spec_dict)
+    if "desiredTurnsRatios" not in out:
+        trs = []
+        for tr in main_dr.get("turnsRatios", []):
+            v = tr.get("nominal") if isinstance(tr, dict) else tr
+            if isinstance(v, (int, float)):
+                trs.append(float(v))
+        if trs:
+            out["desiredTurnsRatios"] = trs
+    lm = main_dr.get("magnetizingInductance")
+    lm = lm.get("nominal") if isinstance(lm, dict) else lm
+    if isinstance(lm, (int, float)) and lm > 0:
+        out.setdefault("desiredMagnetizingInductance", float(lm))
+        out.setdefault("desiredInductance", float(lm))
+    return out
+
+
+def _realize_via_kirchhoff(
+    topology: str,
+    spec_dict: dict[str, Any],
+    pick: TopologyPick,
+) -> "DesignOutcome":
+    """ABT #36 — single-TAS cutover. Kirchhoff designs ``k_tas`` (CIAS stages +
+    per-component requirements); HS fills real parts (``fill_kirchhoff_bom``) and
+    designs the magnetics from k_tas's own seeds (ABT #34, topology-agnostic — so
+    sepic/cuk/zeta/fsbb work, which MKF's topology path cannot). The realism gate
+    reads k_tas directly. NO design_converter_components / decompose_from_spec /
+    assemble_bom_from_tas / unify. Fail-loud: an unregulated/non-finite point is refused."""
+    import math
+
+    from heaviside import bridge as _bridge
+    from heaviside.catalogue.kirchhoff_fill import (
+        KirchhoffFillError,
+        fill_kirchhoff_bom,
+        stamp_mkf_magnetic,
+    )
+    from heaviside.decomposer import kirchhoff_adapter as _ka
+    from heaviside.decomposer.kirchhoff_adapter import (
+        KirchhoffTopologyUnsupported,
+        KirchhoffUnavailable,
+    )
+    from heaviside.pipeline.analyst import AnalystError, run_analyst
+    from heaviside.pipeline.stress import StressDerivationError, derive_stresses
+    from heaviside.sim import SimError
+    from heaviside.sim.runner import SimResult, stamp_simulation_results
+    from heaviside.stages.realism_gate import evaluate as evaluate_tas
+
+    ops = spec_dict.get("operatingPoints") or [{}]
+    first_op = ops[0] if isinstance(ops[0], dict) else {}
+    vouts = first_op.get("outputVoltages")
+    vout_target = (
+        float(vouts[0])
+        if isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))
+        else None
+    )
+    if vout_target is None:
+        raise RealizeError(f"kirchhoff-native requires a regulation target (vout) for {topology}")
+    vin = first_op.get("inputVoltage")
+    if not isinstance(vin, (int, float)):
+        iv = spec_dict.get("inputVoltage")
+        if isinstance(iv, Mapping):
+            vin = iv.get("nominal") or iv.get("minimum") or iv.get("maximum")
+    if not isinstance(vin, (int, float)) or vin <= 0:
+        raise RealizeError(f"kirchhoff-native: no input voltage resolved for {topology}")
+
+    # Align Kirchhoff's semiconductor REQUIREMENT derating with the HS realism gate
+    # (ABT #36 GOTCHA). Kirchhoff's default vDerate=0.8 (IPC-9592, 1.25x) is LOOSER than
+    # the gate's FET rule (vds_rated >= 1.5*stress), so parts filled to the 1.25x
+    # requirement fail the 1.5x gate. Setting vDerate = 1/1.5 makes the requirement match
+    # the tightest gate rule (the diode's 1.3x is looser, so it passes too). This affects
+    # only the semiconductor rating requirements — not the magnetic or the deck — so
+    # regulation is preserved (verified: boost still delivers 24 V). The old unify path's
+    # regression from forcing vDerate was architectural, not from the derating itself.
+    # Respect an explicit caller-provided config.vDerate.
+    if not isinstance(spec_dict.get("config"), Mapping) or "vDerate" not in spec_dict["config"]:
+        _cfg = dict(spec_dict.get("config") or {})
+        _cfg["vDerate"] = 1.0 / _GATE_FET_DERATING_RATIO
+        spec_dict = {**spec_dict, "config": _cfg}
+
+    try:
+        k_tas = _ka.design_from_hs_spec(topology, spec_dict)
+        fill_records = fill_kirchhoff_bom(k_tas, topology=topology)
+        if _design_ktas_magnetics(
+            k_tas, bridge_mod=_bridge,
+            pyom_vendor=_bridge._import_pyom_vendor(), stamp_fn=stamp_mkf_magnetic,
+        ) == 0:
+            raise RealizeError(f"kirchhoff-native: {topology} k_tas has no magnetic to design")
+        # The analytical stress deriver needs the transformer turns ratio + magnetizing
+        # inductance for isolated topologies. The MKF path got these from
+        # design_converter_components; the native path harvests them from k_tas's OWN
+        # magnetic seed (designRequirements.turnsRatios / magnetizingInductance), preserved
+        # through the MKF_MODEL stamp.
+        spec_dict = _harvest_magnetic_design_into_spec(k_tas, spec_dict)
+        _stamp_ktas_gate_stresses(k_tas, fill_records, derive_stresses(topology, spec_dict))
+        op = _ka.simulate_regulated(k_tas, float(vout_target), topology, fidelity="DATASHEET")
+    except (KirchhoffUnavailable, KirchhoffTopologyUnsupported, KirchhoffFillError,
+            SimError, StressDerivationError, _bridge.BridgeError) as exc:
+        raise RealizeError(f"kirchhoff-native realize failed for {topology}: {exc}") from exc
+
+    if not op.get("regulated"):
+        raise RealizeError(
+            f"kirchhoff-native: {topology} did not regulate to {vout_target} V "
+            f"(converged={op.get('converged')}, vout={op.get('vout')}) — refusing an "
+            "unregulated operating point for the realism gate"
+        )
+    vout_m, pin, pout, eff = (
+        float(op["vout"]), float(op["pin"]), float(op["pout"]), float(op["efficiency"])
+    )
+    if not all(math.isfinite(x) for x in (vout_m, pin, pout, eff)) or pin <= 0:
+        raise RealizeError(f"kirchhoff-native: non-finite/zero operating point for {topology} (op={op})")
+    stamp_simulation_results(
+        k_tas,
+        SimResult(
+            vin=float(vin), iin=pin / vin, vout=vout_m,
+            iout=(pout / vout_m if vout_m else 0.0),
+            pin=pin, pout=pout, total_losses=pin - pout, efficiency=eff,
+        ),
+    )
+    # Regulated control variable → the gate's duty_cycle_bounds check.
+    if op.get("control") == "duty" and isinstance(op.get("value"), (int, float)):
+        k_tas["duty"] = float(op["value"])
+
+    # Analyst is best-effort here (efficiency already comes from the regulated sim);
+    # a topology the analyst can't model must not sink the design — the gate still runs.
+    try:
+        run_analyst(topology, k_tas, spec_dict)
+    except AnalystError:
+        pass
+
+    report = evaluate_tas(k_tas, topology=topology, spec=spec_dict)
+    return DesignOutcome(
+        pick=pick,
+        tas=k_tas,
+        verdict_dict={
+            "verdict": report.verdict.value,
+            "summary": report.summary,
+            "checks": [
+                {"name": c.name, "status": c.status.value, "value": c.value, "margin": c.margin}
+                for c in report.checks
+            ],
+        },
     )
 
 
@@ -592,6 +908,14 @@ def stage3_realize(
 
     topology = pick.topology.name
     spec_dict = _augment_converter_spec(dict(spec), topology)
+
+    # ABT #36 — single-TAS cutover. The Kirchhoff backend now realizes ENTIRELY from
+    # k_tas: Kirchhoff designs it, HS fills parts + designs magnetics from its seeds,
+    # the gate reads it. This bypasses design_converter_components (the MKF topology
+    # path that fails for sepic/cuk/zeta/fsbb) + decompose/assemble/unify completely.
+    # (pinned_main does not apply — magnetics come from the per-component seeds.)
+    if sim_backend == "kirchhoff":
+        return _realize_via_kirchhoff(topology, spec_dict, pick)
 
     # Bridge / resonant families model their switching cell as a single
     # behavioural PULSE source by default, which leaves no real MOSFETs for
@@ -688,12 +1012,9 @@ def stage3_realize(
             stamp_simulation_results(tas, sim_result)
         except (SimError, DecomposerError) as exc:
             raise RealizeError(f"simulation failed for {topology}: {exc}") from exc
-    elif sim_backend == "kirchhoff":
-        _simulate_kirchhoff_backend(
-            tas, topology=topology, spec_dict=spec_dict, components=components,
-            first_op=first_op, vout_target=vout_target,
-        )
     else:
+        # sim_backend == "kirchhoff" is handled by the early _realize_via_kirchhoff
+        # return above (ABT #36); only "mkf" reaches this far.
         raise RealizeError(f"unknown sim_backend {sim_backend!r} (expected 'mkf' or 'kirchhoff')")
 
     try:
