@@ -88,7 +88,6 @@
           "connections": [
             {
               "name": "node_A",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "L1",
@@ -106,7 +105,6 @@
             },
             {
               "name": "node_B",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "C_flying",
@@ -182,7 +180,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "power_stage"
         }
       },
       {

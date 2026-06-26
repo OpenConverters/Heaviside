@@ -99,7 +99,6 @@
           "connections": [
             {
               "name": "sw_node",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "Q_HI",
@@ -117,7 +116,6 @@
             },
             {
               "name": "resonant_mid",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "C_r",
@@ -226,7 +224,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "inverter"
         }
       },
       {
@@ -335,7 +334,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "isolation"
         }
       },
       {
@@ -435,7 +435,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "output_0"
         }
       },
       {

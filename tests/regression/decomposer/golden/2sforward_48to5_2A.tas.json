@@ -172,7 +172,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "primary_switch"
         }
       },
       {
@@ -262,7 +263,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "isolation"
         }
       },
       {
@@ -309,7 +311,6 @@
           "connections": [
             {
               "name": "sec0_rect_node",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "D_fwd0",
@@ -369,7 +370,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "output_0"
         }
       },
       {

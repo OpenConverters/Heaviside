@@ -106,7 +106,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "input_coupled_inductor"
         }
       },
       {
@@ -189,7 +190,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "primary_switch"
         }
       },
       {
@@ -328,7 +330,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "isolation"
         }
       },
       {
@@ -371,7 +374,6 @@
           "connections": [
             {
               "name": "out_node",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "D1",
@@ -432,7 +434,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "output_0"
         }
       },
       {

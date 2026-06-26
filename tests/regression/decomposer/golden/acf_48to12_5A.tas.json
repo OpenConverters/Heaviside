@@ -79,7 +79,6 @@
           "connections": [
             {
               "name": "clamp_node",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "Q_clamp",
@@ -155,7 +154,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "primary_switch"
         }
       },
       {
@@ -230,7 +230,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "isolation"
         }
       },
       {
@@ -277,7 +278,6 @@
           "connections": [
             {
               "name": "sec0_rect_node",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "D_fwd0",
@@ -337,7 +337,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "output_0"
         }
       },
       {

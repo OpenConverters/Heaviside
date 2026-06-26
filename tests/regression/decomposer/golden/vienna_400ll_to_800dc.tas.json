@@ -85,7 +85,6 @@
           "connections": [
             {
               "name": "sw_node",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "L1",
@@ -157,7 +156,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "phase_boost_cell"
         }
       },
       {

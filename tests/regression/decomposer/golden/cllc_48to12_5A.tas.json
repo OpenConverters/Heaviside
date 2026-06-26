@@ -198,7 +198,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "primary_bridge"
         }
       },
       {
@@ -262,7 +263,6 @@
             },
             {
               "name": "cr1_to_pri",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "C_r1",
@@ -288,7 +288,6 @@
             },
             {
               "name": "cr2_to_sec",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "C_r2",
@@ -324,7 +323,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "isolation"
         }
       },
       {
@@ -490,7 +490,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "secondary_bridge"
         }
       },
       {
@@ -544,7 +545,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "output_filter"
         }
       },
       {

@@ -385,6 +385,42 @@ def _attach_external_terminals(topology: dict[str, Any]) -> dict[str, Any]:
     return topology
 
 
+def _normalize_circuits_to_cias(topology: dict[str, Any]) -> dict[str, Any]:
+    """Mutate ``topology`` in place so every stage ``circuit`` is a valid
+    CIAS brick (``https://psma.com/cias/CIAS.json``). Returns the same dict
+    for call-site chaining.
+
+    The stencils were written against the pre-CIAS inline-circuit shape
+    (TAS ``circuit.json``): a circuit with ``ports``/``components``/
+    ``connections`` and a ``kind`` tag on each intra-brick connection.
+    The TAS "Lego over CIAS bricks" migration (topology.json ``circuitRef``
+    → CIAS document | URI) made two of those choices invalid for a brick:
+
+      * a CIAS brick REQUIRES a top-level ``name`` (its library lookup
+        key); the stencils never set one.
+      * a CIAS ``connection`` is ``{name, endpoints}`` with
+        ``additionalProperties:false`` — the stray ``kind``/``direction``
+        belong to a TAS ``interStageConnection``, not to a brick-internal
+        net, and must be dropped.
+
+    This is a structural rename only: the brick is named after its owning
+    stage and the vestigial intra-circuit tags are removed. ``kind`` on
+    ``interStageConnections`` (the genuine wire/externalPort discriminator)
+    is left untouched. Idempotent. String (URI) circuits are passed through.
+    """
+    for stage in topology.get("stages", []):
+        circuit = stage.get("circuit")
+        if not isinstance(circuit, dict):
+            continue  # URI-string brick reference, or a control stage
+        circuit.setdefault("name", stage["name"])
+        circuit.setdefault("ports", [])
+        circuit.setdefault("components", [])
+        for conn in circuit.setdefault("connections", []):
+            conn.pop("kind", None)
+            conn.pop("direction", None)
+    return topology
+
+
 def _control_stage() -> dict[str, Any]:
     return {
         "name": "controller",

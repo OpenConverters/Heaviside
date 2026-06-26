@@ -198,7 +198,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "primary_bridge"
         }
       },
       {
@@ -246,7 +247,6 @@
           "connections": [
             {
               "name": "lr_to_pri",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "L_r",
@@ -306,7 +306,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "isolation"
         }
       },
       {
@@ -472,7 +473,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "secondary_bridge"
         }
       },
       {
@@ -526,7 +528,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "output_filter"
         }
       },
       {

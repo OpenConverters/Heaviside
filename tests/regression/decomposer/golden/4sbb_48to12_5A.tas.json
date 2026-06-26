@@ -101,7 +101,6 @@
           "connections": [
             {
               "name": "sw1",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "Q1",
@@ -119,7 +118,6 @@
             },
             {
               "name": "sw2",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "L1",
@@ -239,7 +237,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "power_stage"
         }
       },
       {

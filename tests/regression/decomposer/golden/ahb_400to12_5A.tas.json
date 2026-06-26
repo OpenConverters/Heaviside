@@ -154,7 +154,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "inverter"
         }
       },
       {
@@ -244,7 +245,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "isolation"
         }
       },
       {
@@ -299,7 +301,6 @@
           "connections": [
             {
               "name": "out_rect",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "D1",
@@ -380,7 +381,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "output_0"
         }
       },
       {

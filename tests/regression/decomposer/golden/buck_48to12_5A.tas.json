@@ -80,7 +80,6 @@
           "connections": [
             {
               "name": "sw_node",
-              "kind": "wire",
               "endpoints": [
                 {
                   "component": "Q1",
@@ -152,7 +151,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "name": "power_stage"
         }
       },
       {

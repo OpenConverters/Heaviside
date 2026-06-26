@@ -861,12 +861,18 @@ def select_capacitor(
 # the catalog does not publish.
 
 # CTAS intendedTopologies use full converter names; map them to HS short topology names.
+# Only names whose default camelCase→snake_case normalization does NOT equal the HS
+# stencil key need an explicit entry here. The resonant cousins and the Vienna rectifier
+# are the cases that diverge (e.g. "cllcResonantConverter" → "cllc_resonant" ≠ "cllc"),
+# so without these the selector silently rejects correctly-tagged controllers for them.
 _CTAS_TOPOLOGY = {
     "buckConverter": "buck", "boostConverter": "boost", "buckBoostConverter": "buck_boost",
     "flybackConverter": "flyback", "forwardConverter": "forward", "llcResonantConverter": "llc",
     "powerFactorCorrection": "power_factor_correction", "sepicConverter": "sepic",
     "cukConverter": "cuk", "zetaConverter": "zeta", "pushPullConverter": "push_pull",
     "phaseShiftedFullBridge": "phase_shifted_full_bridge", "dualActiveBridge": "dual_active_bridge",
+    "cllcResonantConverter": "cllc", "clllcResonantConverter": "clllc",
+    "seriesResonantConverter": "series_resonant", "viennaRectifierConverter": "vienna",
 }
 
 

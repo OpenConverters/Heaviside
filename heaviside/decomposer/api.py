@@ -22,7 +22,11 @@ from typing import Any
 
 from heaviside.decomposer.inputs_mapper import InputsMappingError, build_tas_inputs
 from heaviside.decomposer.spice_parser import SpiceDeck, parse_spice
-from heaviside.decomposer.stencils import _attach_external_terminals, get_stencil
+from heaviside.decomposer.stencils import (
+    _attach_external_terminals,
+    _normalize_circuits_to_cias,
+    get_stencil,
+)
 
 
 class DecomposerError(RuntimeError):
@@ -219,6 +223,7 @@ def decompose_netlist(topology: str, netlist: str) -> dict[str, Any]:
     stencil = get_stencil(topology)
     topology_block = stencil(deck)
     _attach_external_terminals(topology_block)
+    _normalize_circuits_to_cias(topology_block)
     return topology_block
 
 
