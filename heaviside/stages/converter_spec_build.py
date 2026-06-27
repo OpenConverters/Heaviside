@@ -32,7 +32,13 @@ def _seed_turns_ratio(spec: dict[str, Any], topology: str) -> None:
     """Seed ``desiredTurnsRatios`` for an isolated/transformer topology when the
     spec omits it (the Heaviside stress engine needs it; MKF re-derives its own
     for the magnetic). Forward/bridge/push-pull: n = Vin_min·D_max/Vout;
-    flyback-family: n = Vin_min·D_max/(Vout·(1−D_max))."""
+    flyback-family: n = Vin_min·D_nom/(Vout·(1−D_nom)).
+
+    The turns ratio is sized for a NOMINAL duty 10% below the duty ceiling, not the ceiling
+    itself (ABT #45): sizing for D_max exactly leaves zero headroom, so rounding the ratio — or
+    any real rectifier drop / conduction loss — pushes the required duty just over the ceiling and
+    MKF rejects the spec ("required dutyCycle 0.4501 exceeds maximumDutyCycle 0.4500"). A nominal
+    duty below the ceiling lets the converter reach target with margin to spare."""
     try:
         from heaviside.topologies import get
         fam = get(topology).family
@@ -49,10 +55,11 @@ def _seed_turns_ratio(spec: dict[str, Any], topology: str) -> None:
     d_max = spec.get("maximumDutyCycle", 0.5)
     if not (isinstance(vmin, (int, float)) and vmin > 0 and vout and vout > 0 and 0 < d_max < 1):
         return
+    d_nom = float(d_max) * 0.9  # headroom below the duty ceiling (ABT #45)
     if "flyback" in topology:
-        n = float(vmin) * float(d_max) / (float(vout) * (1.0 - float(d_max)))
+        n = float(vmin) * d_nom / (float(vout) * (1.0 - d_nom))
     else:  # forward / bridge / push-pull
-        n = float(vmin) * float(d_max) / float(vout)
+        n = float(vmin) * d_nom / float(vout)
     if n > 0:
         spec["desiredTurnsRatios"] = [round(n, 4)]
 

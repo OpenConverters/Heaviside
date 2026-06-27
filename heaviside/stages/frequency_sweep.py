@@ -345,8 +345,20 @@ def sweep(
         )
 
     # Worst-case switch stress (across all OPs) sizes the envelope FET + the
-    # switching-loss surrogate. The stress engine owns this physics.
-    stresses = stress_extract.analytical(entry.name, spec)
+    # switching-loss surrogate. The stress engine owns this physics. Topologies whose peak
+    # switch current depends on fsw (flyback's primary peak IS the magnetizing current) need a
+    # switching frequency; the base spec carries none (fsw is what we are sweeping). Stamp a
+    # representative fsw — the geometric mean of the sweep band — only where the OP lacks one; the
+    # per-fsw saturation gate re-evaluates the real peak at every grid frequency below.
+    f_rep = (f_lo_hz * f_hi_hz) ** 0.5
+    spec_for_stress = dict(spec)
+    spec_for_stress["operatingPoints"] = [
+        {**op, "switchingFrequency": float(op.get("switchingFrequency") or f_rep)}
+        if isinstance(op, Mapping)
+        else op
+        for op in (spec.get("operatingPoints") or [])
+    ]
+    stresses = stress_extract.analytical(entry.name, spec_for_stress)
     if stresses is None or stresses.vds_stress is None or stresses.id_stress is None:
         raise FrequencySweepError(
             f"stress engine could not size the switch for {entry.name!r} "

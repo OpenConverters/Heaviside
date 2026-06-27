@@ -302,10 +302,24 @@ def flyback_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> Component
     eff = spec.get("efficiency")
     if not isinstance(eff, (int, float)) or not (0.0 < eff <= 1.0):
         raise StressDerivationError(f"{where}.efficiency required in (0, 1] for accurate ipeak")
+    Pout = vout * iout
     Lm = spec.get("desiredMagnetizingInductance")
     if not isinstance(Lm, (int, float)) or Lm <= 0:
-        raise StressDerivationError(
-            f"{where}.desiredMagnetizingInductance required (henries) for ipeak"
+        # On the closed-loop frequency sweep the magnetic is a sweep OUTPUT, so Lm is not yet
+        # known when the FET envelope / saturation stresses are first computed. Derive a
+        # representative magnetizing inductance from the target current-ripple ratio so the
+        # pre-sweep stresses can be evaluated; the realism gate re-checks against the
+        # actually-designed core's Lm afterwards. Inverting the ripple definition used below:
+        #   r = ΔIm / I_Lm,avg,  I_Lm,avg = I_in_max / D_max,  ΔIm = Vmin·D_max / (0.8·Lm·fsw)
+        #   ⇒ Lm = Vmin²·D_max²·eff / (0.8·r·Pout·fsw)
+        r = spec.get("currentRippleRatio")
+        if not isinstance(r, (int, float)) or r <= 0:
+            raise StressDerivationError(
+                f"{where}.desiredMagnetizingInductance or currentRippleRatio required "
+                f"(henries / ratio) for ipeak"
+            )
+        Lm = (vmin * vmin * float(d_max) * float(d_max) * float(eff)) / (
+            0.8 * float(r) * Pout * float(fsw)
         )
 
     # Match extract.py:_enrich_flyback closed form so post-filter and
@@ -313,7 +327,6 @@ def flyback_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> Component
     #   I_in_max = Pout / (eff * Vmin)
     #   ripple_worst = Vmin * D_max / (0.8 * Lm * fsw)
     #   ipeak_worst = I_in_max / D_max + ripple_worst / 2
-    Pout = vout * iout
     I_in_max = Pout / (float(eff) * vmin)
     Lm_worst = 0.8 * float(Lm)
     ripple_worst = vmin * float(d_max) / (Lm_worst * float(fsw))
