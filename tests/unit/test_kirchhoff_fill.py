@@ -135,7 +135,7 @@ def test_fill_sources_gate_driver_and_resistor():
                                             "switchingFrequency": {"nominal": 100000.0}}},
           "topology": {"stages": [{"circuit": {"components": [
               {"name": "UDR", "data": {"controller": {}, "inputs": {"designRequirements":
-                  {"function": {"category": "gateDriver"}}}}}]}}]}}
+                  {"category": "gateDriver"}}}}]}}]}}
     r = fill_kirchhoff_bom(gd, topology="phase_shifted_full_bridge")[0]
     assert r["filled"] is True and r["selection"].chosen.category == "gateDriver"
 
