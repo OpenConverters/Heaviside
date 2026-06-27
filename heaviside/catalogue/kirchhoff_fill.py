@@ -254,7 +254,10 @@ def fill_kirchhoff_bom(
                     # Phase 1: source the control IC / gate driver (CTAS family) by
                     # topology + Vin + fsw. Needs the converter context; if absent
                     # (a bare BOM fill with no topology/spec) defer rather than fail.
-                    _cat = req.get("function", {}).get("category") if isinstance(req.get("function"), dict) else None
+                    # CTAS seed: `category` is at the top level of designRequirements (the
+                    # ctas/inputs/designRequirements.json discriminator), not under `function`
+                    # (that is the sourced PART's datasheetInfo discriminator).
+                    _cat = req.get("category")
                     _cat = _cat if isinstance(_cat, str) and _cat else None
                     if topology is None or _vin is None or _fsw is None:
                         rec.update(filled=False, deferred="controller: need topology + Vin + fsw to source")

@@ -257,7 +257,7 @@ def acquire_lock(
         fh.close()
         if unlink_on_release:
             # Another holder may have unlinked it; not an error.
-            with contextlib.suppress(FileNotFoundError):
+            with suppress(FileNotFoundError):
                 lock_path.unlink()
 
 
