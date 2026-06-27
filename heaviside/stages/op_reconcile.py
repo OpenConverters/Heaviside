@@ -176,12 +176,19 @@ def reconcile(
             ReconciliationReport([], -1, False, {"error": "isat unavailable"}),
             "MKF could not evaluate the chosen magnetic's saturation current",
         )
-    estimates = [
-        OpEstimate(op_index=i, ipeak_a=float(s.id_stress), isat_a=float(isat),
-                   label=f"op{i}")
-        for i, s in enumerate(per_op)
-        if s.id_stress is not None and s.id_stress > 0
-    ]
+    # The saturating current is the peak MAGNETIZING current (the flux driver), read from the designed
+    # magnetic's MAS — NOT the stress deriver's id_stress, which is the SWITCH/load current and over-
+    # states saturation several-fold for transformers whose primary also carries the reflected load
+    # (push_pull/forward/bridge). Fall back to id_stress (conservative) only when the MAS carries no
+    # magnetizing current for that OP. Inductors are unchanged (magnetizing current == winding current).
+    mag_peaks = bridge.magnetizing_peaks_per_op(mas)
+    estimates = []
+    for i, s in enumerate(per_op):
+        if s.id_stress is None or s.id_stress <= 0:
+            continue
+        imag = mag_peaks[i] if i < len(mag_peaks) else None
+        ipeak = imag if (isinstance(imag, (int, float)) and imag > 0) else float(s.id_stress)
+        estimates.append(OpEstimate(op_index=i, ipeak_a=ipeak, isat_a=float(isat), label=f"op{i}"))
     return reconcile_margins(
         estimates, min_isat_ratio=min_isat_ratio, raise_on_infeasible=raise_on_infeasible
     )

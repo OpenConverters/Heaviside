@@ -1730,6 +1730,34 @@ def _ipeak_from_mas(cand: "MagneticDesign") -> float | None:
     return peak if (seen and peak > 0) else None
 
 
+def magnetizing_peaks_per_op(mas: Mapping[str, Any]) -> list[float | None]:
+    """Peak MAGNETIZING current (the flux / saturation driver) for EACH operating point of ``mas``,
+    indexed to match ``inputs.operatingPoints`` — the per-OP analogue of :func:`_ipeak_from_mas`.
+
+    MKF stamps the magnetizing current on the primary (winding 0) excitation, recomputed at the
+    DESIGNED core's inductance. The saturation gate must use this, not the switch/load current
+    (which over-states the saturating current for transformers whose primary also carries the
+    reflected load). Returns ``None`` for an OP whose magnetizing current is absent (caller falls
+    back to a conservative estimate)."""
+    inputs = (mas or {}).get("inputs") if isinstance(mas, Mapping) else None
+    ops = inputs.get("operatingPoints") if isinstance(inputs, Mapping) else None
+    if not isinstance(ops, list):
+        return []
+    out: list[float | None] = []
+    for op in ops:
+        pk: float | None = None
+        if isinstance(op, Mapping):
+            excs = op.get("excitationsPerWinding") or []
+            if excs and isinstance(excs[0], Mapping):
+                mc = excs[0].get("magnetizingCurrent")
+                proc = mc.get("processed") if isinstance(mc, Mapping) else None
+                p = proc.get("peak") if isinstance(proc, Mapping) else None
+                if isinstance(p, (int, float)) and p > 0:
+                    pk = abs(float(p))
+        out.append(pk)
+    return out
+
+
 def _isat_margin_inputs(
     entry: TopologyEntry, spec: Mapping[str, Any], cand: "MagneticDesign"
 ) -> tuple[float | None, float | None]:
