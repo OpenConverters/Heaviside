@@ -219,11 +219,13 @@ def fill_kirchhoff_bom(
                         data["semiconductor"] = sel.chosen.raw_envelope["semiconductor"]
                         rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 elif family == "semiconductor" and kind == "diode":
-                    # A diode with no reverse-voltage requirement is a BODY DIODE of a sourced
-                    # MOSFET (anti-parallel; carried by the FET and stripped at DATASHEET) — or an
-                    # unswept rectifier seed. Either way defer, don't crash; only real, independently
-                    # rectifying diodes carry req::diode.
-                    if not _has_all(req, ("ratedReverseVoltage", "ratedForwardCurrent")):
+                    # A BODY DIODE of a sourced MOSFET (anti-parallel; carried by the FET and
+                    # stripped at DATASHEET) is tagged role "bodyDiode"; a diode with no
+                    # reverse-voltage requirement is an unswept rectifier seed. Either way defer,
+                    # don't crash; only real, independently rectifying diodes carry req::diode.
+                    if req.get("role") == "bodyDiode" or not _has_all(
+                        req, ("ratedReverseVoltage", "ratedForwardCurrent")
+                    ):
                         rec.update(filled=False, deferred="diode seed carries no rating requirement (body diode / unswept)")
                     else:
                         sel = select_diode(
