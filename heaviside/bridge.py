@@ -1758,6 +1758,59 @@ def magnetizing_peaks_per_op(mas: Mapping[str, Any]) -> list[float | None]:
     return out
 
 
+def _turns_ratio_duty_feasible(
+    cand: "MagneticDesign", *, tol: float = 0.01
+) -> tuple[bool, str | None]:
+    """``(feasible, reason)`` — reject a transformer candidate whose REALIZED step-down turns ratio
+    (N_primary / N_secondary, from the integer-rounded coil) exceeds the ratio MKF DERIVED to be duty-
+    feasible and stamped in ``designRequirements.turnsRatios`` (sized from the topology's maximum duty).
+
+    A higher step-down ratio needs MORE duty to reach Vout; MKF's integer turns realization can round a
+    secondary down (e.g. 12/4.41 → 12/4 = 3.0 vs a derived 2.72), pushing the realized ratio past the
+    duty ceiling — for push-pull/forward that is per-switch D ≥ 0.5, which shorts the transformer, and
+    the design only fails much later at Realize. Rejecting these here lets the pick land on a feasible
+    candidate (lower realized ratio) instead. Single-winding inductors (no turns ratios) are always
+    feasible. The check is the realized ratio against MKF's OWN duty-derived requirement, so it carries
+    no per-topology duty formula."""
+    try:
+        mas = cand.mas
+    except Exception:
+        return True, None
+    if not isinstance(mas, Mapping):
+        return True, None
+    coil = ((mas.get("magnetic") or {}).get("coil") or {}).get("functionalDescription")
+    trs = ((mas.get("inputs") or {}).get("designRequirements") or {}).get("turnsRatios")
+    if not isinstance(coil, list) or len(coil) < 2 or not isinstance(trs, list) or not trs:
+        return True, None  # no transformer / no turns-ratio requirement → not duty-limited here
+    n0 = coil[0].get("numberTurns") if isinstance(coil[0], Mapping) else None
+    if not isinstance(n0, (int, float)) or n0 <= 0:
+        return True, None
+    for i in range(1, len(coil)):
+        w = coil[i]
+        ni = w.get("numberTurns") if isinstance(w, Mapping) else None
+        if not isinstance(ni, (int, float)) or ni <= 0 or i - 1 >= len(trs):
+            continue
+        req = trs[i - 1]
+        if isinstance(req, Mapping):
+            nominal = req.get("nominal")
+            if nominal is None:
+                lo, hi = req.get("minimum"), req.get("maximum")
+                if isinstance(lo, (int, float)) and isinstance(hi, (int, float)):
+                    nominal = (lo + hi) / 2.0
+                else:
+                    nominal = lo if isinstance(lo, (int, float)) else hi
+            req = nominal
+        if not isinstance(req, (int, float)) or req <= 0:
+            continue
+        realized = float(n0) / float(ni)
+        if realized > float(req) * (1.0 + tol):
+            return False, (
+                f"winding {i}: realized turns ratio {realized:.3f} exceeds the duty-feasible "
+                f"{float(req):.3f} (overshoots the topology's maximum duty)"
+            )
+    return True, None
+
+
 def _isat_margin_inputs(
     entry: TopologyEntry, spec: Mapping[str, Any], cand: "MagneticDesign"
 ) -> tuple[float | None, float | None]:

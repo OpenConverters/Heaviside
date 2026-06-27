@@ -234,7 +234,15 @@ def _evaluate_fsw(
     feasible: list[SweepCandidate] = []
     skipped_unrankable = 0
     skipped_undermargin = 0
+    skipped_duty = 0
     for cand in cands:
+        # Reject candidates whose integer-rounded turns ratio overshoots the topology's maximum duty
+        # (MKF's own duty-derived requirement) — otherwise the pick can land on a magnetic that only
+        # fails far downstream at Realize (push-pull/forward: per-switch D ≥ 0.5 shorts the transformer).
+        duty_ok, _duty_why = bridge._turns_ratio_duty_feasible(cand)
+        if not duty_ok:
+            skipped_duty += 1
+            continue
         ipeak, l_guard = bridge._isat_margin_inputs(entry, spec_at_fsw, cand)
         if ipeak is None or l_guard is None:
             skipped_unrankable += 1
@@ -279,6 +287,8 @@ def _evaluate_fsw(
     bits = []
     if skipped_undermargin:
         bits.append(f"{skipped_undermargin} under {min_isat_ratio:g}× isat margin")
+    if skipped_duty:
+        bits.append(f"{skipped_duty} duty-infeasible (realized turns ratio overshoots max duty)")
     if skipped_unrankable:
         bits.append(f"{skipped_unrankable} unrankable (no isat/loss)")
     reason = ", ".join(bits) if bits else "no candidates"
