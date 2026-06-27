@@ -1664,24 +1664,44 @@ def _ipeak_from_mas(cand: "MagneticDesign") -> float | None:
         return None
     if not isinstance(mas, Mapping):
         return None
-    ops = (mas.get("inputs") or {}).get("operatingPoints")
+    inputs = mas.get("inputs") or {}
+    ops = inputs.get("operatingPoints")
     if not isinstance(ops, list):
         return None
+    # Core saturation is set by the peak MAGNETIZING current, referred to the winding the saturation
+    # current is computed against (winding 0, the primary). A transformer's secondary current is in a
+    # different amp-scale (a step-down secondary carries n× the primary), so taking the raw max across
+    # windings compares the secondary current to a winding-0-referred Isat and over-states the peak by
+    # ~n — exactly the abt #12 saturating-cores false negative. Refer each winding's current to winding 0
+    # via the turns ratio (I_w_ref0 = I_w · N_w/N_0 = I_w / turnsRatios[w-1]) before taking the max.
+    trs_raw = (inputs.get("designRequirements") or {}).get("turnsRatios") or []
+
+    def _ref_factor(winding_index: int) -> float:
+        if winding_index <= 0:
+            return 1.0  # primary is the reference winding
+        if winding_index - 1 < len(trs_raw):
+            t = trs_raw[winding_index - 1]
+            tr = t.get("nominal") if isinstance(t, Mapping) else t
+            if isinstance(tr, (int, float)) and tr != 0:
+                return 1.0 / float(tr)
+        return 1.0
+
     peak = 0.0
     seen = False
     for op in ops:
         if not isinstance(op, Mapping):
             continue
-        for exc in op.get("excitationsPerWinding") or []:
+        for wi, exc in enumerate(op.get("excitationsPerWinding") or []):
             if not isinstance(exc, Mapping):
                 continue
             wf = (exc.get("current") or {}).get("waveform") if isinstance(exc, Mapping) else None
             data = wf.get("data") if isinstance(wf, Mapping) else None
             if isinstance(data, list):
+                factor = _ref_factor(wi)
                 for v in data:
                     if isinstance(v, (int, float)):
                         seen = True
-                        a = abs(float(v))
+                        a = abs(float(v)) * factor
                         if a > peak:
                             peak = a
     return peak if (seen and peak > 0) else None
