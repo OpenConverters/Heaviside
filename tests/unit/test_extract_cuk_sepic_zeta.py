@@ -148,10 +148,10 @@ class TestCukSepicZetaMath:
         # own core/winding (uncoupled), so each gets its own PyOM Isat.
         # L1: 22 turns; L2: 30 turns (turn count harvested from the MAS).
         assert l1["isat"] == pytest.approx(
-            isat_of(_mas(numberTurns=22), temperature_c=25.0), rel=1e-3
+            isat_of(_mas(numberTurns=22), temperature_c=100.0), rel=1e-3
         )
         assert l2["isat"] == pytest.approx(
-            isat_of(_mas(numberTurns=30), temperature_c=25.0), rel=1e-3
+            isat_of(_mas(numberTurns=30), temperature_c=100.0), rel=1e-3
         )
         assert "PyOM" in l1["isat_provenance"]["method"]
         assert "PyOM" in l2["isat_provenance"]["method"]

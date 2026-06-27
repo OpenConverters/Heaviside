@@ -262,7 +262,7 @@ class TestMixedMode:
 class TestIsat:
     def test_isat_uses_l1_mas(self):
         """Ground truth = MKF: the stamped Isat must equal PyOM's
-        saturation current for the L1 magnetic at the op-point ambient
+        saturation current for the L1 magnetic at the hot operating corner
         (25 °C), NOT an analytical formula.
         """
         out = enrich_tas_for_realism(
@@ -271,7 +271,7 @@ class TestIsat:
             spec=_spec(vmin=24.0, vmax=60.0, vout=12.0, L=10e-6),
         )
         l = _get_l1(out)
-        expected = isat_of(_l1_mas(), temperature_c=25.0)
+        expected = isat_of(_l1_mas(), temperature_c=100.0)
         assert l["isat"] == pytest.approx(expected, rel=1e-3)
         assert "PyOM" in l["isat_provenance"]["method"]
         b_sat_T = l["isat_provenance"]["b_sat_T"]

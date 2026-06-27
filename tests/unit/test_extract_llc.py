@@ -305,10 +305,10 @@ class TestIsat:
         out = enrich_tas_for_realism(_llc_tas(), topology="llc", spec=_llc_spec())
         lr = _get_lr(out)
         # Ground truth = MKF: the stamped Isat must equal PyOM's
-        # saturation current for the L_r magnetic at the op-point ambient
+        # saturation current for the L_r magnetic at the hot operating corner
         # (25 °C), NOT an analytical formula. Computing it here on the same
         # L_r MAS the extractor harvested also proves L_r was the source.
-        expected = isat_of(_lr_mas(), temperature_c=25.0)
+        expected = isat_of(_lr_mas(), temperature_c=100.0)
         assert lr["isat"] == pytest.approx(expected, rel=1e-3)
         assert "PyOM" in lr["isat_provenance"]["method"]
         assert "llc" in lr["isat_provenance"]["method"]

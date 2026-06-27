@@ -293,10 +293,10 @@ class TestRippleAndIsat:
         )
         lout = _get_lout(out)
         # Ground truth = MKF: the stamped Isat must equal PyOM's saturation
-        # current for the L_out0 magnetic at the op-point ambient (25 °C),
+        # current for the L_out0 magnetic at the hot operating corner (100 °C, _ISAT_DESIGN_TEMP_C),
         # NOT an analytical formula. Computing it here on the same L_out0
         # MAS the extractor harvested also proves L_out0 was the source.
-        expected = isat_of(_lout_mas(), temperature_c=25.0)
+        expected = isat_of(_lout_mas(), temperature_c=100.0)
         assert lout["isat"] == pytest.approx(expected, rel=1e-3)
         assert "PyOM" in lout["isat_provenance"]["method"]
         assert "phase_shifted_full_bridge" in lout["isat_provenance"]["method"]

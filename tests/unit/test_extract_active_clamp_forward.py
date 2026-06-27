@@ -214,9 +214,9 @@ class TestACFMath:
         )
         l = _get_lout(out)
         # Ground truth = MKF: stamped Isat must equal PyOM's saturation
-        # current for the L_out magnetic at the op-point ambient (25 °C),
+        # current for the L_out magnetic at the hot operating corner (100 °C, _ISAT_DESIGN_TEMP_C),
         # NOT an analytical formula.
-        expected = isat_of(_lout_mas(), temperature_c=25.0)
+        expected = isat_of(_lout_mas(), temperature_c=100.0)
         assert l["isat"] == pytest.approx(expected, rel=1e-3)
         # Confirm extractor used the L_out MAS by reading the real shape's
         # effective area and material B_sat back out of the magnetic.

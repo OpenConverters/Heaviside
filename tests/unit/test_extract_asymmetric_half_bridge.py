@@ -259,11 +259,11 @@ class TestAHBMath:
         )
         l = _get_lout(out)
         # Ground truth = MKF: the stamped Isat must equal PyOM's saturation
-        # current for the L_out magnetic at the op-point ambient (25 °C),
+        # current for the L_out magnetic at the hot operating corner (100 °C, _ISAT_DESIGN_TEMP_C),
         # NOT an analytical formula.  Recomputing it here on the same L_out
         # MAS the extractor harvested also proves L_out (not T1) was the
         # source.
-        expected = isat_of(_lout_mas(), temperature_c=25.0)
+        expected = isat_of(_lout_mas(), temperature_c=100.0)
         assert l["isat"] == pytest.approx(expected, rel=1e-3)
         assert "PyOM" in l["isat_provenance"]["method"]
         assert "asymmetric_half_bridge" in l["isat_provenance"]["method"]

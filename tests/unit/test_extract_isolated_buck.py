@@ -228,10 +228,10 @@ class TestFlybuckMath:
         out = enrich_tas_for_realism(_flybuck_tas(), topology="isolated_buck", spec=_flybuck_spec())
         t1 = _get_t1(out)
         # Ground truth = MKF: the stamped Isat must equal PyOM's saturation
-        # current for the T1 magnetic at the op-point ambient (25 °C), NOT
+        # current for the T1 magnetic at the hot operating corner (100 °C, _ISAT_DESIGN_TEMP_C), NOT
         # an analytical B_sat·N_pri·A_e/L_pri formula. Compute it on the
         # same T1 MAS the extractor harvested.
-        expected = isat_of(_t1_mas(), temperature_c=25.0)
+        expected = isat_of(_t1_mas(), temperature_c=100.0)
         assert t1["isat"] == pytest.approx(expected, rel=1e-3)
         assert t1["isat_provenance"]["n_turns"] == 12
         assert "isolated_buck" in t1["isat_provenance"]["method"]

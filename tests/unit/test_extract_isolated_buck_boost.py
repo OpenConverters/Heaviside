@@ -216,9 +216,9 @@ class TestIBBMath:
         out = enrich_tas_for_realism(_ibb_tas(), topology="isolated_buck_boost", spec=_ibb_spec())
         t1 = _get_t1(out)
         # Ground truth = MKF: stamped Isat must equal PyOM's saturation
-        # current for the real gapped T1 magnetic at the op-point ambient
+        # current for the real gapped T1 magnetic at the hot operating corner
         # (25 °C), NOT an analytical formula.
-        expected = isat_of(_t1_mas(), temperature_c=25.0)
+        expected = isat_of(_t1_mas(), temperature_c=100.0)
         assert t1["isat"] == pytest.approx(expected, rel=1e-3)
         assert t1["isat_provenance"]["n_turns"] == 20
         assert "isolated_buck_boost" in t1["isat_provenance"]["method"]
