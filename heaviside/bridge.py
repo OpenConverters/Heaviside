@@ -1647,17 +1647,24 @@ def _candidate_inductance(cand: "MagneticDesign") -> float | None:
 
 
 def _ipeak_from_mas(cand: "MagneticDesign") -> float | None:
-    """Worst-case peak winding current read straight from MKF's SIMULATED
-    excitation waveform — the real current PyOM/ngspice computed for this exact
-    magnetic, NOT an analytical Heaviside formula (house rule: magnetics/current
-    math lives in MKF). Returns ``max |i(t)|`` across every winding and operating
-    point in ``mas.inputs.operatingPoints[*].excitationsPerWinding[*].current
-    .waveform.data``, or ``None`` if no waveform is present.
+    """Peak MAGNETIZING current for the saturation check, read straight from MKF's SIMULATED
+    excitation — the real flux-driving current PyOM computed for this exact magnetic, NOT an
+    analytical Heaviside formula (house rule: magnetics/current math lives in MKF).
 
-    This supersedes the per-topology analytical ``_IPEAK_WORST`` computers (which
-    over-/under-estimated, e.g. cuk/zeta's switch-sum or the flyback ripple that
-    needed a seeded Lm). The simulated peak is exact, accounts for ripple /
-    CCM-DCM, and is topology-agnostic."""
+    The core saturates on the peak MAGNETIZING current (the net ampere-turns that set the flux),
+    which is the quantity ``calculate_saturation_current`` is referred to (winding 0, the primary).
+    For a single-winding inductor or a flyback the magnetizing current IS the winding current; but a
+    forward/push-pull/bridge primary ALSO carries the reflected LOAD current, which does NOT set the
+    flux (the secondary cancels it) — so the raw winding peak over-states the saturating current by a
+    large factor (abt #12). MKF stamps the magnetizing current on the primary winding's excitation
+    (``magnetizingCurrent.processed.peak``); prefer it.
+
+    FALLBACK (no magnetizing current stamped): the winding currents referred to winding 0 via the
+    turns ratio (I_w_ref0 = I_w / turnsRatios[w-1]) — dimensionally consistent with Isat, conservative
+    for load-carrying primaries but never a wrong-direction (saturation-passing) estimate.
+
+    Returns ``None`` if neither is present. Supersedes the per-topology analytical ``_IPEAK_WORST``
+    computers (which over-/under-estimated)."""
     try:
         mas = cand.mas
     except Exception:
@@ -1668,12 +1675,28 @@ def _ipeak_from_mas(cand: "MagneticDesign") -> float | None:
     ops = inputs.get("operatingPoints")
     if not isinstance(ops, list):
         return None
-    # Core saturation is set by the peak MAGNETIZING current, referred to the winding the saturation
-    # current is computed against (winding 0, the primary). A transformer's secondary current is in a
-    # different amp-scale (a step-down secondary carries n× the primary), so taking the raw max across
-    # windings compares the secondary current to a winding-0-referred Isat and over-states the peak by
-    # ~n — exactly the abt #12 saturating-cores false negative. Refer each winding's current to winding 0
-    # via the turns ratio (I_w_ref0 = I_w · N_w/N_0 = I_w / turnsRatios[w-1]) before taking the max.
+
+    # PRIMARY: the magnetizing-current peak (the actual flux driver), max over operating points. MKF
+    # stamps it on the primary (winding 0) excitation.
+    mag_peak = 0.0
+    mag_seen = False
+    for op in ops:
+        if not isinstance(op, Mapping):
+            continue
+        excs = op.get("excitationsPerWinding") or []
+        if excs and isinstance(excs[0], Mapping):
+            mc = excs[0].get("magnetizingCurrent")
+            proc = mc.get("processed") if isinstance(mc, Mapping) else None
+            pk = proc.get("peak") if isinstance(proc, Mapping) else None
+            if isinstance(pk, (int, float)) and pk > 0:
+                mag_seen = True
+                a = abs(float(pk))
+                if a > mag_peak:
+                    mag_peak = a
+    if mag_seen:
+        return mag_peak
+
+    # FALLBACK: winding currents referred to winding 0 via the turns ratio.
     trs_raw = (inputs.get("designRequirements") or {}).get("turnsRatios") or []
 
     def _ref_factor(winding_index: int) -> float:
