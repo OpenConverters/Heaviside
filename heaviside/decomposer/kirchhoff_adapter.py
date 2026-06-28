@@ -217,6 +217,19 @@ def hs_spec_to_kirchhoff(hs_spec: dict[str, Any]) -> dict[str, Any]:
         "switchingFrequency": {"nominal": float(fsw)},
         "outputs": outputs,
     }
+    # AC-input topologies (power_factor_correction, vienna) need the rectified-line context: the input
+    # TYPE (acSinglePhase / acThreePhase) and the LINE frequency. Pass both through when the HS spec
+    # carries them — design_pfc_tas / design_vienna_tas read them from designRequirements (and throw
+    # without them). A DC spec omits both and the DC topologies never read them.
+    input_type = hs_spec.get("inputType")
+    if isinstance(input_type, str) and input_type:
+        dr["inputType"] = input_type
+    line_freq = hs_spec.get("lineFrequency")
+    if isinstance(line_freq, dict) and any(k in line_freq for k in ("nominal", "minimum", "maximum")):
+        dr["lineFrequency"] = {k: float(line_freq[k]) for k in ("minimum", "nominal", "maximum")
+                               if isinstance(line_freq.get(k), (int, float))}
+    elif isinstance(line_freq, (int, float)):
+        dr["lineFrequency"] = {"nominal": float(line_freq)}
     # della-Pollock "design around the magnetic": when HS has already designed the
     # magnetic (magnetics-first), pass its inductance so Kirchhoff sizes the rest of
     # the stage around it instead of computing its own L (Kirchhoff honours this as
@@ -224,6 +237,18 @@ def hs_spec_to_kirchhoff(hs_spec: dict[str, Any]) -> dict[str, Any]:
     desired_l = hs_spec.get("desiredInductance") or hs_spec.get("desiredMagnetizingInductance")
     if isinstance(desired_l, (int, float)) and desired_l > 0:
         dr["magnetizingInductance"] = {"nominal": float(desired_l)}
+    # della-Pollock Pass 2 for TRANSFORMERS: also pin the realized turns ratio(s) of the
+    # chosen magnetic so Kirchhoff sizes the rectifier/secondary around the FIXED transformer
+    # (req::provided_turns_ratio reads dr.turnsRatios). Without this Kirchhoff re-derives its
+    # own duty-based ratio and drifts from the stamped MKF_MODEL transformer.
+    desired_trs = hs_spec.get("desiredTurnsRatios")
+    if isinstance(desired_trs, (list, tuple)) and desired_trs:
+        trs: list[dict[str, float]] = []
+        for v in desired_trs:
+            if isinstance(v, (int, float)) and v > 0:
+                trs.append({"nominal": float(v)})
+        if trs:
+            dr["turnsRatios"] = trs
 
     out: dict[str, Any] = {"designRequirements": dr, "operatingPoints": k_ops}
     # Pass through an explicit caller config (e.g. vDerate) if provided; we do NOT
@@ -232,8 +257,23 @@ def hs_spec_to_kirchhoff(hs_spec: dict[str, Any]) -> dict[str, Any]:
     # broke regulation (24V -> 16V). The gate-vs-Kirchhoff derating-policy mismatch
     # (IPC-9592 0.8 / 1.25x vs Proteus 1.5x FET / 1.3x diode) is surfaced as an open
     # decision, not papered over by over-rating that degrades the simulated design.
-    if isinstance(hs_spec.get("config"), dict):
-        out["config"] = hs_spec["config"]
+    config: dict[str, Any] = dict(hs_spec["config"]) if isinstance(hs_spec.get("config"), dict) else {}
+    # Propagate the converter's current-ripple ratio into Kirchhoff's design config
+    # so it sizes the inductor to the REQUESTED ripple, not its built-in default
+    # (Buck.cpp / Boost.cpp default rippleRatio=0.4; the output-inductor builders
+    # default inductorRippleRatio per topology). Heaviside carries a single
+    # currentRippleRatio knob; Kirchhoff reads "rippleRatio" for the MAIN inductor
+    # (buck/boost/sepic/…) and "inductorRippleRatio" for the OUTPUT inductor
+    # (transformer topologies), so seed both. Without this the main magnetic comes
+    # back undersized and saturates the realism gate (a 48→12 V 2 A buck was sized
+    # at 228 µH on KH's 0.4 default vs 300 µH for the requested 0.3). An explicit
+    # caller config value still wins (setdefault).
+    crr = hs_spec.get("currentRippleRatio")
+    if isinstance(crr, (int, float)) and crr > 0:
+        config.setdefault("rippleRatio", float(crr))
+        config.setdefault("inductorRippleRatio", float(crr))
+    if config:
+        out["config"] = config
     return out
 
 

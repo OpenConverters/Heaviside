@@ -89,9 +89,23 @@ def _diode_constraints(req: dict[str, Any]) -> DiodeConstraints:
 _CAP_OVERSIZE_MAX = 2.0
 
 
+# A RESONANT cap (role="resonant") sets the LC tank frequency — it must be sourced CLOSE to nominal,
+# not oversized like a ripple/filter cap. Oversizing a resonant Cr detunes the tank (a 6.7nF Cr sourced
+# at 12nF shifts fr ~20% and collapses LLC output to ~0V). Keep a tight ±15% window so the fill picks
+# the nearest standard value (e.g. 6.8nF for a 6.7nF need) rather than the biggest within 2x (abt #54).
+_RESONANT_CAP_TOL = 0.15
+
+
 def _capacitor_constraints(req: dict[str, Any]) -> CapacitorConstraints:
     cnom = float(req["capacitance"]["nominal"])
     ripple = req.get("minimumRippleCurrent")
+    if req.get("role") == "resonant":
+        return CapacitorConstraints(
+            capacitance_min=cnom * (1.0 - _RESONANT_CAP_TOL),
+            capacitance_max=cnom * (1.0 + _RESONANT_CAP_TOL),
+            v_rated_min=float(req["ratedVoltage"]),
+            ripple_current_min=float(ripple) if isinstance(ripple, (int, float)) else None,
+        )
     return CapacitorConstraints(
         capacitance_min=cnom,
         capacitance_max=cnom * _CAP_OVERSIZE_MAX,
@@ -241,13 +255,28 @@ def fill_kirchhoff_bom(
                     rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 elif family == "resistor":
                     # snubber damping R / current sense / bias / feedback divider.
+                    target_ohms = float(req["resistance"]["nominal"])
                     sel = select_resistor(
                         ResistorConstraints(
-                            target_ohms=float(req["resistance"]["nominal"]),
+                            target_ohms=target_ohms,
                             max_tolerance=float(req.get("tolerance", 0.05)),
                             max_value_deviation=0.2),
                         tas_data_dir=tas_data_dir)
-                    data["resistor"] = sel.chosen.raw_envelope["resistor"]
+                    env = sel.chosen.raw_envelope["resistor"]
+                    # A resistor inside a CONTROL stage sets a precision control RATIO (the PFC/Vienna
+                    # voltage-feedback divider, loop gains), and the deck's controller reference is derived
+                    # from that exact value. The catalog match can be ±20% off (the snubber/bias budget),
+                    # which DETUNES the regulation setpoint — a PFC whose 99k/1k divider (kv=0.0100) was
+                    # sourced as 100k/1.15k (kv=0.0114) settles at 351 V instead of its 400 V target. So
+                    # pin the chosen part's resistance to the EXACT design value (realized in HW by a
+                    # precision / trimmed divider): the sourced part fixes package/footprint, the value is
+                    # the control parameter. Power-path resistors (snubber/sense/bias) keep the match.
+                    if st.get("role") == "control":
+                        elec = env.setdefault("manufacturerInfo", {}).setdefault("datasheetInfo", {}) \
+                                  .setdefault("electrical", {})
+                        elec["resistance"] = {"nominal": target_ohms}
+                        rec["control_exact_ohms"] = target_ohms
+                    data["resistor"] = env
                     rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 elif family == "magnetic":
                     # della-Pollock: the magnetic is MKF's (MKF_MODEL), wired by the caller.
