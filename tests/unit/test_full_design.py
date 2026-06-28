@@ -243,19 +243,27 @@ def _buck_pick() -> TopologyPick:
 
 
 def test_sim_backend_selection(monkeypatch) -> None:
-    """Per-topology backend selection: default mkf (no behaviour change), opt-in
-    via the env var (list or '*')."""
-    from heaviside.pipeline.full_design import _sim_backend_for
+    """Per-topology backend selection: the della-Pollock allowlist (abt #48) routes
+    the validated topologies to Kirchhoff and everything else to MKF (fallback);
+    the env var overrides the allowlist entirely (list or '*')."""
+    from heaviside.pipeline.full_design import _KIRCHHOFF_TOPOLOGIES, _sim_backend_for
 
     monkeypatch.delenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", raising=False)
-    assert _sim_backend_for("boost") == "mkf"          # registry empty by default
-    monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "boost,flyback")
+    # Registry default: allowlisted topologies → kirchhoff, long-tail → mkf fallback.
+    assert "boost" in _KIRCHHOFF_TOPOLOGIES
     assert _sim_backend_for("boost") == "kirchhoff"
-    assert _sim_backend_for("buck") == "mkf"
+    # AC/DC self-regulating PFC is validated + allowlisted → kirchhoff.
+    assert "power_factor_correction" in _KIRCHHOFF_TOPOLOGIES
+    assert _sim_backend_for("power_factor_correction") == "kirchhoff"
+    assert _sim_backend_for("vienna") == "mkf"   # long tail (abt #52) stays on MKF
+    # Env var OVERRIDES the allowlist (takes precedence entirely).
+    monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "vienna")
+    assert _sim_backend_for("vienna") == "kirchhoff"
+    assert _sim_backend_for("boost") == "mkf"           # not in the env list → mkf, despite the allowlist
     monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "*")
-    assert _sim_backend_for("buck") == "kirchhoff"
+    assert _sim_backend_for("power_factor_correction") == "kirchhoff"
     monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "")
-    assert _sim_backend_for("boost") == "mkf"           # empty list → none enabled
+    assert _sim_backend_for("boost") == "mkf"           # empty list → none enabled (overrides allowlist)
 
 
 def test_stage3_realize_raises_on_component_design_failure(monkeypatch) -> None:

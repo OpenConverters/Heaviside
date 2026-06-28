@@ -592,18 +592,42 @@ def _simulate_kirchhoff_backend(
 
 def _seed_worst_peak_current(seed: Mapping[str, Any]) -> float | None:
     """Worst-case |peak| winding current from a Kirchhoff magnetic seed's
-    excitations (ABT #34) — the saturation driver for the isat gate."""
+    excitations (ABT #34) — the saturation driver for the isat gate.
+
+    For a TRANSFORMER, secondary winding currents are REFERRED to winding 0 (the
+    primary) via the turns ratio before taking the worst case — the flux (hence
+    saturation) is set by the primary-referred ampere-turns, not the raw secondary
+    current (abt #12). turnsRatios[i-1] = N_w0/N_wi, so I_wi referred to w0 is
+    I_wi / turnsRatios[i-1]. A single-winding inductor has no turns ratios → the
+    bare peak. Without this, a step-down transformer's large secondary current
+    inflates Ipeak and the isat margin reads far too low."""
     ops = seed.get("operatingPoints")
     if not isinstance(ops, list) or not ops:
         return None
     excs = ops[0].get("excitationsPerWinding") if isinstance(ops[0], Mapping) else None
     if not isinstance(excs, list) or not excs:
         return None
+
+    def _resolve(x: Any) -> float | None:
+        if isinstance(x, (int, float)):
+            return float(x)
+        if isinstance(x, Mapping):
+            for k in ("nominal", "maximum", "minimum"):
+                v = x.get(k)
+                if isinstance(v, (int, float)):
+                    return float(v)
+        return None
+
+    trs = [_resolve(t) for t in ((seed.get("designRequirements") or {}).get("turnsRatios") or [])]
     peaks: list[float] = []
-    for e in excs:
+    for i, e in enumerate(excs):
         p = (((e or {}).get("current") or {}).get("processed") or {}).get("peak")
-        if isinstance(p, (int, float)):
-            peaks.append(abs(float(p)))
+        if not isinstance(p, (int, float)):
+            continue
+        p = abs(float(p))
+        if i >= 1 and i - 1 < len(trs) and isinstance(trs[i - 1], (int, float)) and trs[i - 1] > 0:
+            p = p / trs[i - 1]  # refer secondary current to winding 0 (primary)
+        peaks.append(p)
     return max(peaks) if peaks else None
 
 
@@ -625,14 +649,54 @@ def _seed_with_isat_margin(seed: Mapping[str, Any], margin: float) -> dict[str, 
     return s
 
 
-def _design_ktas_magnetics(k_tas: dict[str, Any], *, bridge_mod: Any, pyom_vendor: Any, stamp_fn: Any) -> int:
+def _pinned_magnetic_constraints(pinned_main: Any, bridge_mod: Any) -> tuple[float | None, list[float]]:
+    """Extract the (magnetizing inductance, turns-ratios) constraint from the
+    frequency-swept main magnetic for della-Pollock Pass 2. The turns ratios are the
+    REALIZED ratios computed from the coil's integer turns (N_w0 / N_wi) — name-agnostic,
+    so it works for any winding-naming scheme. Lm is the magnetic's achieved inductance."""
+    mas = getattr(pinned_main, "mas", None)
+    if not isinstance(mas, Mapping):
+        return None, []
+    lm: float | None
+    try:
+        lm = float(bridge_mod._harvest_authoritative_inductance(mas))
+        if lm <= 0:
+            lm = None
+    except Exception:  # noqa: BLE001 - Lm is best-effort; absence just means KH derives it
+        lm = None
+    trs: list[float] = []
+    coil = ((mas.get("magnetic") or {}).get("coil") or {}).get("functionalDescription")
+    if isinstance(coil, list) and len(coil) >= 2:
+        n0 = coil[0].get("numberTurns") if isinstance(coil[0], Mapping) else None
+        if isinstance(n0, (int, float)) and n0 > 0:
+            for w in coil[1:]:
+                ni = w.get("numberTurns") if isinstance(w, Mapping) else None
+                if isinstance(ni, (int, float)) and ni > 0:
+                    trs.append(float(n0) / float(ni))
+    return lm, trs
+
+
+def _design_ktas_magnetics(
+    k_tas: dict[str, Any],
+    *,
+    bridge_mod: Any,
+    pyom_vendor: Any,
+    stamp_fn: Any,
+    main_name: str | None = None,
+    pinned_main: Any = None,
+) -> int:
     """Design every magnetic GEOMETRY in ``k_tas`` from its own seed (topology-agnostic,
     ABT #34), wind the coil, stamp it MKF_MODEL, and stamp the gate's ``isat`` /
     ``ipeak_worst`` flat fields (isat from the designed core, ipeak from the seed
     excitation). The core is designed for a SATURATION MARGIN (Isat >= _GATE_ISAT_MARGIN·Ipeak)
     so it passes the realism gate's isat check AND has the headroom to deliver full output
     without saturating (a core sized right at Ipeak caps Vout below target). Returns the count
-    designed. Fail-loud on a seed-less magnetic."""
+    designed. Fail-loud on a seed-less magnetic.
+
+    della-Pollock Pass 2: when ``pinned_main`` (a ``MagneticDesign``) and ``main_name`` are
+    given, the MAIN magnetic is NOT re-designed — the frequency-swept magnetic is FIXED and
+    stamped as-is (the converter is built around it). SECONDARY magnetics (output/resonant
+    inductors) are still designed fresh from their KH seeds."""
     n = 0
     for st in k_tas.get("topology", {}).get("stages", []):
         for comp in st.get("circuit", {}).get("components", []):
@@ -645,16 +709,25 @@ def _design_ktas_magnetics(k_tas: dict[str, Any], *, bridge_mod: Any, pyom_vendo
                     f"kirchhoff-native: magnetic {comp.get('name')!r} has no inputs seed "
                     f"(ABT #34 expects a complete magnetic_inputs envelope)."
                 )
-            designs = bridge_mod.design_magnetic_from_mas_inputs(
-                _seed_with_isat_margin(seed, _GATE_ISAT_MARGIN), max_results=1)
-            d = designs[0]
-            # isat from the designed core at its achieved L; ipeak from the seed excitation.
+            if pinned_main is not None and main_name is not None and comp.get("name") == main_name:
+                # della-Pollock: FIX the frequency-swept main magnetic, don't re-design it.
+                d = pinned_main
+            else:
+                designs = bridge_mod.design_magnetic_from_mas_inputs(
+                    _seed_with_isat_margin(seed, _GATE_ISAT_MARGIN), max_results=1)
+                d = designs[0]
+            # isat from the designed core at its achieved L; ipeak from the SATURATION DRIVER.
             try:
                 L = float(bridge_mod._harvest_authoritative_inductance(d.mas))
                 isat = bridge_mod._isat_from_mas(d.magnetic, L)
             except Exception:  # noqa: BLE001 - isat is best-effort; the gate marks it unavailable if absent
                 isat = None
-            ipk = _seed_worst_peak_current(seed)
+            # For a TRANSFORMER the flux (hence saturation) is set by the MAGNETIZING current, not the
+            # winding LOAD current (which is balanced by the secondary ampere-turns) — abt #12. Use the
+            # realized magnetizing-current peak from the designed MAS; fall back to the seed winding peak.
+            # A single-winding INDUCTOR has no turns ratios, so its winding current IS the driver.
+            is_transformer = bool((seed.get("designRequirements") or {}).get("turnsRatios"))
+            ipk = (bridge_mod._ipeak_from_mas(d) if is_transformer else None) or _seed_worst_peak_current(seed)
             if isinstance(isat, (int, float)) and isat > 0 and ipk is not None:
                 comp["isat"] = float(isat)
                 comp["ipeak_worst"] = float(ipk)
@@ -677,6 +750,42 @@ def _design_ktas_magnetics(k_tas: dict[str, Any], *, bridge_mod: Any, pyom_vendo
             stamp_fn(k_tas, magnetic, pyom=pyom_vendor, component_name=comp.get("name"))
             n += 1
     return n
+
+
+def _bump_ktas_semiconductor_requirements(k_tas: dict[str, Any], stresses: Any) -> None:
+    """Raise each semiconductor's voltage requirement in ``k_tas`` to the HS realism gate's
+    worst-case stress × the gate's per-class derating (FET 1.5×, diode 1.3×), so the BOM fill
+    picks a part that passes the gate even when Kirchhoff's design-time stress estimate is lower
+    than the gate's worst-case (abt #52 stress reconciliation). Only ever RAISES a requirement
+    (``max``); never lowers KH's value and never touches current ratings. The gate stamps the same
+    worst-case ``vds_stress`` / ``vr_stress`` on every device of a class, so this matches exactly
+    what the gate will later check."""
+    vds = getattr(stresses, "vds_stress", None)
+    vr = getattr(stresses, "vr_stress", None)
+    vw = getattr(stresses, "v_working", None)
+    fet_floor = float(vds) * _GATE_FET_DERATING_RATIO if isinstance(vds, (int, float)) and vds > 0 else None
+    dio_floor = float(vr) * _GATE_DIODE_DERATING_RATIO if isinstance(vr, (int, float)) and vr > 0 else None
+    cap_floor = float(vw) * _GATE_CAP_DERATING_RATIO if isinstance(vw, (int, float)) and vw > 0 else None
+    if fet_floor is None and dio_floor is None and cap_floor is None:
+        return
+    for st in k_tas.get("topology", {}).get("stages", []):
+        for comp in st.get("circuit", {}).get("components", []):
+            data = comp.get("data")
+            if not isinstance(data, dict):
+                continue
+            req = data.get("inputs", {}).get("designRequirements")
+            if not isinstance(req, dict):
+                continue
+            semi = data.get("semiconductor")
+            if isinstance(semi, dict) and "mosfet" in semi and fet_floor is not None:
+                cur = req.get("ratedDrainSourceVoltage")
+                req["ratedDrainSourceVoltage"] = max(float(cur), fet_floor) if isinstance(cur, (int, float)) else fet_floor
+            elif isinstance(semi, dict) and "diode" in semi and dio_floor is not None:
+                cur = req.get("ratedReverseVoltage")
+                req["ratedReverseVoltage"] = max(float(cur), dio_floor) if isinstance(cur, (int, float)) else dio_floor
+            elif "capacitor" in data and cap_floor is not None:
+                cur = req.get("ratedVoltage")
+                req["ratedVoltage"] = max(float(cur), cap_floor) if isinstance(cur, (int, float)) else cap_floor
 
 
 def _stamp_ktas_gate_stresses(
@@ -732,10 +841,13 @@ def _stamp_ktas_gate_stresses(
                     _stamp_capacitor(comp, sel, stress_v=vw, stress_ripple=ir)
 
 
-# The HS realism gate's tightest semiconductor voltage-derating rule (FET
-# vds_rated >= 1.5*vds_stress, heaviside/pipeline/realism.check_fet_voltage_derating).
-# The Kirchhoff requirement vDerate is aligned to 1/this so filled parts meet the gate.
+# The HS realism gate's per-device-class voltage-derating rules
+# (realism.check_fet/diode/capacitor_voltage_derating): FET vds_rated >= 1.5*stress,
+# diode vrrm_rated >= 1.3*v_reverse, cap v_rated >= 1.5*v_working. Kirchhoff's per-class
+# derating knobs are aligned to 1/these so filled parts meet the gate by class.
 _GATE_FET_DERATING_RATIO = 1.5
+_GATE_DIODE_DERATING_RATIO = 1.3
+_GATE_CAP_DERATING_RATIO = 1.5
 
 # The realism gate's inductor saturation rule (Isat >= 1.2*Ipeak,
 # heaviside/pipeline/realism.check_inductor_isat_margin), with a little headroom so the
@@ -783,6 +895,8 @@ def _realize_via_kirchhoff(
     topology: str,
     spec_dict: dict[str, Any],
     pick: TopologyPick,
+    *,
+    pinned_main: "MagneticDesign | None" = None,
 ) -> "DesignOutcome":
     """ABT #36 — single-TAS cutover. Kirchhoff designs ``k_tas`` (CIAS stages +
     per-component requirements); HS fills real parts (``fill_kirchhoff_bom``) and
@@ -827,35 +941,78 @@ def _realize_via_kirchhoff(
     if not isinstance(vin, (int, float)) or vin <= 0:
         raise RealizeError(f"kirchhoff-native: no input voltage resolved for {topology}")
 
-    # Align Kirchhoff's semiconductor REQUIREMENT derating with the HS realism gate
-    # (ABT #36 GOTCHA). Kirchhoff's default vDerate=0.8 (IPC-9592, 1.25x) is LOOSER than
-    # the gate's FET rule (vds_rated >= 1.5*stress), so parts filled to the 1.25x
-    # requirement fail the 1.5x gate. Setting vDerate = 1/1.5 makes the requirement match
-    # the tightest gate rule (the diode's 1.3x is looser, so it passes too). This affects
-    # only the semiconductor rating requirements — not the magnetic or the deck — so
-    # regulation is preserved (verified: boost still delivers 24 V). The old unify path's
-    # regression from forcing vDerate was architectural, not from the derating itself.
-    # Respect an explicit caller-provided config.vDerate.
-    if not isinstance(spec_dict.get("config"), Mapping) or "vDerate" not in spec_dict["config"]:
-        _cfg = dict(spec_dict.get("config") or {})
-        _cfg["vDerate"] = 1.0 / _GATE_FET_DERATING_RATIO
-        spec_dict = {**spec_dict, "config": _cfg}
+    # Align Kirchhoff's component REQUIREMENT derating with the HS realism gate, PER DEVICE
+    # CLASS (abt #36/#52). Kirchhoff's default vDerate=0.8 (IPC-9592, 1.25x) is looser than the
+    # gate's rules, so parts filled to the 1.25x requirement fail the gate. Kirchhoff now exposes
+    # per-class derating knobs (vDerateMosfet / vDerateDiode / vDerateCapacitor, falling back to
+    # vDerate); set each to 1/(gate ratio) so the FET requirement is sized at 1.5x stress, the
+    # diode at 1.3x, the capacitor at 1.5x — exactly the gate's per-class derating
+    # (realism.check_*_voltage_derating). This affects only the rating requirements, not the
+    # magnetic or the deck, so regulation is preserved. Respect explicit caller config.
+    # NOTE (abt #52): this aligns the DERATING FACTOR. Residual gate fails (e.g. the acf diode)
+    # are a separate STRESS-MODEL mismatch — KH's design-time component stress is lower than the
+    # gate's measured worst-case (diode 30V vs 41.5V) — which a derating factor cannot close.
+    _gate_derate = {
+        "vDerateMosfet": 1.0 / _GATE_FET_DERATING_RATIO,        # 1/1.5
+        "vDerateDiode": 1.0 / _GATE_DIODE_DERATING_RATIO,       # 1/1.3
+        "vDerateCapacitor": 1.0 / _GATE_CAP_DERATING_RATIO,     # 1/1.5
+    }
+    _caller_cfg = spec_dict.get("config") if isinstance(spec_dict.get("config"), Mapping) else {}
+    _cfg = dict(_caller_cfg)
+    for _k, _v in _gate_derate.items():
+        if _k not in _cfg and "vDerate" not in _cfg:
+            _cfg[_k] = _v
+    spec_dict = {**spec_dict, "config": _cfg}
+
+    # della-Pollock Pass 2: pin the frequency-swept MAIN magnetic. Inject its realized
+    # magnetizing inductance + turns ratio(s) into the spec so Kirchhoff sizes the REST of
+    # the converter around the fixed magnetic (req::provided_inductance / provided_turns_ratio),
+    # then below we stamp that exact magnetic instead of re-designing it.
+    if pinned_main is not None:
+        lm, trs = _pinned_magnetic_constraints(pinned_main, _bridge)
+        spec_dict = dict(spec_dict)
+        if lm is not None:
+            spec_dict.setdefault("desiredInductance", lm)
+            spec_dict.setdefault("desiredMagnetizingInductance", lm)
+        if trs:
+            spec_dict.setdefault("desiredTurnsRatios", trs)
 
     try:
         k_tas = _ka.design_from_hs_spec(topology, spec_dict)
+        # The analytical stress deriver needs the transformer turns ratio + magnetizing
+        # inductance for isolated topologies — harvest them from k_tas's OWN magnetic seed
+        # (present right after design, before the magnetics are sized). Done BEFORE fill so the
+        # gate-stress requirement bump below can run.
+        spec_dict = _harvest_magnetic_design_into_spec(k_tas, spec_dict)
+        # Stress reconciliation (abt #52): Kirchhoff sizes each semiconductor requirement from its
+        # OWN design-time stress, which can be LOWER than the worst-case stress the HS realism gate
+        # checks (e.g. acf FET: KH 91.7 V via Vin+Vreset vs gate 100.8 V via 2·Vin_max; acf diode:
+        # KH 29.5 V vs gate 41.5 V). A part filled to KH's lower requirement then fails the gate even
+        # though the derating FACTOR matches. Bump every semiconductor's voltage requirement to the
+        # gate's worst-case stress × the gate's per-class derating BEFORE fill, so the picked part is
+        # gate-compliant by construction. We never LOWER a requirement (max), and the gate is not
+        # loosened. Best-effort: if the stress engine can't size the class, leave KH's requirement.
+        try:
+            _gate_stresses = derive_stresses(topology, spec_dict)
+        except StressDerivationError:
+            _gate_stresses = None
+        if _gate_stresses is not None:
+            _bump_ktas_semiconductor_requirements(k_tas, _gate_stresses)
         fill_records = fill_kirchhoff_bom(k_tas, topology=topology)
+        # Identify the main magnetic component in k_tas so Pass 2 fixes IT (and designs the
+        # secondary magnetics fresh). Registry None-binding key, structural fallback.
+        main_name = None
+        if pinned_main is not None:
+            from heaviside.topologies import get as _get_topology
+            main_name = _bridge._main_magnetic_seed_from_ktas(_get_topology(topology), k_tas)[0]
         if _design_ktas_magnetics(
             k_tas, bridge_mod=_bridge,
             pyom_vendor=_bridge._import_pyom_vendor(), stamp_fn=stamp_mkf_magnetic,
+            main_name=main_name, pinned_main=pinned_main,
         ) == 0:
             raise RealizeError(f"kirchhoff-native: {topology} k_tas has no magnetic to design")
-        # The analytical stress deriver needs the transformer turns ratio + magnetizing
-        # inductance for isolated topologies. The MKF path got these from
-        # design_converter_components; the native path harvests them from k_tas's OWN
-        # magnetic seed (designRequirements.turnsRatios / magnetizingInductance), preserved
-        # through the MKF_MODEL stamp.
-        spec_dict = _harvest_magnetic_design_into_spec(k_tas, spec_dict)
-        _stamp_ktas_gate_stresses(k_tas, fill_records, derive_stresses(topology, spec_dict))
+        _stamp_ktas_gate_stresses(k_tas, fill_records,
+                                  _gate_stresses if _gate_stresses is not None else derive_stresses(topology, spec_dict))
         op = _ka.simulate_regulated(k_tas, float(vout_target), topology, fidelity="DATASHEET")
     except (KirchhoffUnavailable, KirchhoffTopologyUnsupported, KirchhoffFillError,
             SimError, StressDerivationError, _bridge.BridgeError) as exc:
@@ -951,13 +1108,13 @@ def stage3_realize(
     topology = pick.topology.name
     spec_dict = _augment_converter_spec(dict(spec), topology)
 
-    # ABT #36 — single-TAS cutover. The Kirchhoff backend now realizes ENTIRELY from
-    # k_tas: Kirchhoff designs it, HS fills parts + designs magnetics from its seeds,
-    # the gate reads it. This bypasses design_converter_components (the MKF topology
-    # path that fails for sepic/cuk/zeta/fsbb) + decompose/assemble/unify completely.
-    # (pinned_main does not apply — magnetics come from the per-component seeds.)
+    # ABT #36 / #48 della-Pollock cutover. The Kirchhoff backend realizes ENTIRELY from
+    # k_tas: Kirchhoff designs it, HS fills parts + designs the secondary magnetics from its
+    # seeds, the gate reads it. This bypasses design_converter_components (the retired MKF
+    # converter-model path) + decompose/assemble/unify completely. ``pinned_main`` (the
+    # frequency-swept MAIN magnetic) is FIXED here — Kirchhoff sizes the rest around it.
     if sim_backend == "kirchhoff":
-        return _realize_via_kirchhoff(topology, spec_dict, pick)
+        return _realize_via_kirchhoff(topology, spec_dict, pick, pinned_main=pinned_main)
 
     # Bridge / resonant families model their switching cell as a single
     # behavioural PULSE source by default, which leaves no real MOSFETs for
@@ -1246,13 +1403,60 @@ def generate_report(outcome: DesignOutcome) -> str:
 # ---------------------------------------------------------------------------
 
 
-# Topologies whose converter sim runs through the Kirchhoff backend (closed-loop
-# regulated, real BOM HS fills + the della-Pollock MKF magnetic as MKF_MODEL).
-# EMPTY by default → every topology uses the MKF backend (zero behaviour change).
-# Opt in per topology via the HEAVISIDE_KIRCHHOFF_TOPOLOGIES env var (comma-
-# separated, "*" = all), or by adding to this set once a topology's full realize
-# path is validated end-to-end.
-_KIRCHHOFF_TOPOLOGIES: frozenset[str] = frozenset()
+# Topologies whose converter sim runs through the Kirchhoff backend (della-Pollock:
+# Kirchhoff designs the rest of the converter around the pinned main magnetic, HS
+# fills the real BOM, and the deck simulates with real component models — the
+# MKF-designed magnetic stamped as MKF_MODEL). Opt in per topology via the
+# HEAVISIDE_KIRCHHOFF_TOPOLOGIES env var (comma-separated, "*" = all), or this set.
+#
+# These are validated to PASS end-to-end through the REAL converter_designer entry
+# (frequency_sweep → KH della-Pollock realize → realism gate verdict=pass), abt #48.
+# Validate any addition through design_converter() itself, NOT a hand-built realize
+# (pinning a pre-designed magnetic bypasses the sweep + the realize-stage magnetic
+# re-design, so it passes things the real path rejects — that mistake put sepic/cuk/
+# llc/acf here prematurely; they're back on the MKF fallback under abt #52).
+#
+# Long tail still on MKF (abt #52), by blocker class:
+#   B (MKF advise feasibility, incl. a secondary magnetic at realize): sepic, cuk,
+#     weinberg, phase_shifted_full_bridge, phase_shifted_half_bridge
+#   A (KH regulator/deck non-convergence/hang): isolated_buck, isolated_buck_boost,
+#     asymmetric_half_bridge, dual_active_bridge, four_switch_buck_boost
+#   C (forward duty/turns-ratio calibration, abt #45): single_switch_forward,
+#     two_switch_forward
+#   D (resonant fsw-window flow not wired): llc, series_resonant, cllc, clllc
+#   + active_clamp_forward realizes via KH but its BOM fails voltage-derating (verdict
+#     fail), so it stays off until the derating-policy gap is closed.
+#
+# AC/DC self-regulating input: power_factor_correction is validated and allowlisted —
+# it flows through the REAL design_converter() entry with the SELF-REGULATING branch
+# (converter_designer skips the loss sweep: fsw is fixed and there is no Vout control
+# variable — the controller is in the Kirchhoff deck; simulate_regulated runs it over
+# whole line cycles). The boost inductor is designed from Kirchhoff's own magnetic seed
+# at realize, and a PFC stress deriver (= boost physics) feeds the realism gate the true
+# DC-bus blocking voltage. A 230 Vac→400 Vdc 400 W single-phase PFC reaches verdict=pass
+# (Vout 402 V, η 96.96 %, isat margin 1.44×). NOT vienna (3-phase regulation still under
+# debug by a separate agent — it stays on the MKF fallback).
+_KIRCHHOFF_TOPOLOGIES: frozenset[str] = frozenset({
+    "buck", "boost", "flyback", "zeta", "push_pull", "sepic", "cuk",
+    "isolated_buck", "isolated_buck_boost",
+    "four_switch_buck_boost", "dual_active_bridge",
+    # AC/DC self-regulating (no loss sweep, controller in the KH deck):
+    "power_factor_correction",
+    # Forward-reset family — unblocked by the #45 fixes (deeper turns-ratio headroom in
+    # _seed_turns_ratio + the [1.0,n] demag-aware seed for single-switch + the incomplete-analyst-
+    # efficiency gate fix using SPICE η):
+    "active_clamp_forward", "two_switch_forward", "single_switch_forward", "weinberg",
+    # NOTE: resonant (llc/src/cllc/clllc) have the correct designer branch (design at the gain-law
+    # fsw, no loss sweep) but are NOT allowlisted yet. The CONVERGENCE blocker is now FIXED (abt #54):
+    # cap-divider balancing resistors give the bus-split midpoint a DC reference (was a singular MNA
+    # matrix → garbage Vout), and the power probe is now a pure post-processing measurement (the old
+    # behavioural Bpout v² source collapsed the global timestep on the stiff resonant deck). With those,
+    # the IDEAL LLC regulates cleanly to 12 V. REMAINING: with the real MKF_MODEL magnetic the tank
+    # DETUNES (vout≈0) — the realized transformer Lm/leakage doesn't match the designed Cr/Lr, so the
+    # resonance shifts out of the regulator's frequency bracket. Needs real-magnetic tank co-design
+    # (size Cr/Lr from the realized Lm + measured leakage). src/cllc converge but need gain calibration
+    # (land ~10.9/11.6 V); clllc has a builder json-null bug (design_clllc_tas).
+})
 
 
 def _sim_backend_for(topology: str) -> str:

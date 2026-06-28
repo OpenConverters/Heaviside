@@ -211,6 +211,26 @@ def boost_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentSt
     )
 
 
+def power_factor_correction_stresses(
+    spec: Mapping[str, Any], *, op_index: int = 0
+) -> ComponentStresses:
+    """Stresses for a single-phase boost PFC's power stage.
+
+    A PFC pre-regulator IS a boost converter: the input bridge rectifies the AC
+    line and the boost cell (switch + boost diode) steps the rectified line up to
+    the regulated DC bus (``outputVoltages[0]``). The voltage stresses are the
+    boost stresses — the switch and boost diode block the DC bus, and the bridge
+    rectifier diodes block at most the line peak (< the bus), so ``Vout`` is the
+    conservative blocking voltage for every semiconductor. We delegate to
+    :func:`boost_stresses`, evaluating the worst-case current at ``Vin_min`` (the
+    RMS line minimum — conservative, since the instantaneous rectified input
+    only ever rises toward the peak). This gives the realism gate the TRUE
+    operating stress (~the bus) so the voltage-derating checks evaluate the real
+    margin, instead of falling back to the Kirchhoff requirement (already derated,
+    which would double-count and read as a failure)."""
+    return boost_stresses(spec, op_index=op_index)
+
+
 # ---------------------------------------------------------------------------
 # Cuk stresses (Maniktala Ch.2; inverting buck-boost family)
 # ---------------------------------------------------------------------------
@@ -1003,6 +1023,7 @@ _DERIVERS: dict[str, Any] = {
     "dual_active_bridge": dual_active_bridge_stresses,
     "isolated_buck": isolated_buck_stresses,
     "isolated_buck_boost": isolated_buck_boost_stresses,
+    "power_factor_correction": power_factor_correction_stresses,
 }
 
 
@@ -1105,6 +1126,7 @@ __all__ = [
     "llc_stresses",
     "phase_shifted_full_bridge_stresses",
     "phase_shifted_half_bridge_stresses",
+    "power_factor_correction_stresses",
     "push_pull_stresses",
     "sepic_stresses",
     "single_switch_forward_stresses",
