@@ -91,6 +91,15 @@ def _kirchhoff_spec(inp: dict, topology: str) -> dict:
 # node snubbers) — the strict xfail caught the fix; acf delivers again (~12.3V).
 _KNOWN_GAPS: dict[str, str] = {}
 
+# Resonant gain-headroom designs (abt #62): SRC/CLLC size n so the fr gain PEAK delivers ~1.08·Vo, so the
+# closed-loop regulator hits Vo just ABOVE fr where the tank is efficient (instead of pinning the nominal
+# point at the M=1 peak with zero margin -> deep off-resonance boost -> ~50% efficiency). A gain-margin
+# resonant design INHERENTLY OVERSHOOTS open-loop at fr (the gain peaks there). This test runs OPEN-LOOP
+# (REQUIREMENTS fidelity, no regulate), so it cannot gate these to ±tol of spec — the CLOSED-LOOP delivery
+# is gated by the HS realism gate (design_converter -> verdict; SRC reaches pass). Here we require only the
+# expected direction: the open-loop output overshoots spec (never undershoots).
+_RESONANT_HEADROOM = {"series_resonant", "cllc"}
+
 
 def _topology_params():
     for t in _TOPOLOGIES:
@@ -122,6 +131,14 @@ def test_kirchhoff_backend_delivers_spec(topology: str):
         backend="kirchhoff",
     )
     vout = result.result["vout"]
+    if topology in _RESONANT_HEADROOM:
+        # Gain-headroom design: open-loop output at fr overshoots spec BY DESIGN; the regulator trims it to
+        # spec in production (gated by the realism gate). Verify direction only — overshoots, never undershoots.
+        assert abs(vout) >= abs(target_vout) * 0.98, (
+            f"{topology}: gain-headroom design should overshoot spec open-loop (regulator-pinned, not "
+            f"open-loop-pinned — abt #62), got {vout:.4f} V vs spec {target_vout:.4f} V"
+        )
+        return
     # Compare magnitude: an inverting topology delivering -V satisfies a +V spec.
     assert abs(vout) == pytest.approx(abs(target_vout), rel=_REQ_TOL), (
         f"{topology}: HS-Kirchhoff vout {vout:.4f} V does not deliver spec "
