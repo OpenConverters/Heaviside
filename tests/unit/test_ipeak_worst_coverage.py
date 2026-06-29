@@ -24,11 +24,13 @@ from heaviside.pipeline.stress import derive_stresses
 _NEWLY_COVERED = ["sepic", "zeta", "four_switch_buck_boost"]
 # Already covered before B3 (regression guard).
 _PREVIOUSLY_COVERED = ["buck", "boost", "cuk", "flyback"]
-# Topologies that MUST stay unregistered for the loss SWEEP: resonant (fsw from
-# the gain law, B6) + non-converter magnetics. (Transformers ARE now registered
+# Topologies that MUST stay unregistered for the loss SWEEP: TRUE resonant converters
+# (fsw from the gain law, B6) + non-converter magnetics. (Transformers ARE now registered
 # via the magnetizing-current computer — see the transformer tests below.)
+# NOTE: dual_active_bridge is NOT resonant — it is a phase-shifted isolated bridge at a
+# freely-chosen fsw (square-wave, no LC tank), so it IS loss-swept and registered (like psfb).
 _MUST_STAY_UNREGISTERED = [
-    "llc", "cllc", "series_resonant", "dual_active_bridge", "common_mode_choke",
+    "llc", "cllc", "series_resonant", "common_mode_choke",
 ]
 
 
@@ -113,7 +115,8 @@ def test_sweep_raises_for_unregistered_topology():
 
 _TRANSFORMERS_UNI = ["single_switch_forward", "two_switch_forward", "active_clamp_forward"]
 _TRANSFORMERS_BI = ["push_pull", "asymmetric_half_bridge",
-                    "phase_shifted_full_bridge", "phase_shifted_half_bridge", "weinberg"]
+                    "phase_shifted_full_bridge", "phase_shifted_half_bridge", "weinberg",
+                    "dual_active_bridge"]  # phase-shifted isolated bridge, ±-excited like the others
 
 
 def test_magnetizing_ipeak_formula():
@@ -135,7 +138,8 @@ def test_transformer_registered_with_magnetizing(topo):
     assert bridge._IPEAK_WORST.get(topo) is not None
 
 
-@pytest.mark.parametrize("topo", ["llc", "cllc", "clllc", "series_resonant", "dual_active_bridge"])
+@pytest.mark.parametrize("topo", ["llc", "cllc", "clllc", "series_resonant"])
 def test_resonant_still_unregistered(topo):
-    # resonant fsw comes from the gain law (B6), not the loss sweep
+    # TRUE resonant fsw comes from the gain law (B6), not the loss sweep. (dual_active_bridge
+    # is NOT here — it is a phase-shifted bridge at a freely-chosen fsw, so it IS registered.)
     assert bridge._IPEAK_WORST.get(topo) is None

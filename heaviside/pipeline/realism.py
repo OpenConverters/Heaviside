@@ -553,7 +553,18 @@ def evaluate_tas(
         for v in sim.values():
             if isinstance(v, Mapping):
                 cand = v.get("efficiency_analyst")
-                if isinstance(cand, (int, float)):
+                # Only TRUST the analyst efficiency when it is a physically valid ratio (0 < η < 1) AND
+                # its loss budget is COMPLETE. An analyst η >= 1.0 (zero losses) OR a loss budget with a
+                # NULL component means the analyst FAILED to model some loss (e.g. a dab/bridge/acf
+                # transformer whose T1_core/T1_dcr came back null) — so the efficiency is OVER-estimated
+                # (e.g. acf analyst 0.996 vs SPICE 0.824) and would falsely fail/pass efficiency_sanity.
+                # When the analyst is impossible or incomplete, fall through to the measured SPICE
+                # efficiency below (which DOES capture the real losses of the real-part deck).
+                _lb = v.get("loss_budget")
+                _analyst_complete = not (
+                    isinstance(_lb, Mapping) and any(x is None for x in _lb.values())
+                )
+                if isinstance(cand, (int, float)) and 0.0 < float(cand) < 1.0 and _analyst_complete:
                     eta = float(cand)
                     eta_source = "analyst"
                     break

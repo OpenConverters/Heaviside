@@ -5,6 +5,7 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Tag from 'primevue/tag'
 import Button from 'primevue/button'
+import DesignReport from './DesignReport.vue'
 import { statusSeverity } from '../status.js'
 import { useDatasheet, inferCategory } from '../composables/useDatasheet.js'
 
@@ -42,9 +43,14 @@ function dsOpen(mpn, componentType) {
     </template>
     <div v-if="loading">Loading…</div>
     <template v-else-if="kind === 'design'">
-      <Tag v-if="result.verdict" :severity="result.verdict === 'pass' ? 'success' : 'warn'"
-           :value="result.topology + ' · ' + result.verdict" />
-      <div class="report-html" style="margin-top:.6rem; max-height:72vh" v-html="result.html"></div>
+      <!-- Interactive report when the job returns structured data (waveforms /
+           BOM); fall back to the rendered HTML for older jobs that only have it. -->
+      <DesignReport v-if="result.bom || result.waveforms" :result="result" :pdf-url="pdfUrl" />
+      <template v-else>
+        <Tag v-if="result.verdict" :severity="result.verdict === 'pass' ? 'success' : 'warn'"
+             :value="result.topology + ' · ' + result.verdict" />
+        <div class="report-html" style="margin-top:.6rem; max-height:72vh" v-html="result.html"></div>
+      </template>
     </template>
     <template v-else-if="kind === 'crossref'">
       <Tag :severity="result.passed ? 'success' : 'warn'"

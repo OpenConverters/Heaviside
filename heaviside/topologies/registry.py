@@ -329,7 +329,13 @@ TOPOLOGIES: tuple[TopologyEntry, ...] = (
         ("dab", "dualActiveBridgeConverter"),
         None,
         "converter",
-        "resonant",
+        # DAB is a PHASE-SHIFTED isolated bridge, NOT a resonant converter: two active
+        # full bridges + a transformer + an auxiliary SERIES inductor, power transferred
+        # via the phase shift between the bridges (P ∝ n·V1·V2·φ(π−|φ|)/(2π²·fsw·L)) with
+        # square-wave excitation at a FIXED, freely-CHOSEN fsw. There is no LC tank tuned
+        # to fsw (that's the resonant DAB / CLLC variant), so it is sized like the other
+        # isolated bridges (PSFB/PSHB) — loss-swept over fsw — not by a resonant gain law.
+        "isolated_bridge",
         # DAB has the series leakage/external inductor L_r and the main
         # transformer T1. Both bridges are real MOSFETs (no diode rect).
         magnetic_binding={

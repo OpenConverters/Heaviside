@@ -6,7 +6,11 @@ import Button from 'primevue/button'
 import Tag from 'primevue/tag'
 import Message from 'primevue/message'
 import CatalogDetail from './CatalogDetail.vue'
+import CatalogOverview from './CatalogOverview.vue'
 import { api } from '../api.js'
+
+// View mode: 'overview' (show-off dashboard) | 'browse' (parametric search)
+const mode = ref('overview')
 
 // ── Per-category config ───────────────────────────────────────────────────────
 // scale: multiply user input by this to get SI value sent to the API
@@ -27,6 +31,9 @@ const UNIT_CONFIG = {
   magnetics:  [{ label: 'L',      unit: 'µH', scale: 1e-6  },
                { label: 'Isat',   unit: 'A',  scale: 1     },
                { label: 'DCR',    unit: 'mΩ', scale: 1e-3  }],
+  connectors: [{ label: 'V',         unit: 'V',   scale: 1 },
+               { label: 'I/contact', unit: 'A',   scale: 1 },
+               { label: 'Pos',       unit: 'pos', scale: 1 }],
 }
 
 // Friendly labels for tech filter chips per category
@@ -53,9 +60,15 @@ const TECH_LABELS = {
   },
   resistors:  {},
   magnetics:  { inductor: 'Inductor', chipBead: 'Chip Bead', commonModeChoke: 'CMC' },
+  connectors: {
+    boardToBoard: 'Board-to-Board', dataInterface: 'Data Interface',
+    pinHeaderSocket: 'Pin Header/Socket', wireToBoard: 'Wire-to-Board',
+    circular: 'Circular', terminalBlock: 'Terminal Block', fpcFfc: 'FPC/FFC',
+    cardEdge: 'Card Edge', power: 'Power',
+  },
 }
 
-const categories = ['mosfets', 'diodes', 'capacitors', 'resistors', 'magnetics']
+const categories = ['mosfets', 'diodes', 'capacitors', 'resistors', 'magnetics', 'connectors']
 const category = ref('mosfets')
 
 // ── Filter state ──────────────────────────────────────────────────────────────
@@ -210,6 +223,13 @@ function changeCategory() {
   load()
 }
 
+// ── Overview → Browse jump ────────────────────────────────────────────────────
+function pickCategory(cat) {
+  if (categories.includes(cat)) category.value = cat
+  mode.value = 'browse'
+  changeCategory()
+}
+
 // ── Detail navigation ─────────────────────────────────────────────────────────
 function cardHref(row) {
   return `#/catalog/${category.value}/${encodeURIComponent(row.mpn)}`
@@ -257,6 +277,21 @@ onUnmounted(() => window.removeEventListener('hashchange', parseHash))
     @close="goBack" />
 
   <div v-else>
+    <!-- ── Mode toggle: Overview dashboard vs parametric Browse ─────────── -->
+    <div class="cat-mode">
+      <button class="cat-mode-btn" :class="{ active: mode === 'overview' }"
+              @click="mode = 'overview'">
+        <i class="pi pi-chart-bar" /> Overview
+      </button>
+      <button class="cat-mode-btn" :class="{ active: mode === 'browse' }"
+              @click="mode = 'browse'">
+        <i class="pi pi-search" /> Browse
+      </button>
+    </div>
+
+    <CatalogOverview v-if="mode === 'overview'" @pick="pickCategory" />
+
+    <template v-else>
     <!-- ── DB Stats banner ──────────────────────────────────────────────── -->
     <div class="db-banner">
       <div class="db-banner-label mono">◈ INTERNAL COMPONENT DB</div>
@@ -401,10 +436,37 @@ onUnmounted(() => window.removeEventListener('hashchange', parseHash))
 
       <Message v-if="error" severity="error" style="margin-top:.6rem">{{ error }}</Message>
     </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
+/* ── Mode toggle ──────────────────────────────────────────────────────────── */
+.cat-mode {
+  display: inline-flex;
+  gap: .25rem;
+  padding: .25rem;
+  border: 1px solid var(--p-surface-700);
+  border-radius: 8px;
+  background: var(--p-surface-900);
+  margin-bottom: .9rem;
+}
+.cat-mode-btn {
+  display: inline-flex; align-items: center; gap: .4rem;
+  font-family: var(--mono);
+  font-size: .72rem; font-weight: 600; letter-spacing: .04em;
+  padding: .38rem .9rem;
+  border: none; border-radius: 6px;
+  background: none; color: var(--p-surface-400);
+  cursor: pointer; transition: background .12s, color .12s;
+}
+.cat-mode-btn:hover { color: var(--p-surface-100); }
+.cat-mode-btn.active {
+  background: rgba(60,224,200,.12);
+  color: var(--ch1);
+  box-shadow: inset 0 0 0 1px rgba(60,224,200,.4);
+}
+
 /* ── DB stats banner ──────────────────────────────────────────────────────── */
 .db-banner {
   background: linear-gradient(135deg,

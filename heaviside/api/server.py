@@ -15,6 +15,7 @@ Launch:
 from __future__ import annotations
 
 import logging
+import unicodedata
 from collections.abc import Mapping
 from typing import Any
 
@@ -592,12 +593,35 @@ def _design_converter_job(spec: dict[str, Any], topology: str | None, update: An
     cb.check_cancelled = update.check_cancelled  # type: ignore[attr-defined]
 
     design = design_converter(topo, spec, use_llm=True, with_reviewers=True, progress=cb)
+
+    # Per-operating-point electrical summary so the interactive report can label
+    # each waveform with its Vin/Vout/Iout (the waveforms themselves carry only
+    # op_index + label). Built from the spec the design ran at — no fabrication.
+    vin = (spec.get("inputVoltage") or {})
+    op_summary: list[dict[str, Any]] = []
+    for i, o in enumerate(spec.get("operatingPoints") or []):
+        if not isinstance(o, dict):
+            continue
+        op_summary.append({
+            "op_index": i,
+            "vin_nominal": vin.get("nominal"),
+            "output_voltages": o.get("outputVoltages"),
+            "output_currents": o.get("outputCurrents"),
+            "ambient_c": o.get("ambientTemperature"),
+            "fsw_hz": o.get("switchingFrequency") or design.fsw_hz,
+        })
+
     return {
         "topology": topo,
         "verdict": design.verdict,
         "fsw_hz": design.fsw_hz,
         "html": render_html(design.outcome),
         "bom": design.bom,
+        # Structured data for the interactive report (the HTML above stays the
+        # PDF/source-of-truth fallback). waveforms: per-OP inductor/primary
+        # winding current + voltage from PyOM's ngspice.
+        "waveforms": design.waveforms,
+        "operating_points": op_summary,
     }
 
 
@@ -1173,6 +1197,39 @@ def manufacturers(min_pct: float = 1.0) -> dict[str, Any]:
     return {"total": total, "min_pct": min_pct, "manufacturers": leaders}
 
 
+def _fold(s: str | None) -> str:
+    """Accent- and case-insensitive key for search/grouping.
+
+    Strips diacritics (ü→u, é→e) and case so a query like ``wurth`` matches
+    the stored ``Würth Elektronik``, and the two spellings group together.
+    Manufacturer-agnostic: it folds any accented name, not a hardcoded list.
+    """
+    if not s:
+        return ""
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(ch for ch in nfkd if not unicodedata.combining(ch)).casefold().strip()
+
+
+def _merge_by_fold(counter: Mapping[str, int]) -> list[tuple[str, int]]:
+    """Merge name→count entries whose folded keys collide (e.g. ``Würth``
+    and ``Wurth``), summing counts and displaying the dominant spelling.
+    Returns (display_name, total) sorted by count descending.
+    """
+    from collections import Counter
+
+    groups: dict[str, dict[str, Any]] = {}
+    for name, cnt in counter.items():
+        g = groups.setdefault(_fold(name), {"total": 0, "spellings": Counter()})
+        g["total"] += cnt
+        g["spellings"][name] += cnt
+    merged = [
+        (g["spellings"].most_common(1)[0][0], g["total"])
+        for g in groups.values()
+    ]
+    merged.sort(key=lambda x: -x[1])
+    return merged
+
+
 def _fmt_eng(value: float | None, unit: str) -> str | None:
     """Engineering-notation string (e.g. 4.7e-6 F → '4.7 µF'). None passes through."""
     if value is None or not isinstance(value, (int, float)):
@@ -1202,6 +1259,22 @@ def _fmt_eng(value: float | None, unit: str) -> str | None:
 # ---------------------------------------------------------------------------
 _STATS_CACHE: dict[str, int] | None = None
 _FACETS_CACHE: dict[str, dict[str, Any]] = {}
+_OVERVIEW_CACHE: dict[str, Any] | None = None
+# Folded manufacturer key -> dominant (canonical) spelling, e.g.
+# "wurth elektronik" -> "Würth Elektronik". Built during _build_overview
+# (warmed on app load); used to normalize browse-row manufacturer display.
+_MFR_CANONICAL: dict[str, str] = {}
+
+# SI unit per category parameter, parallel to _CATALOG_LABELS. "%" is a sentinel
+# meaning "format as a percentage" (used for resistor tolerance).
+_CATALOG_UNITS: dict[str, list[str]] = {
+    "mosfets":    ["V", "Ω", "A"],
+    "diodes":     ["V", "A", "V"],
+    "capacitors": ["F", "V", "Ω"],
+    "resistors":  ["Ω", "%", "W"],
+    "magnetics":  ["H", "A", "Ω"],
+    "connectors": ["V", "A", "pos"],
+}
 
 _CATALOG_FILES: dict[str, str] = {
     "mosfets": "mosfets.ndjson",
@@ -1209,6 +1282,7 @@ _CATALOG_FILES: dict[str, str] = {
     "capacitors": "capacitors.ndjson",
     "resistors": "resistors.ndjson",
     "magnetics": "magnetics.ndjson",
+    "connectors": "connectors.ndjson",
 }
 
 _CATALOG_LABELS: dict[str, list[str]] = {
@@ -1217,6 +1291,7 @@ _CATALOG_LABELS: dict[str, list[str]] = {
     "capacitors": ["C", "V", "ESR"],
     "resistors":  ["R", "Tol", "P"],
     "magnetics":  ["L", "Isat", "DCR"],
+    "connectors": ["V", "I/contact", "Pos"],
 }
 
 
@@ -1323,12 +1398,43 @@ def _catalog_projectors() -> dict[str, Any]:
             "_p1n": p1n, "_p2n": p2n, "_p3n": p3n,
         }
 
+    def _connector(env: dict[str, Any]) -> dict[str, Any] | None:
+        try:
+            mi = env["connector"]["manufacturerInfo"]
+        except (KeyError, TypeError):
+            return None
+        ref, name = mi.get("reference"), mi.get("name")
+        if not isinstance(ref, str) or not isinstance(name, str):
+            return None
+        di = mi.get("datasheetInfo") or {}
+        el = di.get("electrical") or {}
+        mech = di.get("mechanical") or {}
+        fd = di.get("familyDetails") or {}
+
+        def _scalar(v: Any) -> float | None:
+            if isinstance(v, Mapping):
+                v = v.get("nominal", v.get("maximum", v.get("minimum")))
+            return v if isinstance(v, (int, float)) else None
+
+        p1n = _scalar(el.get("ratedVoltage"))
+        p2n = _scalar(el.get("ratedCurrentPerContact"))
+        p3n = _scalar(mech.get("positions"))
+        return {
+            "mpn": ref, "manufacturer": name, "tech": fd.get("family") or "",
+            "p1": _fmt_eng(p1n, "V"),
+            "p2": _fmt_eng(p2n, "A"),
+            "p3": f"{int(p3n)} pos" if p3n is not None else None,
+            "status": mi.get("status", ""),
+            "_p1n": p1n, "_p2n": p2n, "_p3n": p3n,
+        }
+
     return {
         "mosfets":    ("mosfets.ndjson",    _mosfet),
         "diodes":     ("diodes.ndjson",     _diode),
         "capacitors": ("capacitors.ndjson", _cap),
         "resistors":  ("resistors.ndjson",  _res),
         "magnetics":  ("magnetics.ndjson",  _mag),
+        "connectors": ("connectors.ndjson", _connector),
     }
 
 
@@ -1364,7 +1470,7 @@ def _catalog_scan(
         )
     filename, project = projectors[category]
     path = _tas_data_dir() / filename
-    q = query.strip().lower()
+    q = _fold(query)
     tech_lo = tech.strip().lower()
 
     matched: list[dict[str, Any]] = []
@@ -1375,7 +1481,7 @@ def _catalog_scan(
             continue
         if row is None:
             continue
-        if q and q not in (row["mpn"] or "").lower() and q not in (row["manufacturer"] or "").lower():
+        if q and q not in _fold(row["mpn"]) and q not in _fold(row["manufacturer"]):
             continue
         if tech_lo and tech_lo != (row["tech"] or "").lower():
             continue
@@ -1412,6 +1518,11 @@ def _catalog_scan(
         row.pop("_p1n", None)
         row.pop("_p2n", None)
         row.pop("_p3n", None)
+        # Normalize manufacturer display to the canonical spelling (e.g.
+        # "Wurth Elektronik" -> "Würth Elektronik") when the map is warmed.
+        canon = _MFR_CANONICAL.get(_fold(row.get("manufacturer")))
+        if canon:
+            row["manufacturer"] = canon
     return total, page
 
 
@@ -1487,6 +1598,152 @@ def _build_facets(category: str) -> dict[str, Any]:
     return result
 
 
+def _build_overview() -> dict[str, Any]:
+    """Rich per-category aggregates for the catalog overview dashboard.
+
+    One scan per category (cached for process lifetime). Per category we surface:
+    count, production count, technology histogram, top manufacturers, and the
+    covered span of each parametric axis. This powers the "show-off" overview
+    view; it is intentionally heavier than ``/catalog/stats`` (counts only).
+    """
+    global _OVERVIEW_CACHE, _MFR_CANONICAL
+    if _OVERVIEW_CACHE is not None:
+        return _OVERVIEW_CACHE
+    from collections import Counter
+
+    # Folded key -> all observed spellings (across every category), used to
+    # pick one canonical display name per manufacturer.
+    global_spellings: dict[str, Counter] = {}
+
+    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.catalogue.selector import _tas_data_dir
+
+    def _fmt_param(value: float | None, unit: str) -> str | None:
+        if value is None:
+            return None
+        if unit == "%":
+            return f"{value * 100:.3g}%"
+        return _fmt_eng(value, unit)
+
+    projectors = _catalog_projectors()
+    categories: dict[str, Any] = {}
+    grand_total = 0
+    all_mfrs: set[str] = set()
+
+    for cat, (fname, project) in projectors.items():
+        path = _tas_data_dir() / fname
+        labels = _CATALOG_LABELS.get(cat, ["", "", ""])
+        units = _CATALOG_UNITS.get(cat, ["", "", ""])
+
+        count = 0
+        production = 0
+        techs: Counter[str] = Counter()
+        mfrs: Counter[str] = Counter()
+        mins: list[float | None] = [None, None, None]
+        maxs: list[float | None] = [None, None, None]
+
+        for _, env in iter_envelopes(path):
+            try:
+                row = project(env)
+            except Exception:
+                continue
+            if row is None:
+                continue
+            count += 1
+            if (row.get("status") or "").lower() == "production":
+                production += 1
+            t = row.get("tech") or ""
+            if t:
+                techs[t] += 1
+            m = row.get("manufacturer") or ""
+            if m:
+                mfrs[m] += 1
+                all_mfrs.add(_fold(m))
+            for i, key in enumerate(("_p1n", "_p2n", "_p3n")):
+                v = row.get(key)
+                if not isinstance(v, (int, float)) or v <= 0:
+                    continue
+                if mins[i] is None or v < mins[i]:
+                    mins[i] = v
+                if maxs[i] is None or v > maxs[i]:
+                    maxs[i] = v
+
+        params = [
+            {
+                "label": labels[i],
+                "min": mins[i],
+                "max": maxs[i],
+                "minFmt": _fmt_param(mins[i], units[i]),
+                "maxFmt": _fmt_param(maxs[i], units[i]),
+            }
+            for i in range(3)
+        ]
+        for name, cnt in mfrs.items():
+            global_spellings.setdefault(_fold(name), Counter())[name] += cnt
+        merged_mfrs = _merge_by_fold(mfrs)
+        categories[cat] = {
+            "count": count,
+            "production": production,
+            "manufacturerCount": len(merged_mfrs),
+            "techs": [{"name": n, "count": c} for n, c in techs.most_common()],
+            "manufacturers": [{"name": n, "count": c} for n, c in merged_mfrs[:8]],
+            "params": params,
+        }
+        grand_total += count
+
+    _MFR_CANONICAL = {
+        key: spellings.most_common(1)[0][0]
+        for key, spellings in global_spellings.items()
+    }
+    _OVERVIEW_CACHE = {
+        "total": grand_total,
+        "manufacturerTotal": len(all_mfrs),
+        "categories": categories,
+    }
+    return _OVERVIEW_CACHE
+
+
+@app.get("/catalog/overview")
+def catalog_overview() -> dict[str, Any]:
+    """Rich aggregate stats across the whole component DB (cached)."""
+    return _build_overview()
+
+
+def _warm_catalog_caches() -> None:
+    """Pre-compute every catalog aggregate so the first visitor to the Catalog /
+    Overview tab doesn't pay for a full NDJSON scan. Each builder caches for the
+    process lifetime and is idempotent, so a later request just reads the cache.
+
+    Run in a background thread at startup: the server is ready to serve
+    immediately, and the (multi-second) corpus scans finish shortly after boot.
+    A failure here is logged but never fatal — the endpoints still compute
+    lazily on demand, exactly as before warming was added."""
+    import time
+
+    t0 = time.monotonic()
+    try:
+        _build_overview()      # also warms _MFR_CANONICAL (browse-row display)
+        _build_stats()
+        _manufacturer_counts()
+        for category in _catalog_projectors():
+            _build_facets(category)
+    except Exception:
+        logger.exception("catalog cache warming failed (endpoints will compute lazily)")
+        return
+    logger.info("catalog caches warmed in %.1fs", time.monotonic() - t0)
+
+
+@app.on_event("startup")
+def _warm_caches_on_startup() -> None:
+    """Kick catalog cache warming onto a daemon thread at boot — non-blocking so
+    the server becomes ready instantly and health checks pass during the scan."""
+    import threading
+
+    threading.Thread(
+        target=_warm_catalog_caches, name="catalog-cache-warm", daemon=True
+    ).start()
+
+
 @app.get("/catalog/stats")
 def catalog_stats() -> dict[str, Any]:
     """Total valid component counts per category (cached for process lifetime)."""
@@ -1512,6 +1769,7 @@ def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
         "capacitors": "capacitors.ndjson",
         "resistors": "resistors.ndjson",
         "magnetics": "magnetics.ndjson",
+        "connectors": "connectors.ndjson",
     }
     if category not in _NDJSON:
         raise HTTPException(status_code=404, detail=f"unknown category '{category}'")
@@ -1519,7 +1777,7 @@ def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
     mpn_lo = mpn.strip().lower()
     for _lineno, env in iter_envelopes(path):
         # Locate the manufacturerInfo dict regardless of the envelope key.
-        for key in ("semiconductor", "capacitor", "resistor", "magnetic"):
+        for key in ("semiconductor", "capacitor", "resistor", "magnetic", "connector"):
             sub = env.get(key, {})
             if not sub:
                 continue

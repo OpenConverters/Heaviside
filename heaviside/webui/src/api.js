@@ -40,6 +40,7 @@ export const api = {
   topologies: () => jget('/topologies'),
   manufacturers: () => jget('/manufacturers'),
   catalogStats: () => jget('/catalog/stats'),
+  catalogOverview: () => jget('/catalog/overview'),
   catalogFacets: (cat) => jget(`/catalog/${cat}/facets`),
   catalog: (cat, opts = {}) => {
     const {

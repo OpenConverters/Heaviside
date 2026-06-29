@@ -86,6 +86,31 @@ def test_hs_spec_to_kirchhoff_maps_fields():
     assert op["outputs"] == [{"power": 36.0}]  # 24 V * 1.5 A
 
 
+def test_hs_spec_to_kirchhoff_propagates_current_ripple_ratio():
+    # Kirchhoff sizes the inductor from config "rippleRatio" (main inductor) /
+    # "inductorRippleRatio" (output inductor), defaulting to 0.4 when absent. HS's
+    # currentRippleRatio must reach both, or the magnetic comes back undersized and
+    # saturates the realism gate (a buck was 228 µH @ 0.4 default vs 300 µH @ 0.3).
+    k = ka.hs_spec_to_kirchhoff({**_HS_SPEC, "currentRippleRatio": 0.3})
+    assert k["config"]["rippleRatio"] == 0.3
+    assert k["config"]["inductorRippleRatio"] == 0.3
+
+
+def test_hs_spec_to_kirchhoff_explicit_config_ripple_wins():
+    # An explicit caller config value is authoritative over the currentRippleRatio seed.
+    k = ka.hs_spec_to_kirchhoff(
+        {**_HS_SPEC, "currentRippleRatio": 0.3, "config": {"rippleRatio": 0.25}}
+    )
+    assert k["config"]["rippleRatio"] == 0.25
+    assert k["config"]["inductorRippleRatio"] == 0.3  # seeded for the unset key
+
+
+def test_hs_spec_to_kirchhoff_no_ripple_no_config():
+    # No currentRippleRatio and no caller config ⇒ no config key (KH uses its defaults).
+    k = ka.hs_spec_to_kirchhoff(_HS_SPEC)
+    assert "config" not in k
+
+
 _BOOST_SPEC = {
     "designRequirements": {
         "efficiency": 1.0,
