@@ -6,6 +6,15 @@ it, and compares the results against the PDF's performance claims.
 
 If the simulation doesn't match the claims, it diagnoses why and feeds
 lessons back to the teacher for future runs.
+
+della-Pollock cutover (abt #48): the two-phase simulation runs on KIRCHHOFF,
+not on MKF stencils. Kirchhoff designs the topology TAS from the reference's
+spec; HS fills the BOM (real parts + an MKF magnetic GEOMETRY designed from
+Kirchhoff's own per-component seed) and Kirchhoff regulates + simulates it.
+The reference design's ACTUAL parameters (inductance, output capacitance,
+controller/FET Rds_on) are stamped into the TAS so Phase 2 is a virtual
+replica of the real board — no MKF ``decompose_from_spec`` stencil netlist and
+no string-rewriting of a deck. MKF is magnetics-geometry-only here.
 """
 
 from __future__ import annotations
@@ -17,6 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
+from heaviside.decomposer import kirchhoff_adapter as _ka
 from heaviside.pipeline.re_state import (
     ComponentRoleMap,
     ReferenceClaims,
@@ -203,92 +213,21 @@ def parse_component_value(value_str: str) -> float | None:
     return num * multiplier
 
 
-# ---------------------------------------------------------------------------
-# Netlist patching
-# ---------------------------------------------------------------------------
+def _ref_value_for_roles(ref_bom: list[dict[str, Any]], roles: tuple[str, ...]) -> float | None:
+    """First positive parsed component value among ``ref_bom`` entries whose
+    role is in ``roles`` — the reference design's ACTUAL value (e.g. the main
+    inductor's inductance, the output cap's capacitance)."""
+    for comp in ref_bom:
+        if comp.get("role", "") in roles:
+            val = parse_component_value(str(comp.get("value", "")))
+            if val and val > 0:
+                return val
+    return None
 
 
-def _convert_to_sync_buck(deck: str, ron: float = 0.05) -> str:
-    """Replace SW1+diode with behavioral ideal switches.
-
-    The ngspice SW model has a VH hysteresis region that creates
-    artificial switching-transition losses proportional to I×V×fsw.
-    For high-current converters, this dominates over conduction loss
-    and produces unrealistic efficiency.
-
-    Fix: replace both SW1 and D1 with behavioral current sources
-    (B elements) that act as ideal controlled resistors:
-
-        I = V(across) / (gate_high ? RON : ROFF)
-
-    This gives instantaneous switching with zero transition loss,
-    matching real MOSFET behavior (where switching loss comes from
-    Coss/Ciss charge, not resistance transition).
-    """
-    # Extract PULSE timing
-    pulse_match = re.search(
-        r"PULSE\((\s*[\d.eE+\-]+\s+[\d.eE+\-]+\s+[\d.eE+\-]+\s+"
-        r"[\d.eE+\-]+\s+[\d.eE+\-]+\s+)([\d.eE+\-]+)(\s+)([\d.eE+\-]+)\s*\)",
-        deck,
-    )
-    if not pulse_match:
-        return deck
-
-    ton = float(pulse_match.group(2))
-    tper = float(pulse_match.group(4))
-    t_dead = tper * 0.02
-    ton_sr = tper - ton - 2 * t_dead
-    if ton_sr <= 0:
-        return deck
-
-    # Extract S1 connections
-    s1_match = re.search(r"^S1\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+SW1", deck, re.MULTILINE)
-    if not s1_match:
-        return deck
-    hs_drain = s1_match.group(1)  # vin_dc
-    hs_source = s1_match.group(2)  # sw
-
-    # Extract D1 connections
-    d1_match = re.search(r"^D1\s+(\S+)\s+(\S+)\s+DIDEAL", deck, re.MULTILINE)
-    if not d1_match:
-        return deck
-    anode = d1_match.group(1)  # 0
-    cathode = d1_match.group(2)  # sw
-
-    roff = 1e9
-
-    # The low-side gate is the complement of the high-side, derived
-    # dynamically so it tracks when simulate_closed_loop adjusts D.
-    switch_block = (
-        f"* Behavioral ideal switches (zero transition loss)\n"
-        f"Bs1 {hs_drain} {hs_source} "
-        f"I=V({hs_drain},{hs_source})/(V(pwm_ctrl)>2.5 ? {ron:.6e} : {roff:.1e})\n"
-        f"\n"
-        f"* Low-side: complement of high-side (auto-tracks duty changes)\n"
-        f"Bs2 {cathode} {anode} "
-        f"I=V({cathode},{anode})/(V(pwm_ctrl)<2.5 ? {ron:.6e} : {roff:.1e})\n"
-        f"\n"
-        f"* Body diode for dead-time freewheeling\n"
-        f".model DBODY D(IS=1e-8 RS=0.005 N=1.5 BV=100)\n"
-        f"Dbody2 {anode} {cathode} DBODY\n"
-    )
-
-    # Remove SW model, S1, snubbers, diode, D1
-    deck = re.sub(r"^\* PWM High-side Switch\n", "", deck, flags=re.MULTILINE)
-    deck = re.sub(r"^\.model\s+SW1\s+SW\s+.*?\n", "", deck, flags=re.MULTILINE)
-    deck = re.sub(r"^S1\s+.*?\n", "", deck, flags=re.MULTILINE)
-    deck = re.sub(r"^Rsnub_s1\s+.*?\n", "", deck, flags=re.MULTILINE)
-    deck = re.sub(r"^Csnub_s1\s+.*?\n", "", deck, flags=re.MULTILINE)
-    deck = re.sub(r"^\* Freewheeling Diode\n", "", deck, flags=re.MULTILINE)
-    deck = re.sub(r"^\.model\s+DIDEAL\s+D\(.*?\)\n", "", deck, flags=re.MULTILINE)
-    deck = re.sub(r"^D1\s+.*?\n", switch_block, deck, flags=re.MULTILINE)
-
-    logger.info(
-        "testbench: converted to sync buck with behavioral switches (RON=%.2fmΩ)", ron * 1000
-    )
-    return deck
-
-
+# bounded deck rewriters retained for the spice_sim calibrate layer (it nudges
+# passive values / fsw on a deck the simulator then re-judges). These operate on
+# generic ngspice deck text and are NOT used by the testbench's Kirchhoff path.
 def _rewrite_component_value(deck: str, refdes: str, new_value: float) -> str:
     """Replace the numeric value of a two-terminal component (L/C/R)."""
     pattern = re.compile(
@@ -301,69 +240,35 @@ def _rewrite_component_value(deck: str, refdes: str, new_value: float) -> str:
     return new_deck
 
 
-def _inject_waveform_meas(deck: str, vout_target: float) -> str:
-    """Add .meas directives and extend the sim window for waveform measurement.
-
-    Extends the .tran window to ensure the LC filter has fully settled
-    before measuring ripple. Measures over the last 20 switching cycles.
-    """
-    # Extract switching frequency from PULSE period
-    pulse_match = re.search(r"PULSE\([^)]*\s([\d.eE+\-]+)\s*\)", deck)
-    if not pulse_match:
+def _rewrite_fsw(deck: str, new_fsw: float) -> str:
+    """Rewrite the PWM PULSE period to match a target fsw."""
+    if new_fsw <= 0:
         return deck
-    tper = float(pulse_match.group(1))
-    if tper <= 0:
-        return deck
-
-    # Extend sim to 500 cycles for full settling, measure last 20
-    n_settle = 500
-    n_meas = 20
-    t_stop = tper * (n_settle + n_meas)
-    t_start = tper * n_settle
-    tstep = tper / 50
-
-    # Replace .tran with extended window
-    deck = re.sub(
-        r"^\.tran\s+.*$",
-        f".tran {tstep:.6e} {t_stop:.6e} {t_start:.6e} UIC",
-        deck,
-        flags=re.MULTILINE | re.IGNORECASE,
-    )
-    # Add .ic for output voltage
-    if ".ic" not in deck.lower():
-        deck = deck.replace(".end", f".ic v(vout)={vout_target}\n.end")
-
-    meas = [
-        "",
-        "* waveform characterization (RE testbench)",
-        f".meas tran vout_max max v(vout) FROM={t_start:.6e} TO={t_stop:.6e}",
-        f".meas tran vout_min min v(vout) FROM={t_start:.6e} TO={t_stop:.6e}",
-        f".meas tran vsw_max max v(sw) FROM={t_start:.6e} TO={t_stop:.6e}",
-        f".meas tran vsw_min min v(sw) FROM={t_start:.6e} TO={t_stop:.6e}",
-        f".meas tran il_max max i(Vl_sense) FROM={t_start:.6e} TO={t_stop:.6e}",
-        f".meas tran il_min min i(Vl_sense) FROM={t_start:.6e} TO={t_stop:.6e}",
-        "",
-    ]
-    lines = deck.splitlines()
-    out: list[str] = []
-    for line in lines:
-        if line.strip().lower() == ".end":
-            out.extend(meas)
-        out.append(line)
-    return "\n".join(out) + "\n"
-
-
-def _parse_waveform_meas(stdout: str) -> dict[str, float]:
-    """Parse waveform .meas results from ngspice output."""
-    results: dict[str, float] = {}
+    new_period = 1.0 / new_fsw
     pattern = re.compile(
-        r"^\s*(vout_max|vout_min|vsw_max|vsw_min|il_max|il_min)\s*=\s*([-+]?[\d.]+(?:[eE][-+]?\d+)?)"
+        r"(PULSE\s*\([^)]*?\s)([\d.eE+\-]+)(\s+[\d.eE+\-]+\s*\))",
+        re.IGNORECASE,
     )
-    for line in stdout.splitlines():
-        m = pattern.match(line)
-        if m:
-            results[m.group(1)] = float(m.group(2))
-    return results
+
+    def _sub(m: re.Match) -> str:
+        parts = m.group(0)
+        # PULSE(V1 V2 Td Tr Tf Ton Tper) — Tper is the last number
+        nums = re.findall(r"[\d.eE+\-]+", parts)
+        if len(nums) >= 7:
+            old_period = float(nums[6])
+            old_ton = float(nums[5])
+            duty = old_ton / old_period if old_period > 0 else 0.5
+            new_ton = duty * new_period
+            parts = parts.replace(nums[5], f"{new_ton:.6e}", 1)
+            parts = parts.replace(nums[6], f"{new_period:.6e}", 1)
+        return parts
+
+    return pattern.sub(_sub, deck)
+
+
+# ---------------------------------------------------------------------------
+# Waveform analysis
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -466,86 +371,8 @@ def _check_waveforms(
     return issues
 
 
-def _extract_waveforms(netlist: str, vout_target: float) -> WaveformCharacteristics | None:
-    """Run simulation with waveform measurements and extract characteristics."""
-    import os
-    import subprocess
-    import tempfile
-
-    deck = _inject_waveform_meas(netlist, vout_target)
-
-    ngspice = shutil.which("ngspice")
-    if not ngspice:
-        return None
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".cir", delete=False) as f:
-        f.write(deck)
-        cir_path = f.name
-    try:
-        result = subprocess.run(
-            [ngspice, "-b", cir_path],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            return None
-        meas = _parse_waveform_meas(result.stdout)
-    except Exception:
-        return None
-    finally:
-        os.unlink(cir_path)
-
-    vout_max = meas.get("vout_max", 0)
-    vout_min = meas.get("vout_min", 0)
-    vsw_max = meas.get("vsw_max", 0)
-    vsw_min = meas.get("vsw_min", 0)
-    il_max = meas.get("il_max", 0)
-    il_min = meas.get("il_min", 0)
-
-    return WaveformCharacteristics(
-        vout_ripple_mv=(vout_max - vout_min) * 1000,
-        vsw_vpp=vsw_max - vsw_min,
-        il_ripple_a=il_max - il_min,
-        il_avg_a=(il_max + il_min) / 2,
-    )
-
-
-def _estimate_ron(iout: float, fsw: float = 0) -> float:
-    """Estimate effective MOSFET RON for the ngspice SW model.
-
-    The SW model adds switching-transition loss proportional to current
-    and frequency (from the VH hysteresis region). To compensate, we
-    reduce the conduction RON so that total simulated loss (conduction +
-    SW-model switching) matches the real converter's total loss.
-
-    Empirical fit: RON ≈ 0.15 / Iout^1.3, with a frequency-dependent
-    correction for the SW model's switching artifact.
-    """
-    if iout <= 0:
-        return 0.05
-    ron_base = 0.2 / (iout**1.3)
-    # SW model switching loss compensation: at high current × high freq,
-    # the SW model's VH transition dissipates extra power. Subtract an
-    # equivalent RON to keep total loss realistic.
-    if fsw > 0 and iout > 5:
-        sw_loss_per_amp = 0.002 * (fsw / 1e6)  # ~2mW/A per MHz from VH
-        ron_compensation = sw_loss_per_amp / iout
-        ron_base = max(ron_base - ron_compensation, ron_base * 0.3)
-    return max(ron_base, 0.0003)
-
-
-def _rewrite_ron(deck: str, new_ron: float) -> str:
-    """Replace RON in all SW models."""
-    return re.sub(
-        r"(RON=)[\d.eE+\-]+",
-        rf"\g<1>{new_ron:.6f}",
-        deck,
-    )
-
-
 def _get_controller_rdson(ref_bom: list[dict[str, Any]]) -> float | None:
-    """Look up the controller IC's Rds_on from TAS controllers database.
+    """Look up the controller IC's Rds_on from the internal controllers DB.
 
     Returns average of HS+LS Rds_on in ohms, or None if not found.
     """
@@ -589,140 +416,13 @@ def _get_controller_rdson(ref_bom: list[dict[str, Any]]) -> float | None:
                 if hs and isinstance(hs, (int, float)):
                     avg = (hs + (ls or hs)) / 2
                     logger.info(
-                        "testbench: found controller %s Rds_on in TAS: HS=%.1fmΩ LS=%.1fmΩ",
+                        "testbench: found controller %s Rds_on in internal DB: HS=%.1fmΩ LS=%.1fmΩ",
                         ic_mpn,
                         hs * 1000,
                         (ls or hs) * 1000,
                     )
                     return avg
     return None
-
-
-def _get_inductor_dcr(ref_bom: list[dict[str, Any]]) -> float | None:
-    """Look up the main inductor's DCR from TAS magnetics database.
-
-    Returns DCR in ohms, or None if the inductor MPN is not in TAS.
-    """
-    import json
-    from pathlib import Path
-
-    tas_path = Path(__file__).resolve().parents[2] / "TAS" / "data" / "magnetics.ndjson"
-    if not tas_path.exists():
-        return None
-
-    # Find the main inductor MPN from the BOM
-    inductor_mpn = None
-    for comp in ref_bom:
-        role = comp.get("role", "")
-        if role in ("mainInductor", "boostInductor", "buckInductor"):
-            inductor_mpn = comp.get("mpn", comp.get("part", ""))
-            if inductor_mpn:
-                break
-    if not inductor_mpn:
-        return None
-
-    mpn_upper = inductor_mpn.upper().strip()
-    with open(tas_path, "rb") as f:
-        for raw_line in f:
-            if raw_line[:3] == b"\xef\xbb\xbf":
-                raw_line = raw_line[3:]
-            if not raw_line.strip():
-                continue
-            try:
-                rec = json.loads(raw_line)
-            except json.JSONDecodeError:
-                continue
-            ref = rec.get("magnetic", {}).get("manufacturerInfo", {}).get("reference", "")
-            ref_upper = ref.upper().strip()
-            if (
-                ref_upper == mpn_upper
-                or ref_upper.startswith(mpn_upper)
-                or mpn_upper.startswith(ref_upper)
-            ):
-                el_raw = (
-                    rec.get("magnetic", {})
-                    .get("manufacturerInfo", {})
-                    .get("datasheetInfo", {})
-                    .get("electrical")
-                )
-                el_items = el_raw if isinstance(el_raw, list) else ([el_raw] if isinstance(el_raw, dict) else [])
-                dcr_block = next(
-                    (item.get("dcResistance", {}) for item in el_items if "dcResistance" in item),
-                    {},
-                )
-                dcr_max = dcr_block.get("maximum")
-                if isinstance(dcr_max, (int, float)) and dcr_max > 0:
-                    logger.info(
-                        "testbench: found inductor %s DCR=%.1fmΩ in TAS",
-                        inductor_mpn,
-                        dcr_max * 1000,
-                    )
-                    return float(dcr_max)
-    logger.warning(
-        "testbench: inductor %s not found in TAS magnetics",
-        inductor_mpn,
-    )
-    return None
-
-
-def _inject_inductor_dcr(deck: str, dcr: float) -> str:
-    """Add a series resistance to L1 to model inductor DCR."""
-    # Insert Rdcr between sw node and l_in (where Vl_sense already is)
-    # L1 connects l_in to vout. Add Rdcr between l_in and a new node.
-    deck = re.sub(
-        r"^(L1\s+)l_in(\s+vout\s+)",
-        r"\1l_dcr\2",
-        deck,
-        flags=re.MULTILINE,
-    )
-    # Add the DCR resistor
-    dcr_line = f"Rdcr l_in l_dcr {dcr:.6e}\n"
-    deck = deck.replace("L1 l_dcr", dcr_line + "L1 l_dcr")
-    return deck
-
-
-def _rewrite_rload(deck: str, new_rload: float) -> str:
-    """Replace the Rload value to set a different output current."""
-    pattern = re.compile(
-        r"^(\s*Rload\s+\S+\s+\S+\s+)([\d.eE+\-]+)(.*?)$",
-        re.MULTILINE | re.IGNORECASE,
-    )
-    return pattern.sub(rf"\g<1>{new_rload:.6f}\3", deck)
-
-
-def _rewrite_vin(deck: str, new_vin: float) -> str:
-    """Replace the Vin DC source value."""
-    pattern = re.compile(
-        r"^(\s*Vin\s+\S+\s+\S+\s+)([\d.eE+\-]+)(.*?)$",
-        re.MULTILINE | re.IGNORECASE,
-    )
-    return pattern.sub(rf"\g<1>{new_vin}\3", deck)
-
-
-def _rewrite_fsw(deck: str, new_fsw: float) -> str:
-    """Rewrite the PWM PULSE period to match the reference fsw."""
-    if new_fsw <= 0:
-        return deck
-    new_period = 1.0 / new_fsw
-    pattern = re.compile(
-        r"(PULSE\s*\([^)]*?\s)([\d.eE+\-]+)(\s+[\d.eE+\-]+\s*\))",
-        re.IGNORECASE,
-    )
-
-    def _sub(m: re.Match) -> str:
-        parts = m.group(0)
-        # PULSE(V1 V2 Td Tr Tf Ton Tper) — Tper is the last number
-        nums = re.findall(r"[\d.eE+\-]+", parts)
-        if len(nums) >= 7:
-            old_period = float(nums[6])
-            old_ton = float(nums[5])
-            duty = old_ton / old_period if old_period > 0 else 0.5
-            new_ton = duty * new_period
-            parts = parts.replace(nums[5], f"{new_ton:.6e}", 1)
-            parts = parts.replace(nums[6], f"{new_period:.6e}", 1)
-        return parts
-
-    return pattern.sub(_sub, deck)
 
 
 # ---------------------------------------------------------------------------
@@ -833,10 +533,328 @@ def _diagnose_mismatch(comparison: SimComparison, state: REState) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Main testbench
+# Kirchhoff simulation seam (della-Pollock cutover)
 # ---------------------------------------------------------------------------
 
 _MAX_TESTBENCH_LOOPS = 3
+
+
+def _kirchhoff_errors() -> tuple[type[Exception], ...]:
+    """The Kirchhoff/bridge/sim exceptions a testbench sim may raise — caught so
+    a sim failure becomes a diagnostic on the REState (the testbench is a
+    best-effort validation, never a pipeline-killer), not an uncaught crash."""
+    from heaviside.catalogue.kirchhoff_fill import KirchhoffFillError
+    from heaviside.catalogue.selector import SelectionError
+    from heaviside.decomposer.kirchhoff_adapter import (
+        KirchhoffSpecError,
+        KirchhoffTopologyUnsupported,
+        KirchhoffUnavailable,
+    )
+    from heaviside.sim import SimError
+
+    errs: list[type[Exception]] = [
+        KirchhoffUnavailable,
+        KirchhoffTopologyUnsupported,
+        KirchhoffSpecError,
+        KirchhoffFillError,
+        SelectionError,
+        SimError,
+    ]
+    try:
+        from heaviside.bridge import BridgeError
+
+        errs.append(BridgeError)
+    except Exception:  # bridge import is optional context for the tuple
+        pass
+    try:
+        # _design_ktas_magnetics raises RealizeError when MKF cannot wind a core for
+        # the (reference) inductance — a surfaced magnetic-design failure, turned into
+        # a testbench diagnostic rather than crashing the whole crossref run.
+        from heaviside.pipeline.full_design import RealizeError
+
+        errs.append(RealizeError)
+    except Exception:  # optional context for the tuple
+        pass
+    return tuple(errs)
+
+
+def _op_to_simresult(op: dict[str, Any], vin: float) -> Any:
+    """Build a runner ``SimResult`` from a Kirchhoff regulated operating point,
+    so the existing comparison/report code (which reads ``.vout`` / ``.efficiency``
+    / ``.pin`` …) is unchanged. Fail-loud on a non-finite point."""
+    import math
+
+    from heaviside.sim.runner import SimResult
+
+    vout = float(op["vout"])
+    pin = float(op["pin"])
+    pout = float(op["pout"])
+    eff = float(op["efficiency"])
+    if not all(math.isfinite(x) for x in (vout, pin, pout, eff)) or pin <= 0:
+        raise ValueError(f"non-finite/zero Kirchhoff operating point: {op}")
+    return SimResult(
+        vin=float(vin),
+        iin=(pin / vin if vin else 0.0),
+        vout=vout,
+        iout=(pout / vout if vout else 0.0),
+        pin=pin,
+        pout=pout,
+        total_losses=pin - pout,
+        efficiency=eff,
+    )
+
+
+def _set_tas_load(tas: dict[str, Any], vout: float, iout: float) -> None:
+    """Set the primary output power (= Vout·Iout) on every Kirchhoff operating
+    point, so ``tas_to_ngspice`` emits the matching ``Rload`` and the regulated
+    sim reports efficiency at THIS load. In-place on a (caller-owned) copy."""
+    power = float(vout) * float(iout)
+    ops = tas.get("inputs", {}).get("operatingPoints")
+    if not isinstance(ops, list):
+        return
+    for op in ops:
+        outs = op.get("outputs") if isinstance(op, dict) else None
+        if isinstance(outs, list) and outs and isinstance(outs[0], dict):
+            outs[0]["power"] = power
+
+
+def _regulate_at_load(
+    k_tas: dict[str, Any],
+    vout: float,
+    iout: float,
+    topology: str,
+    *,
+    fidelity: str,
+    label: str,
+) -> dict[str, Any] | None:
+    """Closed-loop REGULATED operating point at a specific output current.
+
+    Deep-copies the TAS (so the design/parts are untouched), sets the load, and
+    runs Kirchhoff's ``simulate_regulated``. Returns the op dict, or ``None`` if
+    the design did not regulate to target / produced a non-physical point (a
+    surfaced sim failure, not a silent fallback)."""
+    import copy
+
+    t = copy.deepcopy(k_tas)
+    _set_tas_load(t, vout, iout)
+    try:
+        op = _ka.simulate_regulated(t, float(vout), topology, fidelity=fidelity)
+    except _kirchhoff_errors() as exc:
+        logger.warning("testbench [%s]: Kirchhoff sim failed: %s", label, exc)
+        return None
+    if not op.get("regulated"):
+        logger.warning(
+            "testbench [%s]: did not regulate to %.3f V (vout=%s, converged=%s)",
+            label,
+            vout,
+            op.get("vout"),
+            op.get("converged"),
+        )
+        return None
+    return op
+
+
+def _simulate_phase(
+    k_tas: dict[str, Any],
+    topology: str,
+    vout: float,
+    iout: float,
+    vin: float,
+    ref_claims: ReferenceClaims,
+    ref_spec: Any,
+    label: str,
+    *,
+    fidelity: str,
+) -> tuple[Any, SimComparison] | None:
+    """Regulate ``k_tas`` at (Vout, Iout) and build a comparison vs claims.
+
+    Returns ``(SimResult, SimComparison)`` or ``None`` on sim failure."""
+    op = _regulate_at_load(k_tas, vout, iout, topology, fidelity=fidelity, label=label)
+    if op is None:
+        return None
+    try:
+        sim_result = _op_to_simresult(op, vin)
+    except ValueError as exc:
+        logger.warning("testbench [%s]: %s", label, exc)
+        return None
+
+    comparison = _build_comparison(sim_result, ref_claims, ref_spec)
+    logger.info(
+        "testbench [%s]: η_sim=%.1f%% η_claimed=%.1f%% Δ=%.1fpp "
+        "Vout_sim=%.2f Vout_claimed=%.2f err=%.1f%% → %s",
+        label,
+        comparison.sim_efficiency * 100 if comparison.sim_efficiency else 0,
+        comparison.claimed_efficiency * 100 if comparison.claimed_efficiency else 0,
+        comparison.efficiency_delta_pp,
+        comparison.sim_vout,
+        comparison.claimed_vout,
+        comparison.vout_error_pct,
+        "PASS" if comparison.passed else "MISMATCH",
+    )
+    return sim_result, comparison
+
+
+def _override_cap_capacitance(tas: dict[str, Any], *, output: float | None, input_: float | None) -> None:
+    """Stamp the reference design's ACTUAL output/input filter capacitance into the
+    Kirchhoff per-component requirement BEFORE the BOM fill, so the fill sources a
+    real part close to the reference value (and the deck uses it). This replicates
+    the real board's filter AND sidesteps Kirchhoff's own (sometimes degenerate)
+    output-cap sizing — e.g. its boost designer can emit a NEGATIVE Cout; the
+    reference value is the physical truth here. Resonant caps are left to
+    Kirchhoff (their value sets the tank, not a filter)."""
+    for st in tas.get("topology", {}).get("stages", []):
+        for comp in st.get("circuit", {}).get("components", []):
+            data = comp.get("data")
+            if not isinstance(data, dict) or "capacitor" not in data:
+                continue
+            req = data.get("inputs", {}).get("designRequirements", {})
+            if not isinstance(req, dict):
+                continue
+            role = req.get("role")
+            cap = req.get("capacitance")
+            if not isinstance(cap, dict):
+                continue
+            if role == "outputFilter" and output and output > 0:
+                cap["nominal"] = float(output)
+            elif role == "inputFilter" and input_ and input_ > 0:
+                cap["nominal"] = float(input_)
+
+
+def _override_mosfet_ron(tas: dict[str, Any], ron: float) -> int:
+    """Overwrite the on-resistance of every (BOM-filled) MOSFET in the TAS with the
+    reference design's measured Rds_on, so the DATASHEET deck's switch model uses the
+    REAL board's conduction resistance (Kirchhoff reads ``onResistance`` from the
+    part envelope). Returns the count overwritten."""
+    n = 0
+    for st in tas.get("topology", {}).get("stages", []):
+        for comp in st.get("circuit", {}).get("components", []):
+            data = comp.get("data")
+            semi = data.get("semiconductor") if isinstance(data, dict) else None
+            if not isinstance(semi, dict) or "mosfet" not in semi:
+                continue
+            elec = (
+                semi["mosfet"]
+                .setdefault("manufacturerInfo", {})
+                .setdefault("datasheetInfo", {})
+                .setdefault("electrical", {})
+            )
+            elec["onResistance"] = float(ron)
+            n += 1
+    return n
+
+
+def _build_phase2_tas(
+    topology: str,
+    hs_spec: dict[str, Any],
+    *,
+    ref_cout: float | None,
+    ref_cin: float | None,
+    ron: float | None,
+) -> dict[str, Any]:
+    """Design the topology TAS and fill it into a virtual replica of the real board:
+    real BOM parts (Kirchhoff requirement fill), the magnetic GEOMETRY designed by
+    MKF from Kirchhoff's own per-component seed (MKF_MODEL — real DCR + AC ladder),
+    the reference filter capacitance, and the reference controller/FET Rds_on. The
+    spec already carries the reference inductance via ``desiredInductance`` so
+    Kirchhoff (and the MKF magnetic) are sized to the real board's L."""
+    from heaviside import bridge as _bridge
+    from heaviside.catalogue.kirchhoff_fill import (
+        KirchhoffFillError,
+        fill_kirchhoff_bom,
+        stamp_mkf_magnetic,
+    )
+    from heaviside.pipeline.full_design import _design_ktas_magnetics
+
+    k_tas = _ka.design_from_hs_spec(topology, hs_spec)
+    _override_cap_capacitance(k_tas, output=ref_cout, input_=ref_cin)
+    fill_kirchhoff_bom(k_tas, topology=topology)
+    n_mag = _design_ktas_magnetics(
+        k_tas,
+        bridge_mod=_bridge,
+        pyom_vendor=_bridge._import_pyom_vendor(),
+        stamp_fn=stamp_mkf_magnetic,
+    )
+    if n_mag == 0:
+        raise KirchhoffFillError(f"testbench: {topology} TAS has no magnetic to design")
+    if ron and ron > 0:
+        n_ron = _override_mosfet_ron(k_tas, ron)
+        logger.info("testbench: stamped reference Rds_on=%.1fmΩ on %d MOSFET(s)", ron * 1000, n_ron)
+    return k_tas
+
+
+def _extract_kirchhoff_waveforms(
+    k_tas: dict[str, Any],
+    op: dict[str, Any],
+    topology: str,
+) -> float | None:
+    """Measure the output-voltage ripple of the regulated Phase-2 design from a
+    Kirchhoff DATASHEET deck (real sim). The deck is emitted at the REGULATED
+    control value (so it sits on target), and ``v(Vout)`` peak-to-peak is measured
+    over the deck's own steady-state window. Returns ripple in millivolts, or
+    ``None`` if ngspice is unavailable / the measurement fails.
+
+    Only the top-level output node ``Vout`` is measured (always present, topology-
+    agnostic); the inductor/switch waveforms are derived analytically from the
+    KNOWN (reference) inductance + operating point in :func:`run_testbench`."""
+    import copy
+    import os
+    import subprocess
+    import tempfile
+
+    if shutil.which("ngspice") is None:
+        return None
+
+    reg = _ka._load_regulate()
+    t = copy.deepcopy(k_tas)
+    ctrl = op.get("control")
+    val = op.get("value")
+    field = reg._CONTROL.get(ctrl, (None,))[0] if isinstance(ctrl, str) else None
+    base = _ka.kirchhoff_base(topology) or topology
+    if field is not None and isinstance(val, (int, float)):
+        reg._set_control(t, field, float(val), base)
+
+    deck = _ka.tas_to_ngspice(t, "DATASHEET")
+
+    # Reuse the deck's own steady-state window (the AVG-vout meas line) for the
+    # ripple max/min. Use the `m_` result namespace so the measurement vector does
+    # not shadow the `v(Vout)` node (ngspice case-insensitive shadowing, abt #54).
+    win = re.search(r"meas\s+tran\s+vout\s+avg\s+v\(Vout\)\s+(from=\S+\s+to=\S+)", deck, re.IGNORECASE)
+    window = win.group(1) if win else ""
+    inject = (
+        f"meas tran m_vmax max v(Vout) {window}\n"
+        f"meas tran m_vmin min v(Vout) {window}\n"
+    )
+    if "\nrun\n" in deck:
+        deck = deck.replace("\nrun\n", "\nrun\n" + inject, 1)
+    else:
+        return None
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".cir", delete=False) as f:
+        f.write(deck)
+        cir = f.name
+    try:
+        proc = subprocess.run(["ngspice", "-b", cir], capture_output=True, text=True, timeout=60)
+    except Exception:  # sim failure surfaces as "no waveform" (best-effort)
+        return None
+    finally:
+        os.unlink(cir)
+
+    def _grab(name: str) -> float | None:
+        m = re.search(rf"\b{name}\s*=\s*([-\d.eE+]+)", proc.stdout + proc.stderr)
+        try:
+            return float(m.group(1)) if m else None
+        except ValueError:
+            return None
+
+    vmax, vmin = _grab("m_vmax"), _grab("m_vmin")
+    if vmax is None or vmin is None:
+        return None
+    return abs(vmax - vmin) * 1000.0
+
+
+# ---------------------------------------------------------------------------
+# Load points
+# ---------------------------------------------------------------------------
 
 
 def _build_load_points(
@@ -880,9 +898,11 @@ def _build_load_points(
 
 
 def _build_converter_json(state: REState) -> tuple[dict[str, Any], str] | None:
-    """Build the MKF converter spec dict and normalize topology.
+    """Build the Heaviside converter spec dict and normalize the topology.
 
-    Returns (converter_json, topology) or None on failure.
+    Returns (hs_spec, topology) or None on failure. The spec is the
+    ``inputVoltage``/``operatingPoints``/``efficiency`` shape Kirchhoff's
+    :func:`design_from_hs_spec` consumes.
     """
     spec = state.ref_spec
     if not spec or spec.vout <= 0:
@@ -920,130 +940,121 @@ def _build_converter_json(state: REState) -> tuple[dict[str, Any], str] | None:
             converter_json["inputVoltage"]["minimum"] = converter_json["inputVoltage"]["nominal"]
             state.diagnostics.append(
                 f"testbench: Vin_min={vin_min:.1f}V < Vout×1.2={vout * 1.2:.1f}V — "
-                f"simulating at Vin_nom instead (MKF does not model 100% duty)."
+                f"simulating at Vin_nom instead (cannot model 100% duty)."
             )
 
     norm = _normalize_topology(topology)
     if not norm:
-        state.diagnostics.append(f"testbench: cannot map topology '{spec.topology}' to a stencil")
+        state.diagnostics.append(
+            f"testbench: cannot map topology '{spec.topology}' to a Kirchhoff designer"
+        )
         return None
     return converter_json, norm
 
 
-def _simulate_netlist(
-    netlist: str,
-    vout_target: float,
-    ref_claims: ReferenceClaims,
-    ref_spec: Any,
-    label: str,
-) -> tuple[Any, SimComparison] | None:
-    """Simulate a netlist and build a comparison against claims.
-
-    Returns (sim_result, comparison) or None on sim failure.
-    """
-    try:
-        from heaviside.sim.runner import simulate_closed_loop
-
-        sim_result = simulate_closed_loop(
-            netlist,
-            vout_target=vout_target,
-            tolerance=0.03,
-            max_iterations=16,
-        )
-    except Exception as exc:
-        logger.warning("testbench [%s]: simulation failed: %s", label, exc)
-        return None
-
-    comparison = _build_comparison(sim_result, ref_claims, ref_spec)
-    logger.info(
-        "testbench [%s]: η_sim=%.1f%% η_claimed=%.1f%% Δ=%.1fpp "
-        "Vout_sim=%.2f Vout_claimed=%.2f err=%.1f%% → %s",
-        label,
-        comparison.sim_efficiency * 100 if comparison.sim_efficiency else 0,
-        comparison.claimed_efficiency * 100 if comparison.claimed_efficiency else 0,
-        comparison.efficiency_delta_pp,
-        comparison.sim_vout,
-        comparison.claimed_vout,
-        comparison.vout_error_pct,
-        "PASS" if comparison.passed else "MISMATCH",
-    )
-    return sim_result, comparison
+# ---------------------------------------------------------------------------
+# Main testbench
+# ---------------------------------------------------------------------------
 
 
 def run_testbench(state: REState) -> REState:
-    """Virtual test bench: two-phase simulation.
+    """Virtual test bench: two-phase Kirchhoff simulation.
 
-    Phase 1 — Theoretical: decompose from spec with MKF's ideal
-    component values. This validates that the topology + operating point
-    produce physically reasonable efficiency before touching real BOM data.
+    Phase 1 — Theoretical (ideal): Kirchhoff designs the topology from the
+    reference spec and regulates it at IDEAL (REQUIREMENTS) fidelity. This
+    validates the topology + operating point produce a physically reasonable
+    closed-loop point before touching real BOM data.
 
-    Phase 2 — Real BOM: patch the scaffold netlist with actual component
-    values from the reference design's BOM (inductor, capacitor values),
-    inject parasitics, and re-simulate. This is the "virtual replica" of
-    the real board.
+    Phase 2 — Real BOM: the SAME design, filled into a virtual replica of the
+    real board — real BOM parts (Kirchhoff requirement fill), the magnetic
+    GEOMETRY designed by MKF from Kirchhoff's seed (real DCR), the reference's
+    ACTUAL inductance / filter capacitance / controller Rds_on stamped in — and
+    regulated at DATASHEET fidelity.
 
-    Comparing both phases against PDF claims tells us how much of any gap
-    is topology-inherent vs component-specific.
+    Comparing both phases against PDF claims tells us how much of any gap is
+    topology-inherent vs component-specific.
     """
     result = _build_converter_json(state)
     if result is None:
         return state
-    converter_json, topology = result
+    hs_spec, topology = result
     spec = state.ref_spec
     assert spec is not None
 
-    # Map BOM roles to stencil positions
+    if _ka.kirchhoff_base(topology) is None:
+        state.diagnostics.append(
+            f"testbench: Kirchhoff has no designer for topology {topology!r} "
+            f"(mapped from '{spec.topology}') — cannot simulate"
+        )
+        return state
+
+    # Map BOM roles (used by the stress extractor + diagnostics).
     role_map = build_role_map(state.ref_bom, spec.topology)
     state.role_map = role_map
     logger.info(
-        "testbench: mapped %d/%d BOM components to stencil roles (confidence %.0f%%)",
+        "testbench: mapped %d/%d BOM components to roles (confidence %.0f%%)",
         len(role_map.roles),
         len(state.ref_bom),
         role_map.confidence * 100,
     )
 
-    # Extract inductor value for magnetizing_inductance
-    mag_inductance = 100e-6
-    for comp in state.ref_bom:
-        role = comp.get("role", "")
-        if role in ("mainInductor", "boostInductor", "buckInductor", "mainTransformer"):
-            val = parse_component_value(str(comp.get("value", "")))
-            if val and val > 0:
-                mag_inductance = val
-                break
-
-    turns_ratios = [spec.turns_ratio] if spec.turns_ratio else [1.0]
-
-    # ------------------------------------------------------------------
-    # Phase 1: Theoretical — ideal components from MKF
-    # ------------------------------------------------------------------
-    try:
-        from heaviside.decomposer.api import decompose_from_spec
-
-        netlist_ideal, tas = decompose_from_spec(
-            topology,
-            converter_json,
-            turns_ratios,
-            mag_inductance,
-        )
-    except Exception as exc:
-        state.diagnostics.append(f"testbench: decompose failed: {exc}")
-        return state
-
-    logger.info("testbench: scaffold netlist generated (%d chars)", len(netlist_ideal))
-
-    # For synchronous buck/boost: replace the diode with a sync rectifier.
-    # Detect from: topology name, BOM roles, or PDF text.
-    raw_topo = spec.topology.lower()
-    has_sync_role = any(
-        comp.get("role", "") in ("synchronousRectifier", "lowSideSwitch") for comp in state.ref_bom
+    # Reference design's ACTUAL component values (drive the virtual replica).
+    ref_l = _ref_value_for_roles(
+        state.ref_bom,
+        ("mainInductor", "boostInductor", "buckInductor", "mainTransformer"),
     )
-    pdf_says_sync = "synchronous" in (state.pdf_text or "").lower()
-    is_sync = "synchronous" in raw_topo or "sync" in raw_topo or has_sync_role or pdf_says_sync
-    # Rds_on priority: TAS controllers (verified) > PDF extraction (may be wrong variant)
-    ron_from_tas = _get_controller_rdson(state.ref_bom)
-    if ron_from_tas:
-        ron = ron_from_tas
+    ref_cout = _ref_value_for_roles(state.ref_bom, ("outputCapacitor",))
+    ref_cin = _ref_value_for_roles(state.ref_bom, ("inputCapacitor",))
+    if ref_l and ref_l > 0:
+        hs_spec["desiredInductance"] = ref_l
+
+    vin = float(hs_spec["inputVoltage"]["nominal"])
+
+    # Detect multi-phase (simulate one phase at Iout/N).
+    raw_topo_full = spec.topology.lower()
+    pdf_lower = (state.pdf_text or "").lower()
+    n_phases = 1
+    if any(k in raw_topo_full for k in ("dual", "2-phase", "two-phase", "polyphase", "poly", "multi")):
+        n_phases = 2
+    if n_phases == 1 and any(
+        k in pdf_lower
+        for k in ("dual-phase", "dual phase", "2-phase", "two-phase", "polyphase", "2xlt", "2×lt")
+    ):
+        n_phases = 2
+    if n_phases == 1 and ("4-phase" in pdf_lower or "four-phase" in pdf_lower):
+        n_phases = 4
+    if n_phases > 1:
+        logger.info(
+            "testbench: %d-phase converter — simulating one phase at %.1fA (total %.1fA)",
+            n_phases,
+            spec.iout / n_phases,
+            spec.iout,
+        )
+
+    # Kirchhoff models the buck/boost family with a DIODE rectifier (asynchronous).
+    # When the reference is SYNCHRONOUS (a low-side FET replaces the diode) the real
+    # board's rectification loss is I²·Rds_on, not I·Vf — so the simulated efficiency
+    # is CONSERVATIVE (lower) than the real sync board by the diode-vs-FET conduction
+    # gap. Surface it as a diagnostic (not a silent wrong number) so the efficiency
+    # comparison is read with this Kirchhoff model gap in mind.
+    has_sync_role = any(
+        c.get("role", "") in ("synchronousRectifier", "lowSideSwitch") for c in state.ref_bom
+    )
+    pdf_says_sync = "synchronous" in pdf_lower
+    if ("buck" in topology or "boost" in topology) and (
+        "sync" in raw_topo_full or has_sync_role or pdf_says_sync
+    ):
+        state.diagnostics.append(
+            "testbench: reference is SYNCHRONOUS but Kirchhoff models this topology "
+            "asynchronously (diode rectifier) — simulated efficiency is conservative "
+            "(real sync board's I²·Rds_on rectification loss is lower than the modeled "
+            "diode I·Vf loss)."
+        )
+
+    # Rds_on priority: internal-DB controllers (verified) > PDF extraction.
+    ron = _get_controller_rdson(state.ref_bom)
+    if ron:
+        pass
     elif spec.rdson_hs and spec.rdson_ls:
         ron = (spec.rdson_hs + spec.rdson_ls) / 2 / 1000  # mΩ → Ω
         logger.info(
@@ -1056,88 +1067,28 @@ def run_testbench(state: REState) -> REState:
         logger.info("testbench: Rds_on from PDF extraction: %.1fmΩ", spec.rdson_hs)
     else:
         state.diagnostics.append(
-            "testbench: Rds_on not available — not in TAS controllers "
+            "testbench: Rds_on not available — not in internal-DB controllers "
             "and IC datasheet extraction failed. Cannot simulate."
         )
         return state
 
-    # Detect multi-phase from topology string OR PDF text
-    raw_topo_full = spec.topology.lower()
-    pdf_lower = (state.pdf_text or "").lower()
-    n_phases = 1
-    if any(k in raw_topo_full for k in ("dual", "2-phase", "two-phase")) or any(
-        k in raw_topo_full for k in ("polyphase", "poly", "multi")
-    ):
-        n_phases = 2
-    # Also check PDF text (LLM may not include phase info in topology)
-    if n_phases == 1 and any(
-        k in pdf_lower
-        for k in (
-            "dual-phase",
-            "dual phase",
-            "2-phase",
-            "two-phase",
-            "polyphase",
-            "2xlt",
-            "2×lt",
-        )
-    ):
-        n_phases = 2
-    if n_phases == 1 and ("4-phase" in pdf_lower or "four-phase" in pdf_lower):
-        n_phases = 4
+    iout_phase = spec.iout / n_phases
 
-    if n_phases > 1:
-        # Rewrite Rload to simulate one phase at Iout/N
-        iout_per_phase = spec.iout / n_phases
-        rload_per_phase = spec.vout / iout_per_phase if iout_per_phase > 0 else spec.vout
-        netlist_ideal = _rewrite_rload(netlist_ideal, rload_per_phase)
-        logger.info(
-            "testbench: %d-phase converter — simulating one phase at %.1fA (total %.1fA)",
-            n_phases,
-            iout_per_phase,
-            spec.iout,
-        )
+    # ------------------------------------------------------------------
+    # Phase 1: Theoretical — Kirchhoff design, ideal (REQUIREMENTS) fidelity
+    # ------------------------------------------------------------------
+    try:
+        k_ideal = _ka.design_from_hs_spec(topology, hs_spec)
+    except _kirchhoff_errors() as exc:
+        state.diagnostics.append(f"testbench: Kirchhoff design failed: {exc}")
+        return state
 
-    if is_sync and "buck" in topology:
-        netlist_ideal = _convert_to_sync_buck(netlist_ideal, ron=ron)
-    else:
-        netlist_ideal = _rewrite_ron(netlist_ideal, ron)
-
-    # Inject inductor DCR from TAS data (no heuristic estimates)
-    inductor_dcr = _get_inductor_dcr(state.ref_bom)
-    if inductor_dcr is not None:
-        netlist_ideal = _inject_inductor_dcr(netlist_ideal, inductor_dcr)
-    else:
-        state.diagnostics.append(
-            "testbench: inductor DCR not available in TAS — "
-            "simulation uses ideal inductor (no winding loss)"
-        )
-
-    # Note: switching overlap loss (P = 0.5×Vin×Iout×tr_tf×fsw) is NOT
-    # modeled because ngspice behavioral sources on inductor current
-    # include transient spikes that inflate the loss beyond physical values.
-    # The remaining efficiency gap (typically 1-6pp) comes from:
-    #   - Gate drive: Qg × Vg × fsw (not in sim)
-    #   - Switching overlap: 0.5 × Vin × Iout × (tr+tf) × fsw (not in sim)
-    #   - PCB trace resistance (not in sim)
-
-    logger.info(
-        "testbench: RON=%.2fmΩ DCR=%s Iout=%.1fA fsw=%.0fkHz",
-        ron * 1000,
-        f"{inductor_dcr * 1000:.1f}mΩ" if inductor_dcr else "N/A",
-        spec.iout,
-        spec.fsw / 1000,
-    )
-
-    phase1 = _simulate_netlist(
-        netlist_ideal,
-        spec.vout,
-        state.ref_claims,
-        spec,
-        "ideal",
+    phase1 = _simulate_phase(
+        k_ideal, topology, spec.vout, iout_phase, vin,
+        state.ref_claims, spec, "ideal", fidelity="REQUIREMENTS",
     )
     if phase1 is None:
-        state.diagnostics.append("testbench: ideal simulation failed")
+        state.diagnostics.append("testbench: ideal (Kirchhoff REQUIREMENTS) simulation failed")
         return state
 
     sim_ideal, comp_ideal = phase1
@@ -1154,8 +1105,8 @@ def run_testbench(state: REState) -> REState:
         "total_losses": sim_ideal.total_losses,
     }
 
-    # If even the ideal sim is wildly off (>30pp), something is wrong
-    # with the spec extraction — don't proceed to BOM patching.
+    # If even the ideal sim is wildly off (>30pp), something is wrong with the
+    # spec extraction — don't proceed to BOM realization.
     if comp_ideal.efficiency_delta_pp > 30 and comp_ideal.claimed_efficiency > 0:
         state.diagnostics.append(
             f"testbench: ideal sim η={sim_ideal.efficiency:.1%} vs "
@@ -1167,47 +1118,22 @@ def run_testbench(state: REState) -> REState:
         return state
 
     # ------------------------------------------------------------------
-    # Phase 2: Real BOM — patch with actual component values
+    # Phase 2: Real BOM — Kirchhoff design filled into a virtual replica
     # ------------------------------------------------------------------
-    netlist_bom = netlist_ideal
+    try:
+        k_bom = _build_phase2_tas(
+            topology, hs_spec, ref_cout=ref_cout, ref_cin=ref_cin, ron=ron
+        )
+    except _kirchhoff_errors() as exc:
+        state.diagnostics.append(f"testbench: BOM realization failed: {exc}")
+        _learn_from_testbench(state)
+        return state
 
-    if n_phases > 1:
-        # Multi-phase boards have duplicate components per phase. BOM
-        # patching would overwrite the same netlist refs multiple times
-        # with values from different phases. Skip BOM patching — the
-        # ideal phase with correct Rds_on + DCR is sufficient.
-        logger.info("testbench: skipping BOM patching for %d-phase board", n_phases)
-        patched = 0
-    else:
-        patched = 0
-        for comp in state.ref_bom:
-            ref_des = comp.get("ref_des", "")
-            stencil_ref = role_map.roles.get(ref_des)
-            if not stencil_ref:
-                continue
-            value = parse_component_value(str(comp.get("value", "")))
-            if value and value > 0:
-                cat = comp.get("category", comp.get("component_type", ""))
-                if cat in ("capacitor", "inductor", "magnetic"):
-                    netlist_bom = _rewrite_component_value(
-                        netlist_bom,
-                        stencil_ref,
-                        value,
-                    )
-                    patched += 1
-
-        # Inject parasitics from TAS
-        try:
-            from heaviside.sim import inject_parasitics
-
-            netlist_bom = inject_parasitics(netlist_bom, tas)
-        except Exception as exc:
-            state.diagnostics.append(f"testbench: parasitic injection failed: {exc}")
-
-    logger.info("testbench: patched %d BOM values into netlist", patched)
-
-    state.netlist = netlist_bom
-    state.tas = tas
+    state.tas = k_bom
+    try:
+        state.netlist = _ka.tas_to_ngspice(k_bom, "DATASHEET")
+    except _kirchhoff_errors() as exc:
+        logger.warning("testbench: could not emit DATASHEET deck for state.netlist: %s", exc)
 
     # ------------------------------------------------------------------
     # Phase 2: Simulate at each claimed efficiency operating point
@@ -1219,20 +1145,20 @@ def run_testbench(state: REState) -> REState:
         label = lp["label"]
         iout = lp["iout"] / n_phases  # per-phase current
         claimed_eff = lp["efficiency"]
-        rload = spec.vout / iout if iout > 0 else spec.vout / spec.iout
-
-        nl_lp = _rewrite_rload(netlist_bom, rload)
         lp_claims = ReferenceClaims(
             efficiency={label: claimed_eff} if claimed_eff else {},
             vout_measured=state.ref_claims.vout_measured,
         )
-        result = _simulate_netlist(nl_lp, spec.vout, lp_claims, spec, f"bom@{label}")
-        if result is None:
+        res = _simulate_phase(
+            k_bom, topology, spec.vout, iout, vin,
+            lp_claims, spec, f"bom@{label}", fidelity="DATASHEET",
+        )
+        if res is None:
             state.diagnostics.append(f"testbench: BOM sim failed at {label}")
             all_bom_passed = False
             continue
 
-        sim_lp, comp_lp = result
+        sim_lp, comp_lp = res
         state.comparisons.append(comp_lp)
         state.sim_result = {
             "phase": f"bom@{label}",
@@ -1248,16 +1174,13 @@ def run_testbench(state: REState) -> REState:
     if all_bom_passed and load_points:
         state.passed = True
     elif not load_points:
-        # No claimed load points — fall back to single full-load sim
-        phase2 = _simulate_netlist(
-            netlist_bom,
-            spec.vout,
-            state.ref_claims,
-            spec,
-            "bom",
+        # No claimed load points — single full-load sim.
+        res = _simulate_phase(
+            k_bom, topology, spec.vout, iout_phase, vin,
+            state.ref_claims, spec, "bom", fidelity="DATASHEET",
         )
-        if phase2:
-            _sim_bom, comp_bom = phase2
+        if res:
+            _sim_bom, comp_bom = res
             state.comparisons.append(comp_bom)
             state.passed = comp_bom.passed
     else:
@@ -1270,41 +1193,35 @@ def run_testbench(state: REState) -> REState:
     # ------------------------------------------------------------------
     # Phase 3: Waveform characterization + analytical cross-check
     # ------------------------------------------------------------------
+    actual_l = ref_l or 100e-6
+    actual_cout = ref_cout or 1e-4
 
-    # Extract Cout from BOM for analytical calc
-    cout_val = 1e-4  # default
-    for comp in state.ref_bom:
-        role = comp.get("role", "")
-        if role == "outputCapacitor":
-            val = parse_component_value(str(comp.get("value", "")))
-            if val and val > 0:
-                cout_val = val
-                break
-
-    # Extract actual L and Cout from the netlist (post-patching)
-    l_match = re.search(r"^L1\s+\S+\s+\S+\s+([\d.eE+\-]+)", netlist_bom, re.MULTILINE)
-    cout_match = re.search(r"^Cout\s+\S+\s+\S+\s+([\d.eE+\-]+)", netlist_bom, re.MULTILINE)
-    actual_l = float(l_match.group(1)) if l_match else mag_inductance
-    actual_cout = float(cout_match.group(1)) if cout_match else cout_val
-
-    wf = _extract_waveforms(netlist_bom, spec.vout)
-    if wf:
+    op_wf = _regulate_at_load(
+        k_bom, spec.vout, iout_phase, topology, fidelity="DATASHEET", label="waveform"
+    )
+    if op_wf is not None:
+        analytical = _compute_analytical_waveforms(spec, actual_l, actual_cout, topology)
+        il_avg = abs(float(op_wf["pout"]) / spec.vout) if spec.vout else 0.0
+        vout_ripple_mv = _extract_kirchhoff_waveforms(k_bom, op_wf, topology)
+        # Inductor + switch waveforms are derived from the KNOWN reference L +
+        # operating point (analytical); the output ripple is the real measured
+        # sim quantity that cross-checks L AND Cout together.
+        wf = WaveformCharacteristics(
+            vout_ripple_mv=vout_ripple_mv if vout_ripple_mv is not None else analytical.vout_ripple_mv,
+            vsw_vpp=analytical.vsw_vpp,
+            il_ripple_a=analytical.il_ripple_a,
+            il_avg_a=il_avg,
+        )
         logger.info(
-            "testbench waveforms: Vout_ripple=%.1fmV Vsw_pp=%.1fV IL_ripple=%.2fA IL_avg=%.2fA",
+            "testbench waveforms: Vout_ripple=%.1fmV (%s) Vsw_pp=%.1fV IL_ripple=%.2fA IL_avg=%.2fA",
             wf.vout_ripple_mv,
+            "measured" if vout_ripple_mv is not None else "analytical",
             wf.vsw_vpp,
             wf.il_ripple_a,
             wf.il_avg_a,
         )
 
-        analytical = _compute_analytical_waveforms(
-            spec,
-            actual_l,
-            actual_cout,
-            topology,
-        )
         wf_checks = _check_waveforms(wf, analytical)
-
         state.sim_result = state.sim_result or {}
         if isinstance(state.sim_result, dict):
             state.sim_result["waveforms"] = {
