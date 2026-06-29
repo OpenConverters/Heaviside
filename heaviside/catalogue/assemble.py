@@ -1,8 +1,8 @@
 """BOM assembly: walk TAS placeholders, pick real MPNs, stamp them.
 
-Runs between ``bridge.attach_components_to_tas`` (which fills the
-magnetics from PyMKF) and the realism gate (which compares each
-component's rated values against per-class stress thresholds).
+Runs after the magnetics are designed from Kirchhoff's TAS seeds (PyOM/MKF
+geometry) and before the realism gate (which compares each component's rated
+values against per-class stress thresholds).
 
 Per CLAUDE.md "no fallbacks": each placeholder either gets stamped with a
 real selection from the TAS DB or raises :class:`SelectionError` from the

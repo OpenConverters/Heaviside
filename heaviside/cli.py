@@ -10,21 +10,13 @@ from typing import Any
 import typer
 
 from heaviside import __version__
-from heaviside.topologies import CONVERTERS, MAGNETICS_ONLY, TOPOLOGIES, get
+from heaviside.topologies import CONVERTERS, MAGNETICS_ONLY, TOPOLOGIES
 
 app = typer.Typer(
     name="heaviside",
     help="PyOpenMagnetics-first power electronics design system.",
     no_args_is_help=True,
     add_completion=False,
-)
-
-
-# Families whose MKF decks need ``bridge_simulation_mode="switch"`` so that
-# real MOSFET refdeses appear in the netlist (otherwise the stencils refuse
-# the deck because the bridge collapses to a single ``Vbridge`` source).
-_BRIDGE_FAMILIES = frozenset(
-    {"isolated_bridge", "isolated_push_pull", "resonant", "series_resonant"}
 )
 
 
@@ -61,99 +53,41 @@ def _load_spec(path: Path) -> dict[str, Any]:
         raise typer.Exit(code=2) from None
 
 
-def _parse_turns(raw: str | None, spec: dict[str, Any]) -> list[float]:
-    """Resolve turns ratios from --turns flag or fall back to spec fields."""
-    if raw is not None:
-        try:
-            return [float(t.strip()) for t in raw.split(",") if t.strip()]
-        except ValueError as exc:
-            typer.echo(f"error: --turns must be a comma-separated list of floats: {exc}", err=True)
-            raise typer.Exit(code=2) from None
-    # Common MAS field names — accept the first one we find.
-    for key in ("desiredTurnsRatios", "turnsRatios"):
-        if key in spec:
-            value = spec[key]
-            if isinstance(value, list) and all(isinstance(v, (int, float)) for v in value):
-                return [float(v) for v in value]
-    # Many non-isolated topologies legitimately have zero turns ratios.
-    return []
-
-
-def _parse_lm(raw: float | None, spec: dict[str, Any]) -> float:
-    if raw is not None:
-        return float(raw)
-    for key in ("desiredInductance", "magnetizingInductance"):
-        if key in spec and isinstance(spec[key], (int, float)):
-            return float(spec[key])
-    typer.echo(
-        "error: magnetizing inductance not provided (--lm) and not found in spec "
-        "(looked for 'desiredInductance', 'magnetizingInductance').",
-        err=True,
-    )
-    raise typer.Exit(code=2)
-
-
-def _resolve_bridge_mode(bridge_mode: str, topology: str) -> str:
-    if bridge_mode != "auto":
-        return bridge_mode
-    entry = get(topology)
-    return "switch" if entry.family in _BRIDGE_FAMILIES else ""
-
-
 @app.command()
 def design(
     topology: str = typer.Argument(..., help="Canonical topology name (e.g. 'buck', 'dab')."),
-    spec: Path = typer.Option(..., "--spec", "-s", help="JSON file with MAS converter spec."),
+    spec: Path = typer.Option(..., "--spec", "-s", help="JSON file with the Heaviside converter spec."),
     out: Path | None = typer.Option(
-        None, "--out", "-o", help="Write populated TAS to FILE (default: stdout)."
-    ),
-    turns: str | None = typer.Option(
-        None, "--turns", help="Comma-separated turns ratios; overrides spec."
-    ),
-    lm: float | None = typer.Option(
-        None, "--lm", help="Magnetizing inductance in henries; overrides spec."
-    ),
-    bridge_mode: str = typer.Option(
-        "auto",
-        "--bridge-mode",
-        help="MKF bridge simulation mode: 'auto' (default), '', 'switch', or 'pulse'.",
+        None, "--out", "-o", help="Write the TAS to FILE (default: stdout)."
     ),
     no_attach: bool = typer.Option(
         False,
         "--no-attach",
-        help="Skip Phase B (component design + attachment). Emit decomposed TAS only.",
+        help="Emit Kirchhoff's BARE TAS (every component a design requirement; no BOM / magnetic fill).",
     ),
     realism: bool = typer.Option(
         False,
         "--realism",
-        help=(
-            "Run the realism gate on the populated TAS. Fail-closed: exits 6 "
-            "if any check FAILS or every applicable check is UNAVAILABLE "
-            "(INCOMPLETE). v0.1 typically returns INCOMPLETE until the "
-            "librarian / sim agents enrich the pipeline."
-        ),
+        help="Report the realism-gate verdict (the full realize path runs it); exits 6 if it FAILs.",
     ),
     compact: bool = typer.Option(False, "--compact", help="Emit JSON without indentation."),
 ) -> None:
-    """Run the end-to-end pipeline: spec → MKF deck → TAS → designed components → populated TAS.
+    """Design a converter through Kirchhoff (della-Pollock cutover, abt #48).
+
+    Kirchhoff designs the topology and emits the TAS \u2014 every component as a design REQUIREMENT
+    (seed). HS fills the BOM (real Q/D/C from the internal DB) and designs each magnetic GEOMETRY via
+    PyOM/MKF from Kirchhoff's per-component seed; the realism gate reads the populated TAS. The MKF
+    converter models (process_converter / design_magnetics_from_converter / get_extra_components_inputs)
+    are retired \u2014 the converter math + the full component list are Kirchhoff's; MKF is geometry-only.
 
     Examples:
 
-        # Buck — non-isolated, no turns ratios:
+        # Buck \u2014 full realize (BOM + magnetics + gate):
         heaviside design buck --spec buck_48to12.json
 
-        # DAB — bidirectional bridge (auto switch-mode):
-        heaviside design dab --spec dab_800to500.json --turns 1.6 --out dab.tas.json
-
-        # Just decompose; skip component design:
+        # Just Kirchhoff's bare TAS (component requirements, no fill):
         heaviside design flyback --spec fly.json --no-attach
     """
-    # Lazy imports so that ``heaviside version`` / ``heaviside topologies``
-    # do not pay for PyOpenMagnetics' large native module load.
-    from heaviside import bridge as _bridge
-    from heaviside.bridge import BridgeError
-    from heaviside.decomposer import decompose_from_spec
-    from heaviside.decomposer.api import DecomposerError
     from heaviside.spec.validate_topology import (
         SpecValidationError,
         validate_spec_for_topology,
@@ -161,124 +95,37 @@ def design(
 
     spec_json = _load_spec(spec)
 
-    # Per-topology spec validation runs BEFORE any PyMKF call so users
-    # see "missing maximumDutyCycle" up-front instead of mid-pipeline.
+    # Per-topology spec validation runs up-front so users see "missing maximumDutyCycle" before any
+    # Kirchhoff / PyOM call.
     try:
         validate_spec_for_topology(topology, spec_json)
     except SpecValidationError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=2) from None
 
-    turns_ratios = _parse_turns(turns, spec_json)
-    mode = _resolve_bridge_mode(bridge_mode, topology)
-
-    # L is computed by MKF in design_converter_components — it owns the
-    # physics derivation (V·s, ripple ratio, duty). Heaviside should not
-    # second-guess it. Order of operations:
-    #   1. Design the magnetic first (no_attach path skips this).
-    #   2. Harvest L from the picked main magnetic.
-    #   3. Inject L into the spec dict so every downstream consumer
-    #      (decompose, extract.py, stress.py, sim.runner) reads the
-    #      same value via the existing ``desiredInductance`` /
-    #      ``desiredMagnetizingInductance`` keys.
-    #   4. Decompose with the harvested L.
-    #
-    # --lm CLI flag is an escape hatch: forces a specific L (e.g. for
-    # research / reproducibility) and short-circuits the harvest.
-    # --no-attach must still supply L via spec or --lm because there
-    # is no design step to harvest from.
-    components = None
+    verdict: str | None = None
     if no_attach:
-        magnetizing_inductance = _parse_lm(lm, spec_json)
+        # Kirchhoff's bare TAS: every component is a SEED (family slot + designRequirements). No BOM
+        # selection, no magnetic geometry \u2014 the "decompose only" mode.
+        from heaviside.decomposer import kirchhoff_adapter as _ka
+
+        try:
+            tas = _ka.design_from_hs_spec(topology, spec_json)
+        except Exception as exc:  # noqa: BLE001 - surface any Kirchhoff design failure with its type
+            typer.echo(f"error: Kirchhoff design failed ({type(exc).__name__}): {exc}", err=True)
+            raise typer.Exit(code=3) from None
     else:
+        # Full della-Pollock realize: Kirchhoff designs it, HS fills parts + designs the magnetics
+        # (PyOM/MKF) from Kirchhoff's seeds, the realism gate reads it. One KH TAS, end to end.
+        from heaviside.pipeline.converter_designer import design_converter
+
         try:
-            components = _bridge.design_converter_components(
-                topology,
-                spec_json,
-                max_results=1,
-                use_ngspice=False,
-            )
-        except BridgeError as exc:
-            typer.echo(f"error: bridge design failed: {exc}", err=True)
-            raise typer.Exit(code=4) from None
-        except Exception as exc:
-            typer.echo(
-                f"error: component design failed ({type(exc).__name__}): {exc}",
-                err=True,
-            )
+            outcome = design_converter(topology, spec_json, use_llm=False, with_reviewers=False)
+        except Exception as exc:  # noqa: BLE001 - surface any realize failure with its type
+            typer.echo(f"error: design failed ({type(exc).__name__}): {exc}", err=True)
             raise typer.Exit(code=5) from None
-
-        # Save transformer Lm before clobbering — ACF needs it below.
-        orig_lm = spec_json.get("desiredMagnetizingInductance")
-        if lm is not None:
-            magnetizing_inductance = float(lm)
-        else:
-            magnetizing_inductance = components.L_authoritative
-            spec_json["desiredInductance"] = magnetizing_inductance
-            spec_json["desiredMagnetizingInductance"] = magnetizing_inductance
-
-    # For ACF the main magnetic is the output choke; the deck's Lpri
-    # must be the transformer Lm from the original spec.
-    lm_for_deck = magnetizing_inductance
-    if (
-        topology == "active_clamp_forward"
-        and components is not None
-        and isinstance(orig_lm, (int, float))
-        and orig_lm > 0
-        and orig_lm > 5 * magnetizing_inductance
-    ):
-        lm_for_deck = float(orig_lm)
-
-    try:
-        _, tas = decompose_from_spec(
-            topology,
-            spec_json,
-            turns_ratios=turns_ratios,
-            magnetizing_inductance=lm_for_deck,
-            bridge_simulation_mode=mode,
-        )
-    except DecomposerError as exc:
-        typer.echo(f"error: decompose failed: {exc}", err=True)
-        raise typer.Exit(code=3) from None
-
-    if not no_attach:
-        try:
-            _bridge.attach_components_to_tas(tas, components, topology=topology)
-            # Pick real Q/D/C MPNs from the local TAS DB. Skipped silently
-            # for topologies with no stress deriver registered yet; the
-            # realism gate's voltage-derating checks will stay UNAVAILABLE
-            # for those topologies, which is the honest failure mode.
-            from heaviside.catalogue import (
-                SelectionError,
-                assemble_bom_from_tas,
-            )
-            from heaviside.pipeline.stress import StressDerivationError
-
-            try:
-                assemble_bom_from_tas(tas, topology=topology, spec=spec_json)
-            except SelectionError as exc:
-                typer.echo(
-                    f"warn: BOM selection failed for {topology!r} — "
-                    f"realism gate will FAIL on the affected components. "
-                    f"Detail: {exc}",
-                    err=True,
-                )
-            except StressDerivationError as exc:
-                typer.echo(
-                    f"warn: BOM skipped for {topology!r} — "
-                    f"spec missing fields for stress derivation. "
-                    f"Detail: {exc}",
-                    err=True,
-                )
-        except BridgeError as exc:
-            typer.echo(f"error: bridge attach failed: {exc}", err=True)
-            raise typer.Exit(code=4) from None
-        except Exception as exc:
-            typer.echo(
-                f"error: component design failed ({type(exc).__name__}): {exc}",
-                err=True,
-            )
-            raise typer.Exit(code=5) from None
+        tas = outcome.tas
+        verdict = outcome.verdict
 
     payload = json.dumps(tas, indent=None if compact else 2)
     if out is None:
@@ -288,107 +135,9 @@ def design(
         out.write_text(payload + ("" if compact else "\n"))
         typer.echo(f"wrote {out}", err=True)
 
-    if realism:
-        from heaviside.pipeline import (
-            EnrichmentError,
-            RealismVerdict,
-            enrich_tas_for_realism,
-        )
-        from heaviside.sim import (
-            SimError,
-            simulate_closed_loop,
-            simulate_steady_state,
-            stamp_simulation_results,
-        )
-        from heaviside.stages.realism_gate import evaluate as evaluate_tas
-
-        try:
-            tas_for_gate = enrich_tas_for_realism(tas, topology=topology, spec=spec_json)
-        except EnrichmentError as exc:
-            typer.echo(f"error: realism enrichment failed: {exc}", err=True)
-            raise typer.Exit(code=6) from None
-
-        # Sim: try closed-loop first (iterative duty search until vout
-        # matches spec target). Falls back to open-loop steady-state if
-        # the deck has no PWM source (resonant/bridge topologies) or
-        # the duty search doesn't converge. SimError is non-fatal — the
-        # realism gate keeps sim-dependent checks UNAVAILABLE if both
-        # paths fail.
-        try:
-            from heaviside.sim.parasitics import inject_parasitics
-
-            netlist, _ = decompose_from_spec(
-                topology,
-                spec_json,
-                turns_ratios=turns_ratios,
-                magnetizing_inductance=lm_for_deck,
-                bridge_simulation_mode=mode,
-            )
-            netlist = inject_parasitics(netlist, tas)
-            sim_result = None
-            is_closed_loop = False
-            ops = spec_json.get("operatingPoints") or [{}]
-            first_op = ops[0] if isinstance(ops[0], dict) else {}
-            vouts = first_op.get("outputVoltages")
-            vout_target = (
-                float(vouts[0])
-                if isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))
-                else None
-            )
-            if vout_target is not None:
-                try:
-                    sim_result = simulate_closed_loop(
-                        netlist,
-                        vout_target=vout_target,
-                    )
-                    is_closed_loop = True
-                except SimError as exc:
-                    typer.echo(
-                        f"closed-loop sim fell back to open-loop: {exc}",
-                        err=True,
-                    )
-            if sim_result is None:
-                sim_result = simulate_steady_state(netlist)
-            stamp_simulation_results(tas_for_gate, sim_result)
-            if is_closed_loop:
-                # Tells the realism gate's output_voltage_regulation
-                # check to actually evaluate (instead of falling through
-                # to NOT_APPLICABLE on the controller-present heuristic).
-                tas_for_gate["simulation_results"]["op0"]["is_closed_loop"] = True
-        except (SimError, DecomposerError) as exc:
-            typer.echo(f"sim runner skipped: {exc}", err=True)
-
-        # Analyst stage: per-component loss attribution + junction
-        # temperatures. No-op for topologies without a registered
-        # analyst (realism gate keeps no_negative_losses + thermal_limit
-        # UNAVAILABLE for those, which is the honest failure mode).
-        from heaviside.pipeline.analyst import AnalystError, run_analyst
-
-        try:
-            run_analyst(topology, tas_for_gate, spec_json)
-        except AnalystError as exc:
-            typer.echo(f"analyst skipped: {exc}", err=True)
-
-        report = evaluate_tas(tas_for_gate, topology=topology, spec=spec_json)
-        summary = report.summary
-        typer.echo(
-            f"realism: verdict={report.verdict.value} "
-            f"pass={summary['pass']} fail={summary['fail']} "
-            f"unavailable={summary['unavailable']} "
-            f"not_applicable={summary['not_applicable']}",
-            err=True,
-        )
-        for c in report.checks:
-            if c.status.value == "pass":
-                typer.echo(
-                    f"  [pass] {c.name}: value={c.value} margin={c.margin}",
-                    err=True,
-                )
-            elif c.status.value in ("fail", "unavailable"):
-                typer.echo(
-                    f"  [{c.status.value}] {c.name}: {c.detail or ''}".rstrip(": "), err=True
-                )
-        if report.verdict is not RealismVerdict.PASS:
+    if realism and verdict is not None:
+        typer.echo(f"realism verdict: {verdict}", err=True)
+        if str(verdict).lower() == "fail":
             raise typer.Exit(code=6)
 
 
