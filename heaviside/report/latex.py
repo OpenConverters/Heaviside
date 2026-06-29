@@ -146,7 +146,7 @@ def _pct(ratio: float | None, sig: int = 3) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _TOPO_LABEL: dict[str, str] = {
-    "buck": "Synchronous Buck DC-DC Converter",
+    "buck": "Buck DC-DC Converter",
     "boost": "Boost DC-DC Converter",
     "buck_boost": "Buck-Boost DC-DC Converter",
     "flyback": "Flyback Isolated DC-DC Converter",
