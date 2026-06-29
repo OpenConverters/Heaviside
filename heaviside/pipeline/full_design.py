@@ -55,7 +55,6 @@ from heaviside.agents.magnetic_picker import (
 from heaviside.bridge import (
     BridgeError,
     MagneticDesign,
-    design_magnetics,
     select_fast_by_isat_margin,
 )
 from heaviside.pipeline.topology_screen import (

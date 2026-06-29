@@ -117,127 +117,6 @@ def _mas(*, scoring: float, shape: str, material: str, n_windings: int) -> dict:
 # -----------------------------------------------------------------------------
 
 
-def test_design_magnetics_returns_sorted_designs(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Top-scoring design comes first, even if PyOM returns them out of order."""
-    fake = _FakePyOM(
-        responses=[
-            {
-                "data": [
-                    _mas(scoring=2.0, shape="PQ 26/25", material="3C95", n_windings=1),
-                    _mas(scoring=5.0, shape="RM 8/I", material="3C97", n_windings=1),
-                    _mas(scoring=3.5, shape="ETD 29", material="N87", n_windings=1),
-                ]
-            }
-        ],
-    )
-    _patch_pyom(monkeypatch, fake)
-
-    designs = bridge.design_magnetics("buck", {"any": "spec"}, max_results=3)
-
-    assert [d.scoring for d in designs] == [5.0, 3.5, 2.0]
-    assert designs[0].core_shape_name == "RM 8/I"
-    assert designs[0].core_material_name == "3C97"
-    assert designs[0].winding_names == ("pri",)
-    assert designs[0].elapsed_s >= 0.0
-
-    # Verify dispatch sent the right call to PyOM.
-    assert len(fake.calls) == 1
-    name, spec, n, mode, ngs, w = fake.calls[0]
-    assert name == "buck"
-    assert spec == {"any": "spec"}
-    assert n == 3
-    assert mode == "standard cores"
-    assert ngs is False
-    assert w is None
-
-
-def test_design_magnetics_retries_unknown_topology_variant(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """If the first variant returns 'Unknown topology', the second is tried."""
-    fake = _FakePyOM(
-        responses=[
-            {"error": "Exception: Unknown topology cuk"},
-            {"data": [_mas(scoring=1.0, shape="PQ 20/16", material="3C95", n_windings=2)]},
-        ],
-    )
-    _patch_pyom(monkeypatch, fake)
-
-    # cuk has two registered pyom_names: ("cuk", "cukConverter").
-    designs = bridge.design_magnetics("cuk", {"any": "spec"})
-
-    assert len(designs) == 1
-    assert [call[0] for call in fake.calls] == ["cuk", "cukConverter"]
-
-
-def test_design_magnetics_unknown_topology_all_variants_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """If every variant says 'Unknown topology' on both pip and vendor, BridgeError is raised."""
-    fake = _FakePyOM(
-        responses=[
-            # pip pass: cuk → unknown, cukConverter → unknown
-            {"error": "Exception: Unknown topology cuk"},
-            {"error": "Exception: Unknown topology cukConverter"},
-            # vendor pass: cuk → unknown, cukConverter → unknown
-            {"error": "Exception: Unknown topology cuk"},
-            {"error": "Exception: Unknown topology cukConverter"},
-        ],
-    )
-    _patch_pyom(monkeypatch, fake)
-
-    with pytest.raises(bridge.BridgeError, match="upstream binding gap"):
-        bridge.design_magnetics("cuk", {"any": "spec"})
-
-
-def test_design_magnetics_real_engine_error_does_not_retry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A non-'Unknown topology' error propagates immediately."""
-    fake = _FakePyOM(
-        responses=[{"error": "Exception: Input JSON does not conform to schema!"}],
-    )
-    _patch_pyom(monkeypatch, fake)
-
-    with pytest.raises(bridge.BridgeError, match="does not conform to schema"):
-        bridge.design_magnetics("buck", {"bad": "spec"})
-
-    # No retry attempted — buck only has one variant anyway, but the
-    # point is the error was reported, not silently skipped.
-    assert len(fake.calls) == 1
-
-
-def test_design_magnetics_empty_data_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = _FakePyOM(responses=[{"data": []}])
-    _patch_pyom(monkeypatch, fake)
-    with pytest.raises(bridge.BridgeError, match="zero designs"):
-        bridge.design_magnetics("buck", {"any": "spec"})
-
-
-def test_design_magnetics_unexpected_shape_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake = _FakePyOM(responses=[{"data": "not a list"}])
-    _patch_pyom(monkeypatch, fake)
-    with pytest.raises(bridge.BridgeError, match="expected list"):
-        bridge.design_magnetics("buck", {"any": "spec"})
-
-
-def test_design_magnetics_missing_mas_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake = _FakePyOM(
-        responses=[{"data": [{"scoring": 1.0, "no_mas_here": True}]}],
-    )
-    _patch_pyom(monkeypatch, fake)
-    with pytest.raises(bridge.BridgeError, match="no 'mas' field"):
-        bridge.design_magnetics("buck", {"any": "spec"})
-
-
-# -----------------------------------------------------------------------------
-# attach_magnetics_to_tas — single magnetic
-# -----------------------------------------------------------------------------
-
 
 def _single_magnetic_tas() -> dict:
     """Minimal TAS with one magnetic (placeholder URL pattern)."""
@@ -259,7 +138,6 @@ def _single_magnetic_tas() -> dict:
             "interStageConnections": [],
         }
     }
-
 
 def test_attach_single_magnetic_replaces_placeholder() -> None:
     tas = _single_magnetic_tas()
@@ -637,13 +515,22 @@ def test_design_extra_magnetic_empty_data_raises(
 def test_design_converter_components_buck_no_extras(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake = _FakePyOM(
-        responses=[
-            {"data": [_mas(scoring=4.0, shape="PQ 20/16", material="3C95", n_windings=1)]},
-        ],
-        extras_responses=[[]],  # buck has zero extras
-    )
+    # della-Pollock cutover (abt #48): the MAIN magnetic comes from Kirchhoff now
+    # (design_magnetics_fast is Kirchhoff-seeded), so patch it to a fixed pick; the
+    # EXTRAS still come from PyOM (get_extra_components_inputs), mocked by _FakePyOM.
+    fake = _FakePyOM(responses=[], extras_responses=[[]])  # buck has zero extras
     _patch_pyom(monkeypatch, fake)
+    monkeypatch.setattr(
+        bridge,
+        "design_magnetics_fast",
+        lambda *a, **k: [
+            bridge.MagneticDesign(
+                scoring=4.0,
+                mas=_mas(scoring=4.0, shape="PQ 20/16", material="3C95", n_windings=1)["mas"],
+                elapsed_s=0.0,
+            )
+        ],
+    )
 
     components = bridge.design_converter_components("buck", {"any": "spec"})
     assert components.main_magnetic.scoring == 4.0
@@ -656,10 +543,10 @@ def test_design_converter_components_buck_no_extras(
 def test_design_converter_components_acf_two_extras(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # MAIN magnetic from Kirchhoff (patched); EXTRAS (output inductor + clamp cap)
+    # from PyOM get_extra_components_inputs + design_extra_magnetic (mocked).
     fake = _FakePyOM(
-        responses=[
-            {"data": [_mas(scoring=5.0, shape="ETD 39", material="N87", n_windings=2)]},
-        ],
+        responses=[],
         extras_responses=[
             [
                 _extras_inputs(name="outputInductor", kind="magnetic"),
@@ -671,6 +558,17 @@ def test_design_converter_components_acf_two_extras(
         ],
     )
     _patch_pyom(monkeypatch, fake)
+    monkeypatch.setattr(
+        bridge,
+        "design_magnetics_fast",
+        lambda *a, **k: [
+            bridge.MagneticDesign(
+                scoring=5.0,
+                mas=_mas(scoring=5.0, shape="ETD 39", material="N87", n_windings=2)["mas"],
+                elapsed_s=0.0,
+            )
+        ],
+    )
 
     components = bridge.design_converter_components("active_clamp_forward", {"any": "spec"})
     assert components.main_magnetic.core_shape_name == "ETD 39"
@@ -1186,3 +1084,95 @@ def test_attach_components_llc_registry_binds_C_r_resonant_cap() -> None:
         ]["shape"]["name"]
         == "RM 8"
     )
+
+
+# ---------------------------------------------------------------------------
+# abt #48 cutover: the frequency-sweep seam designs the MAIN magnetic from a
+# Kirchhoff per-topology seed (not MKF's process_converter converter model).
+# ---------------------------------------------------------------------------
+
+
+def _ktas(*magnetics: tuple[str, int]) -> dict[str, Any]:
+    """A minimal Kirchhoff-shaped TAS carrying ``magnetics`` as
+    ``(name, n_windings)`` — each a magnetic component with a MAS Inputs seed
+    whose turnsRatios length encodes the winding count (windings - 1 entries)."""
+    comps = []
+    for name, nw in magnetics:
+        seed = {
+            "designRequirements": {
+                "magnetizingInductance": {"nominal": 1e-4},
+                "turnsRatios": [{"nominal": 2.0} for _ in range(max(0, nw - 1))],
+            },
+            "operatingPoints": [{"excitationsPerWinding": [{} for _ in range(nw)]}],
+        }
+        comps.append({"name": name, "data": {"magnetic": {}, "inputs": seed}})
+    return {"topology": {"stages": [{"circuit": {"components": comps}}]}}
+
+
+def test_main_magnetic_seed_picks_registry_main_transformer():
+    from heaviside.topologies import get
+
+    entry = get("push_pull")  # magnetic_binding {"T1": None, "L_out0": "outputInductor"}
+    # Kirchhoff names the output inductor "Lout" (not the registry "L_out0"); the
+    # main "T1" coincides, so the registry main role wins by name.
+    name, seed = bridge._main_magnetic_seed_from_ktas(entry, _ktas(("T1", 4), ("Lout", 1)))
+    assert name == "T1"
+    assert len(seed["operatingPoints"][0]["excitationsPerWinding"]) == 4
+
+
+def test_main_magnetic_seed_sole_inductor_is_main():
+    from heaviside.topologies import get
+
+    entry = get("buck")  # magnetic_binding {"L1": None}
+    name, _ = bridge._main_magnetic_seed_from_ktas(entry, _ktas(("L1", 1)))
+    assert name == "L1"
+
+
+def test_main_magnetic_seed_structural_fallback_to_transformer():
+    from heaviside.topologies import get
+
+    entry = get("push_pull")
+    # Names drift entirely (no "T1"): the structural rule picks the lone
+    # multi-winding transformer over the single-winding inductor.
+    name, seed = bridge._main_magnetic_seed_from_ktas(entry, _ktas(("XF", 3), ("LO", 1)))
+    assert name == "XF"
+    assert len(seed["designRequirements"]["turnsRatios"]) == 2
+
+
+def test_main_magnetic_seed_ambiguous_raises():
+    from heaviside.topologies import get
+
+    entry = get("push_pull")
+    # No name match + two transformers ⇒ ambiguous ⇒ loud, no silent guess.
+    with pytest.raises(bridge.BridgeError, match="cannot identify the main magnetic"):
+        bridge._main_magnetic_seed_from_ktas(entry, _ktas(("A", 3), ("B", 4)))
+
+
+def test_main_magnetic_seed_missing_inputs_raises():
+    from heaviside.topologies import get
+
+    entry = get("buck")
+    tas = {"topology": {"stages": [{"circuit": {"components": [
+        {"name": "L1", "data": {"magnetic": {}}}  # no "inputs" seed
+    ]}}]}}
+    with pytest.raises(bridge.BridgeError, match="no MAS Inputs seed"):
+        bridge._main_magnetic_seed_from_ktas(entry, tas)
+
+
+def test_design_magnetics_at_fsw_rejects_slow_path():
+    # fast=False (full-sim from a MAS seed) is not wired; it must surface loudly
+    # rather than fall back to the retired MKF process_converter converter model.
+    spec = {"operatingPoints": [{"outputVoltages": [12], "outputCurrents": [1]}]}
+    with pytest.raises(bridge.BridgeError, match="fast=False"):
+        bridge.design_magnetics_at_fsw("buck", spec, 100_000.0, fast=False)
+
+
+def test_design_magnetics_at_fsw_rejects_desired_inductance():
+    # The BASE-schema guard stays load-bearing under the Kirchhoff seam: an
+    # injected desiredInductance would make Kirchhoff size around a pre-set L.
+    spec = {
+        "desiredInductance": 1e-4,
+        "operatingPoints": [{"outputVoltages": [12], "outputCurrents": [1]}],
+    }
+    with pytest.raises(bridge.BridgeError, match="BASE-schema"):
+        bridge.design_magnetics_at_fsw("buck", spec, 100_000.0)

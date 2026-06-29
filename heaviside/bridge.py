@@ -173,37 +173,6 @@ _pyom_vendor_module: Any = None
 _pyom_fast_param_supported: bool | None = None  # None = not yet probed
 
 
-def _supports_fast_param(pyom: Any) -> bool:
-    """Return True if this PyOM build's design_magnetics_from_converter accepts
-    a 7th ``fast`` positional argument. Probed once per process via the
-    pybind11 docstring (the doc lists every overload including parameter names).
-    Falls back to False so old builds silently use the 6-arg slow path."""
-    global _pyom_fast_param_supported
-    if _pyom_fast_param_supported is not None:
-        return _pyom_fast_param_supported
-    try:
-        doc = pyom.design_magnetics_from_converter.__doc__ or ""
-        # The new overload lists "fast : bool" in its signature block.
-        _pyom_fast_param_supported = "fast" in doc
-    except Exception:
-        _pyom_fast_param_supported = False
-    return _pyom_fast_param_supported
-
-# The vendor build of the pybind11 extension (newer than the PyPI
-# wheel; carries generate_ngspice_circuit extras like
-# bridge_simulation_mode). Loaded as a SEPARATE native module from the
-# installed package, with its own C++ settings state — which is why
-# _apply_pyom_settings runs on both gateway paths.
-_PYOM_VENDOR_SO = (
-    Path(__file__).resolve().parent.parent
-    / "vendor"
-    / "PyOpenMagnetics"
-    / "build"
-    / "cp312-cp312-linux_x86_64"
-    / "PyOpenMagnetics.cpython-312-x86_64-linux-gnu.so"
-)
-
-
 def _import_pyom() -> Any:
     """Gateway to the installed PyOpenMagnetics extension.
 
@@ -220,6 +189,16 @@ def _import_pyom() -> Any:
         _apply_pyom_settings(_ext)
         _pyom_settings_applied = True
     return _ext
+
+
+_PYOM_VENDOR_SO = (
+    Path(__file__).resolve().parent.parent
+    / "vendor"
+    / "PyOpenMagnetics"
+    / "build"
+    / "cp312-cp312-linux_x86_64"
+    / "PyOpenMagnetics.cpython-312-x86_64-linux-gnu.so"
+)
 
 
 def _import_pyom_vendor() -> Any:
@@ -254,204 +233,6 @@ def _import_pyom_vendor() -> Any:
 
     _pyom_vendor_module = _import_pyom()
     return _pyom_vendor_module
-
-
-def design_magnetics(
-    topology: str | TopologyEntry,
-    converter_spec: Mapping[str, Any],
-    *,
-    max_results: int = 1,
-    core_mode: str = "standard cores",
-    use_ngspice: bool = False,
-    weights: Mapping[str, float] | None = None,
-    use_only_cores_in_stock: bool | None = None,
-    fast: bool = False,
-) -> list[MagneticDesign]:
-    """Design the magnetic component(s) for a converter spec.
-
-    Calls ``PyOpenMagnetics.design_magnetics_from_converter`` retrying
-    each name variant registered for the topology (mirrors the existing
-    ``heaviside.topologies.dispatch`` behaviour).
-
-    ``use_only_cores_in_stock`` (when not ``None``) pins PyOM's
-    ``useOnlyCoresInStock`` global setting for the duration of the call and
-    — crucially — folds it into the cache key. PyOM's saturation filter has
-    no derating headroom, so the stock-only subset can yield zero candidates
-    for high-step-down isolated topologies that the full catalogue serves.
-    Because the global setting is otherwise invisible to the cache, callers
-    that toggle it MUST pass it here, or a stock-only zero result would be
-    replayed for a full-catalogue retry with identical args.
-
-    Parameters
-    ----------
-    topology : str | TopologyEntry
-        Canonical Python name or a registry entry.
-    converter_spec : Mapping
-        Converter inputs JSON (``inputVoltage``, ``desiredInductance``,
-        ``operatingPoints``, …). See PyOM's ``AGENTS.md §5``.
-    max_results : int
-        Number of top-scoring designs to return.
-    core_mode : str
-        PyOM core search mode. Must be lowercase, space-separated
-        (``"available cores"``, ``"standard cores"``). ``"AVAILABLE_CORES"``
-        raises in PyOM.
-    use_ngspice : bool
-        Whether PyOM should drive its design loop with ngspice waveforms
-        instead of analytical models. Off by default — analytical is
-        roughly 10× faster and accurate enough for first-pass design.
-    weights : Mapping[str, float] | None
-        Optional scoring weights passed through to PyOM (e.g.
-        ``{"EFFICIENCY": 2.0, "DIMENSIONS": 0.5}``).
-
-    Returns
-    -------
-    list[MagneticDesign]
-        At most ``max_results`` entries, sorted by descending ``scoring``.
-
-    Raises
-    ------
-    BridgeError
-        If every registered PyOM name variant returns an error envelope,
-        or if the response shape is unexpected, or if zero designs come
-        back.
-    """
-    entry = topology if isinstance(topology, TopologyEntry) else get(topology)
-
-    # Use the installed pip package first — it handles all standard topologies
-    # without needing desiredInductance pre-computed. The vendor .so is a custom
-    # build that requires desiredInductance for single-inductor topologies (buck,
-    # boost, …), so we only fall through to it when the pip package returns
-    # "Unknown topology" (e.g. weinberg, which is absent from PyPI builds).
-    pyom = _import_pyom()
-
-    # Pin useOnlyCoresInStock for the duration of the call when requested,
-    # restoring the prior value afterwards. The flag is also threaded into
-    # the cache key below so a stock-only and a full-catalogue call with
-    # otherwise-identical args never alias.
-    _prior_in_stock: bool | None = None
-    if use_only_cores_in_stock is not None:
-        try:
-            _prior_in_stock = bool(pyom.get_settings().get("useOnlyCoresInStock", True))
-        except Exception:
-            _prior_in_stock = None
-        pyom.set_settings({"useOnlyCoresInStock": bool(use_only_cores_in_stock)})
-
-    # The vendor .so and the pip package have different 7-arg semantics.
-    # The vendor .so's 7th arg is `fast` (fast core-advise path, no ngspice).
-    # The pip package's 7th arg triggers ngspice internally — never pass it.
-    # Only use the 7-arg form with the vendor .so.
-    _vendor_so = _import_pyom_vendor()
-    _pip_so = pyom  # pyom is already _import_pyom()
-
-    def _call_pyom(p: Any, variant: str, spec_arg: dict, weights_arg: Any) -> Any:
-        use_fast_arg = fast and (p is _vendor_so) and _supports_fast_param(p)
-        if use_fast_arg:
-            return p.design_magnetics_from_converter(
-                variant, spec_arg, int(max_results), str(core_mode),
-                bool(use_ngspice), weights_arg, bool(fast),
-            )
-        return p.design_magnetics_from_converter(
-            variant, spec_arg, int(max_results), str(core_mode),
-            bool(use_ngspice), weights_arg,
-        )
-
-    def _try_variants(p: Any, cache_prefix: str) -> tuple[dict | None, str | None]:
-        """Try every variant name against PyOM instance p.
-
-        Returns (result_dict, None) on the first success, or (None, last_error)
-        if every variant returns 'Unknown topology'.  Any other error is raised
-        immediately as BridgeError.
-        """
-        _last: str | None = None
-        for variant in entry.pyom_names:
-            _spec_arg = {
-                k: v for k, v in converter_spec.items()
-                if k not in entry.strip_spec_keys
-            }
-            _weights_arg = dict(weights) if weights is not None else None
-            res = cached_call(
-                cache_prefix,
-                (
-                    variant,
-                    _spec_arg,
-                    int(max_results),
-                    str(core_mode),
-                    bool(use_ngspice),
-                    _weights_arg,
-                    ("stock" if use_only_cores_in_stock else "allcores")
-                    if use_only_cores_in_stock is not None
-                    else None,
-                    "fast" if fast else None,
-                ),
-                call=lambda v=variant, s=_spec_arg, w=_weights_arg: _call_pyom(p, v, s, w),
-            )
-            if not isinstance(res, dict):
-                raise BridgeError(
-                    f"design_magnetics_from_converter({variant!r}) returned "
-                    f"{type(res).__name__}, expected dict."
-                )
-            err = res.get("error")
-            if err is None:
-                return res, None
-            if isinstance(err, str) and "Unknown topology" in err:
-                _last = err
-                continue
-            raise BridgeError(f"PyOpenMagnetics rejected topology {variant!r}: {err}")
-        return None, _last
-
-    try:
-        # Pip-first cascade: pip computes L internally and works for all
-        # standard topologies. Vendor .so fallback handles topologies absent
-        # from the PyPI build (e.g. weinberg → "Unknown topology").
-        t0 = time.monotonic()
-        result, last_error = _try_variants(pyom, "design_magnetics_from_converter_pip")
-        if result is None:
-            result, last_error = _try_variants(
-                _vendor_so, "design_magnetics_from_converter_vendor"
-            )
-        elapsed = time.monotonic() - t0
-
-        if result is None:
-            raise BridgeError(
-                f"PyOpenMagnetics does not recognise any variant of topology "
-                f"{entry.name!r}. Tried: {entry.pyom_names}. Last error: "
-                f"{last_error!r}. This is an upstream binding gap — add it to "
-                f"vendor/PyOpenMagnetics/ and rebuild (do not work around it here)."
-            )
-
-        data = result.get("data")
-        if not isinstance(data, list):
-            raise BridgeError(
-                f"design_magnetics_from_converter({entry.name!r}) returned "
-                f"data={type(data).__name__}, expected list. "
-                f"Result keys: {sorted(result)}"
-            )
-        if not data:
-            raise BridgeError(
-                f"design_magnetics_from_converter({entry.name!r}) returned "
-                f"zero designs for spec. Loosen constraints or check "
-                f"converter inputs."
-            )
-
-        designs: list[MagneticDesign] = []
-        for raw in data:
-            if not isinstance(raw, dict) or "mas" not in raw:
-                raise BridgeError(
-                    f"design_magnetics_from_converter({entry.name!r}) returned "
-                    f"a design entry with no 'mas' field: keys={list(raw)}"
-                )
-            designs.append(
-                MagneticDesign(
-                    scoring=float(raw.get("scoring", 0.0)),
-                    mas=raw["mas"],
-                    elapsed_s=elapsed,
-                )
-            )
-        designs.sort(key=lambda d: d.scoring, reverse=True)
-        return designs
-    finally:
-        if use_only_cores_in_stock is not None and _prior_in_stock is not None:
-            pyom.set_settings({"useOnlyCoresInStock": _prior_in_stock})
 
 
 def _advise_magnetics_fast(
@@ -586,6 +367,45 @@ def design_magnetic_from_mas_inputs(
     return _advise_magnetics_fast(pyom, mas_inputs, "mas-inputs seed", max_results, core_mode)
 
 
+def _resolve_switching_frequency(spec: Mapping[str, Any]) -> float | None:
+    """Resolve a scalar switching frequency from an HS converter spec — top-level
+    ``switchingFrequency`` first, then ``designRequirements.switchingFrequency``. Accepts a bare
+    number or a ``{nominal/maximum/minimum}`` dimensionWithTolerance (preferred order nominal →
+    max → min). Returns None if absent (caller decides whether that is fatal)."""
+    sf: Any = spec.get("switchingFrequency")
+    if sf is None:
+        dr = spec.get("designRequirements")
+        if isinstance(dr, Mapping):
+            sf = dr.get("switchingFrequency")
+    if isinstance(sf, (int, float)):
+        return float(sf)
+    if isinstance(sf, Mapping):
+        for k in ("nominal", "maximum", "minimum"):
+            v = sf.get(k)
+            if isinstance(v, (int, float)):
+                return float(v)
+    return None
+
+
+def _spec_with_per_op_fsw(spec: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``spec`` with ``switchingFrequency`` stamped onto every operating point
+    that lacks one (resolved via :func:`_resolve_switching_frequency`). ``design_from_hs_spec``
+    requires per-op fsw; the sweep seam stamps the swept value, but the topology+spec entries
+    (stage-2 pick, agents, REST) carry it only at the spec level. Untouched if already per-op or
+    if no spec-level fsw exists (Kirchhoff then surfaces the missing-fsw error, no silent default)."""
+    ops = spec.get("operatingPoints")
+    if not isinstance(ops, list) or not ops:
+        return spec
+    fsw = _resolve_switching_frequency(spec)
+    if fsw is None:
+        return spec
+    spec["operatingPoints"] = [
+        ({**op, "switchingFrequency": op.get("switchingFrequency", fsw)} if isinstance(op, Mapping) else op)
+        for op in ops
+    ]
+    return spec
+
+
 def design_magnetics_fast(
     topology: str | TopologyEntry,
     converter_spec: Mapping[str, Any],
@@ -616,7 +436,11 @@ def design_magnetics_fast(
     from heaviside.decomposer import kirchhoff_adapter as _ka
 
     entry = topology if isinstance(topology, TopologyEntry) else get(topology)
-    k_tas = _ka.design_from_hs_spec(entry.name, dict(converter_spec))
+    # design_from_hs_spec requires switchingFrequency ON each operating point (the sweep seam
+    # design_magnetics_at_fsw stamps the swept fsw there). This topology+spec entry has no swept
+    # fsw, so resolve the spec's own switchingFrequency and stamp it onto every op that lacks one.
+    spec_f = _spec_with_per_op_fsw(dict(converter_spec))
+    k_tas = _ka.design_from_hs_spec(entry.name, spec_f)
     _name, seed = _main_magnetic_seed_from_ktas(entry, k_tas)
     return design_magnetic_from_mas_inputs(seed, max_results=max_results, core_mode=core_mode)
 
@@ -1174,7 +998,6 @@ __all__ = [
     "attach_magnetics_to_tas",
     "design_converter_components",
     "design_extra_magnetic",
-    "design_magnetics",
     "extra_components",
 ]
 
@@ -2141,17 +1964,18 @@ def _try_pick_main(
 ) -> tuple[MagneticDesign | None, list[MagneticDesign]]:
     """Single retrieval pass. Returns ``(picked_or_None_if_strict_miss,
     raw_candidates_list)``. The raw list is returned so the caller can
-    fall back to ``candidates[0]`` (PyMKF's top scorer) after the final
-    retry without a third design_magnetics call.
+    fall back to ``candidates[0]`` (the top scorer) after the final retry.
+
+    della-Pollock cutover (abt #48): the magnetic requirement comes from KIRCHHOFF's per-topology
+    seed (``design_magnetics_fast`` is Kirchhoff-seeded now); the MKF ``design_magnetics_from_converter``
+    converter model is retired. ``use_ngspice`` / ``weights`` / ``use_only_cores_in_stock`` were
+    slow-converter-model knobs and no longer apply (kept for caller signature compatibility).
     """
-    candidates = design_magnetics(
+    candidates = design_magnetics_fast(
         entry,
         converter_spec,
         max_results=pool,
         core_mode=core_mode,
-        use_ngspice=use_ngspice,
-        weights=weights,
-        use_only_cores_in_stock=use_only_cores_in_stock,
     )
     picked = _select_main_by_isat_margin(
         candidates,

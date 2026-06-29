@@ -40,7 +40,7 @@ BUCK_SPEC: dict = {
 
 @pytest.mark.integration
 def test_buck_end_to_end_bridge() -> None:
-    """Full spec → MKF deck + TAS → PyOM magnetic design → annotated TAS."""
+    """Full spec → TAS → Kirchhoff-seeded magnetic design → annotated TAS."""
     # 1. Decompose to (deck, tas).
     _, tas = decompose_from_spec(
         "buck",
@@ -49,12 +49,12 @@ def test_buck_end_to_end_bridge() -> None:
         magnetizing_inductance=BUCK_SPEC["desiredInductance"],
     )
 
-    # 2. Ask PyOM to design the buck inductor.
-    designs = bridge.design_magnetics(
+    # 2. Design the buck inductor from Kirchhoff's per-topology seed (della-Pollock cutover
+    # abt #48 — the MKF converter-model slow path is retired; MKF designs geometry only).
+    designs = bridge.design_magnetics_fast(
         "buck",
         BUCK_SPEC,
         max_results=1,
-        use_ngspice=False,
     )
     assert len(designs) == 1
     top = designs[0]
