@@ -1,10 +1,17 @@
-"""Tests for ``heaviside.bridge._select_main_by_isat_margin`` and its
-two helpers (_ipeak_worst_buck, _isat_from_mas).
+"""Tests for the isat post-filter ``heaviside.bridge.select_fast_by_isat_margin``
+and its two helpers (_ipeak_worst_buck, _isat_from_mas).
 
-Coverage: post-filter selects the first candidate clearing the isat
-margin; falls back honestly to PyMKF's top scorer when no candidate
-clears the threshold; behaves transparently for topologies without a
-registered ``_IPEAK_WORST`` entry.
+della-Pollock cutover (abt #48): the post-filter used to live in the
+``_select_main_by_isat_margin`` picker (consumed by the retired
+``design_converter_components``); it now lives in ``select_fast_by_isat_margin``
+(the stage-2 path), which DESIGNS the candidate pool via ``design_magnetics_fast``
+(here mocked) and returns the CLEARING SUBSET — falling through to the full
+(unfiltered) pool, honestly, when nothing clears, so the realism gate fails the
+design rather than this layer hiding it.
+
+Coverage: the post-filter keeps the candidates clearing the isat margin;
+falls back to the full pool when none clear; behaves transparently for
+topologies without a registered ``_IPEAK_WORST`` entry.
 
 Candidates here are built from **real, PyOM-evaluable** magnetics
 (:func:`real_magnetic`) so ``_isat_from_mas`` exercises the genuine
@@ -19,12 +26,12 @@ from __future__ import annotations
 
 import pytest
 
+from heaviside import bridge
 from heaviside.bridge import (
-    BridgeError,
     MagneticDesign,
     _ipeak_worst_buck,
     _isat_from_mas,
-    _select_main_by_isat_margin,
+    select_fast_by_isat_margin,
 )
 from heaviside.topologies.registry import get
 from tests.unit._real_mas import isat_of, real_magnetic
@@ -128,137 +135,57 @@ def test_isat_from_mas_returns_none_for_malformed_mas() -> None:
     }
     assert _isat_from_mas(half_baked, L_henries=22e-6) is None
 
+# ---------------------------------------------------------------------------
+# select_fast_by_isat_margin — the post-filter on the stage-2 path (abt #48).
+# design_magnetics_fast (Kirchhoff-seeded + PyOM-designed) is mocked so we drive
+# the filter with controlled candidates; the isat itself is REAL MKF physics.
+# ---------------------------------------------------------------------------
 
-def test_select_picks_first_passing_candidate() -> None:
-    """Top-scorer FAILS the isat margin (ungapped, ~1.3 A), second-best
-    PASSES (gapped, ~22.7 A). Threshold is 1.2 * 6.364 = 7.64 A. Post-filter
-    must skip candidate 0 and return candidate 1."""
+
+def test_select_fast_keeps_only_clearing_candidate(monkeypatch) -> None:
+    """Top scorer FAILS the isat margin (ungapped, ~1.3 A); the gapped one
+    PASSES (~22.7 A). Threshold ~1.2x ipeak. The filter must drop the failing
+    candidate and return the clearing one."""
     cand_fail = _candidate(score=3.0, **_FAIL)
     cand_pass = _candidate(score=2.0, **_PASS)
-    chosen = _select_main_by_isat_margin(
-        [cand_fail, cand_pass],
-        get("buck"),
-        _BUCK_SPEC,
-        min_isat_ratio=1.2,
+    monkeypatch.setattr(bridge, "design_magnetics_fast", lambda *a, **k: [cand_fail, cand_pass])
+    cleared = select_fast_by_isat_margin("buck", _BUCK_SPEC, n_candidates=2, min_isat_ratio=1.2)
+    assert cleared == [cand_pass]
+
+
+def test_select_fast_falls_through_to_full_pool_when_none_clear(monkeypatch) -> None:
+    """Every candidate is below the threshold (the real buck-48-to-12-at-5A
+    situation). The filter widens the pool once, still finds nothing, and
+    returns the FULL pool so realism FAILs it honestly — never an empty hide."""
+    cands = [_candidate(score=3.0, **_FAIL)]
+    monkeypatch.setattr(bridge, "design_magnetics_fast", lambda *a, **k: list(cands))
+    result = select_fast_by_isat_margin("buck", _BUCK_SPEC, n_candidates=2, min_isat_ratio=1.2)
+    assert result == cands
+
+
+def test_select_fast_disabled_when_min_ratio_zero(monkeypatch) -> None:
+    """min_isat_ratio=0 short-circuits the filter — escape hatch, returns the pool."""
+    cands = [_candidate(score=3.0, **_FAIL), _candidate(score=2.0, **_PASS)]
+    monkeypatch.setattr(bridge, "design_magnetics_fast", lambda *a, **k: list(cands))
+    assert select_fast_by_isat_margin("buck", _BUCK_SPEC, n_candidates=2, min_isat_ratio=0.0) == cands
+
+
+def test_select_fast_passes_through_without_ipeak_fn(monkeypatch) -> None:
+    """For topologies with no registered _IPEAK_WORST entry the filter is a
+    no-op (returns the pool). Boost has no entry today."""
+    cands = [_candidate(score=3.0, **_FAIL), _candidate(score=2.0, **_PASS)]
+    monkeypatch.setattr(bridge, "design_magnetics_fast", lambda *a, **k: list(cands))
+    out = select_fast_by_isat_margin(
+        "boost", {"inputVoltage": {"nominal": 12.0}}, n_candidates=2, min_isat_ratio=1.2
     )
-    assert chosen is cand_pass
+    assert out == cands
 
 
-def test_select_falls_back_to_top_scorer_when_no_candidate_passes() -> None:
-    """Exactly the buck-48-to-12-at-5A real-world situation: every candidate
-    is below the 7.64 A threshold. Post-filter MUST return candidate[0] (top
-    scorer) so realism can FAIL it honestly."""
-    cands = [
-        _candidate(score=3.0, **_FAIL),  # ~1.3 A
-        _candidate(score=2.5, shape="ETD 29/16/10", gap_mm=0.5, turns=30),  # ~6.2 A
-    ]
-    chosen = _select_main_by_isat_margin(
-        cands,
-        get("buck"),
-        _BUCK_SPEC,
-        min_isat_ratio=1.2,
-    )
-    assert chosen is cands[0]
-
-
-def test_select_disabled_when_min_ratio_zero() -> None:
-    """min_isat_ratio=0 short-circuits to PyMKF's top scorer — escape hatch."""
-    cands = [
-        _candidate(score=3.0, **_FAIL),
-        _candidate(score=2.0, **_PASS),
-    ]
-    chosen = _select_main_by_isat_margin(
-        cands,
-        get("buck"),
-        _BUCK_SPEC,
-        min_isat_ratio=0.0,
-    )
-    assert chosen is cands[0]
-
-
-def test_select_passes_through_when_no_topology_ipeak_fn() -> None:
-    """For topologies without a registered _IPEAK_WORST entry, post-filter
-    is a no-op (returns top scorer). Boost has no entry today."""
-    cands = [
-        _candidate(score=3.0, **_FAIL),
-        _candidate(score=2.0, **_PASS),
-    ]
-    chosen = _select_main_by_isat_margin(
-        cands,
-        get("boost"),
-        {"inputVoltage": {"nominal": 12.0}},
-        min_isat_ratio=1.2,
-    )
-    assert chosen is cands[0]
-
-
-def test_select_empty_pool_raises() -> None:
-    with pytest.raises(BridgeError, match="empty candidate list"):
-        _select_main_by_isat_margin([], get("buck"), _BUCK_SPEC, min_isat_ratio=1.2)
-
-
-def test_select_skips_candidate_with_unreadable_mas() -> None:
-    """A malformed MAS in the middle of the list should be skipped (its
-    Isat is unreadable -> None), not crash — pick the next readable one."""
+def test_select_fast_skips_candidate_with_unreadable_mas(monkeypatch) -> None:
+    """A malformed MAS (unreadable Isat -> None) is skipped, not crashed —
+    the next readable, clearing candidate is kept."""
     cand_bad = MagneticDesign(scoring=4.0, mas={"magnetic": {}}, elapsed_s=0.0)
     cand_good = _candidate(score=3.0, **_PASS)
-    chosen = _select_main_by_isat_margin(
-        [cand_bad, cand_good],
-        get("buck"),
-        _BUCK_SPEC,
-        min_isat_ratio=1.2,
-    )
-    # cand_bad has no readable isat -> skipped; cand_good ~22.7 A -> PASS
-    assert chosen is cand_good
-
-
-# ---------------------------------------------------------------------------
-# strict=True (tier-2 retry signal)
-# ---------------------------------------------------------------------------
-
-
-def test_strict_returns_none_when_no_candidate_passes() -> None:
-    """The interim MKF-isat workaround needs to know when the cheap
-    pool exhausted. ``strict=True`` returns None instead of falling
-    back to candidates[0] so the caller can retry with a wider pool."""
-    cands = [
-        _candidate(score=3.0, **_FAIL),  # ~1.3 A
-        _candidate(score=2.5, shape="ETD 29/16/10", gap_mm=0.5, turns=30),  # ~6.2 A
-    ]
-    # buck threshold ~7.64 A (1.2 * 6.364 ipeak); both cands fail.
-    chosen = _select_main_by_isat_margin(
-        cands,
-        get("buck"),
-        _BUCK_SPEC,
-        min_isat_ratio=1.2,
-        strict=True,
-    )
-    assert chosen is None
-
-
-def test_strict_still_returns_candidate_when_one_passes() -> None:
-    cand_fail = _candidate(score=4.0, **_FAIL)
-    cand_pass = _candidate(score=2.0, **_PASS)
-    chosen = _select_main_by_isat_margin(
-        [cand_fail, cand_pass],
-        get("buck"),
-        _BUCK_SPEC,
-        min_isat_ratio=1.2,
-        strict=True,
-    )
-    assert chosen is cand_pass
-
-
-def test_strict_still_falls_back_when_no_ipeak_fn_registered() -> None:
-    """``strict`` only changes behaviour when a margin check ran. If
-    we couldn't compute Ipeak (no topology entry), we still return
-    candidates[0] as before — the caller has no signal to retry on."""
-    cands = [_candidate(score=3.0, **_FAIL)]
-    chosen = _select_main_by_isat_margin(
-        cands,
-        get("boost"),
-        {"inputVoltage": {"nominal": 12.0}},
-        min_isat_ratio=1.2,
-        strict=True,
-    )
-    assert chosen is cands[0]
+    monkeypatch.setattr(bridge, "design_magnetics_fast", lambda *a, **k: [cand_bad, cand_good])
+    cleared = select_fast_by_isat_margin("buck", _BUCK_SPEC, n_candidates=2, min_isat_ratio=1.2)
+    assert cleared == [cand_good]

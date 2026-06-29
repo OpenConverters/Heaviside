@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import importlib
-
 import pytest
 
 from heaviside import topologies
-from heaviside.topologies import dispatch
 from heaviside.topologies.registry import CONVERTERS, MAGNETICS_ONLY, TOPOLOGIES, get
 
 
@@ -45,33 +42,16 @@ class TestRegistry:
 
 
 @pytest.mark.unit
-class TestTopologyModules:
-    @pytest.mark.parametrize("name", [t.name for t in TOPOLOGIES])
-    def test_module_importable(self, name: str) -> None:
-        mod = importlib.import_module(f"heaviside.topologies.{name}")
-        assert hasattr(mod, "design"), f"{name} missing design()"
-        assert hasattr(mod, "ENTRY"), f"{name} missing ENTRY"
-        assert mod.ENTRY.name == name
-
-
-@pytest.mark.unit
 class TestPublicAPI:
-    def test_design_and_get_exported(self) -> None:
-        assert hasattr(topologies, "design")
+    # della-Pollock cutover (abt #48): the per-topology ``design()`` dispatch (process_converter)
+    # is gone — ``heaviside.topologies`` is now purely the registry (get / names / TOPOLOGIES).
+    def test_registry_exported(self) -> None:
         assert hasattr(topologies, "get")
+        assert hasattr(topologies, "names")
         assert hasattr(topologies, "TOPOLOGIES")
+        assert not hasattr(topologies, "design"), "the retired process_converter dispatch must be gone"
 
     def test_names_returns_27(self) -> None:
         assert len(topologies.names()) == 27
         assert "buck" in topologies.names()
         assert "vienna" in topologies.names()
-
-
-@pytest.mark.unit
-class TestDispatchErrors:
-    def test_topology_dispatch_error_message(self) -> None:
-        # Construct manually without engine to validate the error message format.
-        entry = get("vienna")
-        err = dispatch.TopologyDispatchError(entry, entry.pyom_names)
-        assert "vienna" in str(err)
-        assert "vendor/PyOpenMagnetics" in str(err)
