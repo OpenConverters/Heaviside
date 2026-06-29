@@ -258,7 +258,9 @@ def test_sim_backend_selection(monkeypatch) -> None:
     # vienna + llc are now validated through design_converter() and allowlisted too.
     assert _sim_backend_for("vienna") == "kirchhoff"
     assert _sim_backend_for("llc") == "kirchhoff"
-    assert _sim_backend_for("phase_shifted_full_bridge") == "mkf"  # long tail (abt #52/#61) stays on MKF
+    # asymmetric_half_bridge now passes design_converter() (abt #61 K-cap + fresh .so) → kirchhoff.
+    assert _sim_backend_for("asymmetric_half_bridge") == "kirchhoff"
+    assert _sim_backend_for("phase_shifted_full_bridge") == "mkf"  # long tail (phase-shift regulation) stays on MKF
     # Env var OVERRIDES the allowlist (takes precedence entirely).
     monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "phase_shifted_full_bridge")
     assert _sim_backend_for("phase_shifted_full_bridge") == "kirchhoff"

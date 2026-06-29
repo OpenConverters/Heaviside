@@ -1448,6 +1448,13 @@ _KIRCHHOFF_TOPOLOGIES: frozenset[str] = frozenset({
     # _seed_turns_ratio + the [1.0,n] demag-aware seed for single-switch + the incomplete-analyst-
     # efficiency gate fix using SPICE η):
     "active_clamp_forward", "two_switch_forward", "single_switch_forward", "weinberg",
+    # Asymmetric half-bridge — now passes design_converter() end-to-end (48→12V, verdict=pass).
+    # Unblocked by the abt #61 ngspice K-cap fix (the 2-winding coupling is no longer clamped to
+    # 0.98, so the transformer transfers full power) PLUS deploying the freshly-built PyOpenMagnetics
+    # .so to site-packages — the prior "could not be wound" RealizeError was an artifact of a stale
+    # (June-16) site-packages .so, not a real fast-advise windability gap (abt #63). PSFB/PSHB still
+    # wind but fall short on phase-shift regulation (6.5V / 1.6V) — a separate control blocker.
+    "asymmetric_half_bridge",
     # Resonant: LLC now passes design_converter() (verdict=pass, 11.9 V η 0.71) — the FET-Vt chokepoint
     # (the SiC gate threshold exceeded the 5 V ideal drive, abt #54), the cap-divider balancing resistors,
     # the meas-namespace power probe, AND the real-magnetic TANK CO-DESIGN (re-size Lr/Cr from the pinned
