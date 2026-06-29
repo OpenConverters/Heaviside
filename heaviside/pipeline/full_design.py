@@ -1434,28 +1434,30 @@ def generate_report(outcome: DesignOutcome) -> str:
 # whole line cycles). The boost inductor is designed from Kirchhoff's own magnetic seed
 # at realize, and a PFC stress deriver (= boost physics) feeds the realism gate the true
 # DC-bus blocking voltage. A 230 Vac→400 Vdc 400 W single-phase PFC reaches verdict=pass
-# (Vout 402 V, η 96.96 %, isat margin 1.44×). NOT vienna (3-phase regulation still under
-# debug by a separate agent — it stays on the MKF fallback).
+# (Vout 402 V, η 96.96 %, isat margin 1.44×). VIENNA (3-phase) is now also allowlisted: a
+# back-to-back bidirectional switch + full-bus rail-diode rating + a designed PI bus-voltage
+# loop regulate it to 800 V (η 98.5 %, PF 0.976), and a vienna stress deriver (split-bus:
+# switches block Vout/2, rail diodes block Vout) feeds the gate.
 _KIRCHHOFF_TOPOLOGIES: frozenset[str] = frozenset({
     "buck", "boost", "flyback", "zeta", "push_pull", "sepic", "cuk",
     "isolated_buck", "isolated_buck_boost",
     "four_switch_buck_boost", "dual_active_bridge",
     # AC/DC self-regulating (no loss sweep, controller in the KH deck):
-    "power_factor_correction",
+    "power_factor_correction", "vienna",
     # Forward-reset family — unblocked by the #45 fixes (deeper turns-ratio headroom in
     # _seed_turns_ratio + the [1.0,n] demag-aware seed for single-switch + the incomplete-analyst-
     # efficiency gate fix using SPICE η):
     "active_clamp_forward", "two_switch_forward", "single_switch_forward", "weinberg",
-    # NOTE: resonant (llc/src/cllc/clllc) have the correct designer branch (design at the gain-law
-    # fsw, no loss sweep) but are NOT allowlisted yet. The CONVERGENCE blocker is now FIXED (abt #54):
-    # cap-divider balancing resistors give the bus-split midpoint a DC reference (was a singular MNA
-    # matrix → garbage Vout), and the power probe is now a pure post-processing measurement (the old
-    # behavioural Bpout v² source collapsed the global timestep on the stiff resonant deck). With those,
-    # the IDEAL LLC regulates cleanly to 12 V. REMAINING: with the real MKF_MODEL magnetic the tank
-    # DETUNES (vout≈0) — the realized transformer Lm/leakage doesn't match the designed Cr/Lr, so the
-    # resonance shifts out of the regulator's frequency bracket. Needs real-magnetic tank co-design
-    # (size Cr/Lr from the realized Lm + measured leakage). src/cllc converge but need gain calibration
-    # (land ~10.9/11.6 V); clllc has a builder json-null bug (design_clllc_tas).
+    # Resonant: LLC now passes design_converter() (verdict=pass, 11.9 V η 0.71) — the FET-Vt chokepoint
+    # (the SiC gate threshold exceeded the 5 V ideal drive, abt #54), the cap-divider balancing resistors,
+    # the meas-namespace power probe, AND the real-magnetic TANK CO-DESIGN (re-size Lr/Cr from the pinned
+    # Lm to preserve Ln and keep Lr-Cr at fr) are all in. src/cllc REGULATE but fail the gate on EFFICIENCY
+    # and clllc lands ~10 V — all three blocked on the SAME dominant lever: the realized transformer
+    # turns ratio overshoots ideal by 12-16 % (integer rounding of the small secondary winding in the
+    # magnetic advise), forcing them to boost far off resonance (high circulating current -> low η, or
+    # beyond the tank's reach). Needs the magnetic turns-ratio fix (clean integer rounding) — then src/
+    # cllc/clllc allowlist too.
+    "llc",
 })
 
 

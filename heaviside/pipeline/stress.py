@@ -231,6 +231,35 @@ def power_factor_correction_stresses(
     return boost_stresses(spec, op_index=op_index)
 
 
+def vienna_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStresses:
+    """Stresses for a 3-phase Vienna rectifier's power stage.
+
+    A Vienna is a 3-phase boost rectifier feeding a SPLIT DC bus (±Vout/2). The voltage stresses SPLIT by
+    component class, so a single boost-style ``Vout`` blocking voltage would be wrong:
+      * each phase's bidirectional midpoint switch steers the boost-inductor current to the bus midpoint, so
+        it blocks only the HALF link ``Vout/2`` (never the full bus);
+      * each rail rectifier diode blocks the FULL link ``Vout`` — when a phase sits at one rail the opposite
+        rail's diode sees ``busP-busN = Vout`` in reverse.
+    The phase (inductor/switch) current is the per-phase line current of a 3-phase boost; the rail diodes
+    carry the DC output current. Worst-case current is taken at ``Vin_min`` (eta=1 is the conservative upper
+    bound on the inductor/switch current)."""
+    where = "vienna spec"
+    vmin = _require_positive(spec, ("inputVoltage", "minimum"), where)
+    vout, iout = _vout_iout(spec, where, op_index=op_index)
+    ripple = _ripple_pp(spec)
+    pout = vout * iout
+    iphase_rms = pout / (3.0 * vmin)                 # per-phase line current of a balanced 3-phase input
+    iphase_pk = (2.0 ** 0.5) * iphase_rms
+    return ComponentStresses(
+        vds_stress=vout / 2.0,                        # midpoint switch blocks the HALF bus
+        id_stress=iphase_pk * (1.0 + ripple / 2.0),   # per-phase boost-inductor peak
+        vr_stress=vout,                               # rail diode blocks the FULL bus
+        if_avg_stress=iout,                           # rail diode delivers the DC output current
+        v_working=vout,                               # output cap across the full bus
+        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Cuk stresses (Maniktala Ch.2; inverting buck-boost family)
 # ---------------------------------------------------------------------------
@@ -1024,6 +1053,7 @@ _DERIVERS: dict[str, Any] = {
     "isolated_buck": isolated_buck_stresses,
     "isolated_buck_boost": isolated_buck_boost_stresses,
     "power_factor_correction": power_factor_correction_stresses,
+    "vienna": vienna_stresses,
 }
 
 
@@ -1127,6 +1157,7 @@ __all__ = [
     "phase_shifted_full_bridge_stresses",
     "phase_shifted_half_bridge_stresses",
     "power_factor_correction_stresses",
+    "vienna_stresses",
     "push_pull_stresses",
     "sepic_stresses",
     "single_switch_forward_stresses",
