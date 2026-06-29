@@ -219,48 +219,44 @@ def simulate_from_spec(
     magnetizing_inductance: float,
     *,
     vout_target: float | None = None,
-    backend: str = "mkf",
+    backend: str = "kirchhoff",
     fidelity: str = "REQUIREMENTS",
     **sim_kwargs: Any,
 ) -> SpiceResult:
     """Deterministic engine: turn a converter spec into a deck and ``simulate`` it.
 
-    ``backend`` selects the deck generator (the migration seam — see
-    ``docs/kirchhoff_migration_analysis.md``):
+    Only the ``"kirchhoff"`` backend exists: design + assemble + emit via
+    ``PyKirchhoff`` and run its self-contained deck. Only topologies bound
+    in the adapter are supported; an unbound one raises
+    ``KirchhoffTopologyUnsupported`` (no silent skip). Any other ``backend``
+    value raises ``ValueError`` (the MKF-stencil ``decompose_from_spec``
+    backend was removed in the della-Pollock cutover — no silent fallback).
 
-    * ``"mkf"`` (default): ``decompose_from_spec`` via MKF/PyOM, run through HS's
-      duty-search runner. All magnetics math stays in MKF.
-    * ``"kirchhoff"``: design + assemble + emit via ``PyKirchhoff`` and run its
-      self-contained deck. Only topologies bound in the adapter are supported;
-      an unbound one raises ``KirchhoffTopologyUnsupported`` (no silent skip)."""
-    if backend == "kirchhoff":
-        from heaviside.decomposer import kirchhoff_adapter as _ka
-
-        # Accept either shape: a Kirchhoff-native spec (designRequirements.outputs)
-        # is used as-is; a Heaviside converter spec (top-level inputVoltage +
-        # operatingPoints[].outputVoltages, what the real pipeline passes) is
-        # translated. No silent guessing — translation is fail-loud.
-        if isinstance(converter_json, dict) and "designRequirements" in converter_json:
-            tas = _ka.design_topology_tas(topology, converter_json)
-        else:
-            tas = _ka.design_from_hs_spec(topology, converter_json)
-        deck = _ka.tas_to_ngspice(tas, fidelity)
-        return simulate_self_contained_deck(
-            deck,
-            vout_target=vout_target,
-            tolerance=sim_kwargs.get("tolerance", 0.02),
-            timeout_s=sim_kwargs.get("timeout_s", 120.0),
-        )
-    if backend != "mkf":
+    ``turns_ratios`` / ``magnetizing_inductance`` are retained in the
+    signature for call-site compatibility; the Kirchhoff path designs the
+    magnetic itself from the spec and ignores them."""
+    if backend != "kirchhoff":
         raise ValueError(
-            f"spice_sim: unknown backend {backend!r} (expected 'mkf' or 'kirchhoff')"
+            f"spice_sim: unknown backend {backend!r} (expected 'kirchhoff'; "
+            "the 'mkf' decompose backend was removed in the della-Pollock cutover)"
         )
-    from heaviside.decomposer import decompose_from_spec
+    from heaviside.decomposer import kirchhoff_adapter as _ka
 
-    deck, _tas = decompose_from_spec(
-        topology, converter_json, turns_ratios, magnetizing_inductance
+    # Accept either shape: a Kirchhoff-native spec (designRequirements.outputs)
+    # is used as-is; a Heaviside converter spec (top-level inputVoltage +
+    # operatingPoints[].outputVoltages, what the real pipeline passes) is
+    # translated. No silent guessing — translation is fail-loud.
+    if isinstance(converter_json, dict) and "designRequirements" in converter_json:
+        tas = _ka.design_topology_tas(topology, converter_json)
+    else:
+        tas = _ka.design_from_hs_spec(topology, converter_json)
+    deck = _ka.tas_to_ngspice(tas, fidelity)
+    return simulate_self_contained_deck(
+        deck,
+        vout_target=vout_target,
+        tolerance=sim_kwargs.get("tolerance", 0.02),
+        timeout_s=sim_kwargs.get("timeout_s", 120.0),
     )
-    return simulate(deck, vout_target=vout_target, **sim_kwargs)
 
 
 def _apply_knob(deck: str, knob: dict[str, Any]) -> str:

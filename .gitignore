@@ -83,3 +83,7 @@ scripts/enrichment/*.ndjson
 
 # Persisted job results (runtime, per-machine)
 .heaviside/
+
+# stray catalog debug screenshots
+catalog-*.png
+outputs/

@@ -1,28 +1,16 @@
-"""MKF spice-netlist → TAS topology-stage decomposer.
+"""Decomposer package — SPICE parsing + the live Kirchhoff design seam.
 
-Given a converter spec, this package can:
+The MKF-stencil decompose subsystem (per-topology stencils that mapped an
+MKF-emitted ngspice deck back to a TAS topology block) was removed in the
+della-Pollock cutover: Kirchhoff now owns all converter design and deck
+generation. The live members of this package are:
 
-1. Ask PyOpenMagnetics to generate the canonical ngspice deck for the
-   topology (``decomposer.api.generate_netlist``).
-2. Parse that deck into a list of :class:`spice_parser.SpiceElement`
-   objects, preserving section comments.
-3. Apply a per-topology *stencil* (``decomposer.stencils``) that maps
-   each circuit-relevant SPICE element to a TAS stage / component, then
-   emits a TAS-shaped ``{"stages": [...], "interStageCircuit": [...]}``
-   dict matching ``MAS/schemas/inputs/topologies/<topology>.json``.
-
-Round-tripping (``decomposer.api.decompose_from_spec``) gives us a
-deterministic SPICE → TAS pipeline that is fixture-locked in
-``tests/regression/decomposer/``. If MKF refactors its netlist generator
-the fixtures will diff loudly, which is the entire point.
+* :mod:`heaviside.decomposer.kirchhoff_adapter` — the Kirchhoff design seam.
+* :mod:`heaviside.decomposer.spice_parser` — the SPICE deck parser.
+* :data:`heaviside.decomposer.api.DEFAULT_SPICE_CONFIG` — canonical deck defaults.
 """
 
-from heaviside.decomposer.api import (
-    DecomposerError,
-    decompose_from_spec,
-    decompose_netlist,
-    generate_netlist,
-)
+from heaviside.decomposer.api import DEFAULT_SPICE_CONFIG
 from heaviside.decomposer.spice_parser import (
     SpiceDeck,
     SpiceElement,
@@ -30,11 +18,8 @@ from heaviside.decomposer.spice_parser import (
 )
 
 __all__ = [
-    "DecomposerError",
+    "DEFAULT_SPICE_CONFIG",
     "SpiceDeck",
     "SpiceElement",
-    "decompose_from_spec",
-    "decompose_netlist",
-    "generate_netlist",
     "parse_spice",
 ]

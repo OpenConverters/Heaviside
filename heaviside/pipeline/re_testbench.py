@@ -13,7 +13,7 @@ spec; HS fills the BOM (real parts + an MKF magnetic GEOMETRY designed from
 Kirchhoff's own per-component seed) and Kirchhoff regulates + simulates it.
 The reference design's ACTUAL parameters (inductance, output capacitance,
 controller/FET Rds_on) are stamped into the TAS so Phase 2 is a virtual
-replica of the real board — no MKF ``decompose_from_spec`` stencil netlist and
+replica of the real board — no MKF stencil netlist and
 no string-rewriting of a deck. MKF is magnetics-geometry-only here.
 """
 

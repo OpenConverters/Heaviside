@@ -8,8 +8,8 @@ Pipeline:
 
     spec (Python dict)
         │
-        ├─► heaviside.decomposer.decompose_from_spec(topology, spec, …)
-        │       → (mkf_netlist, tas_topology)
+        ├─► heaviside.decomposer.kirchhoff_adapter.design_from_hs_spec(topology, spec)
+        │       → tas_topology
         │
         └─► heaviside.bridge.design_magnetics(topology, spec, …)
                 → list[MagneticDesign]

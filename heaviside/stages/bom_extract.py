@@ -243,17 +243,24 @@ def extract_bom_from_pdf(
     return extract_bom_from_rows(rows)
 
 
-def _extract_full_bom_rows(pdf_text: str, reference: str) -> list[dict[str, Any]]:
+def _extract_full_bom_rows(
+    pdf_text: str, reference: str, *, extra_instructions: str | None = None
+) -> list[dict[str, Any]]:
     """LLM boundary: full-BOM census via the ``bom-extractor`` agent. Returns
     the raw row dicts with grouped ``ref_des`` preserved (e.g. "C1, C3, C59,
     C63") for the deterministic engine to expand. JSON mode keeps the model
-    from rambling past the JSON (kimi appends prose otherwise)."""
+    from rambling past the JSON (kimi appends prose otherwise).
+
+    ``extra_instructions`` is appended ahead of the PDF body (so a review-loop
+    feedback note survives the 200k-char truncation); the RE pipeline uses it to
+    feed reviewer objections back into a re-extraction."""
     from heaviside.agents.llm_call import call_agent_json
 
     msg = (
         f"Reference design: {reference}\n\n"
-        f"Extract the COMPLETE bill of materials from this PDF.\n\n"
-        f"PDF CONTENT:\n\n{pdf_text[:200_000]}"
+        f"Extract the COMPLETE bill of materials from this PDF.\n"
+        + (f"\n{extra_instructions}\n" if extra_instructions else "")
+        + f"\nPDF CONTENT:\n\n{pdf_text[:200_000]}"
     )
     # Full BOM + descriptions need output headroom; scale with input size.
     max_tokens = min(8192 + len(pdf_text) // 2, 32768)

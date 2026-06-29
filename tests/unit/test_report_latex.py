@@ -64,7 +64,10 @@ def test_render_latex_buck_has_sections(buck_design):
     for title in _SECTIONS:
         assert title in tex, f"missing section: {title}"
     # Real numbers, not placeholders.
-    assert "Synchronous Buck" in tex
+    # The cover carries the topology label. Buck is realized diode-rectified
+    # (not synchronous) by the Kirchhoff path — see commit "label buck
+    # accurately" — so the report says "Buck DC-DC Converter", not "Synchronous".
+    assert "Buck DC-DC Converter" in tex
     assert "48" in tex and "12" in tex            # Vin / Vout
     assert "Texas Instruments" in tex or "CSD" in tex  # real BOM part
     # Buck is non-isolated and uses an inductor (not a transformer).

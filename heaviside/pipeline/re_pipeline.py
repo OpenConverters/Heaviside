@@ -171,10 +171,16 @@ def _stage1_spec_extract(state: REState) -> REState:
     else:
         user_msg += "(No PDF provided — extract what you can from the name/description.)"
 
-    # The merged extraction now also returns the full BOM, which is large — scale
-    # the token budget with PDF size like the dedicated reverse-engineer call did
-    # (8192 can't hold an 80+ line BOM, which silently truncated it → fallback).
-    spec_tokens = min(16384 + len(state.pdf_text or "") // 4, 32768)
+    # spec-extract emits the SPEC + topology + a bounded `key_components` list
+    # (power-path parts only) — NOT the full BOM. The complete parts census is
+    # owned by the dedicated bom-extractor (stage 2), a tool-less, BOM-only,
+    # json-mode call whose compact output stays under the model's token cap even
+    # for 50+ line BOMs. Folding the whole BOM into this tool-using spec-extract
+    # call (the old "merged single call") overran max_tokens on large designs
+    # ("unrecoverable state due to max_tokens limit") and the retries failed too.
+    # Keeping spec-extract's output bounded removes that failure mode, so a fixed
+    # modest budget is enough (it no longer scales with PDF size).
+    spec_tokens = 8192
 
     def _produce_spec_extract(feedback: str | None) -> dict[str, Any]:
         msg = user_msg + (f"\n\n{feedback}" if feedback else "")
@@ -186,19 +192,20 @@ def _stage1_spec_extract(state: REState) -> REState:
                 _produce_spec_extract,
                 title="REFERENCE SPEC EXTRACTION REVIEW",
                 scope=(
-                    "REFERENCE-DESIGN SPEC + BOM EXTRACTION from a datasheet / "
-                    "eval-board PDF. Judge whether the extracted electricals (Vin "
-                    "window, Vout/Iout/Pout, topology, fsw, isolation/turns-ratio) "
-                    "and the component count are COMPLETE and CONSISTENT with the "
-                    "source — missing rails, an obviously wrong topology, "
-                    "contradictory numbers, or dropped line items are objections. "
-                    "Do NOT redesign the converter; only verify the extraction is "
-                    "faithful to the document."
+                    "REFERENCE-DESIGN SPEC + KEY-COMPONENT EXTRACTION from a "
+                    "datasheet / eval-board PDF. Judge whether the extracted "
+                    "electricals (Vin window, Vout/Iout/Pout, topology, fsw, "
+                    "isolation/turns-ratio) and the power-path key components are "
+                    "COMPLETE and CONSISTENT with the source — missing rails, an "
+                    "obviously wrong topology, contradictory numbers, or a missing "
+                    "main switch/controller/magnetic are objections. The full BOM "
+                    "is reviewed separately in the next stage. Do NOT redesign the "
+                    "converter; only verify the extraction is faithful."
                 ),
                 present=lambda d: {
                     "specs": d.get("specs", {}),
                     "performance": d.get("performance", {}),
-                    "bom_line_count": len(d.get("bom", []) or []),
+                    "key_components": d.get("key_components", []) or [],
                 },
                 state=state,
             )
@@ -208,8 +215,10 @@ def _stage1_spec_extract(state: REState) -> REState:
         state.diagnostics.append(f"spec-extract agent failed after retries: {exc}")
         return state
 
-    # Stash for the merged single-call path: reverse_engineer reuses this BOM
-    # instead of re-reading the whole PDF in a second call.
+    # Stash the spec-extract output so stage 2 can overlay power-path roles
+    # (controller / main switch / magnetics) from `key_components` onto the
+    # role-less bom-extractor census — the RDS(on)/DCR enrichment stages key off
+    # `role`. The full BOM is NOT carried here; stage 2 extracts it directly.
     state.extract_data = data
 
     specs = data.get("specs", {})
@@ -281,57 +290,85 @@ def _stage1_spec_extract(state: REState) -> REState:
 
 
 def _stage2_reverse_engineer(state: REState) -> REState:
-    """Extract the BOM from the reference design."""
+    """Extract the full BOM from the reference design.
+
+    When a PDF/text body is available, the COMPLETE parts census comes from the
+    dedicated ``bom-extractor`` agent (``heaviside.stages.bom_extract``): a
+    BOM-only, json-mode, tool-less call whose compact output (grouped ref-des, no
+    spec/performance/reasoning overhead) stays within the model's max_tokens even
+    for large 50+ line BOMs. This is deliberately NOT folded into spec-extract —
+    that merge re-emitted the entire BOM alongside the specs and overran
+    max_tokens on big designs ("unrecoverable state due to max_tokens limit").
+
+    For a name/description-only reference (no PDF) there is no census to extract,
+    so the small inferred BOM is produced by the ``reverse-engineer`` agent."""
+    review_scope = (
+        "REVERSE-ENGINEERING the reference design's schematic + BOM from its PDF. "
+        "Judge whether the BOM is COMPLETE and the parts make sense for the stated "
+        "topology/specs — a power stage missing its main switch, inductor, or "
+        "output caps; ref-des collisions; or parts that can't belong to this "
+        "converter are objections. Do NOT design a new converter; only verify the "
+        "extracted netlist/BOM is faithful and complete."
+    )
+
+    def _present(d: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "bom_line_count": len(d.get("bom", []) or []),
+            "bom": [
+                {k: c.get(k) for k in ("ref_des", "mpn", "part", "role", "value")}
+                for c in (d.get("bom", []) or [])[:60]
+            ],
+        }
+
+    # PDF/text present → robust full-BOM census via the dedicated bom-extractor.
+    if state.pdf_text:
+        from heaviside.stages.bom_extract import _extract_full_bom_rows
+
+        def _produce_bom(feedback: str | None) -> dict[str, Any]:
+            rows = _extract_full_bom_rows(
+                state.pdf_text, state.reference, extra_instructions=feedback
+            )
+            return {"bom": rows}
+
+        try:
+            if state.review_llm:
+                data = _reviewed_extraction(
+                    _produce_bom,
+                    title="REVERSE-ENGINEERED SCHEMATIC/BOM REVIEW",
+                    scope=review_scope,
+                    present=_present,
+                    state=state,
+                )
+            else:
+                data = _produce_bom(None)
+        except LLMCallError as exc:
+            state.diagnostics.append(f"bom-extractor agent failed after retries: {exc}")
+            return state
+
+        state = _finish_reverse_engineer(state, data)
+        _overlay_key_component_roles(state)
+        return state
+
+    # No PDF: infer a small BOM from the reverse-engineer agent (bounded output —
+    # no full census to emit, so no token-budget risk).
     user_msg = f"Reference design: {state.reference}\n"
     if state.ref_spec:
         user_msg += f"Topology: {state.ref_spec.topology}\n"
         user_msg += (
             f"Specs: {state.ref_spec.vout}V / {state.ref_spec.iout}A / {state.ref_spec.pout}W\n\n"
         )
-    if state.pdf_text:
-        user_msg += f"REFERENCE DESIGN PDF CONTENT:\n\n{state.pdf_text[:100_000]}"
-
-    # Scale tokens with PDF size — large BOMs need more output space
-    bom_tokens = min(16384 + len(state.pdf_text or "") // 4, 32768)
 
     def _produce_re(feedback: str | None) -> dict[str, Any]:
         msg = user_msg + (f"\n\n{feedback}" if feedback else "")
-        return call_agent_json("reverse-engineer", msg, max_tokens=bom_tokens, max_retries=2)
-
-    # MERGED single-call path: spec_extract already extracted the full BOM (and
-    # was reviewed). Reuse it — no second full-PDF call, no second review.
-    # Fall back to the dedicated reverse-engineer call only if that BOM is empty.
-    stashed = state.extract_data or {}
-    if stashed.get("bom"):
-        logger.info(
-            "RE stage 2: reusing spec-extract's %d-line BOM (merged single call)",
-            len(stashed["bom"]),
-        )
-        data = stashed
-        state.extract_data = None  # consumed
-        return _finish_reverse_engineer(state, data)
+        return call_agent_json("reverse-engineer", msg, max_tokens=8192, max_retries=2)
 
     try:
         if state.review_llm:
             data = _reviewed_extraction(
                 _produce_re,
                 title="REVERSE-ENGINEERED SCHEMATIC/BOM REVIEW",
-                scope=(
-                    "REVERSE-ENGINEERING the reference design's schematic + BOM "
-                    "from its PDF. Judge whether the BOM is COMPLETE and the parts "
-                    "make sense for the stated topology/specs — a power stage "
-                    "missing its main switch, inductor, or output caps; ref-des "
-                    "collisions; or parts that can't belong to this converter are "
-                    "objections. Do NOT design a new converter; only verify the "
-                    "extracted netlist/BOM is faithful and complete."
-                ),
-                present=lambda d: {
-                    "bom_line_count": len(d.get("bom", []) or []),
-                    "bom": [
-                        {k: c.get(k) for k in ("ref_des", "mpn", "part", "role", "value")}
-                        for c in (d.get("bom", []) or [])[:60]
-                    ],
-                },
+                scope=review_scope,
+                present=_present,
                 state=state,
             )
         else:
@@ -341,6 +378,27 @@ def _stage2_reverse_engineer(state: REState) -> REState:
         return state
 
     return _finish_reverse_engineer(state, data)
+
+
+def _overlay_key_component_roles(state: REState) -> None:
+    """Overlay power-path ``role`` (controller / main switch / magnetics / output
+    rectifier) from spec-extract's bounded ``key_components`` onto the role-less
+    bom-extractor census, matched by ref-des. Downstream enrichment keys off
+    ``role`` (RDS(on) lookup finds the controller; the magnetic DCR fetch finds
+    the inductor), so without this overlay those stages would silently no-op."""
+    kc = (state.extract_data or {}).get("key_components") or []
+    role_by_ref = {
+        c.get("ref_des"): c.get("role")
+        for c in kc
+        if isinstance(c, dict) and c.get("ref_des") and c.get("role")
+    }
+    if not role_by_ref:
+        return
+    for row in state.ref_bom:
+        if not row.get("role"):
+            role = role_by_ref.get(row.get("ref_des"))
+            if role:
+                row["role"] = role
 
 
 def _finish_reverse_engineer(state: REState, data: dict[str, Any]) -> REState:

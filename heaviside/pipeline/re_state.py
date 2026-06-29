@@ -167,9 +167,10 @@ class REState:
     # progress sink. Off by default; the API job turns them on.
     review_llm: bool = False
     progress: Any = None
-    # Raw output of the spec-extract LLM call, stashed so reverse_engineer can
-    # reuse its BOM instead of making a second full-PDF call (the merged single-
-    # call extraction). None until spec_extract runs.
+    # Raw output of the spec-extract LLM call (specs + performance + bounded
+    # power-path key_components — NOT the full BOM). Stashed so reverse_engineer
+    # can overlay power-path `role`s onto the role-less bom-extractor census.
+    # None until spec_extract runs.
     extract_data: dict[str, Any] | None = None
 
 

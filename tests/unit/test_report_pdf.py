@@ -50,7 +50,10 @@ def test_waveform_svg_empty_without_data():
 
 def test_report_includes_waveform_section():
     html = render_html(_outcome(_mas_with_waveforms()))
-    assert "Simulation Waveforms" in html and "<svg" in html
+    # Unified report: the waveforms section is now titled "Operating Waveforms"
+    # (matching the LaTeX/PDF report); pipeline-internal sections are gone.
+    assert "Operating Waveforms" in html and "<svg" in html
+    assert "Realism Checks" not in html and "Gatekeeper" not in html
 
 
 def test_report_renders_to_pdf():

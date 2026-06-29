@@ -1,9 +1,10 @@
 """reporter — render a design into a deliverable PDF.
 
-The HTML report (``heaviside.report.render_html``) already carries the magnetic,
-the inline-SVG simulation waveforms, the real-part BOM, and the realism checks.
-This stage turns that HTML into a PDF via WeasyPrint (pure-Python HTML/CSS → PDF;
-the SVG plot renders natively, no browser needed).
+The HTML report (``heaviside.report.render_html``) carries the power-electronics
+design document — key specs, magnetics, BOM, inline-SVG operating waveforms, the
+power-loss budget and design margins. This stage turns that HTML into a PDF via
+WeasyPrint (pure-Python HTML/CSS → PDF; the SVG plot renders natively, no
+browser needed).
 """
 from __future__ import annotations
 

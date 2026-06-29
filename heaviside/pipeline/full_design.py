@@ -382,12 +382,14 @@ def stage2_pick_magnetics(
 # Stage 3 — realize (decompose → BOM → simulate → realism gate)
 # ---------------------------------------------------------------------------
 #
-# stage3_realize takes a Stage 2 TopologyPick and runs it end to end:
-#   - design_converter_components (MKF magnetic + extras)
-#   - decompose_from_spec → TAS + ideal netlist
-#   - assemble_bom_from_tas → real FET/diode/cap/controller from the internal DB
-#   - enrich_tas_for_realism + inject_parasitics
-#   - simulate_closed_loop (or steady_state) + run_analyst
+# stage3_realize takes a Stage 2 TopologyPick and runs it end to end via the
+# Kirchhoff-native realize path (della-Pollock cutover — the MKF
+# design_converter_components / decompose_from_spec / assemble_bom_from_tas flow
+# was removed):
+#   - kirchhoff_adapter.design_from_hs_spec → k_tas (the single TAS the gate reads)
+#   - fill_kirchhoff_bom → real FET/diode/cap/controller from the internal DB
+#   - design each magnetic GEOMETRY from k_tas's own seeds (ABT #34) + stamp
+#   - simulate_regulated + stamp_simulation_results
 #   - realism_gate.evaluate → verdict
 # Every step is a hard failure: it raises RealizeError rather than returning a
 # degraded outcome (a degraded TAS would slip a non-physics PASS past the gate).

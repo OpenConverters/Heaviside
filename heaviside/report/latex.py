@@ -2,10 +2,12 @@
 professional power-electronics **design report**, emitted as LaTeX and compiled
 to PDF with ``pdflatex``.
 
-Unlike :mod:`heaviside.report.html` — which narrates the *pipeline* (frequency
-sweep, realism checks, gatekeeper, diagnostics) — this report is written from a
-**power-electronics engineer's** point of view, in the shape of a vendor
-eval-board application note:
+Both this renderer and :mod:`heaviside.report.html` consume the same shared,
+format-agnostic :class:`heaviside.report.model.ReportModel` and emit the **same
+report** — written from a **power-electronics engineer's** point of view, in the
+shape of a vendor eval-board application note (the pipeline-internal framing —
+frequency sweep, realism checks, gatekeeper, diagnostics — is deliberately
+dropped):
 
   0. Cover / title block (topology, one-line spec, "validated" badge)
   1. Key Specifications        (Parameter / Symbol / Min / Typ / Max / Unit)
@@ -33,9 +35,17 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+from heaviside.report.model import (
+    ReportModel,
+    _CAT_DESC,
+    _POWER_CATS,
+    _resolve,
+    sym_tex,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LaTeX escaping + number/unit formatting
@@ -63,38 +73,6 @@ def _esc(text: Any) -> str:
     for ch in str(text):
         out.append(_LATEX_SPECIAL.get(ch, ch))
     return "".join(out)
-
-
-def _resolve(dim: Any, prefer: str = "nominal") -> float | None:
-    """Collapse a ``dimensionWithTolerance`` ({nominal,minimum,maximum}) — or a
-    bare scalar — to one number, mirroring ``PEAS::resolve_dimensional_values``.
-
-    Semantics (default NOMINAL): nominal -> (min+max)/2 -> max -> min.  MAXIMUM /
-    MINIMUM pick that end first.  Returns ``None`` when nothing is present
-    (the caller decides whether that is an n/a row or a hard error) — we never
-    invent a value.
-    """
-    if isinstance(dim, (int, float)):
-        return float(dim)
-    if not isinstance(dim, Mapping):
-        return None
-    nom = dim.get("nominal")
-    lo = dim.get("minimum")
-    hi = dim.get("maximum")
-    nom = float(nom) if isinstance(nom, (int, float)) else None
-    lo = float(lo) if isinstance(lo, (int, float)) else None
-    hi = float(hi) if isinstance(hi, (int, float)) else None
-    if prefer == "maximum":
-        order = [hi, nom, lo]
-    elif prefer == "minimum":
-        order = [lo, nom, hi]
-    else:
-        mid = (lo + hi) / 2.0 if (lo is not None and hi is not None) else None
-        order = [nom, mid, hi, lo]
-    for v in order:
-        if v is not None:
-            return v
-    return None
 
 
 def _num(value: float | None, sig: int = 4) -> str:
@@ -142,380 +120,6 @@ def _pct(ratio: float | None, sig: int = 3) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Topology metadata
-# ─────────────────────────────────────────────────────────────────────────────
-
-_TOPO_LABEL: dict[str, str] = {
-    "buck": "Buck DC-DC Converter",
-    "boost": "Boost DC-DC Converter",
-    "buck_boost": "Buck-Boost DC-DC Converter",
-    "flyback": "Flyback Isolated DC-DC Converter",
-    "forward": "Forward Isolated DC-DC Converter",
-    "push_pull": "Push-Pull Isolated DC-DC Converter",
-    "half_bridge": "Half-Bridge Isolated DC-DC Converter",
-    "full_bridge": "Full-Bridge Isolated DC-DC Converter",
-    "psfb": "Phase-Shifted Full-Bridge Converter",
-    "llc": "LLC Resonant Half-Bridge Converter",
-    "cllc": "CLLC Bidirectional Resonant Converter",
-    "pfc": "Single-Phase Boost PFC Pre-Regulator",
-    "vienna": "Three-Phase Vienna Rectifier",
-}
-
-# Topology-templated theory-of-operation paragraphs (generic but correct per
-# family). One short paragraph; the design numbers live in later sections.
-_TOPO_THEORY: dict[str, str] = {
-    "buck": (
-        "The converter is a step-down (buck) topology. During the on-time the high-side "
-        "switch connects the input to the output inductor, ramping its current up; during "
-        "the off-time the current freewheels through the rectifier. The output voltage is "
-        "set by the duty cycle, $V_{out} = D\\,V_{in}$, and is regulated by a feedback loop "
-        "that modulates $D$. The design targets continuous-conduction mode (CCM) at full "
-        "load, with the inductor sized for the specified peak-to-peak current ripple."),
-    "boost": (
-        "The converter is a step-up (boost) topology. The switch periodically shorts the "
-        "input inductor to ground, storing energy; when it opens, the inductor current is "
-        "delivered to the output through the rectifier at a higher voltage, "
-        "$V_{out} = V_{in}/(1-D)$. The loop regulates the output by modulating $D$; the "
-        "inductor is sized for CCM operation at the rated load."),
-    "flyback": (
-        "The converter is an isolated flyback. During the on-time energy is stored in the "
-        "coupled-inductor (transformer) magnetizing inductance; during the off-time it is "
-        "transferred to the secondary and the output. The conversion ratio is "
-        "$V_{out} = \\frac{N_s}{N_p}\\frac{D}{1-D}V_{in}$. Galvanic isolation is provided "
-        "by the transformer; the magnetizing inductance is sized for the chosen "
-        "conduction mode and peak current."),
-    "forward": (
-        "The converter is an isolated single-switch forward. Energy is transferred to the "
-        "secondary during the switch on-time through the transformer (which carries no DC "
-        "energy storage); the output inductor filters the rectified secondary voltage. "
-        "$V_{out} = \\frac{N_s}{N_p} D\\,V_{in}$. A reset winding or clamp recovers the "
-        "magnetizing energy each cycle."),
-    "push_pull": (
-        "The converter is an isolated push-pull. Two switches alternately drive the two "
-        "halves of a center-tapped primary, so the transformer is excited symmetrically in "
-        "both flux polarities and the core is fully utilised. The rectified, filtered "
-        "secondary gives $V_{out} = \\frac{N_s}{N_p} D\\,V_{in}$ (with $D$ per switch). "
-        "Symmetric drive keeps the average flux near zero, avoiding staircase saturation."),
-    "half_bridge": (
-        "The converter is an isolated half-bridge. Two switches drive the transformer "
-        "primary from a capacitor-divided rail, applying $\\pm V_{in}/2$ across the "
-        "primary. The rectified secondary is filtered to the output, "
-        "$V_{out} = \\frac{N_s}{N_p} D\\,V_{in}$."),
-    "full_bridge": (
-        "The converter is an isolated full-bridge. Four switches in two legs apply the full "
-        "$\\pm V_{in}$ across the transformer primary, giving the highest power capability "
-        "of the bridge family. The rectified secondary is filtered to the output."),
-    "llc": (
-        "The converter is an LLC resonant half-bridge. The half-bridge drives a series "
-        "resonant tank (resonant inductor $L_r$, resonant capacitor $C_r$) in series with "
-        "the transformer magnetizing inductance $L_m$. Output regulation is achieved by "
-        "varying the switching frequency around the series-resonant frequency "
-        "$f_r = 1/(2\\pi\\sqrt{L_r C_r})$, which lets the primary switches turn on at zero "
-        "voltage (ZVS) and the secondary rectifiers turn off at zero current (ZCS) over a "
-        "wide load range, for high efficiency."),
-    "pfc": (
-        "The stage is a single-phase boost power-factor-correction (PFC) pre-regulator. The "
-        "boost inductor current is shaped by the controller to follow the rectified line "
-        "voltage, drawing near-unity-power-factor sinusoidal input current while regulating "
-        "the bulk output to a fixed DC voltage above the line peak."),
-}
-
-
-def _theory_for(topology: str, isolated: bool) -> str:
-    if topology in _TOPO_THEORY:
-        return _TOPO_THEORY[topology]
-    iso = ("It provides galvanic isolation through a transformer."
-           if isolated else "It is a non-isolated topology.")
-    return (f"The converter is a {_esc(topology.replace('_', ' '))} topology. {iso} "
-            "Output regulation is provided by the control loop modulating the switching "
-            "duty cycle (or frequency for resonant families).")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Model extraction — normalise ConverterDesign | DesignOutcome into one view
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Loss-mechanism suffixes used by the analyst's loss-budget keys
-# ("Q1_conduction", "C_out_esr", "L1_core", ...). The refdes is whatever
-# precedes a recognised mechanism suffix.
-_LOSS_MECH: dict[str, str] = {
-    "conduction": "Conduction",
-    "switching": "Switching",
-    "core": "Core",
-    "dcr": "Winding (DCR)",
-    "copper": "Winding",
-    "winding": "Winding",
-    "esr": "ESR",
-    "gate": "Gate drive",
-    "reverse": "Reverse recovery",
-}
-
-
-def _split_loss_key(key: str) -> tuple[str, str]:
-    """Split a loss-budget key into ``(refdes, mechanism_label)``."""
-    idx = key.rfind("_")
-    if idx > 0:
-        suffix = key[idx + 1:].lower()
-        if suffix in _LOSS_MECH:
-            return key[:idx], _LOSS_MECH[suffix]
-    return key, "Total"
-
-
-class _ReportModel:
-    """A flat, render-ready view of the design — every section reads from here."""
-
-    def __init__(self, src: Any) -> None:
-        from heaviside.pipeline.converter_designer import (
-            ConverterDesign,
-            magnetic_waveforms,
-        )
-
-        self.is_design = isinstance(src, ConverterDesign)
-        outcome = src.outcome if self.is_design else src
-        self.outcome = outcome
-        tas = getattr(outcome, "tas", None)
-        self.tas: Mapping[str, Any] = tas if isinstance(tas, Mapping) else {}
-
-        # Topology + label
-        if self.is_design:
-            self.topology = src.topology
-        else:
-            topo = getattr(getattr(outcome, "pick", None), "topology", None)
-            self.topology = getattr(topo, "name", None) or "converter"
-        self.topo_label = _TOPO_LABEL.get(
-            self.topology, self.topology.replace("_", " ").title() + " Converter")
-
-        self.family = self._topology_family()
-        fam = self.family or ""
-        # NB: "non_isolated" *contains* "isolated" — match the prefix, not a substring.
-        self.isolated = fam.startswith("isolated") or fam == "resonant"
-
-        # Verdict
-        vd = getattr(outcome, "verdict_dict", None)
-        self.verdict_dict: Mapping[str, Any] = vd if isinstance(vd, Mapping) else {}
-        self.verdict = self.verdict_dict.get("verdict")
-        self.passed = self.verdict == "pass"
-
-        # Spec — lives at tas.inputs.{designRequirements,operatingPoints}
-        self.req: Mapping[str, Any] = {}
-        self.ops: list[Mapping[str, Any]] = []
-        inputs = self.tas.get("inputs")
-        if isinstance(inputs, Mapping):
-            dr = inputs.get("designRequirements")
-            if isinstance(dr, Mapping):
-                self.req = dr
-            ops = inputs.get("operatingPoints")
-            if isinstance(ops, list):
-                self.ops = [o for o in ops if isinstance(o, Mapping)]
-
-        # fsw*
-        self.fsw_hz = float(src.fsw_hz) if self.is_design else (
-            getattr(outcome, "fsw_optimal", None) or self._fsw_from_req())
-
-        # Simulation results (first op block)
-        self.sim_op: Mapping[str, Any] = self._first_sim_op()
-
-        # BOM
-        if self.is_design and getattr(src, "bom", None):
-            self.bom = list(src.bom)
-        else:
-            self.bom = self._extract_bom()
-
-        # Loss budget (flat worst-case)
-        lb = self.tas.get("loss_budget")
-        self.loss_budget: Mapping[str, Any] = lb if isinstance(lb, Mapping) else {}
-
-        # Magnetics
-        self.sweep_front = None
-        sweep = getattr(src, "sweep", None) if self.is_design else None
-        front = getattr(sweep, "front", None) if sweep is not None else None
-        if isinstance(front, Sequence) and front:
-            self.sweep_front = front[0]
-        self.magnetics = self._extract_magnetics()
-
-        # Waveforms
-        wfs = getattr(src, "waveforms", None) if self.is_design else None
-        if not wfs and self.magnetics:
-            try:
-                wfs = magnetic_waveforms(self.magnetics[0]["mas"], max_points=200)
-            except Exception:
-                wfs = []
-        self.waveforms = wfs or []
-
-        # Stage names for the block diagram
-        self.stages = [
-            s.get("name") for s in self._stages() if isinstance(s.get("name"), str)
-        ]
-
-    # -- helpers ----------------------------------------------------------------
-
-    def _topology_family(self) -> str | None:
-        try:
-            from heaviside.topologies import get as get_topology
-            return get_topology(self.topology).family
-        except Exception:
-            return None
-
-    def _stages(self) -> list[Mapping[str, Any]]:
-        topo = self.tas.get("topology")
-        stages = topo.get("stages") if isinstance(topo, Mapping) else None
-        return [s for s in stages if isinstance(s, Mapping)] if isinstance(stages, list) else []
-
-    def _fsw_from_req(self) -> float | None:
-        return _resolve(self.req.get("switchingFrequency")) if self.req else None
-
-    def _first_sim_op(self) -> Mapping[str, Any]:
-        sim = self.tas.get("simulation_results")
-        if isinstance(sim, Mapping):
-            for v in sim.values():
-                if isinstance(v, Mapping) and ("efficiency" in v or "pout" in v):
-                    return v
-        return {}
-
-    def _extract_bom(self) -> list[dict[str, Any]]:
-        from heaviside.pipeline.converter_designer import _extract_bom
-        return _extract_bom(self.tas)
-
-    def _extract_magnetics(self) -> list[dict[str, Any]]:
-        """One entry per magnetic, read from the MAS. The main magnetic comes
-        from the pick; isat/ipeak/L/total-loss come from the swept candidate when
-        present (the chosen design point)."""
-        out: list[dict[str, Any]] = []
-        mag = getattr(getattr(self.outcome, "pick", None), "main_magnetic", None)
-        mas = getattr(mag, "mas", None)
-        if not isinstance(mas, Mapping):
-            return out
-        m = mas.get("magnetic") or {}
-        core = m.get("core") or {}
-        coil = m.get("coil") or {}
-        fd = core.get("functionalDescription") or {}
-        pd = core.get("processedDescription") or {}
-        eff = pd.get("effectiveParameters") or {}
-        mat = fd.get("material") or {}
-        shape = fd.get("shape") or {}
-        dr = (mas.get("inputs") or {}).get("designRequirements") or {}
-
-        windings = []
-        for w in (coil.get("functionalDescription") or []):
-            if not isinstance(w, Mapping):
-                continue
-            wire = w.get("wire") or {}
-            windings.append({
-                "name": w.get("name"),
-                "side": w.get("isolationSide"),
-                "turns": w.get("numberTurns"),
-                "parallels": w.get("numberParallels"),
-                "wire_d": _resolve((wire.get("conductingDiameter")) or {}),
-            })
-
-        turns_ratios = []
-        for tr in (dr.get("turnsRatios") or []):
-            r = _resolve(tr)
-            if r is not None:
-                turns_ratios.append(r)
-
-        # Core + winding loss from the MAS outputs (authoritative magnetics math).
-        outputs = mas.get("outputs")
-        core_loss = winding_loss = bpk = None
-        if isinstance(outputs, list) and outputs and isinstance(outputs[0], Mapping):
-            o0 = outputs[0]
-            cl = o0.get("coreLosses")
-            if isinstance(cl, Mapping):
-                v = cl.get("coreLosses")
-                core_loss = float(v) if isinstance(v, (int, float)) else None
-                mfd = cl.get("magneticFluxDensity")
-                proc = mfd.get("processed") if isinstance(mfd, Mapping) else None
-                if isinstance(proc, Mapping) and isinstance(proc.get("peak"), (int, float)):
-                    bpk = float(proc["peak"])
-            wl = o0.get("windingLosses")
-            if isinstance(wl, Mapping) and isinstance(wl.get("windingLosses"), (int, float)):
-                winding_loss = float(wl["windingLosses"])
-
-        front = self.sweep_front
-        out.append({
-            "mas": mas,
-            "refdes": self._magnetic_refdes(),
-            "role": "Transformer" if (turns_ratios or self.isolated) else "Inductor",
-            "core_name": core.get("name"),
-            "shape": shape.get("name"),
-            "core_type": fd.get("type"),
-            "material": mat.get("name"),
-            "gapping": fd.get("gapping") or [],
-            "Ae": eff.get("effectiveArea"),
-            "le": eff.get("effectiveLength"),
-            "Ve": eff.get("effectiveVolume"),
-            "windings": windings,
-            "turns_ratios": turns_ratios,
-            "Lm": dr.get("magnetizingInductance"),
-            "Llk": dr.get("leakageInductance"),
-            "inductance_h": getattr(front, "inductance_h", None),
-            "isat_a": getattr(front, "isat_a", None),
-            "ipeak_a": getattr(front, "ipeak_worst_a", None),
-            "total_loss_w": getattr(front, "magnetic_loss_w", None),
-            "core_loss_w": core_loss,
-            "winding_loss_w": winding_loss,
-            "bpk_t": bpk,
-        })
-        return out
-
-    def _magnetic_refdes(self) -> str:
-        for stage in self._stages():
-            for c in (stage.get("circuit") or {}).get("components") or []:
-                if isinstance(c, Mapping) and (c.get("category") or "").lower() in (
-                    "inductor", "transformer", "magnetic", "coupled_inductor"):
-                    name = c.get("name")
-                    if isinstance(name, str):
-                        return name
-        return "L1"
-
-    # -- derived spec values ----------------------------------------------------
-
-    def vin(self) -> dict[str, float | None]:
-        d = self.req.get("inputVoltage") if self.req else None
-        d = d if isinstance(d, Mapping) else {}
-        return {
-            "min": _resolve(d, "minimum"),
-            "nom": _resolve(d, "nominal"),
-            "max": _resolve(d, "maximum"),
-        }
-
-    def outputs(self) -> list[dict[str, Any]]:
-        """Per-rail (voltage, current, power) from the spec, cross-checked with sim."""
-        rails = []
-        outs = self.req.get("outputs") if self.req else None
-        op0 = self.ops[0] if self.ops else {}
-        op_outs = op0.get("outputs") if isinstance(op0, Mapping) else None
-        if isinstance(outs, list):
-            for i, o in enumerate(outs):
-                if not isinstance(o, Mapping):
-                    continue
-                v = _resolve(o.get("voltage"))
-                p = None
-                if isinstance(op_outs, list) and i < len(op_outs) and isinstance(op_outs[i], Mapping):
-                    p = op_outs[i].get("power")
-                    p = float(p) if isinstance(p, (int, float)) else None
-                cur = (p / v) if (p is not None and v) else None
-                rails.append({"name": o.get("name"), "v": v, "i": cur, "p": p,
-                              "regulation": o.get("regulation")})
-        return rails
-
-    def pout(self) -> float | None:
-        v = self.sim_op.get("pout")
-        if isinstance(v, (int, float)):
-            return float(v)
-        tot = sum(r["p"] for r in self.outputs() if isinstance(r.get("p"), (int, float)))
-        return tot or None
-
-    def eta_target(self) -> float | None:
-        v = self.req.get("efficiency") if self.req else None
-        return float(v) if isinstance(v, (int, float)) else None
-
-    def eta_sim(self) -> float | None:
-        v = self.sim_op.get("efficiency")
-        return float(v) if isinstance(v, (int, float)) else None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Section renderers
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -548,7 +152,7 @@ def _preamble() -> str:
 """
 
 
-def _cover(m: _ReportModel) -> list[str]:
+def _cover(m: ReportModel) -> list[str]:
     vin = m.vin()
     rails = m.outputs()
     # one-line spec: "48 V -> 12 V / 3 A, 36 W"
@@ -620,7 +224,7 @@ def _humanise_stage(name: str) -> str:
     return " ".join(w.capitalize() for w in spaced.split())
 
 
-def _block_diagram(m: _ReportModel) -> list[str]:
+def _block_diagram(m: ReportModel) -> list[str]:
     # Order power-path stages left-to-right; "control" is drawn underneath.
     power = [s for s in m.stages if s != "control"]
     if not power:
@@ -651,9 +255,16 @@ def _block_diagram(m: _ReportModel) -> list[str]:
     return lines
 
 
-def _key_specs(m: _ReportModel) -> list[str]:
-    vin = m.vin()
-    rails = m.outputs()
+# siunitx unit macro per Key-Specifications unit token.
+_SPEC_UNIT_TEX = {
+    "V": r"\si{\volt}", "A": r"\si{\ampere}", "W": r"\si{\watt}",
+    "kHz": r"\si{\kilo\hertz}", "%": r"\si{\percent}", "--": "--",
+}
+# Base-unit macro for auto-prefixed design-calc results.
+_CALC_UNIT_TEX = {"H": r"\henry", "A": r"\ampere", "V": r"\volt", "W": r"\watt"}
+
+
+def _key_specs(m: ReportModel) -> list[str]:
     lines = [
         r"\section{Key Specifications}",
         r"\begin{center}",
@@ -664,123 +275,40 @@ def _key_specs(m: _ReportModel) -> list[str]:
         r"\midrule",
     ]
 
-    def row(param: str, sym: str, mn, ty, mx, unit: str, cond: str = "") -> str:
-        def c(x):
-            return _num(x) if isinstance(x, (int, float)) else "{--}"
-        return (f"{_esc(param)} & {sym} & {c(mn)} & {c(ty)} & {c(mx)} & "
-                f"{unit} & {_esc(cond)} \\\\")
+    def c(x):
+        return _num(x) if isinstance(x, (int, float)) else "{--}"
 
-    lines.append(row("Input voltage", "$V_{in}$", vin["min"], vin["nom"], vin["max"],
-                     r"\si{\volt}", "DC"))
-    for i, r in enumerate(rails):
-        tag = "" if len(rails) == 1 else f"[{i}]"
-        lines.append(row(f"Output voltage{tag}", f"$V_{{out{tag}}}$", None, r["v"], None,
-                         r"\si{\volt}", str(r.get("regulation") or "")))
-        if r["i"] is not None:
-            lines.append(row(f"Output current{tag}", f"$I_{{out{tag}}}$", None, r["i"], None,
-                             r"\si{\ampere}", "full load"))
-        if r["p"] is not None:
-            lines.append(row(f"Output power{tag}", f"$P_{{out{tag}}}$", None, r["p"], None,
-                             r"\si{\watt}", ""))
-    # Switching frequency (kHz)
-    if m.fsw_hz:
-        lines.append(row("Switching frequency", "$f_{sw}$", None, m.fsw_hz / 1e3, None,
-                         r"\si{\kilo\hertz}", ""))
-    # Efficiency
-    et = m.eta_target()
-    es = m.eta_sim()
-    if et is not None:
-        lines.append(row("Efficiency (target)", r"$\eta$", et * 100, None, None,
-                         r"\si{\percent}", "design min"))
-    if es is not None:
-        lines.append(row("Efficiency (full load)", r"$\eta$", None, es * 100, None,
-                         r"\si{\percent}", "simulated"))
-    lines.append(row("Isolation", "--", None, None, None, "--",
-                     "yes" if m.isolated else "no"))
+    for r in m.key_spec_rows():
+        lines.append(
+            f"{_esc(r['param'])} & {sym_tex(r['sym'])} & {c(r['min'])} & {c(r['typ'])} & "
+            f"{c(r['max'])} & {_SPEC_UNIT_TEX[r['unit']]} & {_esc(r['cond'])} \\\\")
     lines += [r"\bottomrule", r"\end{tabular}", r"\end{center}"]
     return lines
 
 
-def _theory(m: _ReportModel) -> list[str]:
+def _theory(m: ReportModel) -> list[str]:
     return [
         r"\section{Theory of Operation}",
-        _theory_for(m.topology, m.isolated),
+        m.theory_text(),
     ]
 
 
-def _design_calcs(m: _ReportModel) -> list[str]:
+def _calc_result_tex(result: tuple) -> str:
+    """Format a design-calc result tuple from the model as LaTeX."""
+    kind = result[0]
+    if kind == "num":
+        return _num(result[1], result[2])
+    if kind == "si":
+        return _si(result[1], _CALC_UNIT_TEX[result[2]])
+    return str(result[1])  # "text"
+
+
+def _design_calcs(m: ReportModel) -> list[str]:
     """Named quantity -> equation -> substituted numbers -> result."""
     lines = [r"\section{Design Calculations}",
              "The governing relations below are evaluated at the nominal operating "
              "point with the values Heaviside selected for this design."]
-    vin = m.vin()
-    rails = m.outputs()
-    r0 = rails[0] if rails else {}
-    vout = r0.get("v")
-    iout = r0.get("i")
-    mag = m.magnetics[0] if m.magnetics else None
-
-    items: list[tuple[str, str, str]] = []  # (name, equation, result)
-
-    # Duty cycle
-    duty = m.tas.get("duty")
-    if isinstance(duty, (int, float)) and vin["nom"]:
-        items.append((
-            "Duty cycle",
-            r"D = \frac{V_{out}}{V_{in}}" + (
-                rf" = \frac{{{_num(vout)}}}{{{_num(vin['nom'])}}}" if vout else ""),
-            _num(duty, 3)))
-    elif vout and vin["nom"] and not m.isolated:
-        items.append((
-            "Duty cycle (approx.)", r"D \approx \frac{V_{out}}{V_{in}} = "
-            rf"\frac{{{_num(vout)}}}{{{_num(vin['nom'])}}}", _num(vout / vin["nom"], 3)))
-
-    # Turns ratio (transformer) — present the full primary-referred ratio list
-    # rather than guessing which winding is the secondary (center-tapped windings
-    # make windings[1] ambiguous). The effective step-down ratio is the largest.
-    if mag and mag["turns_ratios"]:
-        ratios = mag["turns_ratios"]
-        eff_n = max(ratios)
-        items.append((
-            "Primary-referred turns ratio", r"n = \frac{N_p}{N_s}",
-            f"{_num(eff_n, 3)} : 1"))
-    if mag and mag["windings"]:
-        turn_list = [w.get("turns") for w in mag["windings"]
-                     if isinstance(w.get("turns"), (int, float))]
-        if turn_list and mag["role"] == "Transformer":
-            items.append(("Winding turns",
-                          r"N_{1..k} = " + ",\\,".join(str(int(t)) for t in turn_list),
-                          f"{len(turn_list)} windings"))
-        elif turn_list:
-            items.append(("Inductor turns", rf"N = {int(turn_list[0])}",
-                          f"{int(turn_list[0])} turns"))
-
-    # Magnetizing / main inductance (from MAS designRequirements)
-    if mag and mag.get("Lm") is not None:
-        lm = _resolve(mag["Lm"])
-        label = "Magnetizing inductance" if mag["role"] == "Transformer" else "Output inductance"
-        sym = "L_m" if mag["role"] == "Transformer" else "L"
-        items.append((label, sym + r" = \text{(MKF magnetic design)}", _si(lm, r"\henry")))
-    elif mag and mag.get("inductance_h") is not None:
-        items.append(("Output inductance", r"L = \text{(MKF magnetic design)}",
-                      _si(mag["inductance_h"], r"\henry")))
-
-    # Peak inductor / winding current
-    if mag and mag.get("ipeak_a") is not None:
-        items.append((
-            "Peak winding current (worst OP)",
-            r"I_{pk} = I_{out} + \tfrac{1}{2}\Delta I_L",
-            _si(mag["ipeak_a"], r"\ampere")))
-
-    # Output capacitor ripple (if we have a cap with stress)
-    cap = next((b for b in m.bom if (b.get("category") or "") == "capacitor"), None)
-    if cap and isinstance(cap.get("port_current"), (int, float)):
-        items.append((
-            "Output-cap RMS ripple current",
-            r"I_{C,rms}\ \text{(from triangular inductor ripple)}",
-            _si(cap["port_current"], r"\ampere")))
-
-    # Render as an aligned list
+    items = m.design_calc_items()
     if not items:
         lines.append(r"\textit{Design-calculation inputs were not available for this "
                      r"topology in the current pipeline output.}")
@@ -790,15 +318,16 @@ def _design_calcs(m: _ReportModel) -> list[str]:
     lines.append(r"\toprule")
     lines.append(r"Quantity & Relation & {Result} \tabularnewline")
     lines.append(r"\midrule")
-    for name, eq, res in items:
-        lines.append(rf"{_esc(name)} & $\displaystyle {eq}$ & {res} \tabularnewline")
+    for it in items:
+        lines.append(rf"{_esc(it['name'])} & $\displaystyle {it['eq_tex']}$ & "
+                     rf"{_calc_result_tex(it['result'])} \tabularnewline")
     lines.append(r"\bottomrule")
     lines.append(r"\end{tabular}")
     lines.append(r"\end{center}")
     return lines
 
 
-def _magnetics(m: _ReportModel) -> list[str]:
+def _magnetics(m: ReportModel) -> list[str]:
     if not m.magnetics:
         return []
     lines = [r"\section{Magnetics Design}",
@@ -868,20 +397,7 @@ def _magnetics(m: _ReportModel) -> list[str]:
     return lines
 
 
-# Friendly descriptions per BOM category.
-_CAT_DESC = {
-    "mosfet": "Power MOSFET",
-    "diode": "Rectifier / freewheel diode",
-    "capacitor": "Capacitor",
-    "inductor": "Power inductor",
-    "transformer": "Power transformer",
-    "controller": "PWM / control IC",
-    "resistor": "Resistor",
-}
-_POWER_CATS = {"mosfet", "diode", "capacitor", "inductor", "transformer", "magnetic"}
-
-
-def _bom(m: _ReportModel) -> list[str]:
+def _bom(m: ReportModel) -> list[str]:
     if not m.bom and not m.magnetics:
         return []
     lines = [r"\section{Bill of Materials}"]
@@ -929,7 +445,7 @@ def _coords(xs: Sequence[float], ys: Sequence[float], *, xscale: float = 1.0) ->
     return " ".join(f"({x * xscale:.6g},{y:.6g})" for x, y in zip(xs, ys))
 
 
-def _waveforms(m: _ReportModel) -> list[str]:
+def _waveforms(m: ReportModel) -> list[str]:
     if not m.waveforms:
         return []
     wf = m.waveforms[0]
@@ -974,37 +490,10 @@ def _waveforms(m: _ReportModel) -> list[str]:
     return lines
 
 
-def _loss_budget(m: _ReportModel) -> list[str]:
+def _loss_budget(m: ReportModel) -> list[str]:
     lines = [r"\section{Power-Loss Budget}"]
-    # Build per-(refdes, mechanism) numeric rows from the analyst budget.
-    rows: list[tuple[str, str, float]] = []
-    comp_total: dict[str, float] = {}
-    for key, val in m.loss_budget.items():
-        if not isinstance(val, (int, float)):
-            continue
-        refdes, mech = _split_loss_key(key)
-        rows.append((refdes, mech, float(val)))
-        comp_total[refdes] = comp_total.get(refdes, 0.0) + float(val)
-
-    # Fill magnetic core/winding loss from the MAS when the analyst left it null.
-    for mag in m.magnetics:
-        ref = mag["refdes"]
-        if comp_total.get(ref):
-            continue  # analyst already has it
-        added = False
-        if mag.get("core_loss_w") is not None:
-            rows.append((ref, "Core (MKF)", mag["core_loss_w"]))
-            comp_total[ref] = comp_total.get(ref, 0.0) + mag["core_loss_w"]
-            added = True
-        if mag.get("winding_loss_w") is not None:
-            rows.append((ref, "Winding (MKF)", mag["winding_loss_w"]))
-            comp_total[ref] = comp_total.get(ref, 0.0) + mag["winding_loss_w"]
-            added = True
-        if added:
-            continue
-
-    total = sum(v for _, _, v in rows)
-    sim_total = m.sim_op.get("total_losses")
+    rows, comp_total, total = m.loss_rows()
+    sim_total = m.sim_total_losses()
 
     if not rows:
         if isinstance(sim_total, (int, float)):
@@ -1079,7 +568,7 @@ _CHECK_LABEL = {
 }
 
 
-def _margins(m: _ReportModel) -> list[str]:
+def _margins(m: ReportModel) -> list[str]:
     lines = [r"\section{Design Margins / Component Stress}",
              "Applied stress versus device rating for each power component, with the "
              "headroom expressed affirmatively. Stresses are stamped from the simulated "
@@ -1087,23 +576,18 @@ def _margins(m: _ReportModel) -> list[str]:
 
     # Primary source: BOM stress view (applied vs rated, per component).
     stress_rows: list[str] = []
-    for r in m.bom:
-        cat = (r.get("category") or "").lower()
-        pv, rv = r.get("port_voltage"), r.get("rated_voltage")
-        pc, rc = r.get("port_current"), r.get("rated_current")
-        param_v = {"mosfet": "$V_{ds}$", "diode": "$V_R$",
-                   "capacitor": "Working V"}.get(cat, "Voltage")
-        if isinstance(pv, (int, float)) and isinstance(rv, (int, float)) and rv:
-            margin = (rv - pv) / rv
-            stress_rows.append(
-                f"{_esc(r.get('ref') or '?')} & {param_v} & {_num(pv, 4)} & "
-                f"{_num(rv, 4)} & {_num(margin * 100, 3)} & \\si{{\\volt}} \\\\")
-        if isinstance(pc, (int, float)) and isinstance(rc, (int, float)) and rc:
-            param_i = {"capacitor": "Ripple $I_{rms}$"}.get(cat, "Current")
-            margin = (rc - pc) / rc
-            stress_rows.append(
-                f"{_esc(r.get('ref') or '?')} & {param_i} & {_num(pc, 4)} & "
-                f"{_num(rc, 4)} & {_num(margin * 100, 3)} & \\si{{\\ampere}} \\\\")
+    for s in m.stress_rows():
+        cat = s["cat"]
+        if s["kind"] == "V":
+            param = {"mosfet": "$V_{ds}$", "diode": "$V_R$",
+                     "capacitor": "Working V"}.get(cat, "Voltage")
+            unit = r"\si{\volt}"
+        else:
+            param = {"capacitor": "Ripple $I_{rms}$"}.get(cat, "Current")
+            unit = r"\si{\ampere}"
+        stress_rows.append(
+            f"{_esc(s['ref'])} & {param} & {_num(s['applied'], 4)} & "
+            f"{_num(s['rated'], 4)} & {_num(s['margin'] * 100, 3)} & {unit} \\\\")
 
     if stress_rows:
         lines.append(r"\begin{center}")
@@ -1118,31 +602,28 @@ def _margins(m: _ReportModel) -> list[str]:
         lines.append(r"\end{center}")
 
     # Secondary: affirmative summary of the named physics checks that passed.
-    checks = m.verdict_dict.get("checks") if m.verdict_dict else None
-    if isinstance(checks, list):
-        good = [c for c in checks if isinstance(c, Mapping)
-                and c.get("status") == "pass" and isinstance(c.get("margin"), (int, float))]
-        if good:
-            lines.append(r"\subsection*{Validated Physics Checks}")
-            lines.append(r"\begin{center}")
-            lines.append(r"\begin{tabular}{l S[table-format=3.4] S[table-format=2.4]}")
-            lines.append(r"\toprule")
-            lines.append(r"Check & {Value} & {Margin} \\")
-            lines.append(r"\midrule")
-            for c in good:
-                name = c.get("name", "")
-                known = _CHECK_LABEL.get(name)
-                # Known labels are author LaTeX (may contain math) — insert verbatim;
-                # otherwise prettify the raw check name and escape it.
-                label = known[1] if known else _esc(name.replace("_", " ").title())
-                val = c.get("value")
-                vstr = _num(val, 4) if isinstance(val, (int, float)) else "{--}"
-                lines.append(rf"{label} & {vstr} & {_num(c.get('margin'), 4)} \\")
-            lines.append(r"\bottomrule")
-            lines.append(r"\end{tabular}")
-            lines.append(r"\end{center}")
+    good = m.validated_checks()
+    if good:
+        lines.append(r"\subsection*{Validated Physics Checks}")
+        lines.append(r"\begin{center}")
+        lines.append(r"\begin{tabular}{l S[table-format=3.4] S[table-format=2.4]}")
+        lines.append(r"\toprule")
+        lines.append(r"Check & {Value} & {Margin} \\")
+        lines.append(r"\midrule")
+        for c in good:
+            name = c.get("name", "")
+            known = _CHECK_LABEL.get(name)
+            # Known labels are author LaTeX (may contain math) — insert verbatim;
+            # otherwise prettify the raw check name and escape it.
+            label = known[1] if known else _esc(name.replace("_", " ").title())
+            val = c.get("value")
+            vstr = _num(val, 4) if isinstance(val, (int, float)) else "{--}"
+            lines.append(rf"{label} & {vstr} & {_num(c.get('margin'), 4)} \\")
+        lines.append(r"\bottomrule")
+        lines.append(r"\end{tabular}")
+        lines.append(r"\end{center}")
 
-    if not stress_rows and not (isinstance(checks, list) and checks):
+    if not stress_rows and not good:
         lines.append(r"\textit{Component-stress data was not available for this design.}")
 
     # TODO (Phase 2): junction-temperature (Tj) table, efficiency-vs-load and
@@ -1157,7 +638,7 @@ def _margins(m: _ReportModel) -> list[str]:
 def render_latex(design_or_outcome: Any) -> str:
     """Render a :class:`ConverterDesign` (or legacy ``DesignOutcome``) as LaTeX
     source for a power-electronics design report. Returns the ``.tex`` string."""
-    m = _ReportModel(design_or_outcome)
+    m = ReportModel(design_or_outcome)
     parts: list[str] = [_preamble(), r"\begin{document}"]
     parts += _cover(m)
     parts += _key_specs(m)
