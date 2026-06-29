@@ -606,49 +606,19 @@ def design_magnetics_fast(
     :func:`design_magnetics` when you want a single fully-simulated,
     coil-optimised design.
 
-    Pipeline: ``process_converter(topology, spec)`` → MAS ``Inputs``;
-    then ``calculate_advised_magnetics_fast(inputs, N, core_mode)`` →
-    sorted list of (mas, scoring). Scoring is *ascending* total losses
-    (lower = better).
+    della-Pollock cutover (abt #48): the MKF ``process_converter`` converter model is RETIRED.
+    The magnetic REQUIREMENT (MAS ``Inputs`` seed: designRequirements + operatingPoints) now comes
+    from KIRCHHOFF's per-topology design; MKF designs only the geometry from that seed. Same return
+    contract — candidates sorted by *ascending* total losses (lower scoring = better). This is the
+    topology+spec entry; :func:`design_magnetic_from_mas_inputs` is the seed-in-hand entry, and
+    :func:`design_magnetics_at_fsw` is the frequency-swept seam.
     """
+    from heaviside.decomposer import kirchhoff_adapter as _ka
+
     entry = topology if isinstance(topology, TopologyEntry) else get(topology)
-    pyom = _import_pyom()
-
-    last_error: str | None = None
-    for variant in entry.pyom_names:
-        inputs_raw = pyom.process_converter(variant, dict(converter_spec), False)
-        if not isinstance(inputs_raw, dict):
-            raise BridgeError(
-                f"process_converter({variant!r}) returned "
-                f"{type(inputs_raw).__name__}, expected dict."
-            )
-        err = inputs_raw.get("error")
-        if err is not None:
-            if isinstance(err, str) and "Unknown topology" in err:
-                last_error = err
-                continue
-            raise BridgeError(
-                f"PyOpenMagnetics process_converter({variant!r}) rejected spec: {err}"
-            )
-        # process_converter returns the Inputs envelope directly
-        # (designRequirements + operatingPoints, no nesting).
-        if "designRequirements" not in inputs_raw or "operatingPoints" not in inputs_raw:
-            raise BridgeError(
-                f"process_converter({variant!r}) returned an unexpected shape: "
-                f"keys={sorted(inputs_raw)}"
-            )
-
-        # Topology-AGNOSTIC tail (shared with design_magnetic_from_mas_inputs).
-        # PyOM returns ascending losses; lower scoring = better magnetic.
-        # Heaviside's MagneticDesign convention (used by design_magnetics) is
-        # "higher scoring = better", so callers using both paths should be aware.
-        return _advise_magnetics_fast(pyom, inputs_raw, repr(variant), max_results, core_mode)
-
-    raise BridgeError(
-        f"All PyOM topology names for {entry.name!r} reported 'Unknown topology' "
-        f"in process_converter: variants={entry.pyom_names}, last error: "
-        f"{last_error!r}."
-    )
+    k_tas = _ka.design_from_hs_spec(entry.name, dict(converter_spec))
+    _name, seed = _main_magnetic_seed_from_ktas(entry, k_tas)
+    return design_magnetic_from_mas_inputs(seed, max_results=max_results, core_mode=core_mode)
 
 
 # The realism gate's inductor saturation rule (Isat >= 1.2·Ipeak) plus headroom so the discrete

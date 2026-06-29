@@ -391,7 +391,7 @@ _BOOST_HS_SPEC = {
 
 @pytest.mark.skipif(shutil.which("ngspice") is None, reason="ngspice not installed")
 def test_stage3_kirchhoff_native_single_tas_gate_passes():
-    """ABT #36: stage3_realize(sim_backend='kirchhoff') realizes ENTIRELY from k_tas —
+    """ABT #36/#48: stage3_realize realizes ENTIRELY from k_tas (the only realize backend now) —
     Kirchhoff designs it, HS fills parts + designs the magnetic from its seed, the
     realism gate reads it — with NO decompose/assemble/unify. boost end-to-end:
     regulates 12->24 V and the gate does not FAIL."""
@@ -403,7 +403,7 @@ def test_stage3_kirchhoff_native_single_tas_gate_passes():
     except Exception as exc:  # noqa: BLE001 - native dep optional in some envs
         pytest.skip(f"PyOM vendor not available: {exc}")
 
-    outcome = stage3_realize(_boost_pick(), _BOOST_HS_SPEC, sim_backend="kirchhoff")
+    outcome = stage3_realize(_boost_pick(), _BOOST_HS_SPEC)
 
     # 1. The returned TAS is the Kirchhoff k_tas (its boost switching cell names L1/Q1/D1),
     #    NOT an HS-decompose TAS.
@@ -429,3 +429,44 @@ def test_stage3_kirchhoff_native_single_tas_gate_passes():
     assert verdict["verdict"] != "fail", verdict
     fet = next((c for c in verdict["checks"] if c["name"] == "fet_voltage_derating"), None)
     assert fet is not None and fet["status"] == "pass", verdict["checks"]
+
+
+# ---------------------------------------------------------------------------
+# abt #48: the frequency-sweep seam (bridge.design_magnetics_at_fsw) designs the
+# MAIN magnetic from Kirchhoff's per-topology seed — real path (KH + PyOM), not
+# MKF's process_converter converter model (being retired).
+# ---------------------------------------------------------------------------
+
+_HS_BASE = {
+    "inputVoltage": {"minimum": 45.6, "nominal": 48, "maximum": 50.4},
+    "efficiency": 0.9,
+    "currentRippleRatio": 0.3,
+    "operatingPoints": [
+        {"inputVoltage": 48, "ambientTemperature": 25,
+         "outputVoltages": [12.0], "outputCurrents": [2.0]}
+    ],
+}
+
+
+def test_seam_designs_main_inductor_via_kirchhoff_buck():
+    from heaviside import bridge
+
+    cands = bridge.design_magnetics_at_fsw("buck", _HS_BASE, 100_000.0, max_results=1)
+    assert cands, "no magnetic returned for buck via the Kirchhoff seam"
+    coil = cands[0].mas["magnetic"]["coil"]["functionalDescription"]
+    assert len(coil) == 1  # buck main magnetic is a single-winding inductor
+
+
+def test_seam_designs_main_transformer_via_kirchhoff_push_pull():
+    from heaviside import bridge
+
+    cands = bridge.design_magnetics_at_fsw("push_pull", _HS_BASE, 100_000.0, max_results=1)
+    assert cands, "no magnetic returned for push_pull via the Kirchhoff seam"
+    coil = cands[0].mas["magnetic"]["coil"]["functionalDescription"]
+    # The MAIN magnetic for push_pull is the multi-winding transformer, NOT the
+    # secondary output inductor (Lout) — the converter is built around it.
+    assert len(coil) >= 3
+    # The seed's duty-derived secondaries are emitted as {maximum} ceilings (KH
+    # ba7a332), so the realized turns ratio cannot overshoot the duty ceiling.
+    ok, why = bridge._turns_ratio_duty_feasible(cands[0])
+    assert ok, why

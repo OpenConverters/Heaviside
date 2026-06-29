@@ -263,60 +263,21 @@ def _stage2_pick_one(args: tuple[str, dict, int, str, str]) -> dict[str, Any]:
     into a TopologyPick (or surfaces as a failure)."""
     topology_name, spec, n_candidates, criteria, core_mode = args
     try:
-        if _is_transformer_topology(topology_name):
-            # Slow converter-design adviser: MKF derives turns ratios + L.
-            aug = _augment_converter_spec(dict(spec), topology_name)
-            try:
-                candidates = design_magnetics(
-                    topology_name,
-                    aug,
-                    max_results=n_candidates,
-                    core_mode=core_mode,
-                )
-            except BridgeError as exc:
-                # Tier-2: MKF's MagneticFilterSaturation has no derating
-                # headroom, so with coreAdviserSaturationMargin=1.5 (set by
-                # the bridge) the stock-only catalogue (~1.5K cores) can leave
-                # zero candidates for high-step-down isolated topologies even
-                # though the full 10K-core catalogue has many. This mirrors
-                # the documented tier-2 fallback in
-                # bridge.design_converter_components: when stock-only yields
-                # zero designs, retry against the full catalogue (the same
-                # real cores stage 3 will design against). Only widens the
-                # search — no fabricated values. Re-raise anything else.
-                if "zero designs" not in str(exc):
-                    raise
-                # Widen the requested pool too: MKF's CoreAdviser prunes its
-                # top scorers in MagneticFilterSaturation, so a max_results=1
-                # request can still surface zero passers even against the full
-                # catalogue. Asking for a larger pool lets passing candidates
-                # appear; we keep the top n_candidates afterwards.
-                fallback_pool = max(int(n_candidates), 50)
-                candidates = design_magnetics(
-                    topology_name,
-                    aug,
-                    max_results=fallback_pool,
-                    core_mode=core_mode,
-                    use_only_cores_in_stock=False,
-                )
-                candidates = candidates[: max(int(n_candidates), 1)]
-        else:
-            # Fast path: apply the slow path's Isat post-filter so the
-            # picked core clears gap-aware Isat >= 1.2*Ipeak_worst (the
-            # realism gate's criterion). Without this the fast adviser's
-            # lowest-loss top scorer can be undersized against worst-case
-            # peak current and fail inductor_isat_margin downstream.
-            # Augment the spec the same way as the transformer path — the
-            # fast-path worker also needs diodeVoltageDrop / efficiency / duty
-            # seeds that the REST endpoint doesn't carry (CLAUDE.md: throw on
-            # missing, so seed before handing to process_converter).
-            aug = _augment_converter_spec(dict(spec), topology_name)
-            candidates = select_fast_by_isat_margin(
-                topology_name,
-                aug,
-                n_candidates=n_candidates,
-                core_mode=core_mode,
-            )
+        # della-Pollock cutover (abt #48): the magnetic REQUIREMENT (turns ratios + L) comes from
+        # KIRCHHOFF's per-topology seed for EVERY topology — the MKF process_converter / design_
+        # magnetics_from_converter converter models are retired; MKF designs only the geometry.
+        # select_fast_by_isat_margin designs candidates from that seed (via design_magnetics_fast,
+        # now Kirchhoff-seeded) and applies the realism gate's gap-aware Isat >= 1.2*Ipeak_worst
+        # post-filter so the picked core clears the gate. (The fast-path worker needs diodeVoltageDrop
+        # / efficiency / duty seeds the REST endpoint may not carry, so augment first — throw on
+        # missing per CLAUDE.md, never default.)
+        aug = _augment_converter_spec(dict(spec), topology_name)
+        candidates = select_fast_by_isat_margin(
+            topology_name,
+            aug,
+            n_candidates=n_candidates,
+            core_mode=core_mode,
+        )
         idx = pick_best_pareto(candidates, criteria=criteria)
         return {
             "ok": True,
@@ -1068,174 +1029,21 @@ def stage3_realize(
     spec: Mapping[str, Any],
     *,
     pinned_main: "MagneticDesign | None" = None,
-    spice_config: Mapping[str, Any] | None = None,
-    sim_backend: str = "mkf",
 ) -> DesignOutcome:
-    """Take a Stage 2 TopologyPick and run it through the full pipeline.
+    """Realize the converter via Kirchhoff (della-Pollock cutover).
 
-    ``pinned_main`` (closed-loop designer): the main magnetic the frequency
-    sweep already chose. When given, ``design_converter_components`` uses it
-    verbatim instead of re-designing the magnetic, so the real converter (BOM,
-    netlist, SPICE sim, realism) is built around exactly that magnetic.
+    Kirchhoff designs the circuit from the spec; HS fills the BOM and designs the SECONDARY
+    magnetics from Kirchhoff's per-component seeds (MKF magnetic geometry), then the realism
+    gate reads the result. The MAIN magnetic (``pinned_main`` — the frequency-swept choice) is
+    fixed; Kirchhoff sizes the rest of the stage around it.
 
-    1. design_converter_components (slow-path magnetic + extras)
-    2. decompose_from_spec → TAS + ideal netlist
-    3. attach_components_to_tas (magnetics from MKF)
-    4. assemble_bom_from_tas (select real FET/diode/cap from TAS DB)
-    5. enrich_tas_for_realism
-    6. inject_parasitics into netlist (Rds_on, Vf, ESR)
-    7. simulate with real parasitics (closed-loop or steady-state)
-    8. stamp_simulation_results + run_analyst
-    9. evaluate_tas → verdict
+    MKF's converter models (``process_converter``) are no longer used anywhere in HS — MKF
+    designs only magnetic GEOMETRY. There is a single realize backend now (Kirchhoff); the old
+    MKF decompose/assemble/parasitic-inject/spice-sim path has been removed (abt #48 cutover).
     """
-    from heaviside import bridge as _bridge
-    from heaviside.bridge import BridgeError
-    from heaviside.catalogue import SelectionError, assemble_bom_from_tas
-    from heaviside.decomposer import decompose_from_spec
-    from heaviside.decomposer.api import DecomposerError
-    from heaviside.pipeline import enrich_tas_for_realism
-    from heaviside.pipeline.extract import EnrichmentError
-    from heaviside.pipeline.analyst import AnalystError, run_analyst
-    from heaviside.sim import (
-        SimError,
-        simulate_closed_loop,
-        simulate_steady_state,
-        stamp_simulation_results,
-    )
-    from heaviside.sim.parasitics import inject_parasitics
-    from heaviside.stages.realism_gate import evaluate as evaluate_tas
-
     topology = pick.topology.name
     spec_dict = _augment_converter_spec(dict(spec), topology)
-
-    # ABT #36 / #48 della-Pollock cutover. The Kirchhoff backend realizes ENTIRELY from
-    # k_tas: Kirchhoff designs it, HS fills parts + designs the secondary magnetics from its
-    # seeds, the gate reads it. This bypasses design_converter_components (the retired MKF
-    # converter-model path) + decompose/assemble/unify completely. ``pinned_main`` (the
-    # frequency-swept MAIN magnetic) is FIXED here — Kirchhoff sizes the rest around it.
-    if sim_backend == "kirchhoff":
-        return _realize_via_kirchhoff(topology, spec_dict, pick, pinned_main=pinned_main)
-
-    # Bridge / resonant families model their switching cell as a single
-    # behavioural PULSE source by default, which leaves no real MOSFETs for
-    # the TAS decomposer's bridge stencils to bind (they require SA/SB/SC/SD,
-    # S1/S2, etc.). Request the "switch" deck so MKF emits real switches.
-    _fam = pick.topology.family
-    bridge_mode = "switch" if _fam in ("isolated_bridge", "resonant") else ""
-
-    try:
-        components = _bridge.design_converter_components(
-            topology,
-            spec_dict,
-            max_results=1,
-            use_ngspice=False,
-            pinned_main=pinned_main,
-        )
-    except BridgeError as exc:
-        raise RealizeError(f"component design failed for {topology}: {exc}") from exc
-
-    magnetizing_inductance = components.L_authoritative
-    spec_dict["desiredInductance"] = magnetizing_inductance
-    spec_dict["desiredMagnetizingInductance"] = magnetizing_inductance
-
-    turns_ratios: list[float] = []
-    dr = components.main_magnetic.mas.get("inputs", {}).get("designRequirements", {})
-    for tr in dr.get("turnsRatios", []):
-        if isinstance(tr, dict):
-            v = tr.get("nominal") or tr.get("minimum") or tr.get("maximum")
-            if v is not None:
-                turns_ratios.append(float(v))
-        elif isinstance(tr, (int, float)):
-            turns_ratios.append(float(tr))
-    # Make the MKF-derived turns ratios available to BOM assembly / analyst /
-    # stress (they read spec.desiredTurnsRatios for isolated topologies).
-    if turns_ratios:
-        spec_dict["desiredTurnsRatios"] = turns_ratios
-
-    try:
-        netlist, tas = decompose_from_spec(
-            topology,
-            spec_dict,
-            turns_ratios=turns_ratios,
-            magnetizing_inductance=magnetizing_inductance,
-            bridge_simulation_mode=bridge_mode,
-            spice_config=dict(spice_config) if spice_config else None,
-        )
-    except DecomposerError as exc:
-        raise RealizeError(f"decompose failed for {topology}: {exc}") from exc
-
-    try:
-        _bridge.attach_components_to_tas(tas, components, topology=topology)
-    except BridgeError as exc:
-        raise RealizeError(f"attach failed for {topology}: {exc}") from exc
-
-    # --- Component selection: stamp real FET/diode/cap from TAS DB ---
-    # A partial BOM is a hard failure: it leaves the realism gate without the
-    # ratings/stress its physics checks need (they go UNAVAILABLE, not FAIL),
-    # so a degraded design can pass on metadata alone. Surface it, don't note it.
-    try:
-        assemble_bom_from_tas(tas, topology=topology, spec=spec_dict)
-    except SelectionError as exc:
-        raise RealizeError(f"BOM selection failed for {topology}: {exc}") from exc
-
-    try:
-        tas = enrich_tas_for_realism(tas, topology=topology, spec=spec_dict)
-    except EnrichmentError as exc:
-        raise RealizeError(f"enrichment failed for {topology}: {exc}") from exc
-
-    ops = spec_dict.get("operatingPoints") or [{}]
-    first_op = ops[0] if isinstance(ops[0], dict) else {}
-    vouts = first_op.get("outputVoltages")
-    vout_target = (
-        float(vouts[0])
-        if isinstance(vouts, list) and vouts and isinstance(vouts[0], (int, float))
-        else None
-    )
-    # Backend selection. "mkf" (default) = MKF netlist + parasitic injection + HS's
-    # duty-search sim — unchanged. "kirchhoff" = Kirchhoff designs+sims the circuit
-    # (real BOM HS fills + the della-Pollock MKF magnetic as MKF_MODEL), closed-loop
-    # regulated; HS keeps its TAS + realism gate. Either way the gate consumes the
-    # SAME stamped operating point. No silent fallback between backends.
-    if sim_backend == "mkf":
-        # --- Inject real parasitics into the netlist ---
-        realistic_netlist = inject_parasitics(netlist, tas)
-        # A vout target ⇒ closed-loop sim is the right model; if it fails, that is
-        # a hard failure — do NOT silently fall back to the open-loop steady-state
-        # sim (which measures a different, unregulated quantity). Only run the
-        # steady-state path when there is genuinely no regulation target.
-        try:
-            if vout_target is not None:
-                sim_result = simulate_closed_loop(realistic_netlist, vout_target=vout_target)
-            else:
-                sim_result = simulate_steady_state(realistic_netlist)
-            stamp_simulation_results(tas, sim_result)
-        except (SimError, DecomposerError) as exc:
-            raise RealizeError(f"simulation failed for {topology}: {exc}") from exc
-    else:
-        # sim_backend == "kirchhoff" is handled by the early _realize_via_kirchhoff
-        # return above (ABT #36); only "mkf" reaches this far.
-        raise RealizeError(f"unknown sim_backend {sim_backend!r} (expected 'mkf' or 'kirchhoff')")
-
-    try:
-        run_analyst(topology, tas, spec_dict)
-    except AnalystError as exc:
-        raise RealizeError(f"analyst failed for {topology}: {exc}") from exc
-
-    report = evaluate_tas(tas, topology=topology, spec=spec_dict)
-    verdict_dict = {
-        "verdict": report.verdict.value,
-        "summary": report.summary,
-        "checks": [
-            {"name": c.name, "status": c.status.value, "value": c.value, "margin": c.margin}
-            for c in report.checks
-        ],
-    }
-
-    return DesignOutcome(
-        pick=pick,
-        tas=tas,
-        verdict_dict=verdict_dict,
-    )
+    return _realize_via_kirchhoff(topology, spec_dict, pick, pinned_main=pinned_main)
 
 
 # ---------------------------------------------------------------------------
@@ -1403,107 +1211,6 @@ def generate_report(outcome: DesignOutcome) -> str:
 # ---------------------------------------------------------------------------
 
 
-# Topologies whose converter sim runs through the Kirchhoff backend (della-Pollock:
-# Kirchhoff designs the rest of the converter around the pinned main magnetic, HS
-# fills the real BOM, and the deck simulates with real component models — the
-# MKF-designed magnetic stamped as MKF_MODEL). Opt in per topology via the
-# HEAVISIDE_KIRCHHOFF_TOPOLOGIES env var (comma-separated, "*" = all), or this set.
-#
-# These are validated to PASS end-to-end through the REAL converter_designer entry
-# (frequency_sweep → KH della-Pollock realize → realism gate verdict=pass), abt #48.
-# Validate any addition through design_converter() itself, NOT a hand-built realize
-# (pinning a pre-designed magnetic bypasses the sweep + the realize-stage magnetic
-# re-design, so it passes things the real path rejects — that mistake put sepic/cuk/
-# llc/acf here prematurely; they're back on the MKF fallback under abt #52).
-#
-# Long tail still on MKF (abt #52), by blocker class:
-#   B (MKF advise feasibility, incl. a secondary magnetic at realize): sepic, cuk,
-#     weinberg, phase_shifted_full_bridge, phase_shifted_half_bridge
-#   A (KH regulator/deck non-convergence/hang): isolated_buck, isolated_buck_boost,
-#     asymmetric_half_bridge, dual_active_bridge, four_switch_buck_boost
-#   C (forward duty/turns-ratio calibration, abt #45): single_switch_forward,
-#     two_switch_forward
-#   D (resonant fsw-window flow not wired): llc, series_resonant, cllc, clllc
-#   + active_clamp_forward realizes via KH but its BOM fails voltage-derating (verdict
-#     fail), so it stays off until the derating-policy gap is closed.
-#
-# AC/DC self-regulating input: power_factor_correction is validated and allowlisted —
-# it flows through the REAL design_converter() entry with the SELF-REGULATING branch
-# (converter_designer skips the loss sweep: fsw is fixed and there is no Vout control
-# variable — the controller is in the Kirchhoff deck; simulate_regulated runs it over
-# whole line cycles). The boost inductor is designed from Kirchhoff's own magnetic seed
-# at realize, and a PFC stress deriver (= boost physics) feeds the realism gate the true
-# DC-bus blocking voltage. A 230 Vac→400 Vdc 400 W single-phase PFC reaches verdict=pass
-# (Vout 402 V, η 96.96 %, isat margin 1.44×). VIENNA (3-phase) is now also allowlisted: a
-# back-to-back bidirectional switch + full-bus rail-diode rating + a designed PI bus-voltage
-# loop regulate it to 800 V (η 98.5 %, PF 0.976), and a vienna stress deriver (split-bus:
-# switches block Vout/2, rail diodes block Vout) feeds the gate.
-_KIRCHHOFF_TOPOLOGIES: frozenset[str] = frozenset({
-    "buck", "boost", "flyback", "zeta", "push_pull", "sepic", "cuk",
-    "isolated_buck", "isolated_buck_boost",
-    "four_switch_buck_boost", "dual_active_bridge",
-    # AC/DC self-regulating (no loss sweep, controller in the KH deck):
-    "power_factor_correction", "vienna",
-    # Forward-reset family — unblocked by the #45 fixes (deeper turns-ratio headroom in
-    # _seed_turns_ratio + the [1.0,n] demag-aware seed for single-switch + the incomplete-analyst-
-    # efficiency gate fix using SPICE η):
-    "active_clamp_forward", "two_switch_forward", "single_switch_forward", "weinberg",
-    # Asymmetric half-bridge — now passes design_converter() end-to-end (48→12V, verdict=pass).
-    # Unblocked by the abt #61 ngspice K-cap fix (the 2-winding coupling is no longer clamped to
-    # 0.98, so the transformer transfers full power) PLUS deploying the freshly-built PyOpenMagnetics
-    # .so to site-packages — the prior "could not be wound" RealizeError was an artifact of a stale
-    # (June-16) site-packages .so, not a real fast-advise windability gap (abt #63). PSFB/PSHB still
-    # wind but fall short on phase-shift regulation (6.5V / 1.6V) — a separate control blocker.
-    "asymmetric_half_bridge",
-    # Resonant: LLC now passes design_converter() (verdict=pass, 11.9 V η 0.71) — the FET-Vt chokepoint
-    # (the SiC gate threshold exceeded the 5 V ideal drive, abt #54), the cap-divider balancing resistors,
-    # the meas-namespace power probe, AND the real-magnetic TANK CO-DESIGN (re-size Lr/Cr from the pinned
-    # Lm to preserve Ln and keep Lr-Cr at fr) are all in. src/cllc REGULATE but fail the gate on EFFICIENCY
-    # and clllc lands ~10 V — all three blocked on the SAME dominant lever: the realized transformer
-    # turns ratio overshoots ideal by 12-16 % (integer rounding of the small secondary winding in the
-    # magnetic advise), forcing them to boost far off resonance (high circulating current -> low η, or
-    # beyond the tank's reach). Needs the magnetic turns-ratio fix (clean integer rounding) — then src/
-    # cllc/clllc allowlist too.
-    "llc",
-    # Series resonant (SRC) now passes design_converter() (400->48V, verdict=pass, η 0.70). Unblocked by
-    # the abt #62 turns-ratio fix PLUS the resonant design-headroom lever: Src.cpp sizes n for the fr peak
-    # to deliver 1.08·Vo and lowers the tank Q (2.0->0.8), so the regulator (with the dense sub-fr grid)
-    # hits Vo just above fr where the tank is efficient instead of diving far below resonance. CLLC has the
-    # same headroom now and REGULATES, but still gate-fails on efficiency (~51% — a separate dual-tank /
-    # circulating-current loss, not an operating-point issue), so cllc/clllc stay off the allowlist.
-    "series_resonant",
-    # CLLC + CLLLC now pass design_converter() (400->12V, verdict=pass, η 0.91/0.90). The last lever was
-    # the Coss-aware FET selection (abt #64): at 400 V the primary-bridge FETs' Coss switching loss
-    # dominates (the sim only partially achieves ZVS), but the BOM picked the lowest-Rds = largest-die =
-    # HIGHEST-Coss part (875 pF -> ~55 W loss, η 0.51). kirchhoff_fill now ranks HIGH-VOLTAGE FETs by TOTAL
-    # loss (conduction + Qg crossover + 0.5·Coss·Vds²·fsw) so it picks a small low-Coss part for the
-    # low-current 400 V primary (conduction is negligible there) -> η 0.91. The whole resonant family
-    # (llc/src/cllc/clllc) is now through. (Same fix lifted SRC's margin and let LLC pass at 400 V too.)
-    "cllc", "clllc",
-    # Phase-shifted full bridge now passes design_converter() (48->12V, verdict=pass, η 0.90). The last
-    # lever was the abt #65 LEAKAGE-FEASIBILITY filter: the transformer regulated only to ~6.8 V because the
-    # loss-ranked magnetic pick landed on the smallest core (most turns -> ~17-20 µH leakage, whose ~19 Ω
-    # reactance swamped the 4.4 Ω reflected load and strangled power transfer). MKF's candidate pool already
-    # held low-leakage cores (a bigger core / fewer turns -> ~4 µH); frequency_sweep now rejects hard-switched
-    # isolated-transformer candidates whose leakage reactance exceeds the reflected load, so the pick lands on
-    # a tight-coupled transformer. PSHB is improved by the same filter (2.3 -> 8.8 V) but still short — its
-    # half-bridge turns-ratio is the remaining lever, so it stays on MKF.
-    "phase_shifted_full_bridge",
-})
-
-
-def _sim_backend_for(topology: str) -> str:
-    """Pick the sim backend for ``topology`` — "kirchhoff" if opted in (env var or
-    the registry), else "mkf" (the default; unchanged pipeline)."""
-    env = os.environ.get("HEAVISIDE_KIRCHHOFF_TOPOLOGIES")
-    if env is not None:
-        enabled = {t.strip() for t in env.split(",") if t.strip()}
-        if "*" in enabled or topology in enabled:
-            return "kirchhoff"
-        return "mkf"
-    return "kirchhoff" if topology in _KIRCHHOFF_TOPOLOGIES else "mkf"
-
-
 def full_design(
     spec: Mapping[str, Any],
     *,
@@ -1627,9 +1334,7 @@ def full_design(
         _emit(f"Realizing & simulating {pick.topology.name} ({i + 1}/{len(stage2.picks)})", pct)
         logger.info("Stage 3: realizing %s", pick.topology.name)
         try:
-            outcome = stage3_realize(
-                pick, spec, sim_backend=_sim_backend_for(pick.topology.name)
-            )
+            outcome = stage3_realize(pick, spec)
         except RealizeError as exc:
             # Multi-topology screen: one topology that cannot be realized must
             # not abort the whole batch, but it is NOT silently dropped either —

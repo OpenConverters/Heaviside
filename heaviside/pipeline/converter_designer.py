@@ -237,7 +237,6 @@ def design_converter(
     from heaviside import bridge
     from heaviside.pipeline.full_design import (
         TopologyPick,
-        _sim_backend_for,
         _stage4_adversarial_review,
         stage3_realize,
         stage3b_gatekeeper,
@@ -386,31 +385,13 @@ def design_converter(
         topology=entry, main_magnetic=md, candidates=(md,),
         pick_reason=pick_reason, pick_criteria="frequency_sweep+suitability",
     )
-    # della-Pollock cutover (abt #48): topologies on the Kirchhoff allowlist realize ENTIRELY through
-    # Kirchhoff — KH designs the rest of the converter around the pinned main magnetic, fills the BOM,
-    # and simulates with REAL component models (DATASHEET) in a single pass, so the MKF-only
-    # spice_config re-sim does not apply. All other topologies keep the MKF realize path (fallback)
-    # until they pass through the KH path (abt #52). Set via _KIRCHHOFF_TOPOLOGIES / the
-    # HEAVISIDE_KIRCHHOFF_TOPOLOGIES env override.
-    backend = _sim_backend_for(entry.name)
-    if backend == "kirchhoff":
-        _say("Realizing via Kirchhoff (della-Pollock: parts + real-model sim around the pinned magnetic)", 70)
-        outcome = stage3_realize(pick, spec_at, pinned_main=md, sim_backend="kirchhoff")
-        notes.append("realized via Kirchhoff della-Pollock path (BOM + DATASHEET sim)")
-    else:
-        _say("Realizing converter: selecting real TAS parts + MKF SPICE netlist", 70)
-        outcome = stage3_realize(pick, spec_at, pinned_main=md)
-        # Re-simulate with PyOM's ngspice knobs driven by the REAL selected parts
-        # (switchRON ← FET, diodeRS ← rectifier) — the BOM is only known after the
-        # first realize (decompose precedes selection), so configure-everything-but-
-        # the-magnetic happens on this second pass. Magnetic stays pinned. If the
-        # configured pass fails it raises (stage3_realize no longer swallows): a
-        # failed re-sim is a real failure, not a silently-discarded refinement.
-        knobs = spice_config_from_bom(outcome.tas)
-        if knobs:
-            _say("Re-simulating with SPICE knobs from the real parts (FET RON, diode RS)", 80)
-            outcome = stage3_realize(pick, spec_at, pinned_main=md, spice_config=knobs)
-            notes.append(f"sim configured from BOM: {knobs}")
+    # della-Pollock cutover (abt #48): EVERY topology realizes ENTIRELY through Kirchhoff — KH
+    # designs the rest of the converter around the pinned main magnetic, HS fills the BOM, and it
+    # simulates with REAL component models (DATASHEET) in a single closed-loop pass. MKF's converter
+    # models (process_converter) are gone; MKF designs only magnetic geometry.
+    _say("Realizing via Kirchhoff (della-Pollock: parts + real-model sim around the pinned magnetic)", 70)
+    outcome = stage3_realize(pick, spec_at, pinned_main=md)
+    notes.append("realized via Kirchhoff della-Pollock path (BOM + DATASHEET sim)")
     _say("Realism gate + gatekeeper on the simulated waveforms", 86)
     outcome = replace(outcome, gatekeeper=stage3b_gatekeeper(outcome),
                       fsw_optimal=float(fsw_star_hz))
