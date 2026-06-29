@@ -55,13 +55,56 @@ def _seed_turns_ratio(spec: dict[str, Any], topology: str) -> None:
     d_max = spec.get("maximumDutyCycle", 0.5)
     if not (isinstance(vmin, (int, float)) and vmin > 0 and vout and vout > 0 and 0 < d_max < 1):
         return
-    d_nom = float(d_max) * 0.9  # headroom below the duty ceiling (ABT #45)
-    if "flyback" in topology:
+    # Forward-RESET-limited families (single/two-switch forward, active-clamp forward) physically cannot
+    # exceed ~0.5 duty (the core must reset each cycle). Sizing the turns ratio for d_nom=0.9·0.5=0.45
+    # leaves only ~10% headroom, so real conduction/rectifier losses push the operating duty over 0.5 →
+    # the core saturates and Vout collapses (abt #45). Give these a deeper headroom (d_nom=0.7·d_max) so
+    # the lossy operating duty stays comfortably below the reset limit. The lower turns ratio raises the
+    # primary current somewhat (lower efficiency) but stays well inside efficiency_sanity (>0.70).
+    _RESET_LIMITED = {"two_switch_forward", "active_clamp_forward", "asymmetric_half_bridge"}
+    # single_switch_forward is the hardest: the demag winding both LIMITS duty to <0.5 AND wastes the
+    # reset interval (extra loss), so it needs even deeper turns-ratio headroom to keep the lossy
+    # operating duty under the reset limit.
+    if topology == "single_switch_forward":
+        headroom = 0.6
+    elif topology == "asymmetric_half_bridge":
+        # AHB transfer Vout = 2·Vin·D·(1−D)/n PEAKS at D=0.5 (not monotone like a forward), so the
+        # generic forward-like n sizes the peak only ~25% above target — real losses drop the peak to
+        # ~target and it can't regulate. Deeper headroom lifts the peak well above 12 V so a low-side
+        # duty (~0.3) reaches target with margin.
+        headroom = 0.5
+    elif topology in _RESET_LIMITED:
+        headroom = 0.7
+    else:
+        headroom = 0.9
+    d_nom = float(d_max) * headroom  # headroom below the duty ceiling (ABT #45)
+    if topology == "dual_active_bridge":
+        # DAB has an ACTIVE secondary bridge (not a duty-controlled rectified output): the turns
+        # ratio is VOLTAGE-MATCHING n = V1/V2 = Vin/Vout (so reflected voltages match and circulating
+        # current is minimised), NOT the duty-derived forward/bridge formula. Use the nominal input.
+        vnom = iv.get("nominal") or iv.get("minimum") or iv.get("maximum") if isinstance(iv, dict) else None
+        n = (float(vnom) / float(vout)) if isinstance(vnom, (int, float)) and vnom > 0 else 0.0
+    elif topology == "phase_shifted_half_bridge":
+        # 3-level NPC HALF-bridge: the primary swings +-Vin/2 (the split-cap half bus), so the turns
+        # ratio is sized from HALF the input, n = (Vin_min/2)*d_nom/Vout — NOT full Vin like the
+        # full-bridge. The generic bridge formula (full Vin) doubles n, so the secondary voltage is
+        # too low and the outer-pair duty saturates short of target (~85% of Vout); since this seed is
+        # PINNED in the della-Pollock realize, it overrides Kirchhoff's own correct half-bridge ratio
+        # (abt #66). Worst case = min Vin at the headroomed duty, as for the other bridges.
+        n = (float(vmin) / 2.0) * d_nom / float(vout)
+    elif "flyback" in topology:
         n = float(vmin) * d_nom / (float(vout) * (1.0 - d_nom))
-    else:  # forward / bridge / push-pull
+    else:  # forward / bridge / push-pull (rectified, duty-controlled secondary)
         n = float(vmin) * d_nom / float(vout)
     if n > 0:
-        spec["desiredTurnsRatios"] = [round(n, 4)]
+        # single_switch_forward's transformer has a DEMAG/reset winding at turnsRatios[0] (=1.0); the
+        # step-down secondary is at index 1, which is where its KH builder reads provided_turns_ratio.
+        # A single-element seed [n] would land at index 0 (the demag slot) and be missed at index 1, so
+        # KH would fall back to its own (un-headroomed) ratio. Emit BOTH: [1.0 demag, n secondary].
+        if topology == "single_switch_forward":
+            spec["desiredTurnsRatios"] = [1.0, round(n, 4)]
+        else:
+            spec["desiredTurnsRatios"] = [round(n, 4)]
 
 
 def build(
