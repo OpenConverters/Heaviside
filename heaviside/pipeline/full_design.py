@@ -1465,6 +1465,13 @@ _KIRCHHOFF_TOPOLOGIES: frozenset[str] = frozenset({
     # beyond the tank's reach). Needs the magnetic turns-ratio fix (clean integer rounding) — then src/
     # cllc/clllc allowlist too.
     "llc",
+    # Series resonant (SRC) now passes design_converter() (400->48V, verdict=pass, η 0.70). Unblocked by
+    # the abt #62 turns-ratio fix PLUS the resonant design-headroom lever: Src.cpp sizes n for the fr peak
+    # to deliver 1.08·Vo and lowers the tank Q (2.0->0.8), so the regulator (with the dense sub-fr grid)
+    # hits Vo just above fr where the tank is efficient instead of diving far below resonance. CLLC has the
+    # same headroom now and REGULATES, but still gate-fails on efficiency (~51% — a separate dual-tank /
+    # circulating-current loss, not an operating-point issue), so cllc/clllc stay off the allowlist.
+    "series_resonant",
 })
 
 
