@@ -95,6 +95,7 @@ class Mosfet:
     id_continuous: float  # continuousDrainCurrent (amps, Tc-spec)
     rds_on: float  # onResistance (ohms at gate_vgs / id_test)
     qg_total: float  # totalGateCharge (coulombs)
+    coss: float  # outputCapacitance (farads); 0.0 for legacy rows -> switching-loss term vacuous
     vgs_threshold_max: float  # gateThresholdVoltage.maximum (volts)
     rth_ja: float | None  # thermalResistanceJunctionAmbient (K/W)
     rth_jc: float | None  # thermalResistanceJunctionCase (K/W)
@@ -140,6 +141,12 @@ class Mosfet:
         if not isinstance(qg_total, (int, float)) or qg_total < 0:
             return None
 
+        coss = elec.get("outputCapacitance")
+        if coss is None:
+            coss = 0.0  # legacy rows; the Coss switching-loss term becomes vacuous
+        if not isinstance(coss, (int, float)) or coss < 0:
+            return None
+
         vgs_th = elec.get("gateThresholdVoltage")
         vgs_th_max = vgs_th.get("maximum") if isinstance(vgs_th, Mapping) else vgs_th
         if not isinstance(vgs_th_max, (int, float)):
@@ -179,6 +186,7 @@ class Mosfet:
             id_continuous=float(id_cont),
             rds_on=float(rds_on),
             qg_total=float(qg_total),
+            coss=float(coss),
             vgs_threshold_max=float(vgs_th_max),
             rth_ja=rth_ja,
             rth_jc=rth_jc,
@@ -397,7 +405,15 @@ def select_mosfet(
                 if m.qg_total > 0
                 else 0.0
             )
-            return p_cond + p_sw
+            # Output-capacitance (Coss) switching loss: a hard-switched leg dumps E_oss = 0.5·Coss·Vds²
+            # each transition, so the per-device power is 0.5·Coss·Vds²·fsw. This DOMINATES for a
+            # HIGH-VOLTAGE, LOW-CURRENT stage (e.g. a 400 V resonant primary at <1 A), where conduction
+            # is negligible — there, ranking by lowest Rds (largest die, highest Coss) is exactly wrong
+            # (abt #64: a CLLC primary picked a 6.25 mΩ/875 pF part and lost ~55 W to Coss). A genuinely
+            # ZVS leg recovers E_oss, but the sim only partially achieves ZVS at 400 V, so the realism
+            # gate sees this loss; including it here makes the selector pick the part the gate scores well.
+            p_coss = 0.5 * m.coss * (float(c.op_vds) ** 2) * float(c.op_fsw) if m.coss > 0 else 0.0
+            return p_cond + p_sw + p_coss
 
         winner = min(passing, key=lambda m: (_ev(m), _no_thermal(m), _total_loss(m)))
     else:  # pragma: no cover — enum is exhaustive

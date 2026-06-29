@@ -262,6 +262,9 @@ def test_sim_backend_selection(monkeypatch) -> None:
     assert _sim_backend_for("asymmetric_half_bridge") == "kirchhoff"
     # series_resonant now passes design_converter() (abt #62 turns-ratio + resonant design-headroom) → kirchhoff.
     assert _sim_backend_for("series_resonant") == "kirchhoff"
+    # cllc + clllc now pass design_converter() (abt #64 Coss-aware HV FET selection) → kirchhoff.
+    assert _sim_backend_for("cllc") == "kirchhoff"
+    assert _sim_backend_for("clllc") == "kirchhoff"
     assert _sim_backend_for("phase_shifted_full_bridge") == "mkf"  # long tail (phase-shift regulation) stays on MKF
     # Env var OVERRIDES the allowlist (takes precedence entirely).
     monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "phase_shifted_full_bridge")

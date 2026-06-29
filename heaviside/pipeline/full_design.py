@@ -1472,6 +1472,14 @@ _KIRCHHOFF_TOPOLOGIES: frozenset[str] = frozenset({
     # same headroom now and REGULATES, but still gate-fails on efficiency (~51% — a separate dual-tank /
     # circulating-current loss, not an operating-point issue), so cllc/clllc stay off the allowlist.
     "series_resonant",
+    # CLLC + CLLLC now pass design_converter() (400->12V, verdict=pass, η 0.91/0.90). The last lever was
+    # the Coss-aware FET selection (abt #64): at 400 V the primary-bridge FETs' Coss switching loss
+    # dominates (the sim only partially achieves ZVS), but the BOM picked the lowest-Rds = largest-die =
+    # HIGHEST-Coss part (875 pF -> ~55 W loss, η 0.51). kirchhoff_fill now ranks HIGH-VOLTAGE FETs by TOTAL
+    # loss (conduction + Qg crossover + 0.5·Coss·Vds²·fsw) so it picks a small low-Coss part for the
+    # low-current 400 V primary (conduction is negligible there) -> η 0.91. The whole resonant family
+    # (llc/src/cllc/clllc) is now through. (Same fix lifted SRC's margin and let LLC pass at 400 V too.)
+    "cllc", "clllc",
 })
 
 

@@ -62,10 +62,38 @@ def _has_all(req: dict[str, Any], keys: tuple[str, ...]) -> bool:
     return isinstance(req, dict) and all(isinstance(req.get(k), (int, float)) for k in keys)
 
 
-def _mosfet_constraints(req: dict[str, Any]) -> MosfetConstraints:
+# Above this blocking-voltage rating, a FET's Coss switching loss (0.5·Coss·Vds²·fsw) can dominate its
+# conduction loss for a low-current stage (e.g. a 400 V resonant/bridge primary at <1 A). There, ranking
+# by lowest Rds (largest die, highest Coss) is wrong — pick by TOTAL loss so the Coss term steers toward a
+# small low-Coss part (abt #64). Low-voltage FETs (buck/boost rails, secondary SRs) keep the simple
+# lowest-Rds pick: their Coss loss is negligible (V² is tiny) and conduction dominates, so the pick — and
+# the existing goldens — are unchanged.
+_HV_SWITCHING_LOSS_VDS = 100.0
+
+
+def _mosfet_constraints(
+    req: dict[str, Any], *, op_fsw: float | None = None
+) -> MosfetConstraints:
+    vds_min = float(req["ratedDrainSourceVoltage"])
+    id_min = float(req["ratedContinuousDrainCurrent"])
+    # For a HIGH-VOLTAGE stage, attach an operating point so select_mosfet can rank by total loss
+    # (conduction + Qg crossover + Coss switching). op_vds = the part's own blocking rating and
+    # op_i_rms = its current rating are conservative proxies (they scale every candidate's terms
+    # uniformly, so the RANKING is robust to the exact values); duty ≈ 0.5 for a bridge leg.
+    if op_fsw and op_fsw > 0 and vds_min > _HV_SWITCHING_LOSS_VDS:
+        return MosfetConstraints(
+            vds_min=vds_min,
+            id_min=id_min,
+            rds_on_max=float(req["maximumOnResistance"]),
+            qg_max=math.inf,
+            op_i_rms=id_min,
+            op_vds=vds_min,
+            op_duty=0.5,
+            op_fsw=float(op_fsw),
+        )
     return MosfetConstraints(
-        vds_min=float(req["ratedDrainSourceVoltage"]),
-        id_min=float(req["ratedContinuousDrainCurrent"]),
+        vds_min=vds_min,
+        id_min=id_min,
         rds_on_max=float(req["maximumOnResistance"]),
         qg_max=math.inf,  # Kirchhoff does not emit a gate-charge limit
     )
@@ -227,9 +255,16 @@ def fill_kirchhoff_bom(
                     if not _has_all(req, ("ratedDrainSourceVoltage", "ratedContinuousDrainCurrent", "maximumOnResistance")):
                         rec.update(filled=False, deferred="mosfet seed carries no rating requirement (unswept topology)")
                     else:
-                        sel = select_mosfet(
-                            _mosfet_constraints(req), tiebreaker=mosfet_tiebreaker, tas_data_dir=tas_data_dir
+                        mc = _mosfet_constraints(req, op_fsw=_fsw)
+                        # High-voltage stages carry an operating point -> rank by total loss (Coss
+                        # switching loss steers the resonant/bridge primary to a low-Coss part, abt #64);
+                        # low-voltage FETs have no op point -> keep the caller's lowest-Rds pick.
+                        tb = (
+                            MosfetTiebreaker.LOWEST_TOTAL_LOSS
+                            if mc.op_fsw is not None
+                            else mosfet_tiebreaker
                         )
+                        sel = select_mosfet(mc, tiebreaker=tb, tas_data_dir=tas_data_dir)
                         data["semiconductor"] = sel.chosen.raw_envelope["semiconductor"]
                         rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 elif family == "semiconductor" and kind == "diode":
