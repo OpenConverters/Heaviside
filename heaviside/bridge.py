@@ -43,6 +43,7 @@ Scope (Phase 2):
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from collections.abc import Collection, Mapping, Sequence
@@ -650,6 +651,104 @@ def design_magnetics_fast(
     )
 
 
+# The realism gate's inductor saturation rule (Isat >= 1.2·Ipeak) plus headroom so the discrete
+# core the fast advise picks clears 1.2× AND has room to deliver full output without saturating.
+# Mirrors full_design._GATE_ISAT_MARGIN — keep the two in sync (the sweep sizes the main magnetic
+# to this margin so the della-Pollock realize, which pins it verbatim, passes the gate).
+_GATE_ISAT_MARGIN = 1.3
+
+
+def _seed_with_isat_margin(seed: Mapping[str, Any], margin: float) -> dict[str, Any]:
+    """A copy of the magnetic seed with every winding's CURRENT PEAK scaled by ``margin`` so the
+    advised core is sized for ``margin``×Ipeak — the saturation headroom the realism gate requires.
+    Only the peak (the saturation driver) is scaled; rms/voltage (loss/flux) stay real so the core
+    is not over-sized for loss."""
+    import copy
+
+    s = copy.deepcopy(dict(seed))
+    for op in s.get("operatingPoints", []):
+        if not isinstance(op, Mapping):
+            continue
+        for exc in op.get("excitationsPerWinding", []):
+            proc = ((exc or {}).get("current") or {}).get("processed")
+            if isinstance(proc, dict) and isinstance(proc.get("peak"), (int, float)):
+                proc["peak"] = abs(float(proc["peak"])) * margin
+    return s
+
+
+def _main_magnetic_seed_from_ktas(
+    entry: TopologyEntry, k_tas: Mapping[str, Any]
+) -> tuple[str, Mapping[str, Any]]:
+    """Pick the MAIN magnetic's MAS ``Inputs`` seed from a Kirchhoff TAS.
+
+    The converter is built AROUND the main magnetic — the inductor for
+    buck/boost/etc., the transformer for flyback/forward/push_pull/bridge/
+    resonant. The other magnetics (output inductor, resonant inductors) are
+    SECONDARY and are designed separately at realize (they do not enter the
+    frequency-sweep loss objective; user decision 2026-06-27). The main is
+    identified, in priority order:
+
+    1. The registry ``magnetic_binding`` key whose value is ``None`` (the
+       authoritative "main" role), matched by name against the KH TAS magnetics.
+       The main names (``T1`` / ``L1``) coincide between the registry and
+       Kirchhoff; only the secondary names drift (``L_out0`` vs ``Lout``).
+    2. Structural fallback when no name matches (Kirchhoff name drift): the
+       multi-winding transformer if exactly one is present, else the sole
+       single-winding inductor.
+
+    Raises :class:`BridgeError` when the seed is missing/incomplete or the main
+    is ambiguous — never silently designs the wrong magnetic (no-fallback rule).
+    """
+    mags = _tas_magnetic_components(k_tas)
+    if not mags:
+        raise BridgeError(
+            f"_main_magnetic_seed_from_ktas: Kirchhoff TAS for {entry.name!r} "
+            f"contains no magnetic components."
+        )
+    seeds: list[tuple[str, Any]] = []
+    for c in mags:
+        data = c.get("data")
+        seeds.append(
+            (c.get("name") or "", data.get("inputs") if isinstance(data, Mapping) else None)
+        )
+
+    # 1. registry main role (the single None-valued binding key)
+    main_name = next((k for k, v in (entry.magnetic_binding or {}).items() if v is None), None)
+    chosen: tuple[str, Any] | None = None
+    if main_name is not None:
+        chosen = next(((n, s) for n, s in seeds if n == main_name), None)
+
+    # 2. structural fallback (name-independent: transformer-if-present else inductor)
+    if chosen is None:
+        def _n_windings(seed: Any) -> int:
+            if not isinstance(seed, Mapping):
+                return 0
+            tr = ((seed.get("designRequirements") or {}).get("turnsRatios")) or []
+            return len(tr) + 1  # turnsRatios carries (windings - 1) entries
+        transformers = [(n, s) for n, s in seeds if _n_windings(s) >= 2]
+        if len(transformers) == 1:
+            chosen = transformers[0]
+        elif not transformers and len(seeds) == 1:
+            chosen = seeds[0]
+        else:
+            raise BridgeError(
+                f"_main_magnetic_seed_from_ktas: cannot identify the main magnetic "
+                f"for {entry.name!r}: registry main {main_name!r} is not among the "
+                f"Kirchhoff TAS magnetics {[n for n, _ in seeds]}, and the structural "
+                f"fallback is ambiguous (transformers={[n for n, _ in transformers]}). "
+                f"Fix registry.magnetic_binding or the Kirchhoff component names."
+            )
+
+    name, seed = chosen
+    if not isinstance(seed, Mapping):
+        raise BridgeError(
+            f"_main_magnetic_seed_from_ktas: main magnetic {name!r} for "
+            f"{entry.name!r} carries no MAS Inputs seed on data.inputs "
+            f"(got {type(seed).__name__}); Kirchhoff must emit a complete seed."
+        )
+    return name, seed
+
+
 def design_magnetics_at_fsw(
     topology: str | TopologyEntry,
     converter_spec: Mapping[str, Any],
@@ -659,34 +758,42 @@ def design_magnetics_at_fsw(
     core_mode: str = "standard cores",
     fast: bool = True,
 ) -> list[MagneticDesign]:
-    """Design the magnetic at a specific switching frequency, letting MKF
-    re-derive the inductance for that frequency.
+    """Design the MAIN magnetic at a specific switching frequency, letting
+    Kirchhoff re-derive the inductance for that frequency.
 
     This is the single seam the frequency sweep (master-plan stage C-hs)
-    turns: it stamps ``fsw_hz`` onto every operating point of a copy of the
-    BASE converter spec and hands it to :func:`design_magnetics` with
-    ``fast=True``, where MKF derives L from the operating point +
-    ``currentRippleRatio`` (L ∝ 1/fsw). Heaviside never computes L itself —
-    that keeps the sweep house-rule-clean (all magnetics math in MKF).
+    turns. It stamps ``fsw_hz`` onto every operating point of a copy of the
+    BASE converter spec, asks **Kirchhoff** to design the topology at that
+    frequency (``kirchhoff_adapter.design_from_hs_spec``), extracts the MAIN
+    magnetic's MAS ``Inputs`` seed (:func:`_main_magnetic_seed_from_ktas`), and
+    designs its geometry via :func:`design_magnetic_from_mas_inputs`. Heaviside
+    never computes L itself — Kirchhoff sizes L for the operating point at this
+    ``fsw_hz`` (no ``desiredInductance`` in the BASE spec ⇒ Kirchhoff derives
+    it), keeping the sweep house-rule-clean (magnetics geometry stays in MKF;
+    topology/converter math is Kirchhoff's).
 
-    **The unified fast base path (abt #11, fixed 2026-06-16):**
-    ``design_magnetics_from_converter`` gained a ``fast`` flag; for the
-    single-inductor family (buck/boost/cuk/sepic/zeta/4SBB) it picks
-    Base⇄Advanced by ``desiredInductance`` presence, so a BASE spec (no
-    ``desiredInductance``) is derived in MKF — slow (full sim) at ``fast=False``
-    or core-fast advise at ``fast=True`` (~12 s vs ~120 s). The sweep uses
-    ``fast=True`` to locate the basin; the master-plan re-rank of the bracketed
-    top-K runs the same seam at ``fast=False`` for the full-loss model. The
-    BASE-schema guard below stays load-bearing: an injected ``desiredInductance``
-    flips MKF to the Advanced branch, so it must never reach here.
+    **Cutover (abt #48):** this seam previously routed through MKF's
+    ``process_converter`` converter model (``design_magnetics_fast`` /
+    ``design_magnetics``). Those converter models are being retired — the
+    designer is built around Kirchhoff's per-topology magnetic seed. The
+    converter is built around the MAIN magnetic; the secondary magnetics
+    (output inductor, resonant inductors) are designed separately at realize and
+    do NOT enter the sweep loss objective (fsw* minimises main-magnetic + switching
+    loss only). The return type is unchanged (``list[MagneticDesign]`` for the
+    main magnetic), so the sweep / picker downstream are untouched.
+
+    The BASE-schema guard below stays load-bearing: an injected
+    ``desiredInductance`` would make Kirchhoff size the rest of the stage around
+    a pre-set L instead of deriving it per-fsw, so it must never reach here.
 
     Raises
     ------
     BridgeError
-        If ``fsw_hz`` is not positive, the spec has no operating points, or
-        the spec still carries a ``desiredInductance``/``desiredMagnetizingInductance``
-        (a BASE-schema violation on the designer path — surfaced loudly, not
-        silently stripped).
+        If ``fsw_hz`` is not positive, the spec has no operating points, the
+        spec still carries a ``desiredInductance``/``desiredMagnetizingInductance``
+        (a BASE-schema violation, surfaced loudly), or ``fast=False`` (the
+        full-sim-from-a-MAS-seed path is not wired — surfaced rather than
+        falling back to the retired MKF converter model).
     """
     if not isinstance(fsw_hz, (int, float)) or fsw_hz <= 0:
         raise BridgeError(f"design_magnetics_at_fsw: fsw_hz must be > 0, got {fsw_hz!r}")
@@ -703,20 +810,33 @@ def design_magnetics_at_fsw(
         raise BridgeError(
             "design_magnetics_at_fsw: spec has no operatingPoints to stamp fsw onto."
         )
+    if not fast:
+        raise BridgeError(
+            "design_magnetics_at_fsw: the Kirchhoff seam designs the main magnetic "
+            "via the fast core-advise path; fast=False (full-sim from a MAS seed) "
+            "is not wired. The frequency sweep uses fast=True. Surfaced rather than "
+            "falling back to the retired MKF process_converter converter model (abt #48)."
+        )
     spec_f = dict(converter_spec)
     spec_f["operatingPoints"] = [
         {**op, "switchingFrequency": float(fsw_hz)} if isinstance(op, Mapping) else op
         for op in ops
     ]
-    if fast:
-        # The pip package's design_magnetics ignores fast=True (only the vendor
-        # .so honours it). Route through design_magnetics_fast which calls
-        # calculate_advised_magnetics_fast directly — ~12 s vs ~120 s per sweep
-        # point. The loss reader (_loss_at_output) already handles the fast-path
-        # scalar windingLosses format.
-        return design_magnetics_fast(topology, spec_f, max_results=max_results, core_mode=core_mode)
-    return design_magnetics(
-        topology, spec_f, max_results=max_results, core_mode=core_mode, fast=False
+    # Cutover (abt #48): design the MAIN magnetic from Kirchhoff's per-topology
+    # seed instead of MKF's process_converter. Kirchhoff sizes L for this fsw;
+    # design_magnetic_from_mas_inputs designs the geometry (calculate_advised_
+    # magnetics_fast) from the seed — topology-agnostic, MKF stays geometry-only.
+    from heaviside.decomposer import kirchhoff_adapter as _ka
+
+    entry = topology if isinstance(topology, TopologyEntry) else get(topology)
+    k_tas = _ka.design_from_hs_spec(entry.name, spec_f)
+    _name, seed = _main_magnetic_seed_from_ktas(entry, k_tas)
+    # Size the main magnetic for the realism gate's saturation HEADROOM (Isat >= margin·Ipeak):
+    # scale the seed's winding peaks by the gate margin before advising, so the swept magnetic the
+    # designer later PINS already clears the gate (the della-Pollock realize stamps it verbatim and
+    # does not re-add headroom). Mirrors full_design._design_ktas_magnetics' fresh-design scaling.
+    return design_magnetic_from_mas_inputs(
+        _seed_with_isat_margin(seed, _GATE_ISAT_MARGIN), max_results=max_results, core_mode=core_mode
     )
 
 
@@ -1578,7 +1698,16 @@ _IPEAK_WORST: dict[str, Any] = {
     "phase_shifted_full_bridge": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=True),
     "phase_shifted_half_bridge": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=True),
     "weinberg": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=True),
-    # NOT registered: resonant topologies (llc/cllc/clllc/src/dab) — fsw comes
+    # Isolated buck / buck-boost (flybuck family): single-switch isolated converters whose
+    # transformer core resets each cycle → unidirectional magnetizing peak ΔIm, same as the
+    # forward class (abt #48 della-Pollock long tail).
+    "isolated_buck": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=False),
+    "isolated_buck_boost": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=False),
+    # Dual active bridge: a PHASE-SHIFTED isolated bridge (not resonant), square-wave
+    # transformer excited symmetrically ±, so the magnetizing peak swings ±ΔIm/2 like the
+    # other bridges (psfb/pshb/push_pull). fsw is loss-swept like any isolated bridge.
+    "dual_active_bridge": lambda spec: _ipeak_worst_magnetizing(spec, bidirectional=True),
+    # NOT registered: resonant topologies (llc/cllc/clllc/src) — fsw comes
     # from the gain law (stages.resonant_freq, B6), not the loss sweep, so they
     # take a separate design flow rather than this saturation-gated sweep.
 }
@@ -1808,6 +1937,70 @@ def _turns_ratio_duty_feasible(
                 f"winding {i}: realized turns ratio {realized:.3f} exceeds the duty-feasible "
                 f"{float(req):.3f} (overshoots the topology's maximum duty)"
             )
+    return True, None
+
+
+def _leakage_feasible(
+    entry: TopologyEntry, spec: Mapping[str, Any], cand: "MagneticDesign", *, max_xlk_over_rload: float = 1.0
+) -> tuple[bool, str | None]:
+    """``(feasible, reason)`` — reject a hard-switched isolated transformer candidate whose SERIES LEAKAGE
+    reactance exceeds the reflected load, so power cannot transfer through the transformer.
+
+    A forward/bridge/push-pull stage delivers power THROUGH the transformer, so the leakage inductance sits
+    in series with the reflected load. When Xlk = 2π·fsw·Llk approaches or exceeds the reflected load
+    R_load·n², most of the primary voltage drops across the leakage and the stage CANNOT reach Vout — the
+    converter saturates its duty/phase short of target (abt #65: a PSFB pinned a high-Lm magnetic whose
+    ~17-20µH leakage at 150 kHz = ~19 Ω ≫ the 4.4 Ω reflected load → Vout capped at 6.8 V). MKF's candidate
+    pool DOES contain low-leakage cores (a bigger core / fewer turns gives ~4 µH), but the loss-ranked pick
+    lands on the smallest core (most turns → most leakage). Rejecting the high-leakage candidates here lets
+    the pick land on a tight-coupled transformer that can deliver power.
+
+    RESONANT topologies are EXEMPT: there the transformer leakage is (part of) the resonant tank inductor —
+    wanted, not parasitic. The leakage is read house-rule-clean from MKF's field model
+    (``calculate_leakage_inductance``); the magnetic's coil is already wound in the fast-advise MAS."""
+    if getattr(entry, "family", None) == "resonant":
+        return True, None
+    try:
+        mas = cand.mas
+    except Exception:
+        return True, None
+    if not isinstance(mas, Mapping):
+        return True, None
+    coil = ((mas.get("magnetic") or {}).get("coil") or {}).get("functionalDescription")
+    if not isinstance(coil, list) or len(coil) < 2:
+        return True, None  # single-winding inductor → no through-transformer transfer to strangle
+    n0 = coil[0].get("numberTurns") if isinstance(coil[0], Mapping) else None
+    n1 = coil[1].get("numberTurns") if isinstance(coil[1], Mapping) else None
+    if not all(isinstance(x, (int, float)) and x > 0 for x in (n0, n1)):
+        return True, None
+    n = float(n0) / float(n1)
+    ops = spec.get("operatingPoints")
+    if not isinstance(ops, list) or not ops or not isinstance(ops[0], Mapping):
+        return True, None
+    op = ops[0]
+    vouts, iouts, fsw = op.get("outputVoltages"), op.get("outputCurrents"), op.get("switchingFrequency")
+    if not (isinstance(vouts, list) and vouts and isinstance(iouts, list) and iouts
+            and isinstance(fsw, (int, float)) and fsw > 0):
+        return True, None
+    vout, iout = vouts[0], iouts[0]
+    if not (isinstance(vout, (int, float)) and isinstance(iout, (int, float)) and vout > 0 and iout > 0):
+        return True, None
+    rload_reflected = (float(vout) / float(iout)) * n * n
+    try:
+        pyom = _import_pyom()
+        out = pyom.calculate_leakage_inductance(dict(cand.magnetic), float(fsw), 0)
+        per = out.get("leakageInductancePerWinding") if isinstance(out, Mapping) else None
+        llk = per[1].get("nominal") if isinstance(per, list) and len(per) > 1 and isinstance(per[1], Mapping) else None
+    except Exception:
+        return True, None  # cannot evaluate leakage → keep MKF's pick (surface, don't silently hide)
+    if not isinstance(llk, (int, float)) or llk <= 0:
+        return True, None
+    xlk = 2.0 * math.pi * float(fsw) * float(llk)
+    if xlk > max_xlk_over_rload * rload_reflected:
+        return False, (
+            f"leakage reactance {xlk:.1f}Ω exceeds {max_xlk_over_rload:g}× the reflected load "
+            f"{rload_reflected:.1f}Ω (leakage {float(llk) * 1e6:.1f}µH strangles power transfer)"
+        )
     return True, None
 
 

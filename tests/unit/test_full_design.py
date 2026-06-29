@@ -265,10 +265,12 @@ def test_sim_backend_selection(monkeypatch) -> None:
     # cllc + clllc now pass design_converter() (abt #64 Coss-aware HV FET selection) → kirchhoff.
     assert _sim_backend_for("cllc") == "kirchhoff"
     assert _sim_backend_for("clllc") == "kirchhoff"
-    assert _sim_backend_for("phase_shifted_full_bridge") == "mkf"  # long tail (phase-shift regulation) stays on MKF
-    # Env var OVERRIDES the allowlist (takes precedence entirely).
-    monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "phase_shifted_full_bridge")
+    # phase_shifted_full_bridge now passes design_converter() (abt #65 leakage-feasibility filter) → kirchhoff.
     assert _sim_backend_for("phase_shifted_full_bridge") == "kirchhoff"
+    assert _sim_backend_for("phase_shifted_half_bridge") == "mkf"  # long tail (half-bridge turns ratio) stays on MKF
+    # Env var OVERRIDES the allowlist (takes precedence entirely).
+    monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "phase_shifted_half_bridge")
+    assert _sim_backend_for("phase_shifted_half_bridge") == "kirchhoff"
     assert _sim_backend_for("boost") == "mkf"           # not in the env list → mkf, despite the allowlist
     monkeypatch.setenv("HEAVISIDE_KIRCHHOFF_TOPOLOGIES", "*")
     assert _sim_backend_for("power_factor_correction") == "kirchhoff"

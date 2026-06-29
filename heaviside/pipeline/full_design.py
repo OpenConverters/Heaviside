@@ -1480,6 +1480,15 @@ _KIRCHHOFF_TOPOLOGIES: frozenset[str] = frozenset({
     # low-current 400 V primary (conduction is negligible there) -> η 0.91. The whole resonant family
     # (llc/src/cllc/clllc) is now through. (Same fix lifted SRC's margin and let LLC pass at 400 V too.)
     "cllc", "clllc",
+    # Phase-shifted full bridge now passes design_converter() (48->12V, verdict=pass, η 0.90). The last
+    # lever was the abt #65 LEAKAGE-FEASIBILITY filter: the transformer regulated only to ~6.8 V because the
+    # loss-ranked magnetic pick landed on the smallest core (most turns -> ~17-20 µH leakage, whose ~19 Ω
+    # reactance swamped the 4.4 Ω reflected load and strangled power transfer). MKF's candidate pool already
+    # held low-leakage cores (a bigger core / fewer turns -> ~4 µH); frequency_sweep now rejects hard-switched
+    # isolated-transformer candidates whose leakage reactance exceeds the reflected load, so the pick lands on
+    # a tight-coupled transformer. PSHB is improved by the same filter (2.3 -> 8.8 V) but still short — its
+    # half-bridge turns-ratio is the remaining lever, so it stays on MKF.
+    "phase_shifted_full_bridge",
 })
 
 
