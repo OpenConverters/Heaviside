@@ -61,6 +61,9 @@ knowledge/lessons.ndjson
 # Playwright MCP scratch output
 .playwright-mcp/
 
+# Generated design-report artifacts (PDF/HTML), per-run
+outputs/*.pdf
+
 # webui build deps
 heaviside/webui/node_modules/
 
