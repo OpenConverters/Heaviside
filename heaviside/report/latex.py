@@ -414,8 +414,10 @@ def _bom(m: ReportModel) -> list[str]:
     power_rows = [r for r in m.bom if (r.get("category") or "").lower() in _POWER_CATS]
     other_rows = [r for r in m.bom if (r.get("category") or "").lower() not in _POWER_CATS]
 
-    def emit(title: str, rows: list[dict[str, Any]]) -> None:
-        if not rows:
+    mag_rows = m.magnetic_bom_rows()
+
+    def emit(title: str, rows: list[dict[str, Any]], magnetics: list[dict[str, Any]] | None = None) -> None:
+        if not rows and not magnetics:
             return
         lines.append(rf"\subsection*{{{_esc(title)}}}")
         lines.append(r"\begin{center}")
@@ -430,13 +432,19 @@ def _bom(m: ReportModel) -> list[str]:
                 f"{_esc(r.get('ref') or '?')} & 1 & {_esc(desc)} & "
                 f"{_esc(fmt_rating(r))} & {_esc(r.get('manufacturer') or '--')} & "
                 f"{{\\small\\texttt{{{_esc(r.get('mpn') or '--')}}}}} \\\\")
+        # Custom (designed) magnetics — no MPN; summarised by core + turns.
+        for mr in magnetics or []:
+            desc = f"Custom magnetic --- {mr['summary']}"
+            lines.append(
+                f"{_esc(mr['ref'])} & 1 & {_esc(desc)} & -- & "
+                r"Custom (designed) & {\small\texttt{designed}} \\")
         lines.append(r"\bottomrule")
         lines.append(r"\end{longtable}")
         lines.append(r"\end{center}")
 
-    emit("Power Stage", power_rows)
+    emit("Power Stage", power_rows, mag_rows)
     emit("Control \\& Bias", other_rows)
-    if not power_rows and not other_rows:
+    if not power_rows and not other_rows and not mag_rows:
         lines.append(r"\textit{No selected parts with MPNs were available in the design.}")
     return lines
 
@@ -490,6 +498,144 @@ def _waveforms(m: ReportModel) -> list[str]:
     return lines
 
 
+def _efficiency_regulation(m: ReportModel) -> list[str]:
+    """Phase-2: efficiency-vs-load curve + load/line-regulation tables, from
+    closed-loop re-sims of the SAME realized design (no re-design)."""
+    el = m.efficiency_load_points()
+    lr = m.line_regulation_points()
+    pts = el["points"]
+    lpts = lr["points"]
+    if not pts and not lpts:
+        return []
+    lines = [r"\section{Efficiency \& Regulation}",
+             "The realized design is re-simulated closed-loop (same parts, same "
+             "magnetic) across load and line; the curves below are measured operating "
+             "points, not re-designs."]
+
+    # Efficiency vs load (pgfplots).
+    if pts:
+        coords = " ".join(f"({p['iout']:.6g},{p['eff'] * 100:.6g})" for p in pts)
+        lines += [
+            r"\subsection*{Efficiency vs Load}",
+            r"\begin{center}",
+            r"\begin{tikzpicture}",
+            r"\begin{axis}[width=0.85\linewidth, height=5.2cm, "
+            r"xlabel={Output current $I_{out}$ (\si{\ampere})}, "
+            r"ylabel={Efficiency (\si{\percent})}, "
+            r"grid=both, grid style={gray!20}, tick label style={font=\small}, "
+            r"label style={font=\small}, mark=*, ymajorgrids]",
+            rf"\addplot[thick, accent, mark=*] coordinates {{{coords}}};",
+            r"\end{axis}",
+            r"\end{tikzpicture}",
+            r"\end{center}",
+        ]
+        # Load-regulation table (Vout vs Iout) from the same points.
+        lines += [
+            r"\begin{center}",
+            r"\begin{tabular}{S[table-format=1.3] S[table-format=2.3] "
+            r"S[table-format=2.3] S[table-format=2.2]}",
+            r"\toprule",
+            r"{$I_{out}$ (\si{\ampere})} & {$V_{out}$ (\si{\volt})} & "
+            r"{$P_{out}$ (\si{\watt})} & {$\eta$ (\si{\percent})} \\",
+            r"\midrule",
+        ]
+        for p in pts:
+            lines.append(
+                rf"{_num(p['iout'], 4)} & {_num(p['vout'], 4)} & "
+                rf"{_num(p['pout'], 4)} & {_num(p['eff'] * 100, 4)} \\")
+        lines += [r"\bottomrule", r"\end{tabular}", r"\end{center}"]
+    if el["note"]:
+        lines.append(rf"\small\textit{{{_esc(el['note'])}}}")
+
+    # Line-regulation table (Vout vs Vin at full load).
+    if lpts:
+        lines += [
+            r"\subsection*{Line Regulation (full load)}",
+            r"\begin{center}",
+            r"\begin{tabular}{S[table-format=3.2] S[table-format=2.3] "
+            r"S[table-format=2.2]}",
+            r"\toprule",
+            r"{$V_{in}$ (\si{\volt})} & {$V_{out}$ (\si{\volt})} & "
+            r"{$\eta$ (\si{\percent})} \\",
+            r"\midrule",
+        ]
+        for p in lpts:
+            lines.append(
+                rf"{_num(p['vin'], 4)} & {_num(p['vout'], 4)} & "
+                rf"{_num(p['eff'] * 100, 4)} \\")
+        lines += [r"\bottomrule", r"\end{tabular}", r"\end{center}"]
+        if lr["note"]:
+            lines.append(rf"\small\textit{{{_esc(lr['note'])}}}")
+    return lines
+
+
+def _thermal(m: ReportModel) -> list[str]:
+    """Phase-2: per-device junction temperature table."""
+    th = m.thermal_rows()
+    rows = th["rows"]
+    if not rows:
+        return []
+    lines = [r"\section{Thermal (Junction Temperature)}",
+             r"Estimated junction temperature $T_j = P_{loss}\cdot R_{\theta JA} + T_{amb}$ "
+             "per power device, with headroom to the rated $T_{j,max}$. The thermal "
+             "resistance and $T_{j,max}$ are from the selected part's datasheet; a device "
+             "without a datasheet $R_{\\theta JA}$ shows n/a (no value is fabricated)."]
+    lines += [
+        r"\begin{center}",
+        r"\begin{tabular}{l S[table-format=2.4] S[table-format=3.1] "
+        r"S[table-format=3.1] S[table-format=3.1] S[table-format=3.1]}",
+        r"\toprule",
+        r"Device & {$P_{loss}$ (\si{\watt})} & {$R_{\theta JA}$ (\si{\kelvin\per\watt})} & "
+        r"{$T_j$ (\si{\celsius})} & {$T_{j,max}$ (\si{\celsius})} & "
+        r"{Margin (\si{\celsius})} \\",
+        r"\midrule",
+    ]
+
+    def c(x, sig=4):
+        return _num(x, sig) if isinstance(x, (int, float)) else r"{\textit{n/a}}"
+
+    for r in rows:
+        lines.append(
+            f"{_esc(r['ref'])} & {_num(r['p_loss'], 4)} & {c(r['rth_ja'], 3)} & "
+            f"{c(r['tj'], 4)} & {c(r['tj_max'], 4)} & {c(r['margin_c'], 3)} \\\\")
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{center}"]
+    if isinstance(th["ambient_c"], (int, float)):
+        lines.append(rf"\small Ambient $T_{{amb}} = {_num(th['ambient_c'], 3)}$\,\si{{\celsius}}.")
+    if th["note"]:
+        lines.append(rf"\small\textit{{{_esc(th['note'])}}}")
+    return lines
+
+
+def _schematic(m: ReportModel) -> list[str]:
+    """Phase-2: realized netlist (Ref / type / net connections) — the honest
+    interim for a schematic image."""
+    rows = m.schematic_rows()
+    if not rows:
+        return []
+    lines = [r"\section{Schematic (Netlist)}",
+             "The realized circuit as a connection table (a rendered schematic image "
+             "is out of scope; the netlist is the honest interim). Each row lists a "
+             "component and the nets its pins connect to."]
+    lines += [
+        r"\begin{center}",
+        r"\begin{longtable}{l l p{0.5\linewidth}}",
+        r"\toprule",
+        r"Ref & Type & Net connections (pin $\rightarrow$ net) \\",
+        r"\midrule \endhead",
+    ]
+    for r in rows:
+        if r["nets"]:
+            nets = "; ".join(
+                (f"{_esc(pin)} $\\rightarrow$ {_esc(net)}" if pin else _esc(net))
+                for pin, net in r["nets"])
+        else:
+            nets = "--"
+        lines.append(
+            f"{_esc(r['ref'])} & {_esc(r['type'] or '--')} & {nets} \\\\")
+    lines += [r"\bottomrule", r"\end{longtable}", r"\end{center}"]
+    return lines
+
+
 def _loss_budget(m: ReportModel) -> list[str]:
     lines = [r"\section{Power-Loss Budget}"]
     rows, comp_total, total = m.loss_rows()
@@ -530,6 +676,28 @@ def _loss_budget(m: ReportModel) -> list[str]:
             rf"\small Cross-check: the closed-loop simulation reports a total loss of "
             rf"{_si(float(sim_total), r'\watt')} at full load "
             rf"(efficiency {_pct(m.eta_sim())}).")
+
+    # Phase-2: analyst-vs-sim reconciliation (surface the delta, don't hide it).
+    recon = m.loss_reconciliation()
+    if recon is not None:
+        lines += [
+            r"\subsection*{Analyst vs Simulation Reconciliation}",
+            r"\begin{center}",
+            r"\begin{tabular}{l S[table-format=2.4] l}",
+            r"\toprule",
+            r"Source & {Total loss (\si{\watt})} & Method \\",
+            r"\midrule",
+            rf"Analyst budget & {_num(recon['analyst_total'], 4)} & closed-form per-mechanism + MKF magnetic \\",
+            rf"Simulation & {_num(recon['sim_total'], 4)} & measured $P_{{in}}-P_{{out}}$ (regulated) \\",
+            r"\midrule",
+            rf"\textbf{{Delta}} & {_num(recon['delta_w'], 4)} & "
+            + (rf"{_num(recon['delta_pct'], 3)}\,\% of sim" if recon["delta_pct"] is not None else "--")
+            + r" \\",
+            r"\bottomrule",
+            r"\end{tabular}",
+            r"\end{center}",
+            rf"\small\textit{{{_esc(recon['note'])}}}",
+        ]
 
     # Bar chart of per-component totals.
     if comp_total:
@@ -625,9 +793,6 @@ def _margins(m: ReportModel) -> list[str]:
 
     if not stress_rows and not good:
         lines.append(r"\textit{Component-stress data was not available for this design.}")
-
-    # TODO (Phase 2): junction-temperature (Tj) table, efficiency-vs-load and
-    # regulation curves, load-transient response.
     return lines
 
 
@@ -647,8 +812,11 @@ def render_latex(design_or_outcome: Any) -> str:
     parts += _magnetics(m)
     parts += _bom(m)
     parts += _waveforms(m)
+    parts += _efficiency_regulation(m)
     parts += _loss_budget(m)
+    parts += _thermal(m)
     parts += _margins(m)
+    parts += _schematic(m)
     parts.append(r"\end{document}")
     return "\n".join(parts) + "\n"
 
@@ -683,7 +851,7 @@ def render_pdf(design_or_outcome: Any, out_path: str | Path) -> Path:
             proc = subprocess.run(
                 [pdflatex, "-interaction=nonstopmode", "-halt-on-error",
                  "-file-line-error", "report.tex"],
-                cwd=tmp_dir, capture_output=True, text=True,
+                cwd=tmp_dir, capture_output=True, text=True, errors="replace",
             )
             log_path = tmp_dir / "report.log"
             if log_path.exists():

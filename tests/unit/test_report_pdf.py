@@ -56,6 +56,17 @@ def test_report_includes_waveform_section():
     assert "Realism Checks" not in html and "Gatekeeper" not in html
 
 
+def test_phase2_sections_omitted_for_minimal_outcome():
+    """A minimal outcome (empty stages, no regulatable TAS, no thermal data)
+    must OMIT every Phase-2 section rather than fabricate one — the report still
+    renders the Phase-1 waveform section."""
+    html = render_html(_outcome(_mas_with_waveforms()))
+    assert "Operating Waveforms" in html              # Phase-1 still present
+    for section in ("Efficiency & Regulation", "Thermal (Junction Temperature)",
+                    "Schematic (Netlist)", "Analyst vs Simulation Reconciliation"):
+        assert section not in html, f"Phase-2 section should be omitted: {section}"
+
+
 def test_report_renders_to_pdf():
     pytest.importorskip("weasyprint")
     from heaviside.stages.reporter import design_pdf

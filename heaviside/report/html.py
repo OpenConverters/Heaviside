@@ -122,6 +122,11 @@ tr.total-row td { font-weight: bold; }
 .wf-svg { display: block; width: 100%; max-width: 680px;
           background: #06100f; border-radius: 6px;
           border: 1px solid rgba(60,224,200,.3); margin: 0.4em 0; }
+
+/* ── XY plots (efficiency / regulation) ── */
+.xy-svg { display: block; width: 100%; max-width: 560px;
+          border-radius: 6px; margin: 0.5em 0; }
+.rpt-note { font-size: 0.82em; color: #777; font-style: italic; margin: 0.3em 0 0.8em; }
 """
 
 
@@ -245,6 +250,58 @@ def _waveform_svg(wfs: list[dict[str, Any]], *, w: int = 680, h: int = 200) -> s
     return "".join(parts)
 
 
+def _xy_line_svg(xs: list[float], ys: list[float], *, xlabel: str, ylabel: str,
+                 w: int = 560, h: int = 240, pad: int = 44) -> str:
+    """A small light-themed XY line chart with marked points, axes labels and
+    min/max ticks — the HTML counterpart of the pgfplots efficiency/regulation
+    plots. Returns '' when there is nothing plottable."""
+    if not xs or not ys or len(xs) != len(ys):
+        return ""
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    # Pad the y-range a little so a near-flat curve is still readable.
+    yspan = (y1 - y0) or max(abs(y1), 1.0) * 0.1
+    y0 -= yspan * 0.15
+    y1 += yspan * 0.15
+    xr = (x1 - x0) or 1.0
+    yr = (y1 - y0) or 1.0
+
+    def px(x: float) -> float:
+        return pad + (x - x0) / xr * (w - 2 * pad)
+
+    def py(y: float) -> float:
+        return h - pad - (y - y0) / yr * (h - 2 * pad)
+
+    pts = " ".join(f"{px(x):.1f},{py(y):.1f}" for x, y in zip(xs, ys))
+    parts = [
+        f"<svg class='xy-svg' viewBox='0 0 {w} {h}' width='100%' "
+        f"style='height:{h}px' xmlns='http://www.w3.org/2000/svg'>",
+        f"<rect width='{w}' height='{h}' fill='#fff' stroke='#ddd'/>",
+        # axes
+        f"<line x1='{pad}' y1='{h - pad}' x2='{w - pad}' y2='{h - pad}' stroke='#333'/>",
+        f"<line x1='{pad}' y1='{pad}' x2='{pad}' y2='{h - pad}' stroke='#333'/>",
+        f"<polyline fill='none' stroke='#1e3a5a' stroke-width='2' points='{pts}'/>",
+    ]
+    for x, y in zip(xs, ys):
+        parts.append(f"<circle cx='{px(x):.1f}' cy='{py(y):.1f}' r='3' fill='#1e3a5a'/>")
+    # axis tick labels (min/max on each axis)
+    parts += [
+        f"<text x='{pad}' y='{h - pad + 16}' font-size='10' fill='#555'>{_g(x0, 3)}</text>",
+        f"<text x='{w - pad}' y='{h - pad + 16}' font-size='10' fill='#555' "
+        f"text-anchor='end'>{_g(x1, 3)}</text>",
+        f"<text x='{pad - 6}' y='{h - pad}' font-size='10' fill='#555' "
+        f"text-anchor='end'>{_g(min(ys), 3)}</text>",
+        f"<text x='{pad - 6}' y='{pad + 8}' font-size='10' fill='#555' "
+        f"text-anchor='end'>{_g(max(ys), 3)}</text>",
+        f"<text x='{w / 2:.0f}' y='{h - 6}' font-size='11' fill='#333' "
+        f"text-anchor='middle'>{html.escape(xlabel)}</text>",
+        f"<text x='14' y='{h / 2:.0f}' font-size='11' fill='#333' "
+        f"text-anchor='middle' transform='rotate(-90 14 {h / 2:.0f})'>{html.escape(ylabel)}</text>",
+        "</svg>",
+    ]
+    return "".join(parts)
+
+
 def _try_waveforms(mas: Any) -> list[dict[str, Any]]:
     try:
         from heaviside.pipeline.converter_designer import magnetic_waveforms
@@ -269,8 +326,11 @@ def render_html(design_or_outcome: Any) -> str:
     body += _magnetics(m)
     body += _bom(m)
     body += _waveforms(m)
+    body += _efficiency_regulation(m)
     body += _loss_budget(m)
+    body += _thermal(m)
     body += _margins(m)
+    body += _schematic(m)
 
     return "\n".join([
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>",
@@ -482,8 +542,11 @@ def _bom(m: ReportModel) -> list[str]:
     power_rows = [r for r in m.bom if (r.get("category") or "").lower() in _POWER_CATS]
     other_rows = [r for r in m.bom if (r.get("category") or "").lower() not in _POWER_CATS]
 
-    def emit(title: str, rows: list[dict[str, Any]]) -> None:
-        if not rows:
+    mag_rows = m.magnetic_bom_rows()
+
+    def emit(title: str, rows: list[dict[str, Any]],
+             magnetics: list[dict[str, Any]] | None = None) -> None:
+        if not rows and not magnetics:
             return
         lines.append(f"<h3>{_e(title)}</h3>")
         lines.append("<table><tr><th>Ref</th><th>Qty</th><th>Description</th>"
@@ -496,11 +559,17 @@ def _bom(m: ReportModel) -> list[str]:
                 f"<td>{_e(desc)}</td><td>{_e(fmt_rating(r))}</td>"
                 f"<td>{_e(r.get('manufacturer') or '—')}</td>"
                 f"<td class='mpn'>{_e(r.get('mpn') or '—')}</td></tr>")
+        # Custom (designed) magnetics — no MPN; summarised by core + turns.
+        for mr in magnetics or []:
+            lines.append(
+                f"<tr><td>{_e(mr['ref'])}</td><td>1</td>"
+                f"<td>Custom magnetic — {_e(mr['summary'])}</td><td>—</td>"
+                f"<td>Custom (designed)</td><td class='mpn'>designed</td></tr>")
         lines.append("</table>")
 
-    emit("Power Stage", power_rows)
+    emit("Power Stage", power_rows, mag_rows)
     emit("Control & Bias", other_rows)
-    if not power_rows and not other_rows:
+    if not power_rows and not other_rows and not mag_rows:
         lines.append("<p><em>No selected parts with MPNs were available in the design.</em></p>")
     return lines
 
@@ -513,6 +582,105 @@ def _waveforms(m: ReportModel) -> list[str]:
             "<p>Winding current and voltage of the main magnetic, taken from the "
             "design's own simulation (PyOM / ngspice excitation traces).</p>",
             svg]
+
+
+def _efficiency_regulation(m: ReportModel) -> list[str]:
+    """Phase-2: efficiency-vs-load curve + load/line-regulation tables, from
+    closed-loop re-sims of the realized design (inline SVG, like the waveforms)."""
+    el = m.efficiency_load_points()
+    lr = m.line_regulation_points()
+    pts = el["points"]
+    lpts = lr["points"]
+    if not pts and not lpts:
+        return []
+    lines = ["<h2>Efficiency & Regulation</h2>",
+             "<p>The realized design is re-simulated closed-loop (same parts, same "
+             "magnetic) across load and line; the curves below are measured operating "
+             "points, not re-designs.</p>"]
+    if pts:
+        lines.append("<h3>Efficiency vs Load</h3>")
+        svg = _xy_line_svg([p["iout"] for p in pts], [p["eff"] * 100 for p in pts],
+                           xlabel="Output current Iout (A)", ylabel="Efficiency (%)")
+        if svg:
+            lines.append(svg)
+        lines.append("<table><tr><th class='num'>Iout (A)</th><th class='num'>Vout (V)</th>"
+                     "<th class='num'>Pout (W)</th><th class='num'>η (%)</th></tr>")
+        for p in pts:
+            lines.append(
+                f"<tr><td class='num'>{_g(p['iout'], 4)}</td>"
+                f"<td class='num'>{_g(p['vout'], 4)}</td>"
+                f"<td class='num'>{_g(p['pout'], 4)}</td>"
+                f"<td class='num'>{_g(p['eff'] * 100, 4)}</td></tr>")
+        lines.append("</table>")
+    if el["note"]:
+        lines.append(f"<p class='rpt-note'>{_e(el['note'])}</p>")
+    if lpts:
+        lines.append("<h3>Line Regulation (full load)</h3>")
+        lines.append("<table><tr><th class='num'>Vin (V)</th><th class='num'>Vout (V)</th>"
+                     "<th class='num'>η (%)</th></tr>")
+        for p in lpts:
+            lines.append(
+                f"<tr><td class='num'>{_g(p['vin'], 4)}</td>"
+                f"<td class='num'>{_g(p['vout'], 4)}</td>"
+                f"<td class='num'>{_g(p['eff'] * 100, 4)}</td></tr>")
+        lines.append("</table>")
+        if lr["note"]:
+            lines.append(f"<p class='rpt-note'>{_e(lr['note'])}</p>")
+    return lines
+
+
+def _thermal(m: ReportModel) -> list[str]:
+    """Phase-2: per-device junction temperature table."""
+    th = m.thermal_rows()
+    rows = th["rows"]
+    if not rows:
+        return []
+    lines = ["<h2>Thermal (Junction Temperature)</h2>",
+             "<p>Estimated junction temperature T<sub>j</sub> = P<sub>loss</sub>·R<sub>θJA</sub> "
+             "+ T<sub>amb</sub> per power device, with headroom to the rated T<sub>j,max</sub>. "
+             "Thermal resistance and T<sub>j,max</sub> are from the selected part's datasheet; a "
+             "device without a datasheet R<sub>θJA</sub> shows n/a (no value is fabricated).</p>",
+             "<table><tr><th>Device</th><th class='num'>P<sub>loss</sub> (W)</th>"
+             "<th class='num'>R<sub>θJA</sub> (K/W)</th><th class='num'>T<sub>j</sub> (°C)</th>"
+             "<th class='num'>T<sub>j,max</sub> (°C)</th><th class='num'>Margin (°C)</th></tr>"]
+
+    def c(x: Any, sig: int = 4) -> str:
+        return _g(x, sig) if isinstance(x, (int, float)) else "n/a"
+
+    for r in rows:
+        lines.append(
+            f"<tr><td>{_e(r['ref'])}</td><td class='num'>{_g(r['p_loss'], 4)}</td>"
+            f"<td class='num'>{c(r['rth_ja'], 3)}</td><td class='num'>{c(r['tj'], 4)}</td>"
+            f"<td class='num'>{c(r['tj_max'], 4)}</td><td class='num'>{c(r['margin_c'], 3)}</td></tr>")
+    lines.append("</table>")
+    if isinstance(th["ambient_c"], (int, float)):
+        lines.append(f"<p class='rpt-note'>Ambient T<sub>amb</sub> = {_g(th['ambient_c'], 3)} °C.</p>")
+    if th["note"]:
+        lines.append(f"<p class='rpt-note'>{_e(th['note'])}</p>")
+    return lines
+
+
+def _schematic(m: ReportModel) -> list[str]:
+    """Phase-2: realized netlist (Ref / type / net connections)."""
+    rows = m.schematic_rows()
+    if not rows:
+        return []
+    lines = ["<h2>Schematic (Netlist)</h2>",
+             "<p>The realized circuit as a connection table (a rendered schematic image is "
+             "out of scope; the netlist is the honest interim). Each row lists a component "
+             "and the nets its pins connect to.</p>",
+             "<table><tr><th>Ref</th><th>Type</th><th>Net connections (pin → net)</th></tr>"]
+    for r in rows:
+        if r["nets"]:
+            nets = "; ".join(
+                (f"{_e(pin)} → {_e(net)}" if pin else _e(net or "")) for pin, net in r["nets"])
+        else:
+            nets = "—"
+        lines.append(
+            f"<tr><td>{_e(r['ref'])}</td><td>{_e(r['type'] or '—')}</td>"
+            f"<td>{nets}</td></tr>")
+    lines.append("</table>")
+    return lines
 
 
 def _loss_budget(m: ReportModel) -> list[str]:
@@ -552,6 +720,23 @@ def _loss_budget(m: ReportModel) -> list[str]:
             f"<p style='font-size:0.85em;color:#555'>Cross-check: the closed-loop "
             f"simulation reports a total loss of {_e(_fmt_si(sim_total, 'W'))} at full "
             f"load (efficiency {_e(eta_s)}).</p>")
+
+    # Phase-2: analyst-vs-sim reconciliation (surface the delta, don't hide it).
+    recon = m.loss_reconciliation()
+    if recon is not None:
+        delta_pct = (f"{_g(recon['delta_pct'], 3)} % of sim"
+                     if recon["delta_pct"] is not None else "—")
+        lines.append("<h3>Analyst vs Simulation Reconciliation</h3>")
+        lines.append("<table><tr><th>Source</th><th class='num'>Total loss (W)</th>"
+                     "<th>Method</th></tr>")
+        lines.append(f"<tr><td>Analyst budget</td><td class='num'>{_g(recon['analyst_total'], 4)}</td>"
+                     "<td>closed-form per-mechanism + MKF magnetic</td></tr>")
+        lines.append(f"<tr><td>Simulation</td><td class='num'>{_g(recon['sim_total'], 4)}</td>"
+                     "<td>measured P<sub>in</sub>−P<sub>out</sub> (regulated)</td></tr>")
+        lines.append(f"<tr class='total-row'><td>Delta</td><td class='num'>{_g(recon['delta_w'], 4)}</td>"
+                     f"<td>{_e(delta_pct)}</td></tr>")
+        lines.append("</table>")
+        lines.append(f"<p class='rpt-note'>{_e(recon['note'])}</p>")
 
     # Per-component bar chart.
     if comp_total:

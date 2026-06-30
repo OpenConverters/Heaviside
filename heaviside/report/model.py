@@ -19,9 +19,17 @@ hand-reading nominal/min/max. All magnetics numbers come from the MAS/MKF.
 """
 from __future__ import annotations
 
+import copy
 import html as _html
+import os
 from collections.abc import Mapping, Sequence
 from typing import Any
+
+# Phase-2 efficiency-vs-load: load fractions (of rated output) re-simulated
+# CLOSED-LOOP on the SAME realized design. Bounded to <=5 points (CLAUDE.md /
+# task: keep the multi-load re-sim cheap). Set HEAVISIDE_REPORT_NO_RESIM=1 to
+# skip every re-sim (e.g. a fast HTML preview that must not pay the ngspice cost).
+_LOAD_SWEEP_FRACS: tuple[float, ...] = (0.2, 0.4, 0.6, 0.8, 1.0)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dimensional resolver + plain number formatting (format-agnostic)
@@ -331,6 +339,12 @@ class ReportModel:
         self.stages = [
             s.get("name") for s in self._stages() if isinstance(s.get("name"), str)
         ]
+
+        # Phase-2 closed-loop re-sim caches (populated lazily; each is computed
+        # at most once per model instance — the re-sim is the expensive part).
+        self._eff_load: dict[str, Any] | None = None
+        self._line_reg: dict[str, Any] | None = None
+        self._full_load_op: Mapping[str, Any] | None = None
 
     # -- helpers ----------------------------------------------------------------
 
@@ -673,6 +687,335 @@ class ReportModel:
             return []
         return [c for c in checks if isinstance(c, Mapping)
                 and c.get("status") == "pass" and isinstance(c.get("margin"), (int, float))]
+
+    # ── Phase-2: closed-loop re-simulation (efficiency / regulation) ───────────
+    #
+    # The realized TAS Heaviside produced is a regulatable Kirchhoff deck
+    # (``simulate_regulated`` bisects the control variable to a target Vout). We
+    # RE-SIMULATE the SAME design — same BOM, same magnetic — at several loads
+    # (and several Vin) to produce efficiency-vs-load and load/line-regulation
+    # curves. We never RE-DESIGN. The load is scaled by editing the operating
+    # point's output power on a COPY of the TAS (Kirchhoff renders ``Rload =
+    # Vout^2/Pout`` from it), so a lighter load is a higher Rload.
+
+    def _can_resim(self) -> bool:
+        """True iff this is a real, regulatable Kirchhoff TAS we can re-simulate
+        (so fake/minimal outcomes — and the ``HEAVISIDE_REPORT_NO_RESIM`` opt-out
+        — quietly skip the expensive sim and fall back to the single design point)."""
+        if os.environ.get("HEAVISIDE_REPORT_NO_RESIM"):
+            return False
+        if not self.topology:
+            return False
+        ops = self.tas.get("inputs")
+        ops = ops.get("operatingPoints") if isinstance(ops, Mapping) else None
+        if not (isinstance(ops, list) and ops and isinstance(ops[0], Mapping)):
+            return False
+        outs = ops[0].get("outputs")
+        if not (isinstance(outs, list) and outs):
+            return False
+        if not any(isinstance(o, Mapping) and isinstance(o.get("power"), (int, float))
+                   for o in outs):
+            return False
+        rails = self.outputs()
+        return bool(rails and rails[0].get("v"))
+
+    def _resim_regulated(self, *, power_scale: float = 1.0,
+                         vin: float | None = None) -> Mapping[str, Any] | None:
+        """One CLOSED-LOOP regulated operating point of the SAME design at a
+        scaled load (and/or a different Vin), via Kirchhoff ``simulate_regulated``.
+        Returns the op dict on a regulated point, else ``None`` (non-convergence
+        / Kirchhoff unavailable / bad data) — the caller degrades, never throws."""
+        rails = self.outputs()
+        if not rails or not rails[0].get("v"):
+            return None
+        vout_target = rails[0]["v"]
+        try:
+            from heaviside.decomposer import kirchhoff_adapter as ka
+        except Exception:
+            return None
+        t = copy.deepcopy(dict(self.tas))
+        try:
+            op0 = t["inputs"]["operatingPoints"][0]
+            for o in op0.get("outputs", []):
+                if isinstance(o, Mapping) and isinstance(o.get("power"), (int, float)):
+                    o["power"] = float(o["power"]) * power_scale
+            if vin is not None:
+                op0["inputVoltage"] = float(vin)
+        except Exception:
+            return None
+        try:
+            op = ka.simulate_regulated(t, float(vout_target), self.topology, fidelity="DATASHEET")
+        except Exception:
+            return None
+        if not isinstance(op, Mapping) or not op.get("regulated"):
+            return None
+        for k in ("vout", "pin", "pout", "efficiency"):
+            if not isinstance(op.get(k), (int, float)):
+                return None
+        return op
+
+    @staticmethod
+    def _op_point(op: Mapping[str, Any], *, frac: float | None = None,
+                  vin: float | None = None) -> dict[str, Any]:
+        vo = float(op["vout"]); pin = float(op["pin"]); pout = float(op["pout"])
+        return {
+            "frac": frac, "vin": vin, "vout": vo, "pin": pin, "pout": pout,
+            "eff": float(op["efficiency"]),
+            "iout": (pout / vo) if vo else None,
+        }
+
+    def efficiency_load_points(self) -> dict[str, Any]:
+        """Efficiency-vs-load curve (<=5 points) from CLOSED-LOOP re-sims of the
+        realized design at fractions of rated output. Returns ``{"points": [...],
+        "note": str|None}`` where each point is ``{frac, iout, vout, pin, pout,
+        eff}``. Degrades to the converged subset (with a note) rather than
+        failing; returns no points when re-sim is unavailable."""
+        if self._eff_load is not None:
+            return self._eff_load
+        result: dict[str, Any] = {"points": [], "note": None}
+        if not self._can_resim():
+            self._eff_load = result
+            return result
+        pts: list[dict[str, Any]] = []
+        for frac in _LOAD_SWEEP_FRACS:
+            op = self._resim_regulated(power_scale=frac)
+            if op is None:
+                continue
+            if abs(frac - 1.0) < 1e-9:
+                self._full_load_op = op  # reuse as the nominal full-load anchor
+            pts.append(self._op_point(op, frac=frac))
+        n_missing = len(_LOAD_SWEEP_FRACS) - len(pts)
+        if not pts:
+            result["note"] = ("Multi-load re-simulation did not converge at any tested "
+                              "load, so the efficiency-vs-load curve is unavailable.")
+        elif n_missing:
+            result["note"] = (
+                f"{n_missing} of {len(_LOAD_SWEEP_FRACS)} load points did not converge and "
+                "were dropped; the curve shows the converged points only.")
+        result["points"] = pts
+        self._eff_load = result
+        return result
+
+    def line_regulation_points(self) -> dict[str, Any]:
+        """Vout-vs-Vin at full load (line regulation) from re-sims at the spec's
+        distinct min / nominal / max input voltages. Returns ``{"points": [...],
+        "note": str|None}`` with each point ``{vin, vout, eff, pout, iout}``.
+        Reuses the full-load nominal point from :meth:`efficiency_load_points`."""
+        if self._line_reg is not None:
+            return self._line_reg
+        result: dict[str, Any] = {"points": [], "note": None}
+        if not self._can_resim():
+            self._line_reg = result
+            return result
+        vin = self.vin()
+        # Distinct numeric Vin values, in ascending order (min/nom/max may coincide).
+        seen: set[float] = set()
+        vins: list[float] = []
+        for key in ("min", "nom", "max"):
+            v = vin.get(key)
+            if isinstance(v, (int, float)) and round(v, 6) not in seen:
+                seen.add(round(v, 6))
+                vins.append(float(v))
+        vins.sort()
+        vnom = vin.get("nom")
+        pts: list[dict[str, Any]] = []
+        n_target = len(vins)
+        for v in vins:
+            # Reuse the cached nominal full-load op when Vin == nominal.
+            if (vnom is not None and abs(v - vnom) < 1e-9
+                    and self._full_load_op is not None):
+                pts.append(self._op_point(self._full_load_op, vin=v))
+                continue
+            op = self._resim_regulated(power_scale=1.0, vin=v)
+            if op is None:
+                continue
+            pts.append(self._op_point(op, vin=v))
+        n_missing = n_target - len(pts)
+        if not pts:
+            result["note"] = ("Line-regulation re-simulation did not converge, so the "
+                              "Vout-vs-Vin sweep is unavailable.")
+        elif n_missing:
+            result["note"] = (f"{n_missing} of {n_target} line points did not converge and "
+                              "were dropped.")
+        result["points"] = pts
+        self._line_reg = result
+        return result
+
+    # ── Phase-2: power-loss reconciliation ─────────────────────────────────────
+
+    def loss_reconciliation(self) -> dict[str, Any] | None:
+        """Analyst per-component loss budget total vs the closed-loop simulation
+        total, with the delta SURFACED (not hidden). Returns ``{analyst_total,
+        sim_total, delta_w, delta_pct, note}`` or ``None`` when either side is
+        missing. The note explains WHY the two differ (different models — the
+        analyst sums closed-form per-mechanism terms incl. the independently
+        MKF-computed core+winding loss; the sim measures Pin-Pout at the regulated
+        operating point)."""
+        rows, _comp_total, analyst_total = self.loss_rows()
+        sim_total = self.sim_total_losses()
+        if not rows or sim_total is None:
+            return None
+        delta = analyst_total - sim_total
+        pct = (delta / sim_total * 100.0) if sim_total else None
+        # Does the analyst budget include the MKF magnetic loss? (it was filled in
+        # loss_rows when the analyst left it null) — name it in the explanation.
+        has_mag = any(mech.endswith("(MKF)") for _ref, mech, _v in rows)
+        note = (
+            "The two totals come from DIFFERENT models and are not expected to be "
+            "bit-identical. The analyst budget sums closed-form per-mechanism losses "
+            "(MOSFET conduction/switching, rectifier conduction/recovery, capacitor ESR"
+            + (", and the core+winding loss computed independently by MKF from the "
+               "design's flux/current waveforms" if has_mag else "")
+            + "). The simulation total is the measured Pin-Pout at the regulated "
+            "operating point, where the SPICE inductor subcircuit captures winding DCR "
+            "and the saturable magnetizing inductance but models core loss and diode Vf "
+            "differently. The gap is dominated by those magnetic-loss and rectifier "
+            "models; it is shown here rather than reconciled away.")
+        return {"analyst_total": analyst_total, "sim_total": sim_total,
+                "delta_w": delta, "delta_pct": pct, "note": note}
+
+    # ── Phase-2: magnetic BOM rows ─────────────────────────────────────────────
+
+    def magnetic_bom_rows(self) -> list[dict[str, Any]]:
+        """The main magnetic(s) as BOM rows — a designed (custom) part with no
+        MPN, summarised by core + turns. Lets the BOM be complete (the magnetic
+        otherwise appears only in the Magnetics section). One row per magnetic
+        whose refdes is not already a catalogued BOM line."""
+        bom_refs = {(r.get("ref") or "") for r in self.bom}
+        rows: list[dict[str, Any]] = []
+        for mag in self.magnetics:
+            ref = mag.get("refdes") or "L1"
+            if ref in bom_refs:
+                continue
+            core = mag.get("core_name") or mag.get("shape")
+            material = mag.get("material")
+            turn_list = [w.get("turns") for w in mag.get("windings") or []
+                         if isinstance(w.get("turns"), (int, float))]
+            summary_parts = []
+            if core:
+                summary_parts.append(str(core))
+            if material:
+                summary_parts.append(str(material))
+            if turn_list:
+                summary_parts.append(
+                    "N=" + ":".join(str(int(t)) for t in turn_list))
+            rows.append({
+                "ref": ref,
+                "role": mag.get("role") or "Inductor",
+                "category": (mag.get("role") or "inductor").lower(),
+                "summary": ", ".join(summary_parts) or "custom magnetic",
+            })
+        return rows
+
+    # ── Phase-2: thermal (junction temperature) ────────────────────────────────
+
+    def _device_thermal(self) -> dict[str, dict[str, float | None]]:
+        """Per-refdes ``{rth_ja, tj_max}`` stamped from the selected part (only
+        devices that carry at least one thermal field)."""
+        out: dict[str, dict[str, float | None]] = {}
+        for stage in self._stages():
+            for c in (stage.get("circuit") or {}).get("components") or []:
+                if not isinstance(c, Mapping):
+                    continue
+                ref = c.get("name")
+                if not isinstance(ref, str):
+                    continue
+                rth = c.get("rth_ja")
+                tjm = c.get("tj_max")
+                if isinstance(rth, (int, float)) or isinstance(tjm, (int, float)):
+                    out[ref] = {
+                        "rth_ja": float(rth) if isinstance(rth, (int, float)) else None,
+                        "tj_max": float(tjm) if isinstance(tjm, (int, float)) else None,
+                    }
+        return out
+
+    def ambient_c(self) -> float | None:
+        """Ambient temperature [°C] from the first operating point, else ``None``."""
+        op = self.ops[0] if self.ops else {}
+        a = op.get("ambientTemperature") if isinstance(op, Mapping) else None
+        return float(a) if isinstance(a, (int, float)) else None
+
+    def thermal_rows(self) -> dict[str, Any]:
+        """Per-device junction temperature ``Tj = P_loss·Rθ_JA + T_amb`` with the
+        headroom to ``Tj,max``. Rθ_JA and Tj,max come from the selected part — a
+        device that lacks Rθ (or an unknown ambient) renders ``n/a``; NEVER a
+        fabricated Rθ. Returns ``{rows, ambient_c, note}``; ``rows`` is one entry
+        per power device that carries a loss number."""
+        _rows, comp_total, _total = self.loss_rows()
+        th = self._device_thermal()
+        amb = self.ambient_c()
+        rows: list[dict[str, Any]] = []
+        any_na = False
+        for ref in sorted(comp_total, key=lambda r: -comp_total[r]):
+            p = comp_total[ref]
+            info = th.get(ref) or {}
+            rth = info.get("rth_ja")
+            tjm = info.get("tj_max")
+            tj = margin = None
+            if rth is not None and amb is not None:
+                tj = p * rth + amb
+                if tjm is not None:
+                    margin = tjm - tj  # °C of headroom
+            else:
+                any_na = True
+            rows.append({"ref": ref, "p_loss": p, "rth_ja": rth, "t_amb": amb,
+                         "tj": tj, "tj_max": tjm, "margin_c": margin})
+        note = None
+        if amb is None and rows:
+            note = ("Ambient temperature is not specified in the operating point, so "
+                    "junction temperatures cannot be estimated.")
+        elif any_na:
+            note = ("Devices without a datasheet thermal resistance (Rth,JA) show n/a -- "
+                    "no thermal resistance was fabricated.")
+        return {"rows": rows, "ambient_c": amb, "note": note}
+
+    # ── Phase-2: schematic / connection table ──────────────────────────────────
+
+    def _comp_type(self, c: Mapping[str, Any]) -> str | None:
+        prov = c.get("selection_provenance")
+        if isinstance(prov, Mapping) and isinstance(prov.get("category"), str):
+            return prov["category"]
+        name = c.get("name")
+        for mag in self.magnetics:
+            if mag.get("refdes") == name:
+                return (mag.get("role") or "magnetic").lower()
+        data = c.get("data")
+        if isinstance(data, Mapping) and ("control" in data or "controller" in data):
+            return "controller"
+        return None
+
+    def schematic_rows(self) -> list[dict[str, Any]]:
+        """The realized netlist as a table: ``{ref, type, nets}`` where ``nets``
+        is a list of ``(pin, net)`` tuples (``pin`` may be ``None``) — each
+        renderer formats the pin→net arrow in its own markup (no raw glyph leaks
+        into LaTeX). Built from each stage circuit's ``connections``; empty when
+        the TAS carries no connection data."""
+        comp_type: dict[str, str | None] = {}
+        comp_nets: dict[str, list[tuple[str | None, str | None]]] = {}
+        for stage in self._stages():
+            circ = stage.get("circuit")
+            if not isinstance(circ, Mapping):
+                continue
+            for c in circ.get("components") or []:
+                if isinstance(c, Mapping) and isinstance(c.get("name"), str):
+                    comp_type.setdefault(c["name"], self._comp_type(c))
+            for net in circ.get("connections") or []:
+                if not isinstance(net, Mapping):
+                    continue
+                net_name = net.get("name")
+                for ep in net.get("endpoints") or []:
+                    if not isinstance(ep, Mapping):
+                        continue
+                    comp = ep.get("component")
+                    if isinstance(comp, str):
+                        pin = ep.get("pin")
+                        comp_nets.setdefault(comp, []).append(
+                            (pin if isinstance(pin, str) else None,
+                             net_name if isinstance(net_name, str) else None))
+        if not comp_nets:
+            return []
+        return [{"ref": ref, "type": comp_type.get(ref), "nets": comp_nets.get(ref, [])}
+                for ref in comp_type]
 
 
 # Backwards-compatible alias (the class used to live in latex.py as _ReportModel).
