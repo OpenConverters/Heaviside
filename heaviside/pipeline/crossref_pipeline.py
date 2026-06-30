@@ -3049,6 +3049,61 @@ def run_crossref_pipeline(
     return outcome
 
 
+def _run_re_enrichment_stages(re_state: REState) -> REState:
+    """Fan out the INDEPENDENT RE enrichment stages onto the shared ``re_state``.
+
+    Field audit (reads / writes per stage) drives what may run concurrently:
+
+    * ``_stage2_5_verify_mpns`` — reads ``ref_bom`` (each row's role/mpn/category);
+      writes only each row's ``in_tas`` flag (+ best-effort Digi-Key magnetic fetch)
+      and appends to ``diagnostics``. It neither reads nor writes ``ref_spec`` /
+      ``ref_claims`` / the testbench outputs.
+    * ``_stage2_65_extract_rdson`` — reads ``ref_spec`` + ``ref_bom`` + ``pdf_text``;
+      wholesale-REASSIGNS ``state.ref_spec`` (adds the extracted Rds_on).
+    * ``_stage2_7_extract_claims`` — reads ``ref_spec`` + ``pdf_text``; reassigns
+      ``state.ref_claims`` and, gated on 2.65 NOT having found it, also reassigns
+      ``state.ref_spec``.
+    * ``_stage2_8_testbench`` — reads the Rds_on-enriched ``ref_spec`` AND the
+      populated ``ref_claims`` (load points + Rds_on selection); writes
+      ``role_map`` / ``comparisons`` / ``sim_result`` / ``tas`` / ``netlist`` /
+      ``passed`` / ``lessons``.
+
+    So 2.65 → 2.7 → 2.8 is a hard SEQUENTIAL chain: 2.65 and 2.7 both do a
+    wholesale ``state.ref_spec = ReferenceSpec(...)`` reassignment (the spec is a
+    frozen dataclass), 2.7 reads the spec 2.65 wrote, and 2.8 reads both the spec
+    and the claims the first two wrote. Reassigning those shared containers
+    concurrently would race and change the result — they stay ordered.
+
+    Only ``_stage2_5_verify_mpns`` is independent (disjoint write-set: ``in_tas`` +
+    ``diagnostics``; reads no field the chain writes), so it runs CONCURRENTLY with
+    the whole chain on the same shared state — disjoint-field in-place mutation is
+    GIL-safe (``diagnostics`` appends are atomic; only their interleave order, not
+    their content, is non-deterministic). This overlaps the DB-lookup / distributor
+    fetch (network-bound) with the LLM + ngspice chain.
+
+    Exceptions from any stage PROPAGATE (``Future.result()`` re-raises) — no
+    swallowing (CLAUDE.md: surface problems, fail loud).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Reference the stages through the module so test monkeypatches take effect.
+    from heaviside.pipeline import re_pipeline as _re
+
+    def _rdson_claims_testbench(s: REState) -> REState:
+        s = _re._stage2_65_extract_rdson(s)
+        s = _re._stage2_7_extract_claims(s)
+        s = _re._stage2_8_testbench(s)
+        return s
+
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="re-enrich") as pool:
+        f_verify = pool.submit(_re._stage2_5_verify_mpns, re_state)
+        f_chain = pool.submit(_rdson_claims_testbench, re_state)
+        # Surface either branch's exception (no swallow). Block on both so the
+        # shared state is fully populated before the bridge reads it.
+        f_verify.result()
+        return f_chain.result()
+
+
 def run_crossref_with_cre(
     reference: str,
     target_manufacturer: str,
@@ -3074,10 +3129,6 @@ def run_crossref_with_cre(
     from heaviside.pipeline.re_pipeline import (
         _stage0_extract_pdf,
         _stage1_spec_extract,
-        _stage2_5_verify_mpns,
-        _stage2_7_extract_claims,
-        _stage2_8_testbench,
-        _stage2_65_extract_rdson,
         _stage2_reverse_engineer,
     )
     from heaviside.pipeline.re_state import REState
@@ -3103,14 +3154,11 @@ def run_crossref_with_cre(
     re_state = _stage1_spec_extract(re_state)
     _say("Reverse-engineering the schematic + topology", 10)
     re_state = _stage2_reverse_engineer(re_state)
-    _say("Verifying extracted MPNs against the catalog", 14)
-    re_state = _stage2_5_verify_mpns(re_state)
-    _say("Extracting RDS(on) for the power FETs", 17)
-    re_state = _stage2_65_extract_rdson(re_state)
-    _say("Extracting the reference's datasheet performance claims", 20)
-    re_state = _stage2_7_extract_claims(re_state)
-    _say("Testbench: simulating the reference design", 24)
-    re_state = _stage2_8_testbench(re_state)
+    # RE enrichment fan-out: MPN verification runs CONCURRENTLY with the
+    # rdson → claims → testbench chain (see `_run_re_enrichment_stages` for the
+    # per-stage field audit and why only verify-mpns is independent).
+    _say("Verify MPNs ∥ RDS(on)/claims/testbench (concurrent)", 14)
+    re_state = _run_re_enrichment_stages(re_state)
 
     # --- Bridge: extract per-component stress ---
     _say("RE→CR bridge: extracting per-component V/I stress from the sim", 30)
