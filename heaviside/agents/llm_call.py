@@ -94,19 +94,14 @@ def call_llm(
         ],
         "max_tokens": max_tokens,
     }
-    # Thinking control (matches Proteus). DEFAULT ON (disable thinking) — set
-    # HEAVISIDE_KIMI_DISABLE_THINKING=0 to re-enable. Kimi K2.5 runs ~13x faster
-    # / ~17x fewer output tokens with thinking off (equal quality on the CR
-    # sweep); when disabled Moonshot REQUIRES temperature == 0.6 (other values
-    # -> HTTP 400). With thinking ON, k2.5 only accepts temperature == 1, so we
-    # omit it. Non-k2 models take the request temp.
-    disable_thinking = os.environ.get("HEAVISIDE_KIMI_DISABLE_THINKING", "1") == "1"
-    is_k2 = "k2" in model
-    if is_k2 and disable_thinking:
-        body["thinking"] = {"type": "disabled"}
-        body["temperature"] = 0.6
-    elif not is_k2:
-        body["temperature"] = temperature
+    # Thinking + temperature config resolved centrally — single source of
+    # truth in heaviside.llm.moonshot_request_config (see its docstring). Kimi
+    # is always invoked non-reasoning by default; the helper disables thinking
+    # and pins temperature 0.6 for k2, omits temperature when thinking is on
+    # for k2, and passes the request temperature through for non-k2 models.
+    from heaviside.llm.kimi import moonshot_request_config
+
+    body.update(moonshot_request_config(model, temperature=temperature))
     # Force a valid JSON object response (Moonshot/OpenAI-compatible). Needed
     # for reviewer agents: kimi-k2.5 otherwise emits <scratchpad> reasoning with
     # no parseable JSON block. The prompt must mention JSON (the reviewers do).

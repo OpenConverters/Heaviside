@@ -55,6 +55,7 @@ __all__ = [
     "build_kimi_model",
     "is_kimi_model",
     "load_kimi_credentials",
+    "moonshot_request_config",
 ]
 
 
@@ -209,6 +210,44 @@ def is_kimi_model(model_id: str) -> bool:
     return any(lowered.startswith(prefix) for prefix in KIMI_MODEL_PREFIXES)
 
 
+def moonshot_request_config(model_id: str, *, temperature: float) -> dict[str, Any]:
+    """Resolve the Moonshot/Kimi thinking + temperature request config.
+
+    Single source of truth for the Kimi *non-reasoning* invariant shared by
+    both LLM call sites — the single-shot httpx path
+    (:func:`heaviside.agents.llm_call.call_llm`) and the Strands model path
+    (:func:`build_kimi_model`).
+
+    Thinking control matches Proteus and is DEFAULT-ON (i.e. thinking is
+    *disabled*) — Kimi is ALWAYS invoked non-reasoning. Set
+    ``HEAVISIDE_KIMI_DISABLE_THINKING=0`` to re-enable Moonshot thinking.
+    Kimi K2.5 runs ~13x faster / ~17x fewer output tokens with thinking off
+    (equal quality on the CR sweep), and Moonshot then REQUIRES
+    ``temperature == 0.6`` (other values → HTTP 400). With thinking ON, k2.5
+    only accepts ``temperature == 1``, so the temperature is *omitted*.
+    Non-k2 (legacy ``moonshot-v1-*``) models take the request *temperature*.
+
+    Returns a dict carrying zero or more of:
+
+    * ``"thinking"`` → ``{"type": "disabled"}`` — present only when thinking
+      is disabled for a k2 model.
+    * ``"temperature"`` → the resolved temperature (``0.6`` for a thinking-off
+      k2 model; the passed value for a non-k2 model; absent for a thinking-on
+      k2 model).
+
+    Callers merge the result into their request body / model params.
+    """
+    disable_thinking = os.environ.get("HEAVISIDE_KIMI_DISABLE_THINKING", "1") == "1"
+    is_k2 = "k2" in model_id.lower()
+    config: dict[str, Any] = {}
+    if is_k2 and disable_thinking:
+        config["thinking"] = {"type": "disabled"}
+        config["temperature"] = 0.6
+    elif not is_k2:
+        config["temperature"] = temperature
+    return config
+
+
 def build_kimi_model(
     *,
     model_id: str = DEFAULT_KIMI_MODEL_ID,
@@ -257,18 +296,18 @@ def build_kimi_model(
                 "`pip install openai`"
             ) from exc
 
-    # Thinking control (matches Proteus). DEFAULT ON (disable thinking) — set
-    # HEAVISIDE_KIMI_DISABLE_THINKING=0 to re-enable Moonshot thinking. When
-    # disabled we inject `thinking: {type: "disabled"}` via the OpenAI SDK
-    # extra_body escape hatch and force temperature=0.6 (Moonshot K2.5 rejects
-    # other temps with thinking off). ~13x faster, ~17x fewer output tokens,
-    # equal quality on the CR sweep. Only wraps k2* (Moonshot) ids.
-    import os as _os
-
-    if (
-        _os.environ.get("HEAVISIDE_KIMI_DISABLE_THINKING", "1") == "1"
-        and "k2" in model_id.lower()
-    ):
+    # Thinking + temperature config resolved centrally — single source of
+    # truth in moonshot_request_config (see its docstring). When thinking is
+    # disabled for a k2 id, inject `thinking: {type: "disabled"}` via the
+    # OpenAI SDK extra_body escape hatch in format_request and pin the forced
+    # temperature (Moonshot K2.5 rejects other temps with thinking off). Non-k2
+    # / thinking-on temperatures are carried through `params` by the caller.
+    request_config = moonshot_request_config(
+        model_id, temperature=float((params or {}).get("temperature", 0.6))
+    )
+    thinking = request_config.get("thinking")
+    if thinking is not None:
+        forced_temperature = request_config["temperature"]
         _base = model_cls
 
         class _NoThinkKimiModel(_base):  # type: ignore[valid-type,misc]
@@ -277,9 +316,9 @@ def build_kimi_model(
                 if isinstance(request, dict):
                     eb = request.get("extra_body")
                     eb = dict(eb) if isinstance(eb, dict) else {}
-                    eb["thinking"] = {"type": "disabled"}
+                    eb["thinking"] = thinking
                     request["extra_body"] = eb
-                    request["temperature"] = 0.6
+                    request["temperature"] = forced_temperature
                 return request
 
         model_cls = _NoThinkKimiModel
