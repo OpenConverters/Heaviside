@@ -28,9 +28,17 @@ applies to every category — passives, magnetics, and semiconductors alike.
 
 - Each component carries `_source_dimensions_mm` (the original's length ×
   width × height) and each candidate carries `dimensions_mm` plus a
-  pre-computed `fits_original` verdict (`true` / `false` / `"unknown"`).
+  pre-computed `fits_original` verdict
+  (`true` / `"one_size_larger"` / `false` / `"unknown"`).
 - **Prefer the smallest candidate that still meets the electrical specs.**
   Smaller is better.
+- **`fits_original: "one_size_larger"` is an ACCEPTABLE PARTIAL** — the part is
+  ~one EIA case size up (e.g. 0402→0603), a standard substitution for
+  bypass/decoupling. Use it when no same-or-smaller candidate meets the
+  electrical specs: set status to `partial`, fill `original_package` and
+  `substitute_package`, and note the size change ("0402 → 0603, verify board
+  fit"). It is a valid substitution, NOT a reject — prefer it over
+  `no_substitute`.
 - **Strongly avoid candidates with `fits_original: false`** — a part that
   overflows the original footprint is a last resort. Pick an oversize part
   ONLY when no fitting candidate meets the electrical constraints, and when

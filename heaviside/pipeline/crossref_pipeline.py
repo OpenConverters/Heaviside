@@ -591,6 +591,18 @@ _OVERSIZE_BASE = 10.0           # flat floor applied to any part that overflows
 _OVERSIZE_SCALE = 8.0           # extra penalty per unit of worst linear overflow
 _UNKNOWN_DIM_PENALTY = 2.0      # candidate size unknown → can't confirm it fits
 _DIM_TOLERANCE = 1.02           # 2 % slack for rounding / termination spread
+# A substitute up to ~one EIA case size larger (e.g. 0402→0603, ≈0.6 linear
+# overflow) is an ACCEPTABLE PARTIAL substitution for bypass/decoupling parts —
+# offered with a "verify board fit" caveat rather than dropped. Its penalty
+# stays below _OVERSIZE_BASE so the fit filter keeps it and the matcher sees it;
+# ≥2 sizes up remains a heavily-penalised last resort.
+_SLIGHTLY_OVERSIZE_OVERFLOW = 0.65   # worst-linear overflow that counts as one size up
+# Kept small (penalty ≈1–2.6) so an EXACT-value part one size up still outranks a
+# near-value fitting part — otherwise the value-match the user actually needs is
+# pushed out of the top-N by closer-fitting wrong-value parts. Still above any
+# true fit (≤_FIT_AREA_WEIGHT≈0.5) so a same-size match always wins when it exists.
+_SLIGHTLY_OVERSIZE_BASE = 1.0        # partial floor: above any true fit, below _OVERSIZE_BASE
+_SLIGHTLY_OVERSIZE_SCALE = 2.5       # gentle per-overflow slope (one size up stays < value-match weight)
 
 # Weight applied to the value-distance term so the primary electrical value
 # (resistance/inductance/capacitance) dominates package/footprint when ranking
@@ -635,7 +647,34 @@ def _footprint_penalty(
         c_short / s_short,
         (c_h / s_h) if (s_h and c_h) else 1.0,
     ) - 1.0
-    return _OVERSIZE_BASE + _OVERSIZE_SCALE * max(overflow, 0.0)
+    overflow = max(overflow, 0.0)
+    if overflow <= _SLIGHTLY_OVERSIZE_OVERFLOW:
+        # ~one EIA case size larger: an acceptable PARTIAL (verify board fit).
+        # Penalty stays < _OVERSIZE_BASE so it is NOT dropped by the fit filter
+        # and reaches the matcher; gentle so an exact-value part one size up still
+        # outranks a near-value fitting part, but above any true fit.
+        return _SLIGHTLY_OVERSIZE_BASE + _SLIGHTLY_OVERSIZE_SCALE * overflow
+    return _OVERSIZE_BASE + _OVERSIZE_SCALE * overflow
+
+
+def _footprint_tier(
+    source_dims: tuple[float, float, float | None] | None,
+    cand_dims: tuple[float, float, float | None] | None,
+) -> bool | str:
+    """Categorise the fit: ``True`` (fits), ``"one_size_larger"`` (acceptable
+    partial, verify board fit), ``False`` (overflows by ≥ ~2 sizes), or
+    ``"unknown"``. Derived from :func:`_footprint_penalty` so the thresholds stay
+    in one place."""
+    if not source_dims:
+        return "unknown"
+    if not cand_dims or cand_dims[0] is None or cand_dims[1] is None:
+        return "unknown"
+    pen = _footprint_penalty(source_dims, cand_dims)
+    if pen >= _OVERSIZE_BASE:
+        return False
+    if pen >= _SLIGHTLY_OVERSIZE_BASE:
+        return "one_size_larger"
+    return True
 
 
 VOLTAGE_DERATING_FACTOR = 1.25
@@ -1636,13 +1675,11 @@ def _candidate_summaries_for_llm(
     for c in candidates[:limit]:
         summ = _summarize_candidate(c, category)
         if source_dims:
-            cand_dims = _extract_dimensions(c, category)
-            if cand_dims is None or cand_dims[0] is None or cand_dims[1] is None:
-                summ["fits_original"] = "unknown"
-            else:
-                summ["fits_original"] = (
-                    _footprint_penalty(source_dims, cand_dims) < _OVERSIZE_BASE
-                )
+            # 3-state: True (fits) / "one_size_larger" (partial, verify fit) /
+            # False (≥2 sizes over) / "unknown".
+            summ["fits_original"] = _footprint_tier(
+                source_dims, _extract_dimensions(c, category)
+            )
         out.append(summ)
     return out
 
@@ -2957,6 +2994,36 @@ def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
     return state
 
 
+_SUBSTITUTED_STATUSES = ("exact", "recommended", "partial")
+
+
+def _stage_footprint_caveat(state: CrossRefState) -> CrossRefState:
+    """Mark any substitution whose part is ~one EIA size larger than the
+    original as a PARTIAL, with an explicit "old → new size, verify board fit"
+    caveat. Deterministic backstop so a larger substitute is always honestly
+    flagged (and downgraded from 'recommended') regardless of how the LLM
+    scored it — and so the report can show the size change."""
+    for row in state.crossref_result:
+        if row.get("status") not in _SUBSTITUTED_STATUSES:
+            continue
+        op = row.get("original_package")
+        sp = row.get("substitute_package")
+        src = _eia_dims_from_case(op)
+        sub = _eia_dims_from_case(sp)
+        if not src or not sub:
+            continue
+        tier = _footprint_tier((src[0], src[1], None), (sub[0], sub[1], None))
+        if tier == "one_size_larger":
+            if row.get("status") in ("exact", "recommended"):
+                row["status"] = "partial"
+            row["footprint_caveat"] = {"original_package": op, "substitute_package": sp}
+            note = f"Footprint one size larger: {op} → {sp} — verify board fit."
+            existing = str(row.get("notes") or "").strip()
+            if note not in existing:
+                row["notes"] = f"{existing} | {note}" if existing else note
+    return state
+
+
 def run_crossref_pipeline(
     source_bom: list[dict[str, Any]],
     target_manufacturer: str,
@@ -3004,6 +3071,7 @@ def run_crossref_pipeline(
     state = _stage6_otto(state)
     _say("Deterministic in-kind rescue for residual gaps", 78)
     state = _stage6_5_deterministic_rescue(state)
+    state = _stage_footprint_caveat(state)
     _say("Adversarial review (Ray + Nicola)", 84)
     state = _stage7_review(state)
 
@@ -3024,6 +3092,7 @@ def run_crossref_pipeline(
         state = _stage5_score(state)
         state = _stage6_otto(state)
         state = _stage6_5_deterministic_rescue(state)
+        state = _stage_footprint_caveat(state)
         state = _stage7_review(state)
 
     # Stage 8: Learn from this run
