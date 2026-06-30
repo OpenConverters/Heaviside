@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pytest
@@ -61,6 +63,19 @@ _DNP_VALUES = {"ns", "dnp", "dni", "dnf", "", "n/s", "do not populate"}
 # still match-or-beat Proteus). This is flaky-retry for a stochastic check, not
 # a loosened bar. (3 ~= one nominal run plus two recoveries from a rare dip.)
 _CR_MAX_ATTEMPTS = 3
+
+# The 10 designs are fully independent (``_cr_coverage_attempt`` shares no state),
+# yet each is bursty: it idles through RE extraction / testbench sim / review even
+# though it runs 12-way batch-concurrent internally during crossref. Overlapping
+# DESIGNS fills those idle gaps. Cap stays small (<= ~6): the Moonshot ACCOUNT rate
+# limit — not CPU — is the real ceiling, and 4 designs x their internal 12-way
+# bursts already saturate it; going higher just 429s/queues with no speedup.
+_CR_DESIGN_CONCURRENCY = int(os.environ.get("HEAVISIDE_CR_DESIGN_CONCURRENCY", "4"))
+
+# Per-design best attempts are appended here line-by-line from worker threads; the
+# lock serializes the append so concurrent designs can't interleave/corrupt a line.
+_NDJSON_PATH = Path("/tmp/cr_vs_proteus_results.ndjson")
+_WRITE_LOCK = threading.Lock()
 
 
 def _is_dnp_or_zero_ohm(c) -> bool:
@@ -228,16 +243,23 @@ def _cr_coverage_attempt(design: str) -> dict:
     }
 
 
-@pytest.mark.parametrize("design", list(PROTEUS_BASELINE), ids=list(PROTEUS_BASELINE))
-def test_cr_coverage_matches_or_beats_proteus(design: str) -> None:
+def _evaluate_design(design: str) -> dict:
+    """Run the best-of-``_CR_MAX_ATTEMPTS`` retry loop for ONE design and return
+    its best attempt plus the pass/fail verdict against Proteus.
+
+    Designs are fully independent (no shared mutable state), so this is the unit
+    of concurrency: ``_run_all_designs`` fans it out across a thread pool. The
+    ndjson append and the ``_RESULTS`` append are both ``_WRITE_LOCK``-guarded so
+    concurrent designs never interleave a line or race the summary list.
+
+    Retry rationale (unchanged): CR has run-to-run LLM variance (e.g. um3491 sits
+    exactly at Proteus's 100% and dipped to 81% once, then re-ran at 100%). A
+    single variance dip must not fail the gate, but a *consistent* shortfall must
+    — so we keep the best of up to _CR_MAX_ATTEMPTS attempts. Flaky-retry for a
+    genuinely stochastic check, not a loosened bar."""
     p_sub, p_scope = PROTEUS_BASELINE[design]
     proteus_pct = p_sub / p_scope if p_scope else 0.0
 
-    # Retry on a miss. CR has run-to-run LLM variance (e.g. um3491 sits exactly
-    # at Proteus's 100% and dipped to 81% once, then re-ran at 100%). A single
-    # variance dip must not fail the gate, but a *consistent* shortfall must —
-    # so we keep the best of up to _CR_MAX_ATTEMPTS attempts. This is
-    # flaky-retry for a genuinely stochastic check, not a loosened bar.
     best: dict | None = None
     for attempt in range(_CR_MAX_ATTEMPTS):
         r = _cr_coverage_attempt(design)
@@ -249,19 +271,66 @@ def test_cr_coverage_matches_or_beats_proteus(design: str) -> None:
                "runtime_s": r["runtime_s"],
                "review": os.environ.get("HEAVISIDE_CR_REVIEW") == "1",
                "in_tok": r["in_tok"], "out_tok": r["out_tok"], "calls": r["calls"]}
-        with Path("/tmp/cr_vs_proteus_results.ndjson").open("a") as fh:
-            fh.write(json.dumps(rec) + "\n")
         ktok = (r["in_tok"] + r["out_tok"]) / 1000
-        print(f"\n{design} [try{attempt + 1}]: ours {r['ours_n']}/{r['ours_scope']} = "
-              f"{r['ours_pct']*100:.0f}%  |  proteus {p_sub}/{p_scope} = {proteus_pct*100:.0f}%"
-              f"  |  {r['runtime_s']:.0f}s  |  {ktok:.0f}k tok / {r['calls']} calls", flush=True)
-        _RESULTS.append(rec)
+        line = (f"\n{design} [try{attempt + 1}]: ours {r['ours_n']}/{r['ours_scope']} = "
+                f"{r['ours_pct']*100:.0f}%  |  proteus {p_sub}/{p_scope} = {proteus_pct*100:.0f}%"
+                f"  |  {r['runtime_s']:.0f}s  |  {ktok:.0f}k tok / {r['calls']} calls")
+        # Serialize the ndjson append + summary-list append + the print so
+        # interleaved worker threads can't corrupt a line or scramble output.
+        with _WRITE_LOCK:
+            with _NDJSON_PATH.open("a") as fh:
+                fh.write(json.dumps(rec) + "\n")
+            _RESULTS.append(rec)
+            print(line, flush=True)
         if r["ours_pct"] >= proteus_pct:
             break
 
-    assert best["ours_pct"] >= proteus_pct, (
-        f"{design}: CR coverage {best['ours_pct']*100:.0f}% "
-        f"({best['ours_n']}/{best['ours_scope']}) is BELOW Proteus's "
-        f"{proteus_pct*100:.0f}% ({p_sub}/{p_scope}) after {_CR_MAX_ATTEMPTS} "
-        "attempts — regression"
+    passed = best["ours_pct"] >= proteus_pct
+    return {
+        "design": design, "passed": passed, "best": best,
+        "proteus_pct": proteus_pct, "p_sub": p_sub, "p_scope": p_scope,
+    }
+
+
+def _run_all_designs(designs: list[str]) -> list[str]:
+    """Fan ``_evaluate_design`` out over ``designs`` CONCURRENTLY, capped at
+    ``_CR_DESIGN_CONCURRENCY``, and return the list of failure messages (empty =
+    every design matched-or-beat Proteus). One design's failure (or crash) does
+    NOT short-circuit the rest — all designs are evaluated and every failure is
+    reported together, not just the first."""
+    print(f"\n[CR vs Proteus] evaluating {len(designs)} designs CONCURRENTLY "
+          f"(design-level concurrency={_CR_DESIGN_CONCURRENCY}; cap kept small "
+          f"because the Moonshot ACCOUNT rate limit is the ceiling and each "
+          f"design is already 12-way batch-concurrent internally). Override with "
+          f"HEAVISIDE_CR_DESIGN_CONCURRENCY.", flush=True)
+    failures: list[str] = []
+    with ThreadPoolExecutor(max_workers=_CR_DESIGN_CONCURRENCY,
+                            thread_name_prefix="cr-design") as ex:
+        futures = {ex.submit(_evaluate_design, d): d for d in designs}
+        for fut in as_completed(futures):
+            d = futures[fut]
+            try:
+                res = fut.result()
+            except Exception as exc:  # surface the crash, don't swallow it
+                failures.append(f"{d}: CR evaluation raised "
+                                f"{type(exc).__name__}: {exc}")
+                continue
+            if not res["passed"]:
+                best = res["best"]
+                failures.append(
+                    f"{d}: CR coverage {best['ours_pct']*100:.0f}% "
+                    f"({best['ours_n']}/{best['ours_scope']}) is BELOW Proteus's "
+                    f"{res['proteus_pct']*100:.0f}% ({res['p_sub']}/{res['p_scope']}) "
+                    f"after {_CR_MAX_ATTEMPTS} attempts — regression"
+                )
+    return failures
+
+
+def test_cr_coverage_matches_or_beats_proteus() -> None:
+    """Each of the 10 Würth designs must match-or-beat Proteus. Designs run
+    concurrently (see ``_run_all_designs``); all failures are reported together."""
+    failures = _run_all_designs(list(PROTEUS_BASELINE))
+    assert not failures, (
+        f"{len(failures)}/{len(PROTEUS_BASELINE)} design(s) BELOW Proteus:\n  "
+        + "\n  ".join(failures)
     )
