@@ -344,6 +344,35 @@ def extract_bom_from_pdf(
         pdf_text = extract_pdf_text(Path(pdf_path))
 
     expected = _detect_expected_refdes(pdf_text)
+
+    # Reading before thinking: when the PDF carries a structured ruled BOM table
+    # covering the detected designators, parse it deterministically — variance-
+    # free, no LLM call. Only "wins" when it provably covers >= the coverage
+    # threshold; otherwise fall through to the LLM census below.
+    if pdf_path is not None and len(expected) >= _MIN_EXPECTED_REFS_FOR_GUARD:
+        from heaviside.stages.bom_table import parse_bom_table
+
+        table_rows = parse_bom_table(pdf_path)
+        if table_rows:
+            det_bom: list[BomComponent] = []
+            for row in table_rows:
+                comp = _component_from_fields(row)
+                if comp is not None:
+                    det_bom.extend(_expand_grouped_refs(comp))
+            det_cov = _refdes_coverage(det_bom, expected)
+            if det_cov >= _COVERAGE_OK_THRESHOLD:
+                logger.info(
+                    "bom_extract[%s]: deterministic BOM-table parse — %d components, "
+                    "coverage %.0f%% of %d designators (no LLM)",
+                    ref, len(det_bom), det_cov * 100, len(expected),
+                )
+                return det_bom
+            logger.info(
+                "bom_extract[%s]: deterministic table coverage %.0f%% < %.0f%% — "
+                "falling back to LLM census",
+                ref, det_cov * 100, _COVERAGE_OK_THRESHOLD * 100,
+            )
+
     bom = extract_bom_from_rows(_extract_full_bom_rows(pdf_text, ref))
 
     # Too few designators to trust the coverage signal -> accept the draw as-is.
