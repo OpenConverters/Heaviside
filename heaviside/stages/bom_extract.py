@@ -18,12 +18,16 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from heaviside.pipeline.value_parse import parse_si_value
+
+logger = logging.getLogger(__name__)
 
 # PEAS oneOf component keys (heaviside.types.Peas) — the canonical category set.
 PEAS_CATEGORIES = ("capacitor", "magnetic", "semiconductor", "resistor", "controller")
@@ -211,6 +215,97 @@ def extract_bom_from_csv(source: str | Path) -> list[BomComponent]:
     return extract_bom_from_rows(reader)
 
 
+# --- extraction-completeness guard --------------------------------------
+# One LLM draw of a complex/multi-page BOM table occasionally drops many rows
+# (a "bad draw"): the model is stochastic, so the same PDF that usually yields
+# the full census sometimes returns a truncated one. Those dropped rows never
+# reach the (working) cross-reference, so CR coverage looks low for no reason
+# other than the draw — pure run-to-run variance. The guard below re-extracts
+# and MERGES only when a draw looks under-complete, recovering the missed rows
+# without paying for a second LLM call in the common (already-complete) case.
+
+# A draw is "complete enough" when it covers at least this fraction of the
+# reference designators we detected in the source text. Below it, we re-draw
+# and merge. 0.90 tolerates the long tail of designators the text mentions but
+# the BOM legitimately omits (DNP ranges, test points written as ranges, etc.)
+# while still catching a draw that dropped a meaningful block of rows.
+_COVERAGE_OK_THRESHOLD = 0.90
+
+# Extra re-extraction attempts when a draw is under-covered (so at most 3 draws
+# total: the first plus these). Each is merged by ref-des into the running BOM,
+# so successive draws can only add coverage, never lose it.
+_MAX_EXTRA_DRAWS = 2
+
+# The coverage guard only engages when we detected at least this many distinct
+# designators — a tiny excerpt or a sparse PDF can't give a trustworthy
+# coverage signal, so we don't spend extra LLM calls chasing it.
+_MIN_EXPECTED_REFS_FOR_GUARD = 8
+
+# Reference-designator detector. Matches a designator PREFIX (the conventional
+# letters: C R L D Q U J Y T plus the two-letter FB / MH) immediately followed
+# by 1-3 digits, e.g. C1, R12, U1, L2, FB1, MH4. Deliberately conservative to
+# avoid false positives:
+#   * the digit suffix is required, so dielectric codes like "C0G" (letter
+#     after the digit -> the trailing (?!\w) fails) and bare package sizes like
+#     "0402" (no letter prefix) are NOT counted;
+#   * (?<![\w-]) forbids a leading word char or hyphen, so MPNs ("...C81...")
+#     and qualification tags ("AEC-Q200") don't masquerade as designators;
+#   * matching is upper-case only — real designators are upper-case, and this
+#     keeps lower-case prose ("u1 of the figure") from inflating the count.
+_REFDES_RE = re.compile(r"(?<![\w-])(?:FB|MH|[CRLDQUJYT])\d{1,3}(?!\w)")
+
+# Fields whose presence makes a BOM row "more populated"; on a ref-des collision
+# during a merge we keep the row that fills more of these (more useful to CR).
+_MERGE_RICHNESS_FIELDS = (
+    "mpn", "value", "value_si", "technology",
+    "manufacturer", "rated_voltage", "package", "notes",
+)
+
+
+def _detect_expected_refdes(text: str) -> set[str]:
+    """Conservatively detect the reference designators present in source text.
+
+    Returns the de-duplicated set of designator tokens (C1, R12, U1, ...). This
+    is the *expected* part list the extraction should cover; it intentionally
+    under-counts (ranges like "C22-C24" contribute only C22, and codes/packages
+    are excluded) so the coverage signal errs toward NOT triggering spurious
+    re-draws."""
+    return set(_REFDES_RE.findall(text or ""))
+
+
+def _refdes_coverage(bom: list[BomComponent], expected: set[str]) -> float:
+    """Fraction of *expected* designators that appear in *bom* (1.0 if nothing
+    was expected — no signal means nothing to flag)."""
+    if not expected:
+        return 1.0
+    present = {c.ref_des for c in bom}
+    return len(expected & present) / len(expected)
+
+
+def _richness(comp: BomComponent) -> int:
+    """How many of the CR-relevant fields this row actually fills."""
+    return sum(
+        1 for f in _MERGE_RICHNESS_FIELDS if getattr(comp, f) not in (None, "")
+    )
+
+
+def _merge_boms(primary: list[BomComponent], secondary: list[BomComponent]) -> list[BomComponent]:
+    """Union two draws by ref-des. ``primary`` order is preserved and its rows
+    are kept unless ``secondary`` has the SAME ref-des with strictly more
+    populated fields (the better-detailed row wins); ref-des only in
+    ``secondary`` are appended. A merge can only add coverage, never drop it."""
+    by_ref: dict[str, BomComponent] = {}
+    order: list[str] = []
+    for comp in (*primary, *secondary):
+        r = comp.ref_des
+        if r not in by_ref:
+            by_ref[r] = comp
+            order.append(r)
+        elif _richness(comp) > _richness(by_ref[r]):
+            by_ref[r] = comp
+    return [by_ref[r] for r in order]
+
+
 def extract_bom_from_pdf(
     pdf_path: str | Path | None = None,
     *,
@@ -231,7 +326,15 @@ def extract_bom_from_pdf(
 
     Pass ``pdf_text`` to skip PDF text extraction and feed text straight to
     the extractor (caller already has the text, or to keep a test fast on a
-    small excerpt)."""
+    small excerpt).
+
+    A single LLM draw of a complex BOM is stochastic and occasionally drops a
+    block of rows. To make the result reproducible we estimate the expected
+    reference designators from the source text and, ONLY when a draw covers too
+    few of them, re-extract and merge by ref-des (see the guard constants
+    above). The common case — a draw that is already complete — costs exactly
+    one LLM call. A merged BOM that is still short of the expected designators
+    is surfaced via a loud WARNING rather than silently passed off as complete."""
     if pdf_path is None and pdf_text is None:
         raise ValueError("extract_bom_from_pdf: provide pdf_path or pdf_text")
     ref = reference or (Path(pdf_path).stem if pdf_path else "bom")
@@ -239,8 +342,40 @@ def extract_bom_from_pdf(
         from heaviside.pipeline.pdf_extract import extract_pdf_text
 
         pdf_text = extract_pdf_text(Path(pdf_path))
-    rows = _extract_full_bom_rows(pdf_text, ref)
-    return extract_bom_from_rows(rows)
+
+    expected = _detect_expected_refdes(pdf_text)
+    bom = extract_bom_from_rows(_extract_full_bom_rows(pdf_text, ref))
+
+    # Too few designators to trust the coverage signal -> accept the draw as-is.
+    if len(expected) < _MIN_EXPECTED_REFS_FOR_GUARD:
+        return bom
+
+    coverage = _refdes_coverage(bom, expected)
+    if coverage >= _COVERAGE_OK_THRESHOLD:
+        return bom
+
+    # Under-covered first draw -> likely a bad draw. Re-extract and merge,
+    # recovering the dropped rows. Successive draws only add coverage.
+    logger.warning(
+        "bom_extract[%s]: first draw covers %.0f%% of %d detected designators "
+        "(below %.0f%%) — re-extracting to recover dropped rows",
+        ref, coverage * 100, len(expected), _COVERAGE_OK_THRESHOLD * 100,
+    )
+    for _ in range(_MAX_EXTRA_DRAWS):
+        bom = _merge_boms(bom, extract_bom_from_rows(_extract_full_bom_rows(pdf_text, ref)))
+        coverage = _refdes_coverage(bom, expected)
+        if coverage >= _COVERAGE_OK_THRESHOLD:
+            break
+
+    if coverage < _COVERAGE_OK_THRESHOLD:
+        missing = sorted(expected - {c.ref_des for c in bom})
+        logger.warning(
+            "bom_extract[%s]: KNOWN-INCOMPLETE BOM — after %d draws coverage is "
+            "%.0f%% (%d/%d designators); missing %d: %s",
+            ref, _MAX_EXTRA_DRAWS + 1, coverage * 100,
+            len(expected) - len(missing), len(expected), len(missing), missing,
+        )
+    return bom
 
 
 def _extract_full_bom_rows(
