@@ -163,6 +163,26 @@ def _buck_inductance(spec: Mapping[str, Any]) -> float:
     return _required_inductance(spec, "desiredInductance", "buck spec")
 
 
+def _already_isat_enriched(comp: Mapping[str, Any]) -> bool:
+    """True when a magnetic component already carries the realism gate's
+    saturation fields (``isat`` + ``ipeak_worst``).
+
+    The della-Pollock realize pipeline (``full_design._design_ktas_magnetics``)
+    computes these from the *full* MAS and stamps them onto the component
+    **before** :func:`catalogue.kirchhoff_fill.stamp_mkf_magnetic` reduces
+    ``data.magnetic`` to just its SPICE subcircuit (``modelOutputs``). Once
+    that reduction has happened the geometry the extractor would read
+    (``core``/``coil``/saturation curve) is gone, so re-enrichment must treat
+    the already-stamped numbers as authoritative rather than trying to
+    recompute them (ABT #74)."""
+    isat = comp.get("isat")
+    ipk = comp.get("ipeak_worst")
+    return (
+        isinstance(isat, (int, float)) and not isinstance(isat, bool) and isat > 0
+        and isinstance(ipk, (int, float)) and not isinstance(ipk, bool) and ipk > 0
+    )
+
+
 def _conservative_bsat(saturation_curve: list[Mapping[str, Any]]) -> float:
     """Pick the worst-case (lowest) magneticFluxDensity from the MAS
     saturation curve, across all temperature samples.
@@ -521,7 +541,6 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     """
     vmin, vmax = _buck_vin_extremes(spec)
     vout, iout, fsw = _buck_operating_point(spec)
-    L = _buck_inductance(spec)
 
     if vout >= vmin:
         raise EnrichmentError(
@@ -531,11 +550,32 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
 
     d_max = vout / vmin
     d_min = vout / vmax
+
+    si, ci, comp = _find_magnetic_component(tas)
+
+    # Idempotent fast-path (della-Pollock realize, ABT #74). When the design
+    # pipeline already stamped isat / ipeak_worst on the inductor, the emitted
+    # TAS carries only the reduced SPICE magnetic (``data.magnetic`` ==
+    # ``{modelOutputs: …}``) and the post-cutover spec has no
+    # ``desiredInductance`` — MKF derived L from the magnetic seed. Re-enriching
+    # such a TAS must not demand an inductance it no longer needs nor recompute
+    # the saturation fields from geometry that has been stripped: the stamped
+    # numbers are authoritative. Fill only the duty bounds that were not already
+    # recorded (never clobber the regulated ``tas["duty"]`` the sim wrote).
+    if _already_isat_enriched(comp):
+        tas.setdefault("duty", round(d_max, 6))
+        tas.setdefault("duty_min", round(d_min, 6))
+        tas.setdefault("duty_max", round(d_max, 6))
+        return
+
+    # Full-MAS path: derive worst-case peak current and saturation current from
+    # the attached wound-core geometry. This needs the design inductance, which
+    # the seeds→attach / fixture path carries as ``spec.desiredInductance``.
+    L = _buck_inductance(spec)
     L_worst = 0.8 * L
     ripple_worst = vout * (1.0 - d_min) / (L_worst * fsw)
     ipeak_worst = iout + ripple_worst / 2.0
 
-    si, ci, comp = _find_magnetic_component(tas)
     # New PEAS-shaped emission: comp["data"] is a MAS envelope whose
     # "magnetic" sub-document holds core+coil. Legacy SPICE-reader and
     # round-trip fixtures still stamp the magnetic sub-document directly
