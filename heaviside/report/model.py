@@ -573,12 +573,23 @@ class ReportModel:
         # Duty cycle
         duty = self.tas.get("duty")
         if isinstance(duty, (int, float)) and vin["nom"]:
-            add("Duty cycle",
-                r"D = \frac{V_{out}}{V_{in}}" + (
-                    rf" = \frac{{{_g(vout)}}}{{{_g(vin['nom'])}}}" if vout else ""),
-                "D = V<sub>out</sub> / V<sub>in</sub>" + (
-                    f" = {_g(vout)} / {_g(vin['nom'])}" if vout else ""),
-                ("num", duty, 3))
+            if self.isolated:
+                # Isolated: D is set by the transformer turns ratio as well as the
+                # voltages (e.g. D = V_out·n / V_in), so the bare V_out/V_in
+                # substitution is WRONG — it prints 5/48 = 0.10 next to a regulated
+                # D of 0.36. Show the regulated operating-point duty as the measured
+                # value and leave the topology-specific closed form out.
+                add("Duty cycle (regulated)",
+                    r"D\ \text{(regulated operating point)}",
+                    "D (regulated operating point)",
+                    ("num", duty, 3))
+            else:
+                add("Duty cycle",
+                    r"D = \frac{V_{out}}{V_{in}}" + (
+                        rf" = \frac{{{_g(vout)}}}{{{_g(vin['nom'])}}}" if vout else ""),
+                    "D = V<sub>out</sub> / V<sub>in</sub>" + (
+                        f" = {_g(vout)} / {_g(vin['nom'])}" if vout else ""),
+                    ("num", duty, 3))
         elif vout and vin["nom"] and not self.isolated:
             add("Duty cycle (approx.)",
                 r"D \approx \frac{V_{out}}{V_{in}} = "
