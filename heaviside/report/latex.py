@@ -113,6 +113,23 @@ def _si(value: float | None, unit_macro: str, *, sig: int = 4) -> str:
     return rf"\SI{{{_num(value, sig)}}}{{{unit_macro}}}"
 
 
+def _si_area(value_m2: float | None, sig: int = 4) -> str:
+    """Area in mm² (base SI is m²). A metric prefix cannot be applied to a
+    squared unit via _si — 'µm²' means (µm)², off by 1e6 — so render mm² directly
+    (1 mm² = 1e-6 m²)."""
+    if value_m2 is None:
+        return r"\textit{n/a}"
+    return rf"\SI{{{_num(value_m2 * 1e6, sig)}}}{{\milli\meter\squared}}"
+
+
+def _si_volume(value_m3: float | None, sig: int = 4) -> str:
+    """Volume in cm³ (base SI is m³). Same reason as _si_area — 'µm³' would be
+    (µm)³, off by 1e12 — so render cm³ directly (1 cm³ = 1e-6 m³)."""
+    if value_m3 is None:
+        return r"\textit{n/a}"
+    return rf"\SI{{{_num(value_m3 * 1e6, sig)}}}{{\centi\meter\cubed}}"
+
+
 def _pct(ratio: float | None, sig: int = 3) -> str:
     if ratio is None:
         return r"\textit{n/a}"
@@ -348,9 +365,9 @@ def _magnetics(m: ReportModel) -> list[str]:
             ("Core", _esc(mag.get("core_name") or mag.get("shape") or "n/a")),
             ("Core shape", _esc(mag.get("shape") or "n/a")),
             ("Core material", _esc(mag.get("material") or "n/a")),
-            ("Effective area $A_e$", _si(mag.get("Ae"), r"\meter\squared")),
+            ("Effective area $A_e$", _si_area(mag.get("Ae"))),
             ("Effective length $l_e$", _si(mag.get("le"), r"\meter")),
-            ("Effective volume $V_e$", _si(mag.get("Ve"), r"\meter\cubed")),
+            ("Effective volume $V_e$", _si_volume(mag.get("Ve"))),
             ("Gapping", gap),
         ]
         for k, v in rows:
