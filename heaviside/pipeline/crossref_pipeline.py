@@ -716,6 +716,15 @@ _CERAMIC_MPN_PREFIXES = (
 )
 
 
+def _is_polymer_cap(technology: str | None) -> bool:
+    """A conductive-polymer capacitor (polymer tantalum / polymer aluminum /
+    SP-Cap / POSCAP / OS-CON). Cross-substitutable within the polymer group for
+    low-ESR bulk decoupling even across the anode metal (Ta ↔ Al), unlike a wet
+    electrolytic or an MnO2 tantalum."""
+    t = (technology or "").lower()
+    return any(k in t for k in ("polymer", "os-con", "oscon", "poscap", "sp-cap", "sp cap"))
+
+
 def _capacitor_technology_family(technology: str | None) -> str | None:
     """Collapse a CAS technology string (or loose intent like 'ceramic' /
     'X7R' / 'MLCC') to a chemistry FAMILY, so a crossref stays in-kind.
@@ -1031,15 +1040,24 @@ def _rank_candidates(
         # candidates are not penalised.
         tech_penalty = 0.0
         if source_cap_family and category == "capacitor":
-            cand_fam = _capacitor_technology_family(
+            cand_tech = (
                 cand.get("capacitor", {})
                 .get("manufacturerInfo", {})
                 .get("datasheetInfo", {})
                 .get("part", {})
                 .get("technology")
             )
+            cand_fam = _capacitor_technology_family(cand_tech)
             if cand_fam is not None and cand_fam != source_cap_family:
-                tech_penalty = 6.0
+                # Both conductive-polymer (tantalum-polymer ↔ aluminum-polymer) is
+                # an acceptable cross-chemistry for low-ESR BULK caps — a small
+                # penalty (a verify-ESR/ripple partial), not the full family gate
+                # that keeps ceramic↔tantalum↔wet-electrolytic apart.
+                src_tech = str(comp.get("technology") or comp.get("dielectric") or "")
+                tech_penalty = (
+                    1.5 if (_is_polymer_cap(src_tech) and _is_polymer_cap(cand_tech))
+                    else 6.0
+                )
 
         # Footprint fit (all categories): the substitute must occupy no more
         # board space than the original. Smaller is better; oversize is heavily

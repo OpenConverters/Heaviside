@@ -106,8 +106,13 @@ already accounted for 80V stress.
   status "partial" and note the deviation.
 - **Technology (dielectric)**: Must stay in the same family — ceramic for
   ceramic (MLCC/X5R/X7R/C0G/NP0), aluminum electrolytic for electrolytic,
-  tantalum for tantalum, film for film. Mixing families is NEVER acceptable.
-  The `technology` field in `_tas_candidates` tells you the family.
+  tantalum for tantalum, film for film. Mixing families is NEVER acceptable —
+  with ONE exception: **conductive-POLYMER caps cross-substitute across the anode
+  metal**. A polymer-tantalum / POSCAP / SP-Cap and a polymer-aluminum are
+  interchangeable low-ESR bulk caps; when you make that swap set status `partial`
+  and note the chemistry change ("tantalum-polymer → aluminum-polymer, verify
+  ESR/ripple"). A *wet* aluminum electrolytic is NOT a polymer and does not
+  qualify. The `technology` field in `_tas_candidates` tells you the family.
 - **ESR**: Max ESR = original × 1.2. The `esr` field in `_tas_candidates`
   is in ohms. If the original ESR is unknown, do not reject candidates on
   ESR — just report the substitute's `esr` in the output. For output-filter

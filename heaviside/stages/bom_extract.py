@@ -306,6 +306,19 @@ def _merge_boms(primary: list[BomComponent], secondary: list[BomComponent]) -> l
     return [by_ref[r] for r in order]
 
 
+_MPN_IS_VALUE_RE = re.compile(r"^\s*[\d.,]+\s*[pnuµmkKM]?\s*(F|Ω|Ohm|H)\b", re.I)
+
+
+def _row_looks_garbled(comp: "BomComponent") -> bool:
+    """A deterministically-parsed row whose ``mpn`` is really a *value*
+    ("330 uF", "10 kΩ") — the tell that pdfplumber mis-cellularised an atypical
+    table row (a terse description + a multi-word manufacturer/part), so the real
+    part number + chemistry were lost and the row won't cross-reference. Such
+    rows are re-read from the LLM census; every well-parsed row is left as-is."""
+    mpn = (comp.mpn or "").strip()
+    return bool(mpn and _MPN_IS_VALUE_RE.match(mpn))
+
+
 def extract_bom_from_pdf(
     pdf_path: str | Path | None = None,
     *,
@@ -361,6 +374,23 @@ def extract_bom_from_pdf(
                     det_bom.extend(_expand_grouped_refs(comp))
             det_cov = _refdes_coverage(det_bom, expected)
             if det_cov >= _COVERAGE_OK_THRESHOLD:
+                garbled = [c for c in det_bom if _row_looks_garbled(c)]
+                if garbled:
+                    # Field-quality guard: keep every well-parsed deterministic
+                    # row (variance-free), but re-read the mis-cellularised ones
+                    # from the LLM census (it reads atypical rows correctly).
+                    grefs = {c.ref_des for c in garbled}
+                    logger.info(
+                        "bom_extract[%s]: deterministic parse OK (%d comps, %.0f%%), but "
+                        "%d row(s) look garbled (%s) — LLM-refining those",
+                        ref, len(det_bom), det_cov * 100, len(garbled),
+                        ", ".join(str(c.ref_des) for c in garbled[:6]),
+                    )
+                    llm_by_ref = {c.ref_des: c
+                                  for c in extract_bom_from_rows(_extract_full_bom_rows(pdf_text, ref))}
+                    det_bom = [llm_by_ref.get(c.ref_des, c) if c.ref_des in grefs else c
+                               for c in det_bom]
+                    return det_bom
                 logger.info(
                     "bom_extract[%s]: deterministic BOM-table parse — %d components, "
                     "coverage %.0f%% of %d designators (no LLM)",
