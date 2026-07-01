@@ -235,6 +235,21 @@ def _import_pyom_vendor() -> Any:
     return _pyom_vendor_module
 
 
+# Heaviside-authored current-density gate for the FAST magnetic adviser. MKF's
+# fast path winds each candidate and ranks by loss but never gates winding
+# current density (ABT #70: della-Pollock windings ran 18–22 A/mm²). These two
+# strictlyRequired filters make MKF's fast path DROP any wound candidate whose
+# winding exceeds maximumEffectiveCurrentDensity (12 A/mm²), so a lower-density
+# (larger-copper) core is returned instead — without leaving the fast core
+# search the frequency sweep is tuned around. Saturation / inductance / area
+# product are already enforced inside the fast path, so only the density filters
+# are needed here. Each op is {filter, invert, log, strictlyRequired, weight}.
+_HEAVISIDE_MAGNETIC_FILTER_FLOW: list[dict[str, Any]] = [
+    {"filter": "Dc Current Density", "invert": True, "log": False, "strictlyRequired": True, "weight": 1.0},
+    {"filter": "Effective Current Density", "invert": True, "log": False, "strictlyRequired": True, "weight": 1.0},
+]
+
+
 def _advise_magnetics_fast(
     pyom: Any,
     inputs_raw: Mapping[str, Any],
@@ -255,11 +270,22 @@ def _advise_magnetics_fast(
     winding) — Kirchhoff's per-topology magnetic seed (ABT #34) provides it.
     """
     t0 = time.monotonic()
-    result = pyom.calculate_advised_magnetics_fast(
-        dict(inputs_raw),
-        int(max_results),
-        str(core_mode),
-    )
+    # Prefer the current-density-gated fast adviser when the (vendored) PyOM build
+    # exposes it; otherwise fall back to the stock fast path (no density gating).
+    _with_filters = getattr(pyom, "calculate_advised_magnetics_with_filters", None)
+    if _with_filters is not None:
+        result = _with_filters(
+            dict(inputs_raw),
+            _HEAVISIDE_MAGNETIC_FILTER_FLOW,
+            int(max_results),
+            str(core_mode),
+        )
+    else:
+        result = pyom.calculate_advised_magnetics_fast(
+            dict(inputs_raw),
+            int(max_results),
+            str(core_mode),
+        )
     elapsed = time.monotonic() - t0
 
     if not isinstance(result, dict):
@@ -363,7 +389,12 @@ def design_magnetic_from_mas_inputs(
             "excitationsPerWinding — the magnetic cannot be sized without a winding "
             "excitation (ABT #34 requires one per winding)."
         )
-    pyom = _import_pyom()
+    # Use the vendored build: it carries the current-density-gated
+    # calculate_advised_magnetics_with_filters binding (falls back to the
+    # installed extension when the vendor .so is absent). The realize/stamp path
+    # already runs on the vendored PyOM, so magnetic design + stamp stay on one
+    # engine.
+    pyom = _import_pyom_vendor()
     return _advise_magnetics_fast(pyom, mas_inputs, "mas-inputs seed", max_results, core_mode)
 
 
