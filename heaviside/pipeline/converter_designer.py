@@ -56,6 +56,13 @@ class ConverterDesign:
         vd = getattr(self.outcome, "verdict_dict", None)
         return vd.get("verdict") if isinstance(vd, Mapping) else None
 
+    @property
+    def tas(self) -> Any:
+        """The realized TAS (from the inner DesignOutcome). Mirrors ``verdict``
+        so consumers — the ``heaviside design`` CLI, reports — can read
+        ``design.tas`` without reaching through ``.outcome``."""
+        return getattr(self.outcome, "tas", None)
+
 
 def spice_config_from_bom(tas: Mapping[str, Any] | None) -> dict[str, float]:
     """Build PyOM's ngspice ``spice_config`` knobs from the REAL selected parts,
