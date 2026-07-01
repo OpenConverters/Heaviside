@@ -304,6 +304,45 @@ def check_efficiency_vs_spec(eta: float, spec_eta: float, *, tolerance: float = 
     )
 
 
+def check_operating_point_converged(
+    converged: bool, *, regulated: bool | None = None
+) -> CheckResult:
+    """PASS only when the simulated rated operating point actually converged
+    (and, for a closed-loop deck, regulated to its target).
+
+    A design whose rated operating point did not converge is NOT validated: the
+    vout / efficiency / loss numbers read off a non-converged transient are
+    meaningless, and a design "proven" only at some off-rated corner that
+    happened to converge is not proven at its own spec point. ``stage3_realize``
+    already raises before stamping a non-regulated operating point; this gate
+    check encodes that invariant so no alternate stamp path can slip a
+    non-converged point past the gate.
+    """
+    if not isinstance(converged, bool):
+        raise RealismError(f"converged: expected bool, got {type(converged).__name__}")
+    if regulated is not None and not isinstance(regulated, bool):
+        raise RealismError(f"regulated: expected bool/None, got {type(regulated).__name__}")
+    ok = converged and (regulated is None or regulated)
+    if ok:
+        detail = "rated operating point converged" + (
+            " and regulated to target" if regulated else ""
+        )
+    else:
+        detail = (
+            f"rated operating point did NOT converge "
+            f"(converged={converged}, regulated={regulated}) — vout/efficiency/loss "
+            "read off a non-converged point are meaningless; design not validated"
+        )
+    return CheckResult(
+        name="operating_point_converged",
+        status=CheckStatus.PASS if ok else CheckStatus.FAIL,
+        value=1.0 if ok else 0.0,
+        limit=1.0,
+        margin=0.0 if ok else -1.0,
+        detail=detail,
+    )
+
+
 # Single-switch topologies whose duty cycle is bounded above by 0.5 by
 # volt-second balance (transformer reset window).  Two-switch / active-reset
 # variants are excluded.
@@ -665,6 +704,30 @@ def evaluate_tas(
     else:
         checks.append(check_efficiency_vs_spec(eta_sim, float(spec_eta)))
 
+    # --- operating_point_converged --------------------------------------
+    # Did the rated point actually converge/regulate? The realize stage stamps
+    # {converged, regulated} alongside the sim numbers; a False (or a stamp path
+    # that recorded a non-converged point) must NOT read as validated.
+    conv = reg = None
+    if isinstance(sim, Mapping):
+        for v in sim.values():
+            if isinstance(v, Mapping) and ("converged" in v or "regulated" in v):
+                conv = v.get("converged")
+                reg = v.get("regulated")
+                break
+    if conv is None and reg is None:
+        checks.append(
+            _unavailable(
+                "operating_point_converged",
+                "no tas.simulation_results.*.{converged,regulated} marker — the "
+                "realize stage did not record convergence for this operating point",
+            )
+        )
+    else:
+        conv_bool = bool(conv) if conv is not None else bool(reg)
+        reg_bool = bool(reg) if reg is not None else None
+        checks.append(check_operating_point_converged(conv_bool, regulated=reg_bool))
+
     # --- power_balance --------------------------------------------------
     pin = pout = losses_total = None
     if isinstance(sim, Mapping):
@@ -784,8 +847,21 @@ def evaluate_tas(
         )
 
     # --- per-component checks: voltage derating, isat, thermal -----------
+    # EVERY qualifying component is checked — not just the first of each type.
+    # A 4-switch bridge derates all four FETs; a two-diode rectifier gates both
+    # junction temperatures. The single-shot short-circuit that used to stop
+    # after the first component silently passed under-rated / over-temp siblings
+    # (e.g. LLC D2 Tj>Tj_max hidden behind a cooler D1).
     have_fet = have_diode = have_cap = have_magnetic = False
-    fet_done = diode_done = cap_done = isat_done = thermal_done = False
+    fet_n = diode_n = cap_n = isat_n = thermal_n = 0
+
+    def _per_component(result: CheckResult, comp_name: Any, stage: str) -> None:
+        checks.append(
+            CheckResult(
+                **{**result.__dict__, "extra": {"component": comp_name, "stage": stage}}
+            )
+        )
+
     for stage_name, comp in _iter_components(tas):
         cat = _categorise(comp)
         name = comp.get("name", "?")
@@ -795,82 +871,50 @@ def evaluate_tas(
             if (
                 (rated := comp.get(_FET_RATING_FIELD)) is not None
                 and (stress := comp.get("vds_stress")) is not None
-                and not fet_done
             ):
-                checks.append(
-                    CheckResult(
-                        **{
-                            **check_fet_voltage_derating(float(rated), float(stress)).__dict__,
-                            "extra": {"component": name, "stage": stage_name},
-                        },
-                    )
+                _per_component(
+                    check_fet_voltage_derating(float(rated), float(stress)), name, stage_name
                 )
-                fet_done = True
+                fet_n += 1
         elif cat == "diode":
             have_diode = True
             if (
                 (rated := comp.get(_DIODE_RATING_FIELD)) is not None
                 and (rev := comp.get("v_reverse")) is not None
-                and not diode_done
             ):
-                checks.append(
-                    CheckResult(
-                        **{
-                            **check_diode_voltage_derating(float(rated), float(rev)).__dict__,
-                            "extra": {"component": name, "stage": stage_name},
-                        },
-                    )
+                _per_component(
+                    check_diode_voltage_derating(float(rated), float(rev)), name, stage_name
                 )
-                diode_done = True
+                diode_n += 1
         elif cat == "capacitor":
             have_cap = True
             if (
                 (rated := comp.get(_CAP_RATING_FIELD)) is not None
                 and (work := comp.get("v_working")) is not None
-                and not cap_done
             ):
-                checks.append(
-                    CheckResult(
-                        **{
-                            **check_capacitor_voltage_derating(float(rated), float(work)).__dict__,
-                            "extra": {"component": name, "stage": stage_name},
-                        },
-                    )
+                _per_component(
+                    check_capacitor_voltage_derating(float(rated), float(work)), name, stage_name
                 )
-                cap_done = True
+                cap_n += 1
         elif cat == "magnetic":
             have_magnetic = True
             if (
                 (isat := comp.get(_ISAT_FIELD)) is not None
                 and (ipk := comp.get("ipeak_worst")) is not None
-                and not isat_done
             ):
-                checks.append(
-                    CheckResult(
-                        **{
-                            **check_inductor_isat_margin(float(isat), float(ipk)).__dict__,
-                            "extra": {"component": name, "stage": stage_name},
-                        },
-                    )
+                _per_component(
+                    check_inductor_isat_margin(float(isat), float(ipk)), name, stage_name
                 )
-                isat_done = True
+                isat_n += 1
 
         if (
             (tj := comp.get(_TJ_FIELD)) is not None
             and (tj_max := comp.get(_TJ_MAX_FIELD)) is not None
-            and not thermal_done
         ):
-            checks.append(
-                CheckResult(
-                    **{
-                        **check_thermal_limit(float(tj), float(tj_max)).__dict__,
-                        "extra": {"component": name, "stage": stage_name},
-                    },
-                )
-            )
-            thermal_done = True
+            _per_component(check_thermal_limit(float(tj), float(tj_max)), name, stage_name)
+            thermal_n += 1
 
-    if not fet_done:
+    if not fet_n:
         checks.append(
             _unavailable(
                 "fet_voltage_derating",
@@ -880,7 +924,7 @@ def evaluate_tas(
             if have_fet
             else _not_applicable("fet_voltage_derating", "no mosfet components in TAS")
         )
-    if not diode_done:
+    if not diode_n:
         checks.append(
             _unavailable(
                 "diode_voltage_derating",
@@ -889,7 +933,7 @@ def evaluate_tas(
             if have_diode
             else _not_applicable("diode_voltage_derating", "no diode components in TAS")
         )
-    if not cap_done:
+    if not cap_n:
         checks.append(
             _unavailable(
                 "capacitor_voltage_derating",
@@ -898,7 +942,7 @@ def evaluate_tas(
             if have_cap
             else _not_applicable("capacitor_voltage_derating", "no capacitor components in TAS")
         )
-    if not isat_done:
+    if not isat_n:
         checks.append(
             _unavailable(
                 "inductor_isat_margin",
@@ -909,7 +953,7 @@ def evaluate_tas(
             if have_magnetic
             else _not_applicable("inductor_isat_margin", "no magnetic components in TAS")
         )
-    if not thermal_done:
+    if not thermal_n:
         checks.append(
             _unavailable(
                 "thermal_limit",
@@ -1038,6 +1082,7 @@ __all__ = (
     "check_fet_voltage_derating",
     "check_inductor_isat_margin",
     "check_no_negative_losses",
+    "check_operating_point_converged",
     "check_output_voltage_regulation",
     "check_power_balance",
     "check_thermal_limit",

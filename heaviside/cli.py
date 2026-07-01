@@ -114,6 +114,21 @@ def design(
         except Exception as exc:  # noqa: BLE001 - surface any Kirchhoff design failure with its type
             typer.echo(f"error: Kirchhoff design failed ({type(exc).__name__}): {exc}", err=True)
             raise typer.Exit(code=3) from None
+        if realism:
+            # A decompose-only TAS carries only Kirchhoff seeds — no MAS, no real
+            # parts — so the realism gate cannot validate it. Enrichment fails-closed
+            # ("no MAS on L1") for any topology with a registered extractor; where
+            # there is none, the gate returns a non-PASS verdict. Either way,
+            # requesting --realism on a seeds-only TAS must never exit 0.
+            from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
+            from heaviside.pipeline.realism import evaluate_tas
+
+            try:
+                enriched = enrich_tas_for_realism(tas, topology=topology, spec=spec_json)
+            except EnrichmentError as exc:
+                typer.echo(f"realism enrichment failed: {exc}", err=True)
+                raise typer.Exit(code=6) from None
+            verdict = evaluate_tas(enriched, topology=topology, spec=spec_json).verdict.value
     else:
         # Full della-Pollock realize: Kirchhoff designs it, HS fills parts + designs the magnetics
         # (PyOM/MKF) from Kirchhoff's seeds, the realism gate reads it. One KH TAS, end to end.
@@ -137,7 +152,10 @@ def design(
 
     if realism and verdict is not None:
         typer.echo(f"realism verdict: {verdict}", err=True)
-        if str(verdict).lower() == "fail":
+        # A FAIL is always fail-closed. In --no-attach mode the TAS is seeds-only,
+        # so anything short of PASS (i.e. INCOMPLETE) is fail-closed too — you
+        # cannot validate a design whose magnetics/parts were never realized.
+        if str(verdict).lower() == "fail" or (no_attach and str(verdict).lower() != "pass"):
             raise typer.Exit(code=6)
 
 

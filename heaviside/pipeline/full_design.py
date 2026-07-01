@@ -542,6 +542,10 @@ def _simulate_kirchhoff_backend(
             efficiency=eff,
         ),
     )
+    # Record convergence for the gate's operating_point_converged check. We only
+    # reach here after asserting op.regulated above, so regulated is True.
+    tas["simulation_results"]["op0"]["converged"] = bool(op.get("converged", True))
+    tas["simulation_results"]["op0"]["regulated"] = True
 
 
 # ---------------------------------------------------------------------------
@@ -999,6 +1003,10 @@ def _realize_via_kirchhoff(
             pin=pin, pout=pout, total_losses=pin - pout, efficiency=eff,
         ),
     )
+    # Record convergence for the gate's operating_point_converged check. We only
+    # reach here after asserting op.regulated above, so regulated is True.
+    k_tas["simulation_results"]["op0"]["converged"] = bool(op.get("converged", True))
+    k_tas["simulation_results"]["op0"]["regulated"] = True
     # Regulated control variable → the gate's duty_cycle_bounds check.
     if op.get("control") == "duty" and isinstance(op.get("value"), (int, float)):
         k_tas["duty"] = float(op["value"])

@@ -27,6 +27,7 @@ from heaviside.pipeline.realism import (
     check_fet_voltage_derating,
     check_inductor_isat_margin,
     check_no_negative_losses,
+    check_operating_point_converged,
     check_output_voltage_regulation,
     check_power_balance,
     check_thermal_limit,
@@ -397,6 +398,123 @@ class TestOrchestratorVerdict:
         assert eff[0].status is CheckStatus.UNAVAILABLE
         assert eff[0].value is None
         assert "ratio in (0,1)" in eff[0].detail
+
+
+class TestOperatingPointConverged:
+    """A non-converged / non-regulated rated operating point must not read as
+    validated — the numbers off a non-converged point are meaningless."""
+
+    def test_primitive_pass_fail(self):
+        assert check_operating_point_converged(True).status is CheckStatus.PASS
+        assert check_operating_point_converged(False).status is CheckStatus.FAIL
+        # Converged but did not regulate → still FAIL.
+        assert (
+            check_operating_point_converged(True, regulated=False).status is CheckStatus.FAIL
+        )
+        assert (
+            check_operating_point_converged(True, regulated=True).status is CheckStatus.PASS
+        )
+
+    def test_primitive_rejects_non_bool(self):
+        with pytest.raises(RealismError):
+            check_operating_point_converged("yes")  # type: ignore[arg-type]
+
+    def test_gate_fails_a_non_converged_point(self):
+        tas = _buck_shaped_tas()
+        tas["simulation_results"] = {
+            "op0": {"efficiency": 0.9, "vout": 12.0, "converged": False, "regulated": False}
+        }
+        r = evaluate_tas(tas, topology="buck")
+        conv = [c for c in r.checks if c.name == "operating_point_converged"]
+        assert conv and conv[0].status is CheckStatus.FAIL
+        assert r.verdict is RealismVerdict.FAIL
+
+    def test_gate_passes_a_converged_regulated_point(self):
+        tas = _buck_shaped_tas()
+        tas["simulation_results"] = {
+            "op0": {"efficiency": 0.9, "vout": 12.0, "converged": True, "regulated": True}
+        }
+        r = evaluate_tas(tas, topology="buck")
+        conv = [c for c in r.checks if c.name == "operating_point_converged"]
+        assert conv and conv[0].status is CheckStatus.PASS
+
+    def test_marker_absent_is_unavailable_not_silently_passed(self):
+        # An older stamp path that recorded no convergence marker must surface as
+        # UNAVAILABLE, never as a silent pass.
+        tas = _buck_shaped_tas()
+        tas["simulation_results"] = {"op0": {"efficiency": 0.9, "vout": 12.0}}
+        r = evaluate_tas(tas, topology="buck")
+        conv = [c for c in r.checks if c.name == "operating_point_converged"]
+        assert conv and conv[0].status is CheckStatus.UNAVAILABLE
+
+
+class TestEveryComponentIsChecked:
+    """Regression: the gate used to short-circuit after the FIRST component of
+    each kind, silently passing under-rated / over-temp siblings (a 4-FET bridge
+    only checked Q1; an over-temp D2 hid behind a cool D1). Every qualifying
+    component must now be gated."""
+
+    def _two_diode_tas(self) -> dict:
+        return {
+            "topology": {
+                "stages": [
+                    {
+                        "name": "rectifier",
+                        "role": "rectifier",
+                        "circuit": {
+                            "components": [
+                                {"name": "D1", "category": "diode"},
+                                {"name": "D2", "category": "diode"},
+                            ]
+                        },
+                    }
+                ],
+                "interStageConnections": [],
+            }
+        }
+
+    def test_second_diode_overtemp_is_not_hidden_by_first(self):
+        tas = self._two_diode_tas()
+        comps = tas["topology"]["stages"][0]["circuit"]["components"]
+        comps[0].update({"tj": 100.0, "tj_max": 150.0})   # cool — PASS
+        comps[1].update({"tj": 160.0, "tj_max": 150.0})   # over-temp — FAIL
+        r = evaluate_tas(tas, topology="phase_shifted_full_bridge")
+        thermal = [c for c in r.checks if c.name == "thermal_limit"]
+        assert len(thermal) == 2                          # BOTH diodes gated
+        by = {c.extra["component"]: c.status for c in thermal}
+        assert by["D1"] is CheckStatus.PASS
+        assert by["D2"] is CheckStatus.FAIL
+        assert r.verdict is RealismVerdict.FAIL
+
+    def test_all_four_bridge_fets_are_derated(self):
+        tas = {
+            "topology": {
+                "stages": [
+                    {
+                        "name": "bridge",
+                        "role": "switchingCell",
+                        "circuit": {
+                            "components": [
+                                {"name": f"Q{i}", "category": "mosfet",
+                                 "vds_rated": 150.0, "vds_stress": 60.0}
+                                for i in range(1, 5)
+                            ]
+                        },
+                    }
+                ],
+                "interStageConnections": [],
+            }
+        }
+        # Under-rate the LAST switch only — the bug would have checked Q1 (fine)
+        # and never looked at Q4.
+        tas["topology"]["stages"][0]["circuit"]["components"][3]["vds_rated"] = 70.0
+        r = evaluate_tas(tas, topology="phase_shifted_full_bridge")
+        fet = [c for c in r.checks if c.name == "fet_voltage_derating"]
+        assert len(fet) == 4
+        by = {c.extra["component"]: c.status for c in fet}
+        assert by["Q1"] is CheckStatus.PASS
+        assert by["Q4"] is CheckStatus.FAIL             # 70/60 = 1.17 < 1.5
+        assert r.verdict is RealismVerdict.FAIL
 
 
 # ---------------------------------------------------------------------------

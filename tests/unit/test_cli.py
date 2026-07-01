@@ -240,10 +240,11 @@ def test_design_realism_on_decompose_only_is_incomplete_exit_6(buck_spec: Path) 
         app, ["design", "buck", "--spec", str(buck_spec), "--no-attach", "--realism"]
     )
     assert result.exit_code == 6, result.stderr
-    # Decompose-only path: extractor cannot find a MAS on L1, so we get
-    # an enrichment failure rather than INCOMPLETE.
+    # Decompose-only path: L1 carries only a Kirchhoff seed (partial MAS with
+    # designRequirements but no core), so realism enrichment fails-closed on the
+    # incomplete magnetic rather than validating it — exit 6 either way.
     assert "realism enrichment failed" in result.stderr
-    assert "no MAS" in result.stderr or "magnetic" in result.stderr
+    assert "MAS" in result.stderr or "magnetic" in result.stderr
 
 
 def test_design_realism_without_flag_exits_0(buck_spec: Path) -> None:
