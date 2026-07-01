@@ -281,6 +281,29 @@ def check_efficiency_sanity(eta: float, low: float = 0.70, high: float = 0.995) 
     )
 
 
+def check_efficiency_vs_spec(eta: float, spec_eta: float, *, tolerance: float = 0.02) -> CheckResult:
+    """PASS when the achieved (MEASURED) efficiency meets the design's own spec
+    target within ``tolerance`` (default 2 pp, to absorb testbench-scaffolding
+    bias). A design that comes in below its efficiency requirement is NOT
+    validated — the spec is a requirement, not a wish. Must be fed the measured
+    (sim) efficiency, never the optimistic analyst budget."""
+    e = _require_finite("eta", eta)
+    tgt = _require_positive("spec_eta", spec_eta)
+    tol = abs(_require_finite("tolerance", tolerance))
+    margin = e - tgt
+    passed = e >= tgt - tol
+    return CheckResult(
+        name="efficiency_vs_spec",
+        status=CheckStatus.PASS if passed else CheckStatus.FAIL,
+        value=round(e, 4),
+        limit=round(tgt, 4),
+        margin=round(margin, 4),
+        detail=(f"measured η={e:.1%} vs spec target {tgt:.1%} — "
+                f"{'meets' if passed else 'MISSES'} by {abs(margin) * 100:.1f} pp "
+                f"(tolerance {tol * 100:.0f} pp)"),
+    )
+
+
 # Single-switch topologies whose duty cycle is bounded above by 0.5 by
 # volt-second balance (transformer reset window).  Two-switch / active-reset
 # variants are excluded.
@@ -618,6 +641,29 @@ def evaluate_tas(
                 extra={**dict(result.extra), "source": eta_source},
             )
         )
+
+    # --- efficiency_vs_spec ---------------------------------------------
+    # Does the design MEET its own target efficiency? Uses the MEASURED (sim)
+    # efficiency — the analyst budget over-estimates (it omits semiconductor
+    # losses), so gating on it would falsely pass a sub-spec design.
+    eta_sim = None
+    if isinstance(sim, Mapping):
+        for v in sim.values():
+            if isinstance(v, Mapping):
+                cand = v.get("efficiency")
+                if isinstance(cand, (int, float)) and 0.0 < float(cand) < 1.0:
+                    eta_sim = float(cand)
+                    break
+    spec_eta = spec_map.get("efficiency") if isinstance(spec_map, Mapping) else None
+    if eta_sim is None or not isinstance(spec_eta, (int, float)) or not (0.0 < float(spec_eta) < 1.0):
+        checks.append(
+            _unavailable(
+                "efficiency_vs_spec",
+                "need both a MEASURED sim efficiency and a valid spec.efficiency target",
+            )
+        )
+    else:
+        checks.append(check_efficiency_vs_spec(eta_sim, float(spec_eta)))
 
     # --- power_balance --------------------------------------------------
     pin = pout = losses_total = None
