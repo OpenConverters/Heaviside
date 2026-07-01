@@ -5,10 +5,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -30,7 +32,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -40,10 +42,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -65,7 +69,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -75,10 +79,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -98,7 +104,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -108,10 +114,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -131,7 +139,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -141,10 +149,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -164,7 +174,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -174,10 +184,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -199,7 +211,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -209,10 +221,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -232,7 +246,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -242,10 +256,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -265,7 +281,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -275,10 +291,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -298,7 +316,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -308,10 +326,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -331,7 +351,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -341,10 +361,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -366,7 +388,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -376,10 +398,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -399,7 +423,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -409,10 +433,12 @@
       "diode_voltage_derating": "NOT_APPLICABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -432,7 +458,7 @@
       "fail": 0,
       "not_applicable": 2,
       "pass": 0,
-      "unavailable": 10
+      "unavailable": 12
     },
     "verdict": "INCOMPLETE"
   },
@@ -442,10 +468,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -465,7 +493,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -475,10 +503,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -498,7 +528,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -508,10 +538,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -531,7 +563,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -541,10 +573,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -564,7 +598,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -574,10 +608,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -597,7 +633,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -607,10 +643,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -632,7 +670,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -642,10 +680,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -667,7 +707,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -677,10 +717,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -700,7 +742,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -710,10 +752,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -733,7 +777,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -743,10 +787,12 @@
       "diode_voltage_derating": "NOT_APPLICABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -766,7 +812,7 @@
       "fail": 0,
       "not_applicable": 2,
       "pass": 0,
-      "unavailable": 10
+      "unavailable": 12
     },
     "verdict": "INCOMPLETE"
   },
@@ -776,10 +822,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -799,7 +847,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -809,10 +857,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -832,7 +882,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -842,10 +892,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -867,7 +919,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -877,10 +929,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -902,7 +956,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -912,10 +966,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -937,7 +993,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -947,10 +1003,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -970,7 +1028,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -980,10 +1038,12 @@
       "diode_voltage_derating": "NOT_APPLICABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1003,7 +1063,7 @@
       "fail": 0,
       "not_applicable": 2,
       "pass": 0,
-      "unavailable": 10
+      "unavailable": 12
     },
     "verdict": "INCOMPLETE"
   },
@@ -1013,10 +1073,12 @@
       "diode_voltage_derating": "NOT_APPLICABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1036,7 +1098,7 @@
       "fail": 0,
       "not_applicable": 2,
       "pass": 0,
-      "unavailable": 10
+      "unavailable": 12
     },
     "verdict": "INCOMPLETE"
   },
@@ -1046,10 +1108,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1071,7 +1135,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1081,10 +1145,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1104,7 +1170,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1114,10 +1180,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1137,7 +1205,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1147,10 +1215,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1170,7 +1240,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1180,10 +1250,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1203,7 +1275,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1213,10 +1285,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1236,7 +1310,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1246,10 +1320,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1269,7 +1345,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1279,10 +1355,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1302,7 +1380,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1312,10 +1390,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1335,7 +1415,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1345,10 +1425,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1368,7 +1450,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1378,10 +1460,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1401,7 +1485,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1411,10 +1495,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1434,7 +1520,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1444,10 +1530,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1467,7 +1555,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1477,10 +1565,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1500,7 +1590,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1510,10 +1600,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1533,7 +1625,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   },
@@ -1543,10 +1635,12 @@
       "diode_voltage_derating": "UNAVAILABLE",
       "duty_cycle_bounds": "UNAVAILABLE",
       "efficiency_sanity": "UNAVAILABLE",
+      "efficiency_vs_spec": "UNAVAILABLE",
       "estimators_agree": "UNAVAILABLE",
       "fet_voltage_derating": "UNAVAILABLE",
       "inductor_isat_margin": "UNAVAILABLE",
       "no_negative_losses": "UNAVAILABLE",
+      "operating_point_converged": "UNAVAILABLE",
       "output_voltage_regulation": "UNAVAILABLE",
       "power_balance": "UNAVAILABLE",
       "selection_provenance_complete": "NOT_APPLICABLE",
@@ -1566,7 +1660,7 @@
       "fail": 0,
       "not_applicable": 1,
       "pass": 0,
-      "unavailable": 11
+      "unavailable": 13
     },
     "verdict": "INCOMPLETE"
   }
