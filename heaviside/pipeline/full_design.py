@@ -1018,6 +1018,14 @@ def _realize_via_kirchhoff(
     except AnalystError:
         pass
 
+    # B7 cross-check (ABT #75): triangulate the regulated sim efficiency against
+    # the analyst's INDEPENDENT closed-form efficiency and record any gross
+    # disagreement for the realism gate's estimators_agree check. This is the
+    # tripwire the 24.7 %-efficiency transformer bug (ABT #71) slipped past —
+    # the gate trusted a single plausible-looking-but-wrong sim number. Best
+    # effort: a topology missing either estimate just leaves the check UNAVAILABLE.
+    _stamp_efficiency_cross_check(k_tas)
+
     report = evaluate_tas(k_tas, topology=topology, spec=spec_dict)
     return DesignOutcome(
         pick=pick,
@@ -1031,6 +1039,50 @@ def _realize_via_kirchhoff(
             ],
         },
     )
+
+
+# The analyst efficiency is an INDEPENDENT closed-form estimate, but a coarse and
+# OPTIMISTIC one: it sums only the loss buckets MKF actually returned (magnetic
+# core/DCR are frequently null on the fast path, see analyst._inductor_loss_from_mas)
+# so it is an upper bound on true efficiency. A tight tolerance would false-alarm on
+# that known optimism, so estimators_agree here is a GROSS-error tripwire, not a
+# precision cross-validator: 0.20 relative tolerates normal analyst optimism (buck
+# agrees to ~0.001) yet trips on the ABT #71 signature (sim 0.247 vs analyst ~0.90 =
+# 0.73). Loss-sum (total_loss) is deliberately NOT triangulated — at high efficiency
+# a small omitted bucket is a large RELATIVE loss gap, so it would false-fail.
+_CROSS_CHECK_EFFICIENCY_TOL = 0.20
+
+
+def _valid_efficiency(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0.0 < float(value) < 1.0
+
+
+def _stamp_efficiency_cross_check(k_tas: dict[str, Any]) -> None:
+    """Stamp ``k_tas["cross_check"]`` with the sim-vs-analyst efficiency
+    triangulation (ABT #75) so the realism gate's ``estimators_agree`` check can
+    read it. No-op (leaving the check UNAVAILABLE) unless BOTH the regulated sim
+    efficiency and the analyst efficiency are present and valid ratios."""
+    try:
+        from heaviside.stages import cross_check as _cc
+
+        op = (k_tas.get("simulation_results") or {}).get("op0")
+        if not isinstance(op, Mapping):
+            return
+        eta_sim = op.get("efficiency")
+        eta_analyst = op.get("efficiency_analyst")
+        if not (_valid_efficiency(eta_sim) and _valid_efficiency(eta_analyst)):
+            return
+        disagreements = _cc.triangulate(
+            [
+                _cc.Estimate("efficiency", float(eta_sim), "ngspice_sim"),
+                _cc.Estimate("efficiency", float(eta_analyst), "analyst"),
+            ],
+            tolerances={"efficiency": _CROSS_CHECK_EFFICIENCY_TOL},
+        )
+        if disagreements:
+            k_tas["cross_check"] = _cc.to_record(disagreements)
+    except Exception:  # best effort — a cross-check must never sink realize
+        return
 
 
 def stage3_realize(
