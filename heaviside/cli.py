@@ -95,6 +95,18 @@ def design(
 
     spec_json = _load_spec(spec)
 
+    # Normalize a PyOM/camelCase alias (e.g. "dab" → "dual_active_bridge") to the
+    # canonical topology name before any downstream call. Kirchhoff binds only
+    # canonical names, so an unresolved alias would otherwise die with an opaque
+    # "Kirchhoff has no binding for 'dab'" instead of designing the converter.
+    from heaviside.topologies import get as _get_topology
+
+    try:
+        topology = _get_topology(topology).name
+    except KeyError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
     # Per-topology spec validation runs up-front so users see "missing maximumDutyCycle" before any
     # Kirchhoff / PyOM call.
     try:

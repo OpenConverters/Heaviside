@@ -75,10 +75,12 @@ def test_design_invalid_json_exits_2(tmp_path: Path) -> None:
     assert "not valid json" in result.stderr.lower()
 
 
-def test_design_no_attach_missing_lm_exits_2(tmp_path: Path) -> None:
-    """``--no-attach`` skips the design step (which is what normally
-    harvests L from MKF), so a spec without ``desiredInductance`` and no
-    ``--lm`` flag has nowhere to get L from — must fail loudly."""
+def test_design_no_attach_incomplete_spec_fails_loudly(tmp_path: Path) -> None:
+    """Post-cutover (abt #48) Kirchhoff owns decomposition and DERIVES the
+    inductance itself, so a bare buck spec no longer needs ``desiredInductance``
+    (the old ``--lm``/``--turns`` overrides are gone — turns/L come from the
+    spec). But a spec missing a genuinely required field must still fail loudly
+    rather than design on defaults: here ``efficiency`` is absent."""
     spec = tmp_path / "spec.json"
     spec.write_text(
         json.dumps(
@@ -99,33 +101,8 @@ def test_design_no_attach_missing_lm_exits_2(tmp_path: Path) -> None:
         app,
         ["design", "buck", "--spec", str(spec), "--no-attach"],
     )
-    assert result.exit_code == 2
-    assert "magnetizing inductance not provided" in result.stderr.lower()
-
-
-def test_design_bad_turns_flag_exits_2(tmp_path: Path) -> None:
-    spec = tmp_path / "spec.json"
-    # Spec must pass per-topology validation (post-2026-05-22) so we
-    # exercise the --turns flag parsing rather than the spec validator.
-    spec.write_text(
-        json.dumps(
-            {
-                "inputVoltage": {"nominal": 48.0, "minimum": 36.0, "maximum": 60.0},
-                "desiredInductance": 1e-6,
-                "operatingPoints": [
-                    {
-                        "outputVoltages": [12.0],
-                        "outputCurrents": [5.0],
-                        "switchingFrequency": 200000,
-                        "ambientTemperature": 25,
-                    }
-                ],
-            }
-        )
-    )
-    result = runner.invoke(app, ["design", "buck", "--spec", str(spec), "--turns", "not_a_number"])
-    assert result.exit_code == 2
-    assert "--turns" in result.stderr
+    assert result.exit_code != 0
+    assert "efficiency" in result.stderr.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -167,25 +144,22 @@ def test_design_buck_no_attach_emits_tas_to_stdout(buck_spec: Path) -> None:
     tas = json.loads(result.stdout)
     assert "topology" in tas
     names = {s["name"] for s in tas["topology"]["stages"]}
-    # Buck stencil emits at minimum a power_stage + controller pair.
-    assert "power_stage" in names
-    # Decompose-only: components must NOT carry an inline PEAS doc yet
-    # (data should still be a placeholder URL string), and the legacy
-    # bridge sibling fields must be absent.
+    # Post-cutover Kirchhoff emits the switching cell as ``switchingCell``.
+    assert "switchingCell" in names
+    # Decompose-only: every component is a Kirchhoff SEED — it carries an inline
+    # ``data`` with its family discriminator + designRequirements (``inputs``),
+    # but is NOT yet FILLED with a real part (no ``mpn`` / selection provenance,
+    # and the magnetic seed carries requirements, not a designed MAS core).
     for stage in tas["topology"]["stages"]:
         for comp in stage.get("circuit", {}).get("components", []):
-            assert "mas" not in comp
+            assert not comp.get("mpn"), f"{comp.get('name')!r} is filled, not a seed"
+            assert not comp.get("selection_provenance")
             data = comp.get("data")
-            assert not (
-                isinstance(data, dict)
-                and (
-                    "magnetic" in data
-                    or "capacitor" in data
-                    or "semiconductor" in data
-                    or "resistor" in data
-                    or "controller" in data
-                )
-            ), f"pre-attach component {comp.get('name')!r} unexpectedly carries inline PEAS data"
+            assert isinstance(data, dict) and "inputs" in data, (
+                f"seed {comp.get('name')!r} must carry a designRequirements payload"
+            )
+            fam = {"magnetic", "capacitor", "semiconductor", "resistor", "controller"}
+            assert fam & set(data), f"seed {comp.get('name')!r} missing a family discriminator"
 
 
 def test_design_buck_no_attach_writes_file(buck_spec: Path, tmp_path: Path) -> None:
@@ -201,19 +175,37 @@ def test_design_buck_no_attach_writes_file(buck_spec: Path, tmp_path: Path) -> N
     assert "topology" in tas
 
 
-def test_design_dab_alias_resolves_to_dual_active_bridge(buck_spec: Path) -> None:
-    """``dab`` is a PyOM alias; the CLI must accept it for bridge auto-mode
-    detection and for stencil dispatch."""
-    result = runner.invoke(
-        app,
-        ["design", "dab", "--spec", str(buck_spec), "--turns", "1.0", "--no-attach"],
+def test_design_dab_alias_resolves_to_dual_active_bridge(tmp_path: Path) -> None:
+    """``dab`` is a PyOM alias; the CLI must normalise it to the canonical
+    ``dual_active_bridge`` before the Kirchhoff call (which binds only canonical
+    names). Regression: the della-Pollock cutover dropped this normalisation, so
+    ``dab`` died with "Kirchhoff has no binding for 'dab'"."""
+    spec = tmp_path / "dab.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "inputVoltage": {"minimum": 360, "maximum": 420, "nominal": 400},
+                "efficiency": 0.95,
+                "desiredMagnetizingInductance": 1e-3,
+                "desiredTurnsRatios": [1.6],
+                "operatingPoints": [
+                    {
+                        "outputVoltages": [250.0],
+                        "outputCurrents": [4.0],
+                        "switchingFrequency": 100000,
+                        "ambientTemperature": 25,
+                    }
+                ],
+            }
+        )
     )
+    result = runner.invoke(app, ["design", "dab", "--spec", str(spec), "--no-attach"])
     assert result.exit_code == 0, result.stderr
     tas = json.loads(result.stdout)
-    # DAB stencil emits 5 stages (inverter / isolation / outputRectifier /
-    # outputFilter / control). Use a loose lower bound to stay robust to
-    # future stencil cosmetics.
-    assert len(tas["topology"]["stages"]) >= 4
+    # The DAB cell must be present (alias resolved → Kirchhoff designed the
+    # dual-active-bridge, not choked on 'dab').
+    names = {s["name"] for s in tas["topology"]["stages"]}
+    assert any("dab" in n.lower() for n in names), names
 
 
 def test_design_unknown_topology_exits_3(buck_spec: Path) -> None:
