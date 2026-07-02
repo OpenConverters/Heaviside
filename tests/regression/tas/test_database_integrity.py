@@ -67,20 +67,19 @@ _ACTIVE_FILES: tuple[str, ...] = (
 # must update this baseline in the same reviewed commit (forcing the
 # diff to surface in code review) rather than silently sliding it.
 _ROW_COUNT_BASELINE: dict[str, int] = {
-    # 2026-06-13 campaign: +669 Vishay HV ceramic restores (false-positive
-    # quarantines), -30 fabricated MACOM MID12X diodes quarantined, -2 TI
-    # gate drivers moved to mosfets.quarantine_misfiled_drivers.ndjson,
-    # -86,751 Vishay resistor catalog-matrix stubs (partNumber==series, 366
-    # bare series names, 0 resolved to real MPNs) → resistors.quarantine_stubs.
-    "capacitors.ndjson": 112_242,
-    "connectors.ndjson": 14,
-    "controllers.ndjson": 1_667,
+    # 2026-07-02 refresh: the stale 2026-06-13 baseline had drifted well outside
+    # the ±10 % band after the Digi-Key/Mouser backfill + connector catalog
+    # import campaigns (every category grew; rows spot-checked as distinct real
+    # parts, not duplicates). Re-pinned to the current corpus.
+    "capacitors.ndjson": 230_576,
+    "connectors.ndjson": 138_300,
+    "controllers.ndjson": 2_133,
     "converters.ndjson": 47,
-    "diodes.ndjson": 3_189,
-    "igbts.ndjson": 2_075,
-    "magnetics.ndjson": 50_620,
-    "mosfets.ndjson": 6_678,
-    "resistors.ndjson": 30_721,
+    "diodes.ndjson": 13_322,
+    "igbts.ndjson": 2_278,
+    "magnetics.ndjson": 92_368,
+    "mosfets.ndjson": 9_941,
+    "resistors.ndjson": 160_832,
 }
 _ROW_COUNT_TOLERANCE = 0.10
 
