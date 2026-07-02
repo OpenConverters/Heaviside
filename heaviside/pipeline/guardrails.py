@@ -97,31 +97,37 @@ def _flat_record_from_env(env: dict, mi: dict) -> dict:
 
 def _tas_file_index(path: Path) -> dict[str, dict]:
     """Return (building+caching once) an mpn_lower -> flat_record index for an
-    NDJSON catalogue file."""
+    NDJSON catalogue file.
+
+    A read error (e.g. a corrupt NDJSON line) PROPAGATES — it must never be
+    swallowed into a partial index that is then cached for the process
+    lifetime. A truncated index silently shrinks the catalogue, making G5
+    demote valid substitutes as "hallucinations". The cache is populated ONLY
+    after a complete, successful scan; callers pass only existing files.
+    """
     cached = _TAS_INDEX_CACHE.get(path.name)
     if cached is not None:
         return cached
-    index: dict[str, dict] = {}
-    try:
-        from heaviside.catalogue._reader import iter_envelopes
 
-        for _lineno, env in iter_envelopes(path):
-            for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
-                sub = env.get(top_key)
-                if not isinstance(sub, dict):
+    from heaviside.catalogue._reader import iter_envelopes
+
+    index: dict[str, dict] = {}
+    for _lineno, env in iter_envelopes(path):
+        for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
+            sub = env.get(top_key)
+            if not isinstance(sub, dict):
+                continue
+            for inner_key in (None, "mosfet", "diode", "igbt"):
+                record = sub if inner_key is None else sub.get(inner_key)
+                if not isinstance(record, dict):
                     continue
-                for inner_key in (None, "mosfet", "diode", "igbt"):
-                    record = sub if inner_key is None else sub.get(inner_key)
-                    if not isinstance(record, dict):
-                        continue
-                    mi = record.get("manufacturerInfo")
-                    if not isinstance(mi, dict):
-                        continue
-                    ref = mi.get("reference")
-                    if isinstance(ref, str) and ref.strip():
-                        index.setdefault(ref.strip().lower(), _flat_record_from_env(env, mi))
-    except Exception:
-        pass
+                mi = record.get("manufacturerInfo")
+                if not isinstance(mi, dict):
+                    continue
+                ref = mi.get("reference")
+                if isinstance(ref, str) and ref.strip():
+                    index.setdefault(ref.strip().lower(), _flat_record_from_env(env, mi))
+    # Only reached after the FULL scan succeeds — never cache a partial index.
     _TAS_INDEX_CACHE[path.name] = index
     return index
 

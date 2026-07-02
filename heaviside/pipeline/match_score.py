@@ -109,29 +109,36 @@ _MPN_ENV_INDEX_CACHE: dict[str, dict[str, dict]] = {}
 
 
 def _mpn_env_index(path: Path) -> dict[str, dict]:
+    """Build (once, cached) an mpn_lower -> raw-envelope index for an NDJSON file.
+
+    A read error (e.g. a corrupt NDJSON line) PROPAGATES rather than being
+    swallowed into a partial index cached for the process lifetime — a
+    truncated index would silently make bulk scoring miss real parts. The cache
+    is populated only after a complete, successful scan; callers pass only
+    existing files.
+    """
     cached = _MPN_ENV_INDEX_CACHE.get(path.name)
     if cached is not None:
         return cached
-    index: dict[str, dict] = {}
-    try:
-        from heaviside.catalogue._reader import iter_envelopes
 
-        for _lineno, env in iter_envelopes(path):
-            for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
-                sub = env.get(top_key)
-                if not isinstance(sub, dict):
+    from heaviside.catalogue._reader import iter_envelopes
+
+    index: dict[str, dict] = {}
+    for _lineno, env in iter_envelopes(path):
+        for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
+            sub = env.get(top_key)
+            if not isinstance(sub, dict):
+                continue
+            for inner_key in (None, "mosfet", "diode", "igbt"):
+                record = sub if inner_key is None else sub.get(inner_key)
+                if not isinstance(record, dict):
                     continue
-                for inner_key in (None, "mosfet", "diode", "igbt"):
-                    record = sub if inner_key is None else sub.get(inner_key)
-                    if not isinstance(record, dict):
-                        continue
-                    mi = record.get("manufacturerInfo")
-                    if isinstance(mi, dict):
-                        ref = mi.get("reference")
-                        if isinstance(ref, str) and ref.strip():
-                            index.setdefault(ref.strip().lower(), env)
-    except Exception:
-        pass
+                mi = record.get("manufacturerInfo")
+                if isinstance(mi, dict):
+                    ref = mi.get("reference")
+                    if isinstance(ref, str) and ref.strip():
+                        index.setdefault(ref.strip().lower(), env)
+    # Only reached after the FULL scan succeeds — never cache a partial index.
     _MPN_ENV_INDEX_CACHE[path.name] = index
     return index
 
