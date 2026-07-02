@@ -392,8 +392,11 @@ def flyback_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> Component
         vr_stress=vr,
         if_avg_stress=if_avg,
         v_working=vout,
-        # Flyback cap ripple: secondary current pulses; high ripple
-        i_ripple=iout * ((1.0 - float(d_max)) / float(d_max)) ** 0.5,
+        # Flyback output-cap RMS ripple: the diode feeds the cap for the
+        # (1-D) off fraction, so I_Crms = Iout*sqrt(D/(1-D)) — same as boost
+        # (see boost_stresses). The reciprocal sqrt((1-D)/D) undersizes the cap
+        # for D > 0.5, exactly where flyback ripple is worst.
+        i_ripple=iout * (float(d_max) / (1.0 - float(d_max))) ** 0.5,
     )
 
 
@@ -1024,7 +1027,10 @@ def isolated_buck_boost_stresses(
         vr_stress=vr,
         if_avg_stress=if_avg,
         v_working=vout,
-        i_ripple=iout * ((1.0 - d_max) / d_max) ** 0.5,
+        # Output-cap RMS ripple: diode-fed cap over the (1-D) off fraction →
+        # I_Crms = Iout*sqrt(D/(1-D)) (same as boost/flyback). The reciprocal
+        # sqrt((1-D)/D) undersizes the cap for D > 0.5.
+        i_ripple=iout * (d_max / (1.0 - d_max)) ** 0.5,
     )
 
 

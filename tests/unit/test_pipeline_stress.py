@@ -206,6 +206,19 @@ def test_flyback_throws_on_bad_duty() -> None:
         flyback_stresses(bad)
 
 
+def test_flyback_output_cap_ripple_is_iout_sqrt_d_over_1md() -> None:
+    """Output-cap RMS ripple = Iout*sqrt(D/(1-D)), same as boost. Chosen at
+    D=0.6 (not 0.5, where the reciprocal would look identical): the reciprocal
+    sqrt((1-D)/D) undersizes the cap. Iout=2, D=0.6 -> 2*sqrt(1.5) ~= 2.449."""
+    from heaviside.pipeline.stress import flyback_stresses
+
+    s = flyback_stresses({**_FLYBACK_OK, "maximumDutyCycle": 0.6})
+    iout, d = 2.0, 0.6
+    assert s.i_ripple == pytest.approx(iout * (d / (1.0 - d)) ** 0.5, rel=1e-9)
+    # Not the reciprocal (which would undersize for D > 0.5).
+    assert s.i_ripple != pytest.approx(iout * ((1.0 - d) / d) ** 0.5, rel=1e-9)
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
