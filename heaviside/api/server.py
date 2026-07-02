@@ -25,6 +25,46 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 
+def _load_dotenv_if_present() -> None:
+    """Load the repo-root ``.env`` into ``os.environ`` for keys that are not
+    already set, so the server has MOONSHOT_API_KEY (and friends) regardless of
+    how it was launched — a plain ``uvicorn`` / ``nohup`` start otherwise has no
+    LLM key and every crossref/design LLM call fails instantly.
+
+    Only fills UNSET variables (never overrides a real environment value), so a
+    supervisor/systemd ``environment=`` in prod stays authoritative. No
+    dependency: a minimal ``KEY=VALUE`` parser, quotes stripped, ``#`` comments
+    and blank lines skipped. Malformed lines are ignored — a bad .env must never
+    stop the server from booting."""
+    import os
+    from pathlib import Path
+
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    try:
+        text = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    loaded = 0
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[len("export ") :].strip()
+        if not key or key in os.environ:
+            continue
+        value = value.strip().strip("'").strip('"')
+        os.environ[key] = value
+        loaded += 1
+    if loaded:
+        logger.info("loaded %d var(s) from %s", loaded, env_path)
+
+
+_load_dotenv_if_present()
+
+
 def _configure_heaviside_logging() -> None:
     """Route the ``heaviside.*`` loggers to stderr at INFO so the pipeline's
     progress lines (CR stage N, correction loops, per-batch timing, …) are

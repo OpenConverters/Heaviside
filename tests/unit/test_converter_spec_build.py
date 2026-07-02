@@ -36,6 +36,26 @@ def test_defaults_duty_and_vds():
     assert s["operatingPoints"][0]["dutyCycle"] == 0.5  # per-OP duty seeded to ceiling
 
 
+def test_current_ripple_ratio_defaulted_when_absent():
+    """A minimal spec (Vin + rails, no ripple) must get the 0.3 default so the
+    analytical stress engine (stress.py::_ripple_pp) doesn't abort. Regression
+    for 'StressDerivationError: currentRippleRatio must be a positive number'."""
+    spec = _buck_spec()
+    del spec["currentRippleRatio"]
+    out = converter_spec_build.build(spec, "buck")
+    assert out["currentRippleRatio"] == 0.3
+    # and it makes the stress engine happy end-to-end
+    from heaviside.pipeline.stress import derive_stresses
+
+    assert derive_stresses("buck", out) is not None
+
+
+def test_explicit_ripple_ratio_wins():
+    spec = _buck_spec()
+    spec["currentRippleRatio"] = 0.45
+    assert converter_spec_build.build(spec, "buck")["currentRippleRatio"] == 0.45
+
+
 def test_existing_constraints_not_overwritten():
     s = _buck_spec()
     s["maximumDutyCycle"] = 0.42

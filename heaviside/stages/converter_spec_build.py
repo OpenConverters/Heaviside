@@ -150,6 +150,14 @@ def build(
     if "inputVoltage" in spec and spec.get("operatingPoints"):
         spec.setdefault("diodeVoltageDrop", 0.7)
         spec.setdefault("efficiency", 0.9)
+        # Inductor-current ripple ratio (ΔI/Iout) is a DESIGN TARGET, not a
+        # physics result — 0.3 (30 %) is the textbook first-pass value and the
+        # same default the RE path uses (re_state.py). The analytical stress
+        # engine (pipeline/stress.py::_ripple_pp) hard-requires it, so a minimal
+        # user spec (Vin + rails only) would otherwise abort with
+        # "currentRippleRatio must be a positive number". Seed only — an explicit
+        # caller value wins, and a caller-set ripple ≤ 0 still fails loudly.
+        spec.setdefault("currentRippleRatio", 0.3)
 
     # Isolated/transformer topologies need a primary:secondary turns ratio. It
     # is a DESIGN OUTPUT (MKF derives it on the base path), but Heaviside's
