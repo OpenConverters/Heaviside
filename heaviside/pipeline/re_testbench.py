@@ -33,6 +33,7 @@ from heaviside.pipeline.re_state import (
     REState,
     SimComparison,
 )
+from heaviside.pipeline.value_parse import _prefix_multiplier
 
 if TYPE_CHECKING:
     from heaviside.pipeline.crossref import SimDerivedStress
@@ -173,20 +174,6 @@ def build_role_map(
 # Value parsing
 # ---------------------------------------------------------------------------
 
-_SI_PREFIXES = {
-    "T": 1e12,
-    "G": 1e9,
-    "M": 1e6,
-    "k": 1e3,
-    "K": 1e3,
-    "m": 1e-3,
-    "u": 1e-6,
-    "µ": 1e-6,
-    "μ": 1e-6,
-    "n": 1e-9,
-    "p": 1e-12,
-}
-
 _VALUE_RE = re.compile(
     r"^([\d.]+)\s*([TGMkKmuµμnp]?)\s*([FHΩRVAohm]*)",
     re.IGNORECASE,
@@ -194,7 +181,13 @@ _VALUE_RE = re.compile(
 
 
 def parse_component_value(value_str: str) -> float | None:
-    """Parse engineering notation: '4.7uH' → 4.7e-6, '22uF' → 22e-6."""
+    """Parse engineering notation: '4.7uH' → 4.7e-6, '22uF' → 22e-6.
+
+    The regex is IGNORECASE so ALL-CAPS BOM strings ("4.7UH", "22PF") match;
+    prefix resolution is delegated to the shared, case-aware resolver in
+    ``value_parse`` so an unambiguous uppercase prefix folds correctly and an
+    unknown prefix is rejected rather than silently treated as ×1.
+    """
     if not value_str:
         return None
     try:
@@ -208,8 +201,9 @@ def parse_component_value(value_str: str) -> float | None:
         num = float(m.group(1))
     except ValueError:
         return None
-    prefix = m.group(2)
-    multiplier = _SI_PREFIXES.get(prefix, 1.0)
+    multiplier = _prefix_multiplier(m.group(2) or "")
+    if multiplier is None:
+        return None
     return num * multiplier
 
 

@@ -59,6 +59,38 @@ _VALUE_RE = re.compile(
 # EIA "R" convention for resistors: "4R7" = 4.7 Ω, "10R0" = 10.0 Ω.
 _EIA_R_RE = re.compile(r"^(\d+)R(\d+)$", re.IGNORECASE)
 
+# The value regex is IGNORECASE (BOM feeds are often ALL-CAPS, e.g. "22PF",
+# "100NH"), but the multiplier table is case-sensitive because 'm' (milli) and
+# 'M' (mega) are distinct. These prefixes have exactly one SI meaning, so an
+# uppercase/lowercase variant folds unambiguously to the canonical letter.
+# 'm'/'M' and 'k'/'K' are deliberately absent: 'k'/'K' are both already in the
+# table, and 'm'/'M' must never be folded (milli vs mega collision).
+_CASE_FOLD_PREFIX: dict[str, str] = {
+    "P": "p",
+    "N": "n",
+    "U": "u",
+    "g": "G",
+    "t": "T",
+}
+
+
+def _prefix_multiplier(prefix: str) -> float | None:
+    """Resolve an SI prefix letter to its multiplier, or ``None`` if unknown.
+
+    Case-sensitive lookup first (so 'm'/'M' keep their distinct milli/mega
+    meanings), then an unambiguous case-fold for prefixes with a single SI
+    meaning. Never returns a silent ``1.0`` for an unrecognised prefix — an
+    unknown prefix means the string is unparseable, not "no prefix".
+    """
+    if prefix == "":
+        return 1.0
+    if prefix in _SI_MULTIPLIERS:
+        return _SI_MULTIPLIERS[prefix]
+    folded = _CASE_FOLD_PREFIX.get(prefix)
+    if folded is not None:
+        return _SI_MULTIPLIERS[folded]
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Generic SI parser (internal)
@@ -108,8 +140,10 @@ def _parse_si(s: Any, unit_letter: str, plausibility_max: float) -> float:
         num = float(num_str)
     except ValueError:
         return 0.0
-    prefix = prefix or ""
-    return num * _SI_MULTIPLIERS.get(prefix, 1.0)
+    mult = _prefix_multiplier(prefix or "")
+    if mult is None:
+        return 0.0
+    return num * mult
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +267,10 @@ def parse_si_value(s: Any) -> float | None:
         num = float(num_str)
     except ValueError:
         return None
-    prefix = prefix or ""
-    return num * _SI_MULTIPLIERS.get(prefix, 1.0)
+    mult = _prefix_multiplier(prefix or "")
+    if mult is None:
+        return None
+    return num * mult
 
 
 __all__ = [
