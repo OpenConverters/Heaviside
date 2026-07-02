@@ -8,6 +8,9 @@ import pytest
 
 from heaviside.pipeline.analyst import (
     AnalystError,
+    _cuk_op_budget,
+    _sepic_op_budget,
+    _zeta_op_budget,
     compute_buck_loss_budget,
     run_analyst,
     run_buck_analyst,
@@ -294,6 +297,55 @@ def test_cllc_counts_lv_sync_rect_bridge_losses() -> None:
     # The half-bridge LLC model's diode buckets must NOT appear.
     assert "D1_conduction" not in budget
     assert "D2_conduction" not in budget
+
+
+# ---------------------------------------------------------------------------
+# Ćuk / SEPIC / Zeta output-diode conduction loss = Iout * Vf (not (1-D)*Iout*Vf)
+# ---------------------------------------------------------------------------
+
+# 12 V -> 12 V, 5 A: D = Vout/(Vin+Vout) = 0.5. The output diode's AVERAGE
+# current is Iout (charge balance), so P_D_cond = Iout * Vf = 5 * 0.5 = 2.5 W.
+# The old code computed (1-D)*Iout*Vf = 0.5*5*0.5 = 1.25 W — exactly half.
+_BB_SPEC = {
+    "inputVoltage": {"nominal": 12.0, "minimum": 10.0, "maximum": 14.0},
+    "operatingPoints": [
+        {
+            "outputVoltages": [12.0],
+            "outputCurrents": [5.0],
+            "switchingFrequency": 300_000.0,
+            "ambientTemperature": 25.0,
+        }
+    ],
+}
+
+
+def _tas_with_output_diode(vf: float = 0.5) -> dict[str, Any]:
+    return {
+        "topology": {
+            "stages": [
+                {
+                    "name": "power_stage",
+                    "circuit": {
+                        "components": [
+                            {"name": "D1", "vf_typ": vf, "qrr": 0.0},
+                        ],
+                    },
+                }
+            ],
+        },
+    }
+
+
+@pytest.mark.parametrize("budget_fn", [_cuk_op_budget, _sepic_op_budget, _zeta_op_budget])
+def test_output_diode_conduction_is_iout_times_vf(budget_fn) -> None:
+    """Regression: the output diode averages Iout, so its conduction loss is
+    Iout*Vf. Passing raw Iout through the (1-D) factor halved it at D=0.5."""
+    tas = _tas_with_output_diode(vf=0.5)
+    budget = budget_fn(tas, _BB_SPEC)
+    iout, vf = 5.0, 0.5
+    assert budget["D1_conduction"] == pytest.approx(iout * vf, rel=1e-9)
+    # And explicitly NOT the (1-D)*Iout*Vf undercount.
+    assert budget["D1_conduction"] != pytest.approx(0.5 * iout * vf, rel=1e-9)
 
 
 def test_stamp_jt_no_op_without_loss_budget() -> None:

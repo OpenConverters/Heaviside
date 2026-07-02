@@ -725,12 +725,16 @@ def _cuk_op_budget(
     vout_abs = abs(vout)
     duty = vout_abs / (vin + vout_abs)
     iin = iout * vout_abs / vin
+    # The output diode carries the full output charge: its AVERAGE current is
+    # Iout, so the generic budget's (1-duty) factor needs the conducting
+    # current Iout/(1-duty) (= Iin+Iout here), not Iout — passing Iout would
+    # undercount the diode conduction loss by (1-duty). Mirrors boost/flyback.
     return _compute_generic_loss_budget(
         tas,
         spec,
         duty=duty,
         pri_current=(iin + iout),
-        sec_current=iout,
+        sec_current=iout / (1.0 - duty),
         op_index=op_index,
     )
 
@@ -901,7 +905,11 @@ def _sepic_op_budget(
             _find_named(tas, "D1"),
             "D1",
             duty_off=(1.0 - duty),
-            i_fwd=iout,
+            # The output diode's AVERAGE current is Iout; _diode_loss multiplies
+            # the conducting current by duty_off, so the conducting current is
+            # Iout/(1-duty), not Iout (else the loss is undercount by (1-duty) —
+            # e.g. a 12V→12V SEPIC at D=0.5 would halve the diode loss).
+            i_fwd=iout / (1.0 - duty),
             vr=vds_off,
             fsw=fsw,
         )
@@ -953,7 +961,10 @@ def _zeta_op_budget(
             _find_named(tas, "D1"),
             "D1",
             duty_off=(1.0 - duty),
-            i_fwd=iout,
+            # Output diode AVERAGE current is Iout; conducting current is
+            # Iout/(1-duty) (see the SEPIC note above) — passing Iout would
+            # undercount the diode conduction loss by (1-duty).
+            i_fwd=iout / (1.0 - duty),
             vr=vds_off,
             fsw=fsw,
         )
