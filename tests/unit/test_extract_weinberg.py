@@ -212,8 +212,11 @@ class TestWeinbergMath:
     def test_input_current_at_vin_min(self):
         out = enrich_tas_for_realism(_wb_tas(), topology="weinberg", spec=_wb_spec())
         l = _get_l1(out)
-        # Iin = Iout * Vout / Vin_min = 2 * 270 / 36 = 15 A
-        assert l["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(15.0, rel=1e-6)
+        # Iin = Iout * Vout / (Vin_min * eta) = 2 * 270 / (36 * 0.92) = 16.304 A.
+        # (eta from _wb_spec; assuming lossless under-sizes the saturation peak.)
+        assert l["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(
+            2.0 * 270.0 / (36.0 * 0.92), rel=1e-6
+        )
 
 
 # ---------------------------------------------------------------------------

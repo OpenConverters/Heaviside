@@ -172,8 +172,9 @@ class TestBoostMode:
 
         expected = max(ripple_at(12.0), ripple_at(24.0))
         assert l["ipeak_provenance"]["ripple_worst_A_pp"] == pytest.approx(expected, rel=1e-6)
-        # iL_avg_max = Iout * Vout / Vin_min = 5 * 48 / 12 = 20
-        assert l["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(20.0)
+        # iL_avg_max = Iout * Vout / (Vin_min * eta) = 5 * 48 / (12 * 0.95) = 21.05
+        # (boost mode: inductor carries the input current, which rises by 1/eta)
+        assert l["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(5.0 * 48.0 / (12.0 * 0.95))
 
     def test_boost_ripple_uses_interior_peak_when_in_range(self):
         """Vin_min=8, Vin_max=40, Vout=48 ⇒ vout/2=24 lies inside (8,40)
@@ -229,7 +230,7 @@ class TestMixedMode:
         assert l["ipeak_provenance"]["ripple_worst_A_pp"] == pytest.approx(expected, rel=1e-6)
 
     def test_mixed_iL_avg_uses_boost_side_worst(self):
-        """Boost-side avg I_L = Iout*Vout/Vin_min always exceeds
+        """Boost-side avg I_L = Iout*Vout/(Vin_min*eta) always exceeds
         buck-side I_L = Iout, so the mixed combination must report the
         boost figure."""
         out = enrich_tas_for_realism(
@@ -238,8 +239,10 @@ class TestMixedMode:
             spec=_spec(vmin=18.0, vmax=36.0, vout=24.0, iout=5.0),
         )
         l = _get_l1(out)
-        # 5 * 24 / 18 = 6.6667
-        assert l["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(5.0 * 24.0 / 18.0, rel=1e-6)
+        # 5 * 24 / (18 * 0.95) = 7.018 (boost-side input current, eta-corrected)
+        assert l["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(
+            5.0 * 24.0 / (18.0 * 0.95), rel=1e-6
+        )
 
     def test_mixed_end_to_end_realism_passes(self):
         spec = _spec(vmin=18.0, vmax=36.0, vout=24.0, L=22e-6)

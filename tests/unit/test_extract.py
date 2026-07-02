@@ -10,7 +10,11 @@ from __future__ import annotations
 import pytest
 
 from heaviside.pipeline import evaluate_tas
-from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
+from heaviside.pipeline.extract import (
+    EnrichmentError,
+    _enrich_boost,
+    enrich_tas_for_realism,
+)
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
 from tests.unit._real_mas import isat_of, real_magnetic
 
@@ -355,3 +359,23 @@ def test_real_buck_enrichment_runs_both_real_checks(tmp_path):
     # Isat ratio should be a finite positive number even when it FAILs.
     isat = next(c for c in r.checks if c.name == "inductor_isat_margin")
     assert isat.value is not None and isat.value > 0
+
+
+def test_boost_enricher_requires_efficiency() -> None:
+    """The boost inductor's saturation-driver peak is Iout*Vout/(Vin*eta);
+    a missing efficiency must raise, not silently assume lossless (which
+    under-sizes the peak by 1/eta) — mirroring flyback/cuk/sepic/zeta."""
+    spec = {
+        "inputVoltage": {"minimum": 12.0, "maximum": 15.0, "nominal": 13.0},
+        "desiredInductance": 22e-6,
+        "operatingPoints": [
+            {
+                "outputVoltages": [24.0],
+                "outputCurrents": [2.0],
+                "switchingFrequency": 150_000.0,
+                "ambientTemperature": 25,
+            }
+        ],
+    }  # no efficiency
+    with pytest.raises(EnrichmentError, match="efficiency"):
+        _enrich_boost({}, spec)

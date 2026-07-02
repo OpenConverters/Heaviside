@@ -636,7 +636,8 @@ def _enrich_boost(tas: dict, spec: Mapping[str, Any]) -> None:
         ``Vout/2`` (only if it lies inside the input range) and pick
         the largest — that is the honest worst case across the spec.
       * Average inductor current = input current
-        ``I_L_avg = Iout · Vout / Vin``, worst at ``Vin_min``.
+        ``I_L_avg = Iout · Vout / (Vin · η)``, worst at ``Vin_min``
+        (η = spec.efficiency; assuming lossless under-sizes the peak by 1/η).
       * ``Ipeak_worst = I_L_avg(Vin_min) + ΔI_L_worst / 2`` with the
         PROTEUS −20 % inductance tolerance baked into the ripple term.
       * ``Isat = B_sat · N · A_e / L`` — same closed form as buck
@@ -648,6 +649,13 @@ def _enrich_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     vmin, vmax = _vin_extremes(spec, "boost spec")
     vout, iout, fsw = _operating_point(spec, "boost spec")
     L = _required_inductance(spec, "desiredInductance", "boost spec")
+    efficiency = spec.get("efficiency")
+    if not isinstance(efficiency, (int, float)) or not (0.0 < efficiency <= 1.0):
+        raise EnrichmentError(
+            "boost spec.efficiency: required number in (0, 1] — the input (inductor) "
+            "current is Iout*Vout/(Vin*eta); refusing to assume lossless (which "
+            "under-sizes the saturation-driver peak by 1/eta), matching flyback/cuk/sepic/zeta"
+        )
 
     if vout <= vmax:
         raise EnrichmentError(
@@ -668,7 +676,7 @@ def _enrich_boost(tas: dict, spec: Mapping[str, Any]) -> None:
         candidates.append(vout / 2.0)
     ripple_worst = max(_ripple_at(v) for v in candidates)
 
-    iL_avg_max = iout * vout / vmin
+    iL_avg_max = iout * vout / (vmin * float(efficiency))
     ipeak_worst = iL_avg_max + ripple_worst / 2.0
 
     si, ci, comp = _find_magnetic_component(tas)
@@ -2104,6 +2112,14 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
             f"{vmin} V — degenerate (per-switch duty cannot reach 100 %)."
         )
 
+    efficiency = spec.get("efficiency")
+    if not isinstance(efficiency, (int, float)) or not (0.0 < efficiency <= 1.0):
+        raise EnrichmentError(
+            "weinberg spec.efficiency: required number in (0, 1] — the input (inductor) "
+            "current is Iout*Vout/(Vin*eta); refusing to assume lossless (under-sizes "
+            "the saturation-driver peak by 1/eta)"
+        )
+
     # L1 (input coupled inductor) — lineFilter stage. Harvest L from
     # its OWN MAS — see PSFB enricher for rationale.
     si, ci, l1_comp = _find_magnetic_in_stage_role(tas, "lineFilter", "weinberg enrichment (L1)")
@@ -2126,7 +2142,7 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
         candidates.append(interior)
     ripple_worst = max(abs(_ripple_at(v)) for v in candidates)
 
-    iL_avg_max = iout * vout / vmin  # input current at Vin_min
+    iL_avg_max = iout * vout / (vmin * float(efficiency))  # input current at Vin_min
     ipeak_worst = iL_avg_max + ripple_worst / 2.0
     op = _require(spec, ("operatingPoints",), "weinberg spec")[0]
     t_amb = float(op.get("ambientTemperature", 25.0))
@@ -2216,6 +2232,13 @@ def _enrich_four_switch_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     vmin, vmax = _vin_extremes(spec, where)
     vout, iout, fsw = _operating_point(spec, where)
     L = _required_inductance(spec, "desiredInductance", where)
+    efficiency = spec.get("efficiency")
+    if not isinstance(efficiency, (int, float)) or not (0.0 < efficiency <= 1.0):
+        raise EnrichmentError(
+            "four_switch_buck_boost spec.efficiency: required number in (0, 1] — in "
+            "boost/mixed mode the input (inductor) current is Iout*Vout/(Vin*eta); "
+            "refusing to assume lossless (under-sizes the saturation-driver peak by 1/eta)"
+        )
 
     if vmin == vout or vmax == vout:
         raise EnrichmentError(
@@ -2241,7 +2264,7 @@ def _enrich_four_switch_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
         if vmin < vout / 2.0 < vmax:
             candidates.append(vout / 2.0)
         ripple_worst = max(v * (1.0 - v / vout) / (L_worst * fsw) for v in candidates)
-        iL_avg_max = iout * vout / vmin
+        iL_avg_max = iout * vout / (vmin * float(efficiency))
     else:
         mode = "mixed"
         # Buck sub-region: Vin in (vout, vmax].  Smallest Vin > vout
@@ -2262,7 +2285,7 @@ def _enrich_four_switch_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
         ripple_boost = max(v * (1.0 - v / vout) / (L_worst * fsw) for v in boost_candidates)
 
         ripple_worst = max(ripple_buck, ripple_boost)
-        iL_avg_max = iout * vout / vmin
+        iL_avg_max = iout * vout / (vmin * float(efficiency))
         d_max = d_boost_max
         d_min = d_buck_min
 
