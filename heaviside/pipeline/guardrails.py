@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from heaviside.pipeline.value_parse import parse_si_value
 
@@ -1151,15 +1152,82 @@ def _lookup_substitute_voltage(comp: dict, cat: str, tas_data_dir: Path | None) 
     return None
 
 
-def _lookup_substitute_current(comp: dict, cat: str, tas_data_dir: Path | None) -> float | None:
-    """Look up the substitute's current rating from the crossref result."""
-    # Current rating isn't in the standard crossref output — would need TAS lookup
+def _envelope_electrical(env: dict) -> Any:
+    """Return the ``datasheetInfo.electrical`` block of a TAS envelope (a dict
+    for caps/semis/resistors, a LIST of subtype items for magnetics v2), or
+    ``None``. Navigates the top/inner keys the same way the MPN index does."""
+    for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
+        sub = env.get(top_key)
+        if not isinstance(sub, dict):
+            continue
+        for inner_key in (None, "mosfet", "diode", "igbt"):
+            rec = sub if inner_key is None else sub.get(inner_key)
+            if not isinstance(rec, dict):
+                continue
+            di = (rec.get("manufacturerInfo") or {}).get("datasheetInfo") or {}
+            elec = di.get("electrical")
+            if elec is not None:
+                return elec
     return None
+
+
+def _read_electrical_field(elec: Any, field: str) -> float | None:
+    """Read a scalar ``field`` from an electrical block (dict or magnetics list),
+    resolving a ``dimensionWithTolerance`` to a scalar (nominal → max → min)."""
+    val: Any = None
+    if isinstance(elec, list):
+        for item in elec:
+            if isinstance(item, dict) and field in item:
+                val = item[field]
+                break
+    elif isinstance(elec, dict):
+        val = elec.get(field)
+    if isinstance(val, dict):  # dimensionWithTolerance
+        for k in ("nominal", "maximum", "minimum"):
+            if isinstance(val.get(k), (int, float)):
+                return float(val[k])
+        return None
+    return float(val) if isinstance(val, (int, float)) else None
+
+
+def _substitute_electrical_scalar(
+    comp: dict, cat: str, field: str, tas_data_dir: Path | None
+) -> float | None:
+    """Resolve the substitute MPN in TAS and read one electrical scalar from it."""
+    pn = comp.get("substitute_pn")
+    if not pn or pn == "no_substitute":
+        return None
+    rec = _lookup_tas_part(pn, cat, tas_data_dir=tas_data_dir)
+    if not rec:
+        return None
+    env = rec.get("raw_envelope")
+    if not isinstance(env, dict):
+        return None
+    return _read_electrical_field(_envelope_electrical(env), field)
+
+
+# Per-category continuous current-rating field. Absent categories (e.g. caps in
+# G8) legitimately have no comparable rating → that row is skipped, but the gate
+# still fires for the categories that DO carry a rating (not a blanket disable).
+_CURRENT_RATING_FIELD = {
+    "mosfet": "continuousDrainCurrent",
+    "diode": "forwardCurrent",
+}
+
+
+def _lookup_substitute_current(comp: dict, cat: str, tas_data_dir: Path | None) -> float | None:
+    """Continuous current rating of the substitute, resolved from its TAS
+    envelope (mosfet continuousDrainCurrent / diode forwardCurrent)."""
+    field = _CURRENT_RATING_FIELD.get(cat)
+    if field is None:
+        return None
+    return _substitute_electrical_scalar(comp, cat, field, tas_data_dir)
 
 
 def _lookup_substitute_isat(comp: dict, cat: str, tas_data_dir: Path | None) -> float | None:
-    """Look up the substitute inductor's saturation current from the crossref result."""
-    return None
+    """Saturation-current peak of the substitute magnetic, from its TAS
+    envelope (magnetics electrical.saturationCurrentPeak)."""
+    return _substitute_electrical_scalar(comp, cat, "saturationCurrentPeak", tas_data_dir)
 
 
 def apply_guardrails(
