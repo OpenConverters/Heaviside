@@ -1,4 +1,22 @@
-.PHONY: help venv install types types-check probe gen-topologies lint type test test-unit ci clean
+.PHONY: help venv install types types-check probe gen-topologies lint type test test-unit test-smoke test-full ci clean
+
+# Curated, hermetic, fast key tests — the PR smoke gate. No TAS data / PyOM /
+# ngspice / LLM, so it runs in seconds and is deterministic. Keep this list to
+# the highest-signal correctness guards (parse, stress/loss physics, the
+# realism gate, guardrails, review wiring, API security).
+SMOKE_TESTS := \
+	tests/unit/test_value_parse.py \
+	tests/unit/test_pipeline_analyst.py \
+	tests/unit/test_pipeline_stress.py \
+	tests/unit/test_realism.py \
+	tests/unit/test_guardrails_g8_g9.py \
+	tests/unit/test_match_score_keys.py \
+	tests/unit/test_review_verdicts_surfaced.py \
+	tests/unit/test_otto_reguard.py \
+	tests/unit/test_gate_isat_failloud.py \
+	tests/unit/test_index_no_partial_cache.py \
+	tests/unit/test_api_security.py \
+	tests/unit/test_design_spec.py
 
 help:
 	@echo "Heaviside developer targets:"
@@ -12,6 +30,8 @@ help:
 	@echo "  make type       mypy --strict"
 	@echo "  make test       Full pytest suite"
 	@echo "  make test-unit  Unit tests only (fast)"
+	@echo "  make test-smoke Curated fast key tests — the PR gate (seconds)"
+	@echo "  make test-full  All unit + regression tests (needs PyOM + TAS LFS)"
 	@echo "  make ci         lint + type + test-unit + BaseModel cap"
 	@echo "  make clean      Remove build / cache artefacts"
 
@@ -45,6 +65,15 @@ test: types
 
 test-unit: types
 	pytest -m unit -n auto
+
+# Fast PR gate: a selected few key tests, hermetic, ~seconds.
+test-smoke:
+	pytest $(SMOKE_TESTS) -q
+
+# Everything: all unit + regression tests. Needs PyOpenMagnetics built and the
+# TAS Git-LFS data smudged (git lfs pull in TAS/). Slower (~20 min).
+test-full: types
+	pytest tests/unit tests/regression
 
 ci: lint type test-unit
 	python scripts/check_pydantic_cap.py
