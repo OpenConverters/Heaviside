@@ -1442,7 +1442,9 @@ def full_design(
     # Stage 4: Ray + Nicola adversarial review of best design
     if outcomes and outcomes[0].verdict_dict:
         _emit("Final review (Ray + Nicola)", 95)
-        outcomes[0] = _stage4_adversarial_review(outcomes[0])
+        # The panel decision now rides in outcomes[0].diagnostics (surfaced),
+        # so the legacy multi-topology path does not need the panel object.
+        outcomes[0], _ = _stage4_adversarial_review(outcomes[0])
     _emit("Done", 100)
 
     # Stage 5: Teacher — analyze failures and store lessons
@@ -1455,7 +1457,9 @@ def full_design(
     return stage1, stage2, tuple(outcomes)
 
 
-def _stage4_adversarial_review(outcome: DesignOutcome, *, progress: Any = None) -> DesignOutcome:
+def _stage4_adversarial_review(
+    outcome: DesignOutcome, *, progress: Any = None
+) -> tuple[DesignOutcome, Any]:
     """Run Ray (engineering) and Nicola (quality) on the best design.
 
     ``progress`` (optional) is forwarded to the reviewer panel so a caller can
@@ -1467,6 +1471,10 @@ def _stage4_adversarial_review(outcome: DesignOutcome, *, progress: Any = None) 
     a valid result, so we raise rather than quietly recording "0 reviews". A
     reviewer that runs and returns a negative verdict is a valid review (not a
     failure); that is recorded and surfaced, not raised.
+
+    Returns ``(outcome, panel)`` — the panel (a ``reviewer_panel.PanelResult``)
+    carries the actual verdicts and must be surfaced by the caller. Discarding
+    it silently drops a REJECTED review (the G01 defect class).
     """
     from heaviside.agents.llm_call import LLMCallError
     from heaviside.stages.reviewer_panel import review as panel_review
@@ -1501,15 +1509,19 @@ def _stage4_adversarial_review(outcome: DesignOutcome, *, progress: Any = None) 
     for v in panel.verdicts:
         logger.info("Stage 4 (%s): %s", v.reviewer, v.verdict)
 
-    return DesignOutcome(
+    reviewed = DesignOutcome(
         pick=outcome.pick,
         tas=outcome.tas,
         verdict_dict=outcome.verdict_dict,
         gatekeeper=outcome.gatekeeper,
         report=outcome.report,
         fsw_optimal=outcome.fsw_optimal,
-        diagnostics=(*outcome.diagnostics, f"ray+nicola: {len(panel.verdicts)} reviews"),
+        diagnostics=(
+            *outcome.diagnostics,
+            f"ray+nicola review: {panel.decision} ({len(panel.verdicts)} reviewers)",
+        ),
     )
+    return reviewed, panel
 
 
 def _order_topologies_by_lessons(

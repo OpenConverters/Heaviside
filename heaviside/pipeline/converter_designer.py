@@ -416,7 +416,7 @@ def design_converter(
             label = _REVIEW_LABEL.get(name, name)
             _say(f"Reviewing — {label}", _REVIEW_PCT.get(name, 90 + idx))
 
-        outcome = _stage4_adversarial_review(outcome, progress=_review_progress)
+        outcome, review = _stage4_adversarial_review(outcome, progress=_review_progress)
 
     _say("Done", 100)
     return ConverterDesign(

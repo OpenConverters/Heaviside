@@ -2178,20 +2178,11 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
         state.reviewer_log += f"\n--- {reviewer_name.upper()} ---\n{json.dumps(verdict_data)}\n"
         logger.info("CR stage 7: %s %s (%d batches)", reviewer_name, verdict_data["verdict"], len(batches))
 
-    # Pipeline passes only if both reviewers approved
-    ray_approved = any(
-        v.get("reviewer") == "ray" and v.get("verdict", "").upper() in ("APPROVED", "PROCEED")
-        for v in state.review_verdicts
-    )
-    # Computed but intentionally not gating yet (Nicola is advisory for
-    # now — see the `state.passed` line below); `_`-prefixed to mark it
-    # deliberately unused until her verdict becomes binding.
-    _nicola_approved = any(
-        v.get("reviewer") == "nicola"
-        and v.get("verdict", "").upper() in ("APPROVED", "PROCEED", "NOT_APPROVED")
-        # Nicola uses NOT_APPROVED with open_issues — treat as not blocking for CR
-        for v in state.review_verdicts
-    )
+    # Pass/fail is decided by the MOST RECENT Ray verdict (Nicola advisory for
+    # now). `any` over the whole history would let an early approval mask a
+    # later correction-loop rejection.
+    latest_ray = _latest_ray_verdict(state.review_verdicts)
+    ray_approved = latest_ray.get("verdict", "").upper() in ("APPROVED", "PROCEED")
     state.passed = ray_approved  # Ray must approve; Nicola is advisory for now
     return state
 
@@ -2199,6 +2190,21 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
 # ---------------------------------------------------------------------------
 # Public orchestrator
 # ---------------------------------------------------------------------------
+
+
+def _latest_ray_verdict(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """The most recent Ray verdict — the gating reviewer — or ``{}`` if none.
+
+    Ray gates the pipeline (Nicola is advisory for now), so BOTH the pass/fail
+    decision and the correction loop's objection list must key off Ray, and off
+    the LATEST review round: a stale ``any``-over-history read would let an
+    early approval mask a later correction-loop rejection (and reading
+    ``review_verdicts[-1]`` returned Nicola's objections, not Ray's).
+    """
+    for v in reversed(verdicts):
+        if v.get("reviewer") == "ray":
+            return v
+    return {}
 
 
 _CATEGORY_ALIASES = {
@@ -3098,8 +3104,9 @@ def run_crossref_pipeline(
     for loop_i in range(1, _MAX_REVIEW_LOOPS + 1):
         if state.passed:
             break
-        last_verdict = state.review_verdicts[-1] if state.review_verdicts else {}
-        objections = last_verdict.get("objections", [])
+        # Correct the objections from the GATING reviewer (Ray), not
+        # review_verdicts[-1] which is always Nicola (appended last).
+        objections = _latest_ray_verdict(state.review_verdicts).get("objections", [])
         if not objections:
             break
 
