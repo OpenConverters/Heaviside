@@ -1628,7 +1628,10 @@ def _catalog_projectors() -> dict[str, Any]:
             "p1": _fmt_eng(p1n, "Hz"),
             "p2": f"{p2n * 1e6:g} ppm" if p2n is not None else None,
             "p3": _fmt_eng(p3n, "F"),
-            "status": mi.get("status", ""),
+            # Missing lifecycle displays as production (established webui
+            # convention): rows come from a live distributor catalogue, so
+            # they're orderable unless stated otherwise.
+            "status": mi.get("status") or "production",
             "_p1n": p1n,
             "_p2n": p2n,
             "_p3n": p3n,
@@ -1836,6 +1839,10 @@ def _build_overview() -> dict[str, Any]:
             return None
         if unit == "%":
             return f"{value * 100:.3g}%"
+        if unit == "ppm":
+            # Stored as a fraction (2e-05); engineers read ppm, and the
+            # engineering-prefix formatter would render "20 µppm".
+            return f"{value * 1e6:g} ppm"
         return _fmt_eng(value, unit)
 
     projectors = _catalog_projectors()
