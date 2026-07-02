@@ -115,6 +115,7 @@ class CrossRefOutcome:
                     substitute_package=row.get("substitute_package", ""),
                     status=SubstitutionStatus(row.get("status", "no_substitute")),
                     match_detail=row.get("match_detail"),
+                    match_score=row.get("match_score"),
                     notes=row.get("notes", ""),
                     guardrail_fires=tuple(row.get("guardrail_fires", [])),
                 )

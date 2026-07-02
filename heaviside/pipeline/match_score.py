@@ -267,7 +267,9 @@ def compute_match_score(
     sub_pkg = str(part.get("caseCode") or part.get("case") or "").strip()
 
     # --- Primary value comparison ---
-    ctype = (comp.get("type") or src_row.get("type") or "").lower()
+    # Rows carry `component_type` (not `type`); reading `type` left ctype empty
+    # so no value branch fired and value_pct_delta was always None.
+    ctype = (comp.get("component_type") or src_row.get("component_type") or "").lower()
     sub_val: float | None = None
     if "cap" in ctype:
         v = elec.get("capacitance")
@@ -287,7 +289,14 @@ def compute_match_score(
     score["value_pct_delta"] = _value_delta_pct(src_val, sub_val)
 
     # --- Voltage comparison ---
-    sub_volt = _coerce_float(elec.get("ratedVoltage") or elec.get("vdsMax") or elec.get("vrrm"))
+    # DB field names: caps=ratedVoltage, mosfet=drainSourceVoltage,
+    # diode=reverseVoltage. The old vdsMax/vrrm keys never existed in TAS, so
+    # semiconductor voltage scoring was dead.
+    sub_volt = _coerce_float(
+        elec.get("ratedVoltage")
+        or elec.get("drainSourceVoltage")
+        or elec.get("reverseVoltage")
+    )
     if src_volt is not None and sub_volt is not None and src_volt > 0:
         if abs(sub_volt - src_volt) / src_volt < 0.02:
             score["voltage"] = "match"
