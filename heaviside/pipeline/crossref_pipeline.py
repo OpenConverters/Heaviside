@@ -1366,6 +1366,25 @@ def _build_bom_for_llm(state: CrossRefState) -> list[dict[str, Any]]:
     return bom_for_llm
 
 
+def _restore_component_types(state: CrossRefState, bom_for_llm: list[dict[str, Any]]) -> None:
+    """The LLM must not relabel parts: component_type in its output is an echo.
+
+    Restore the engine-derived category (type column / description keywords /
+    catalogue lookup) on every returned row — an LLM guessing "connector" from
+    a numeric MPN would otherwise stick to the row through every downstream
+    check and the report.
+    """
+    types_by_ref = {
+        c["ref_des"]: c["component_type"]
+        for c in bom_for_llm
+        if c.get("ref_des") and c.get("component_type")
+    }
+    for row in state.crossref_result:
+        known = types_by_ref.get(row.get("ref_des"))
+        if known and row.get("component_type") != known:
+            row["component_type"] = known
+
+
 def _stage3_crossref(state: CrossRefState) -> CrossRefState:
     """Call the cross-referencer agent with constrained candidates."""
     bom_for_llm = _build_bom_for_llm(state)
@@ -1392,19 +1411,7 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
     # don't come back (no silent data loss).
     _reconcile_crossref_coverage(state, bom_for_llm)
 
-    # The LLM must not relabel parts: component_type in its output is an echo.
-    # Restore the engine-derived category (type column / description keywords /
-    # catalogue lookup) — an LLM guessing "connector" from a numeric MPN would
-    # otherwise stick to the row through every downstream check and the report.
-    _types_by_ref = {
-        c["ref_des"]: c["component_type"]
-        for c in bom_for_llm
-        if c.get("ref_des") and c.get("component_type")
-    }
-    for _row in state.crossref_result:
-        known = _types_by_ref.get(_row.get("ref_des"))
-        if known and _row.get("component_type") != known:
-            _row["component_type"] = known
+    _restore_component_types(state, bom_for_llm)
 
     logger.info("CR stage 3: crossref produced %d rows", len(state.crossref_result))
     return state
@@ -2571,6 +2578,20 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
             row["component_type"] = cat
         else:
             row.pop("component_type", None)  # drop a bogus package-code value
+        # Backfill missing value/package/voltage from the catalogue record of
+        # the original MPN. A bare-MPN row otherwise reaches candidate ranking
+        # with no value — the value filter can't run, the LLM picks from
+        # unranked parts, and the G1/G2 value guardrails have nothing to check
+        # against (a 10 Ω part once shipped as "partial" for a 10 kΩ original).
+        if cat and not (row.get("value") and row.get("package")):
+            db = _fields_from_catalogue(str(row.get("original_mpn") or ""), cat)
+            if db is not None:
+                if not row.get("value") and db["value"]:
+                    row["value"] = db["value"]
+                if not row.get("package") and db["package"]:
+                    row["package"] = db["package"]
+                if not row.get("rated_voltage") and db["voltage"]:
+                    row["rated_voltage"] = db["voltage"]
         # All free-text columns combined, so value/package recovery doesn't miss
         # data that lives in a secondary description column (e.g. LumiQuote's
         # "Description (IPN)" carries "50H 100MHZ" when the main "Description

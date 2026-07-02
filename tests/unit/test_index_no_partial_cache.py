@@ -44,7 +44,7 @@ def test_read_error_propagates_and_nothing_cached(
         fn(path)
 
     # The partial index must NOT have been cached.
-    assert path.name not in cache
+    assert str(path) not in cache and path.name not in cache
 
 
 @pytest.mark.parametrize(
@@ -68,4 +68,4 @@ def test_complete_scan_is_cached(monkeypatch, tmp_path, module, fn_name, cache_n
     fn = getattr(module, fn_name)
     index = fn(path)
     assert "goodpart-1" in index
-    assert path.name in cache  # a complete scan IS cached
+    assert str(path) in cache  # a complete scan IS cached (full-path key)

@@ -49,8 +49,10 @@ _TAS_DATA_DEFAULT = _REPO_ROOT / "TAS" / "data"
 # TAS MPN lookup (linear scan with caching)
 # ---------------------------------------------------------------------------
 
-_TAS_LOOKUP_CACHE: dict[tuple[str, str], dict | None] = {}
-# Per-file MPN index: filename -> {mpn_lower: flat_record}. Built once on first
+# Keyed by (data_dir, kind, mpn) — the dir must be part of the key or a test
+# fixture directory poisons lookups against the real catalogue (and vice versa).
+_TAS_LOOKUP_CACHE: dict[tuple[str, str, str], dict | None] = {}
+# Per-file MPN index: full path -> {mpn_lower: flat_record}. Built once on first
 # access and reused, so validating N substitutes is O(file) total instead of
 # O(N × file) — the latter made a large BOM (hundreds of magnetic substitutes,
 # each previously scanning the whole 50 MB magnetics.ndjson) take ~20 min.
@@ -155,7 +157,7 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
     demote valid substitutes as "hallucinations". The cache is populated ONLY
     after a complete, successful scan; callers pass only existing files.
     """
-    cached = _TAS_INDEX_CACHE.get(path.name)
+    cached = _TAS_INDEX_CACHE.get(str(path))
     if cached is not None:
         return cached
 
@@ -189,7 +191,7 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
                     if isinstance(ref, str) and ref.strip():
                         index.setdefault(ref.strip().lower(), _flat_record_from_env(env, mi))
     # Only reached after the FULL scan succeeds — never cache a partial index.
-    _TAS_INDEX_CACHE[path.name] = index
+    _TAS_INDEX_CACHE[str(path)] = index
     return index
 
 
@@ -208,11 +210,10 @@ def _lookup_tas_part(
     """
     if not part_number or part_number == "no_substitute":
         return None
-    key = (component_kind, part_number.strip().lower())
+    root = tas_data_dir or _TAS_DATA_DEFAULT
+    key = (str(root), component_kind, part_number.strip().lower())
     if key in _TAS_LOOKUP_CACHE:
         return _TAS_LOOKUP_CACHE[key]
-
-    root = tas_data_dir or _TAS_DATA_DEFAULT
     filenames = _TAS_KIND_TO_FILES.get(component_kind)
     # Fall back to all NDJSON files if kind is unknown.
     if not filenames:
@@ -280,6 +281,22 @@ def _make_fire(
 # ---------------------------------------------------------------------------
 # BOM lookup helper
 # ---------------------------------------------------------------------------
+
+
+def _row_kind(*dicts: dict) -> str:
+    """Lowered component kind from the first dict that carries one.
+
+    Normalized BOM rows and crossref rows carry ``component_type``; legacy /
+    Proteus-style rows carry ``type``. Guards that only read ``type`` silently
+    skipped every normalized row (a 1000×-wrong resistor once shipped as
+    "partial" because G2 never saw a kind for it).
+    """
+    for d in dicts:
+        for key in ("component_type", "type"):
+            v = d.get(key)
+            if v:
+                return str(v).lower()
+    return ""
 
 
 def _build_bom_by_ref(source_bom: list[dict]) -> dict[str, dict]:
@@ -411,9 +428,7 @@ def _g1_capacitor_value_mismatch(
     for comp in comps:
         ref = str(comp.get("ref_des", "") or "").split(",")[0].strip()
         bom_entry = bom_by_ref.get(ref, {})
-        kind_cap = (bom_entry.get("type") or "").lower() == "capacitor" or (
-            comp.get("type") or ""
-        ).lower() == "capacitor"
+        kind_cap = _row_kind(bom_entry, comp) == "capacitor"
         if not kind_cap:
             continue
         pn = (comp.get("substitute_pn") or "").strip()
@@ -473,7 +488,7 @@ def _g2_resistor_value_drift(
     for comp in comps:
         ref = str(comp.get("ref_des", "") or "").split(",")[0].strip()
         bom_entry = bom_by_ref.get(ref, {})
-        kind = (bom_entry.get("type") or "").lower()
+        kind = _row_kind(bom_entry, comp)
         if kind != "resistor":
             continue
         if comp.get("status") not in ("recommended", "partial"):
@@ -547,9 +562,7 @@ def _g3_capacitor_voltage_downrate(
     for comp in comps:
         ref = str(comp.get("ref_des", "") or "").split(",")[0].strip()
         bom_entry = bom_by_ref.get(ref, {})
-        kind_cap = (bom_entry.get("type") or "").lower() == "capacitor" or (
-            comp.get("type") or ""
-        ).lower() == "capacitor"
+        kind_cap = _row_kind(bom_entry, comp) == "capacitor"
         if not kind_cap:
             continue
         if comp.get("status") != "recommended":
@@ -616,8 +629,8 @@ def _g4_inductor_footprint_overrejection(
     for comp in comps:
         ref = str(comp.get("ref_des", "") or "").split(",")[0].strip()
         bom_entry = bom_by_ref.get(ref, {})
-        kind = (bom_entry.get("type") or "").lower()
-        comp_type = (comp.get("type") or "").lower()
+        kind = _row_kind(bom_entry)
+        comp_type = _row_kind(comp)
         _magnetic_kinds = ("inductor", "transformer", "common_mode_choke", "magnetic")
         if kind not in _magnetic_kinds and comp_type not in _magnetic_kinds:
             continue
@@ -646,16 +659,36 @@ def _g4_inductor_footprint_overrejection(
             )
 
 
+# Row component_type → catalogue file-kind, for the G5c category check.
+# Types with no single catalogue file (semiconductor, controller, varistor)
+# are not checkable and are skipped.
+_ROW_TYPE_TO_FILE_KIND = {
+    "capacitor": "capacitor",
+    "resistor": "resistor",
+    "magnetic": "magnetic",
+    "inductor": "magnetic",
+    "chipBead": "magnetic",
+    "mosfet": "mosfet",
+    "diode": "diode",
+    "connector": "connector",
+}
+
+
 def _g5_substitute_existence(
     comps: list[dict],
     fires: list[dict],
     *,
+    target_manufacturer: str = "",
     tas_data_dir: Path | None = None,
 ) -> None:
-    """G5: Substitute MPN must exist in the TAS catalogue.
+    """G5: Substitute MPN must exist in the TAS catalogue — as the right kind
+    of part, from the target manufacturer.
 
     Catches LLM hallucinations where a plausible-looking MPN does not
-    actually exist in TAS. Also catches product-family descriptions
+    actually exist in TAS (5/5b), is a real part of a DIFFERENT category
+    (5c — e.g. a connector MPN offered as a capacitor substitute), or is a
+    real part of the WRONG manufacturer (5d — a substitution must come from
+    the target's catalogue). Also catches product-family descriptions
     masquerading as MPNs (e.g. 'WCAP-MLCC-4700nF-630V').
     """
     for comp in comps:
@@ -711,6 +744,63 @@ def _g5_substitute_existence(
                     f"substitute '{pn}' not present in catalogue (LLM hallucination)",
                 )
             )
+            continue
+
+        # 5c: Category check — the substitute must be the same KIND of part.
+        # A real-but-wrong-category MPN (a connector offered for a capacitor
+        # row) passes the existence check yet is never a valid substitute.
+        row_kind = _ROW_TYPE_TO_FILE_KIND.get(str(comp.get("component_type") or ""))
+        if row_kind:
+            sub_kind = lookup_mpn_category(pn, tas_data_dir=tas_data_dir)
+            if sub_kind is not None and sub_kind != row_kind:
+                prev_status = comp.get("status")
+                comp["status"] = "no_substitute"
+                comp["substitute_pn"] = "no_substitute"
+                comp["notes"] = (
+                    f"GUARDRAIL G5c: {ref} substitute '{pn}' is catalogued as a "
+                    f"{sub_kind}, but this row is a {comp.get('component_type')}. "
+                    f"Demoted to no_substitute.\n" + (comp.get("notes") or "")
+                )
+                fires.append(
+                    _make_fire(
+                        "5c",
+                        ref,
+                        prev_status,
+                        "no_substitute",
+                        f"substitute '{pn}' is a {sub_kind}, row is a "
+                        f"{comp.get('component_type')} (wrong category)",
+                    )
+                )
+                continue
+
+        # 5d: Manufacturer check — a substitution must come from the target
+        # manufacturer's catalogue. A real part of another manufacturer offered
+        # as the substitute is a hallucinated cross-reference.
+        if target_manufacturer:
+            part = _lookup_tas_part(
+                pn, str(comp.get("component_type") or ""), tas_data_dir=tas_data_dir
+            )
+            part_mfr = (part or {}).get("manufacturer")
+            if isinstance(part_mfr, str) and not _manufacturer_matches(
+                part_mfr, target_manufacturer
+            ):
+                prev_status = comp.get("status")
+                comp["status"] = "no_substitute"
+                comp["substitute_pn"] = "no_substitute"
+                comp["notes"] = (
+                    f"GUARDRAIL G5d: {ref} substitute '{pn}' is catalogued as "
+                    f"{part_mfr}, not {target_manufacturer}. "
+                    f"Demoted to no_substitute.\n" + (comp.get("notes") or "")
+                )
+                fires.append(
+                    _make_fire(
+                        "5d",
+                        ref,
+                        prev_status,
+                        "no_substitute",
+                        f"substitute '{pn}' is a {part_mfr} part, target is {target_manufacturer}",
+                    )
+                )
 
 
 def _g6_voltage_inadequacy_in_notes(
@@ -944,7 +1034,7 @@ def _gfoot_footprint_compatibility(
         src = bom_by_ref.get(ref) or {}
 
         # Skip inductor/semiconductor types.
-        ctype = str(comp.get("type") or "").lower()
+        ctype = _row_kind(comp, src)
         if ctype in (
             "inductor",
             "transformer",
@@ -1333,7 +1423,9 @@ def apply_guardrails(
 
     _g4_inductor_footprint_overrejection(comps, bom_by_ref, fires)
 
-    _g5_substitute_existence(comps, fires, tas_data_dir=tas_data_dir)
+    _g5_substitute_existence(
+        comps, fires, target_manufacturer=target_manufacturer, tas_data_dir=tas_data_dir
+    )
 
     _g6_voltage_inadequacy_in_notes(comps, fires)
 

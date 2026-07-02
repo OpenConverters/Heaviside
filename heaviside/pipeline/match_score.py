@@ -117,7 +117,7 @@ def _mpn_env_index(path: Path) -> dict[str, dict]:
     is populated only after a complete, successful scan; callers pass only
     existing files.
     """
-    cached = _MPN_ENV_INDEX_CACHE.get(path.name)
+    cached = _MPN_ENV_INDEX_CACHE.get(str(path))
     if cached is not None:
         return cached
 
@@ -139,7 +139,7 @@ def _mpn_env_index(path: Path) -> dict[str, dict]:
                     if isinstance(ref, str) and ref.strip():
                         index.setdefault(ref.strip().lower(), env)
     # Only reached after the FULL scan succeeds — never cache a partial index.
-    _MPN_ENV_INDEX_CACHE[path.name] = index
+    _MPN_ENV_INDEX_CACHE[str(path)] = index
     return index
 
 

@@ -10,6 +10,7 @@ SMOKE_TESTS := \
 	tests/unit/test_pipeline_stress.py \
 	tests/unit/test_realism.py \
 	tests/unit/test_guardrails_g8_g9.py \
+	tests/unit/test_no_invented_values.py \
 	tests/unit/test_match_score_keys.py \
 	tests/unit/test_review_verdicts_surfaced.py \
 	tests/unit/test_otto_reguard.py \
