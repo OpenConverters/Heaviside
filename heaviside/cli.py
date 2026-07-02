@@ -459,10 +459,8 @@ def crossref(
     n_rec = sum(1 for c in outcome.components if c.status == "recommended")
     n_part = sum(1 for c in outcome.components if c.status == "partial")
     n_none = sum(1 for c in outcome.components if c.status == "no_substitute")
-    n_keep = sum(1 for c in outcome.components if c.status == "keep_original")
     typer.echo(
-        f"  exact={n_exact} recommended={n_rec} partial={n_part} "
-        f"no_substitute={n_none} keep_original={n_keep}",
+        f"  exact={n_exact} recommended={n_rec} partial={n_part} no_substitute={n_none}",
         err=True,
     )
     if outcome.guardrail_log:
@@ -474,7 +472,6 @@ def crossref(
             "recommended": "~",
             "partial": "?",
             "no_substitute": "X",
-            "keep_original": "=",
         }.get(c.status.value, "?")
         sub = c.substitute_mpn or "-"
         typer.echo(f"  [{status_mark}] {c.ref_des:8s} {c.original_mpn:20s} → {sub}")

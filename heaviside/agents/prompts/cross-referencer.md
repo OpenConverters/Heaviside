@@ -393,11 +393,13 @@ catalogue itself. Set to `null` when the data is not available in TAS.
 
 ## Status Definitions
 
-- `exact` — same MPN from target manufacturer (already theirs)
+Use EXACTLY one of these four — no other value is valid:
+
+- `exact` — same MPN from the target manufacturer (already theirs), or a
+  part kept as-is because it is already the target's
 - `recommended` — meets or exceeds all constraints
 - `partial` — meets critical constraints, minor gap flagged
-- `no_substitute` — no candidate found in TAS
-- `keep_original` — component explicitly excluded from crossref
+- `no_substitute` — no candidate found in the internal catalogue
 
 ## Simulation Stress Data
 

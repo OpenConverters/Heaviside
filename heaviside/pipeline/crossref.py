@@ -32,11 +32,56 @@ class SimDerivedStress:
 
 
 class SubstitutionStatus(StrEnum):
+    """The complete, closed set of cross-reference verdicts a row can carry.
+
+    This enum is the single source of truth — every status that reaches the
+    report, the API, the CLI or the summary counts MUST be one of these. Use
+    :meth:`coerce` to turn a raw string into a member so an unknown/typo value
+    fails loudly instead of silently rendering as itself.
+
+    ``EXACT`` absorbs the former ``keep_original`` verdict: a part that is kept
+    as-is (already the target manufacturer, or a not-fitted placeholder) has its
+    substitute equal to its original, which is exactly what ``exact`` means. The
+    "why" (already-target / not-fitted) lives in the row's notes, not in a
+    separate status — the user does not care about that distinction.
+    """
+
     EXACT = "exact"
     RECOMMENDED = "recommended"
     PARTIAL = "partial"
     NO_SUBSTITUTE = "no_substitute"
-    KEEP_ORIGINAL = "keep_original"
+
+    @classmethod
+    def coerce(cls, raw: object) -> "SubstitutionStatus":
+        """Normalise a raw status into a canonical member.
+
+        Accepts a member, a canonical string, or a known legacy alias
+        (``keep_original``/``already_target`` → ``exact``). Raises ``ValueError``
+        on anything else so a typo or an invented status can never slip into
+        output — the enum is the closed contract.
+        """
+        if isinstance(raw, cls):
+            return raw
+        s = str(raw or "").strip()
+        s = _STATUS_ALIASES.get(s, s)
+        try:
+            return cls(s)
+        except ValueError:
+            raise ValueError(
+                f"unknown substitution status {raw!r}; expected one of "
+                f"{[m.value for m in cls]} (or a legacy alias)"
+            ) from None
+
+
+# Legacy / internal raw statuses folded into a canonical member by
+# ``SubstitutionStatus.coerce``. Kept out of the enum so they can never be
+# emitted as a fresh status, but still accepted from old telemetry / the
+# internal pre-classification marker.
+_STATUS_ALIASES: dict[str, str] = {
+    "keep_original": "exact",
+    "already_target": "exact",
+    "keep": "exact",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +158,7 @@ class CrossRefOutcome:
                     substitute_value=row.get("substitute_value", ""),
                     substitute_voltage=row.get("substitute_voltage", ""),
                     substitute_package=row.get("substitute_package", ""),
-                    status=SubstitutionStatus(row.get("status", "no_substitute")),
+                    status=SubstitutionStatus.coerce(row.get("status", "no_substitute")),
                     match_detail=row.get("match_detail"),
                     match_score=row.get("match_score"),
                     notes=row.get("notes", ""),

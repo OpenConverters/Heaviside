@@ -86,13 +86,14 @@ def _sort_key(ref_des: str) -> tuple[str, int]:
 
 
 def _status_label(status: str, target: str) -> tuple[str, str]:
-    """(display_text, css_class)"""
+    """(display_text, css_class). ``exact`` covers both an identical part and a
+    part kept as-is (already the target manufacturer) — the notes column carries
+    the 'why'."""
     return {
-        "exact": ("[OK] Recommended", ""),
+        "exact": ("[OK] Exact", ""),
         "recommended": ("[OK] Recommended", ""),
         "partial": ("~ Partial", ""),
         "no_substitute": ("- No substitute", "conf-muted"),
-        "keep_original": (f"- (already {target})", "conf-muted"),
     }.get(status, (status, ""))
 
 
@@ -100,7 +101,7 @@ def _confidence(comp: dict[str, Any]) -> tuple[str, str]:
     """(label, css_class)"""
     status = comp.get("status", "")
     notes = (comp.get("notes") or "").lower()
-    if status in ("no_substitute", "keep_original"):
+    if status == "no_substitute":
         return "-", "conf-muted"
     if status == "exact":
         return "HIGH", "conf-high"
@@ -294,14 +295,13 @@ def render_crossref_html(
     # ── Stats ────────────────────────────────────────────────────────────────
     total = len(comps)
     status_cnt = Counter(c["status"] for c in comps)
+    # 'exact' now includes parts kept as-is (already the target manufacturer /
+    # not fitted) — their substitute IS the original, so they count as covered.
     already = status_cnt.get("exact", 0)
     newly_repl = status_cnt.get("recommended", 0) + status_cnt.get("partial", 0)
     no_sub = status_cnt.get("no_substitute", 0)
-    keep = status_cnt.get("keep_original", 0)
-    # "trivial" = keep_original (no-change)
-    scope = total - keep
     coverage = already + newly_repl
-    cov_pct = f"{100 * coverage / scope:.0f}%" if scope else "N/A"
+    cov_pct = f"{100 * coverage / total:.0f}%" if total else "N/A"
 
     parts: list[str] = []
     parts.append("<!DOCTYPE html><html><head><meta charset='utf-8'>")
@@ -325,10 +325,9 @@ def render_crossref_html(
     parts.append('<table class="summary-tbl"><colgroup><col><col></colgroup>')
     rows_summary = [
         ("Components reviewed", str(total)),
-        (f"Already {target} (no change required)", str(already + keep)),
-        ("Trivial passives (0Ω jumpers / DNP)", "—"),
-        ("Substitutable scope (real engineering work)", str(scope)),
-        (f"{target} substitutions offered", f"{coverage} ({cov_pct} of substitutable scope)"),
+        (f"Exact / already {target} (no change required)", str(already)),
+        ("Newly substituted (recommended + partial)", str(newly_repl)),
+        (f"{target} coverage", f"{coverage} ({cov_pct} of components reviewed)"),
         ("No equivalent available", str(no_sub)),
     ]
     for i, (metric, value) in enumerate(rows_summary):
@@ -336,9 +335,9 @@ def render_crossref_html(
         parts.append(_tr([_e(metric), _e(value)], cls=cls))
     parts.append("</table>")
     parts.append(
-        '<p class="coverage-line"><em>Coverage % is calculated against the substitutable scope '
-        "so it reflects actual engineering substitution work, "
-        f"NOT pre-existing alignment with the {_e(target)} catalogue.</em></p>"
+        '<p class="coverage-line"><em>Coverage counts parts that are exact (kept as-is because '
+        f"they are already {_e(target)}) plus parts newly substituted from the {_e(target)} "
+        "catalogue.</em></p>"
     )
     parts.append('<hr class="sep">')
 

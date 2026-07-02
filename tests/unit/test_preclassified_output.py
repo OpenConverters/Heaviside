@@ -24,7 +24,10 @@ def test_all_preclassified_still_emits_components():
     st = cp._stage3_crossref(st)  # empty bom_for_llm → early-return path
     out = CrossRefOutcome.from_state(st)
     assert len(out.components) == 2, "kept_original components must not be dropped"
-    assert all(c.status.value == "keep_original" for c in out.components)
+    # keep_original is folded into 'exact' at the output boundary — a kept part
+    # (already the target manufacturer) is an exact match to itself. The user
+    # doesn't care about the keep_original/exact distinction.
+    assert all(c.status.value == "exact" for c in out.components)
 
 
 def test_merge_is_idempotent():

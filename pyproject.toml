@@ -39,6 +39,8 @@ dependencies = [
   # Datasheets / PDF
   "pdfplumber>=0.11",
   "pymupdf>=1.24",
+  # BOM ingest (.xlsx upload path in pipeline/bom_import.py)
+  "openpyxl>=3.1",
   # Component scraping (ported from Proteus)
   "patchright>=1.46",
   "beautifulsoup4>=4.12",
