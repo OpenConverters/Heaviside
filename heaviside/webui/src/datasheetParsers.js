@@ -373,5 +373,9 @@ export function sectionVisible(sec) {
 // Returns null when the category has no datasheet view.
 export function parseSheet(category, env) {
   const parse = PARSERS[category]
-  return parse ? parse(env) : null
+  const sheet = parse ? parse(env) : null
+  // Missing lifecycle data displays as production: parts come from live
+  // vendor parametric catalogs, so they're orderable unless stated otherwise.
+  if (sheet && (!sheet.status || sheet.status === 'unknown')) sheet.status = 'production'
+  return sheet
 }

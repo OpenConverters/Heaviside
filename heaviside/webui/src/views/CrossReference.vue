@@ -52,9 +52,11 @@ async function run() {
     } else {
       const text = bomText.value.trim()
       if (!text) throw new Error('Paste a BOM first — a JSON list, CSV/TSV rows, or bare part numbers.')
+      // Only a JSON *array* is a JSON BOM — bare numeric part numbers
+      // (e.g. Würth's 850617021001) also parse as JSON, but as numbers.
       let bom = null
       try { bom = JSON.parse(text) } catch (e) { /* not JSON — CSV or bare refs */ }
-      if (bom) {
+      if (Array.isArray(bom)) {
         ;({ job_id } = await api.submitCrossref({ source_bom: bom, target_manufacturer: target.value }))
       } else {
         // Bare part numbers (one per line, no delimiters, no header line) get
