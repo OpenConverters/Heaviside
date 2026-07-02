@@ -2054,6 +2054,17 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
                     row["substitute_pn"] = new_pn
                     row["status"] = new_status if new_status else "recommended"
                     row["notes"] = f"Otto-prompted re-search: {fix.get('notes', '')}"
+                    # Carry the substitute's own fields when the LLM supplied
+                    # them, so param-check/footprint don't read the stale
+                    # no_substitute placeholders. Never fabricate — only copy
+                    # what the retry row actually provided.
+                    for field_name in (
+                        "substitute_value",
+                        "substitute_voltage",
+                        "substitute_package",
+                    ):
+                        if fix.get(field_name):
+                            row[field_name] = fix[field_name]
                     applied += 1
                     break
 
@@ -2064,6 +2075,13 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
             len(overturned),
             applied,
         )
+        # Re-gate the applied Otto substitutions — critically G5 (hallucination).
+        # Stage 4's guardrails ran BEFORE this stage, so without re-running them
+        # an invented-but-plausible Otto MPN would reach review/report unchecked
+        # (G5 demotes any substitute MPN absent from the catalogue, and G5b
+        # re-searches it). This covers the correction-loop Otto call too.
+        if applied:
+            state = _stage4_guardrails(state)
     except LLMCallError as exc:
         state.diagnostics.append(f"otto challenge skipped: {exc}")
     return state
