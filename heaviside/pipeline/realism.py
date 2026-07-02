@@ -523,6 +523,23 @@ def _unavailable(name: str, reason: str) -> CheckResult:
     return CheckResult(name=name, status=CheckStatus.UNAVAILABLE, detail=reason)
 
 
+def _first_present(m: Mapping[str, Any], *keys: str) -> Any:
+    """First value among ``keys`` that is present (``is not None``).
+
+    NOT an ``or``-chain: a measured ``0.0`` V output (a dead converter) is a
+    real value the gate must FAIL on, not a falsy sentinel to skip past —
+    skipping it silently downgrades a FAIL to an UNAVAILABLE the verdict never
+    fails on. (pin/pout keep the ``or``-chain deliberately: their check rejects
+    non-positive power, and a present-but-0.0 would otherwise raise mid-gate
+    rather than resolve to UNAVAILABLE.)
+    """
+    for k in keys:
+        val = m.get(k)
+        if val is not None:
+            return val
+    return None
+
+
 def _not_applicable(name: str, reason: str) -> CheckResult:
     return CheckResult(name=name, status=CheckStatus.NOT_APPLICABLE, detail=reason)
 
@@ -762,7 +779,7 @@ def evaluate_tas(
     if isinstance(sim, Mapping):
         for v in sim.values():
             if isinstance(v, Mapping):
-                cand = v.get("vout") or v.get("output_voltage")
+                cand = _first_present(v, "vout", "output_voltage")
                 if isinstance(cand, (int, float)):
                     vout_actual = float(cand)
                     break

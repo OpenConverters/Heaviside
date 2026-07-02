@@ -291,6 +291,28 @@ class TestOrchestratorContract:
         }.issubset(na)
 
 
+class TestFalsySentinelResolution:
+    """A measured 0.0 V output (dead converter) must FAIL regulation, not be
+    treated as a missing value and downgraded to UNAVAILABLE."""
+
+    def test_zero_vout_fails_regulation_not_unavailable(self):
+        tas = _buck_shaped_tas()
+        # No controller stage in _buck_shaped_tas, so the check reaches the
+        # FAIL branch (not the open-loop NOT_APPLICABLE carve-out).
+        tas["simulation_results"] = {"op0": {"vout": 0.0}}
+        spec = {
+            "operatingPoints": [
+                {"outputVoltages": [12.0], "outputCurrents": [5.0]},
+            ]
+        }
+        r = evaluate_tas(tas, topology="buck", spec=spec)
+        reg = next(c for c in r.checks if c.name == "output_voltage_regulation")
+        assert reg.status is CheckStatus.FAIL, (
+            f"0.0 V vout must FAIL regulation, got {reg.status} ({reg.detail})"
+        )
+        assert r.verdict is RealismVerdict.FAIL
+
+
 class TestOrchestratorVerdict:
     def test_all_unavailable_is_incomplete(self):
         r = evaluate_tas(_buck_shaped_tas(), topology="buck")
