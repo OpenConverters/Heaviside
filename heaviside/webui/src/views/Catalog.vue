@@ -59,12 +59,13 @@ const TECH_LABELS = {
     'thin-film-silicon': 'Thin Film',
   },
   resistors:  {},
-  magnetics:  { inductor: 'Inductor', chipBead: 'Chip Bead', commonModeChoke: 'CMC' },
+  magnetics:  { inductor: 'Inductor', chipBead: 'Chip Bead', commonModeChoke: 'CMC',
+                transformer: 'Transformer', coupledInductor: 'Coupled Inductor' },
   connectors: {
     boardToBoard: 'Board-to-Board', dataInterface: 'Data Interface',
     pinHeaderSocket: 'Pin Header/Socket', wireToBoard: 'Wire-to-Board',
     circular: 'Circular', terminalBlock: 'Terminal Block', fpcFfc: 'FPC/FFC',
-    cardEdge: 'Card Edge', power: 'Power',
+    cardEdge: 'Card Edge', power: 'Power', rf: 'RF',
   },
 }
 
@@ -161,7 +162,7 @@ async function load() {
     const j = await api.catalog(category.value, buildOpts())
     rows.value = j.rows
     total.value = j.total
-  } catch (e) { error.value = String(e) }
+  } catch (e) { error.value = e?.message ?? String(e) }
   finally { loading.value = false }
 }
 
@@ -172,7 +173,7 @@ async function loadMore() {
     const j = await api.catalog(category.value, buildOpts())
     rows.value.push(...j.rows)
     total.value = j.total
-  } catch (e) { error.value = String(e) }
+  } catch (e) { error.value = e?.message ?? String(e) }
   finally { loadingMore.value = false }
 }
 
@@ -403,7 +404,7 @@ onUnmounted(() => window.removeEventListener('hashchange', parseHash))
                  :value="row.status || '—'" class="cat-status" />
           </div>
           <div class="cat-mfr">
-            {{ row.manufacturer }}<span v-if="row.tech" class="cat-tech"> · {{ row.tech }}</span>
+            {{ row.manufacturer }}<span v-if="row.tech" class="cat-tech"> · {{ techLabels[row.tech] || row.tech }}</span>
           </div>
           <div v-if="row.p1 || row.p2 || row.p3" class="cat-specs">
             <div v-if="row.p1" class="cat-kv">

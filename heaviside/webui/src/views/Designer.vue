@@ -9,7 +9,7 @@ const advanced = ref(false)
 const d = ref({
   vinMin: 9, vinNom: 12, vinMax: 16,
   outputs: [{ vout: 3.3, iout: 3 }],
-  ambient: 25, ripple: 0.3, topology: null,
+  ambient: 25, topology: null,
 })
 function addOutput() { d.value.outputs.push({ vout: 5, iout: 1 }) }
 function removeOutput(i) { d.value.outputs.splice(i, 1) }
@@ -23,16 +23,22 @@ const error = ref(null)
 onMounted(async () => {
   try {
     const list = await api.topologies()
-    for (const t of list) topologies.value.push({ label: t.name.replace(/_/g, ' '), value: t.name })
+    for (const t of list) {
+      topologies.value.push({
+        label: t.name.replace(/_/g, ' '),
+        value: t.name,
+        // AC-input topologies (PFC / Vienna) can't be described by this
+        // DC-Vin form yet — selectable once the spec grows an AC entry.
+        acInput: t.family === 'ac_dc',
+      })
+    }
   } catch (e) { /* Auto still available */ }
 })
 
 function buildSpec() {
   // Minimal input: Vin window + output rails + ambient. The designer chooses
   // the switching frequency (from the magnetic's total-loss sweep), sizes the
-  // inductor, and seeds efficiency / diode drop — so those are no longer form
-  // inputs. currentRippleRatio is the one optional magnetic knob MKF uses to
-  // derive L from the operating point.
+  // inductor, and seeds efficiency / diode drop — so those are not form inputs.
   return {
     inputVoltage: { minimum: d.value.vinMin, nominal: d.value.vinNom, maximum: d.value.vinMax },
     operatingPoints: [{
@@ -40,19 +46,42 @@ function buildSpec() {
       outputCurrents: d.value.outputs.map((o) => o.iout),
       ambientTemperature: d.value.ambient,
     }],
-    currentRippleRatio: d.value.ripple,
   }
 }
 
+// Reject impossible specs before they reach the pipeline — an inverted or
+// incomplete Vin window otherwise burns several stages before failing.
+function validate() {
+  const { vinMin, vinNom, vinMax, ambient, outputs } = d.value
+  if (vinMin == null || vinNom == null || vinMax == null)
+    return 'Fill in all three input-voltage fields.'
+  if (vinMin <= 0) return 'Vin min must be greater than 0 V.'
+  if (!(vinMin <= vinNom && vinNom <= vinMax))
+    return `Input voltage window must satisfy min ≤ nom ≤ max (got ${vinMin} / ${vinNom} / ${vinMax} V).`
+  for (const [i, o] of outputs.entries()) {
+    if (o.vout == null || o.iout == null) return `OUT${i}: fill in Vout and Iout.`
+    if (o.vout <= 0 || o.iout <= 0) return `OUT${i}: Vout and Iout must be greater than 0.`
+  }
+  if (ambient == null) return 'Ambient temperature is required.'
+  return null
+}
+
+function pickTopology(t) {
+  if (t.acInput) return   // disabled until the form can describe an AC input
+  d.value.topology = t.value
+}
+
 async function run() {
-  error.value = null; running.value = true
+  error.value = validate()
+  if (error.value) return
+  running.value = true
   try {
     const body = { spec: buildSpec(), candidates_per_topology: 3 }
     if (d.value.topology) body.topologies = [d.value.topology]
     const { job_id } = await api.submitDesignClosedLoop(body)
     myJobs.add(job_id)
     location.hash = `#/jobs/${job_id}`
-  } catch (e) { error.value = String(e) }
+  } catch (e) { error.value = e?.message ?? String(e) }
   finally { running.value = false }
 }
 </script>
@@ -104,9 +133,11 @@ async function run() {
     </div>
     <div class="topo-grid">
       <span v-for="t in topologies" :key="String(t.value)" class="chip"
-            :class="{ sel: d.topology === t.value }" @click="d.topology = t.value">
+            :class="{ sel: d.topology === t.value, off: t.acInput }"
+            :title="t.acInput ? 'AC-input topology — needs an AC input spec, which this form can\'t describe yet' : null"
+            @click="pickTopology(t)">
         <span class="chip-dot" v-if="t.value !== null"></span>
-        {{ t.value === null ? '✦ Auto-select' : t.label }}
+        {{ t.value === null ? '✦ Auto-select' : t.label }}<span v-if="t.acInput" class="chip-ac mono"> AC</span>
       </span>
     </div>
 
@@ -141,4 +172,8 @@ async function run() {
 .adv-toggle i { font-size: .7rem; }
 .adv-toggle:hover { color: var(--p-surface-100); }
 .adv-toggle .muted { color: var(--p-surface-400); }
+/* AC-input topologies aren't selectable until the spec has an AC entry */
+.chip.off { opacity: .45; cursor: not-allowed; }
+.chip.off:hover { border-color: var(--p-surface-700); color: var(--p-surface-300); transform: none; }
+.chip-ac { font-size: .6rem; color: var(--p-surface-400); letter-spacing: .06em; }
 </style>

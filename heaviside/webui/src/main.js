@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import PrimeVue from 'primevue/config'
+import ConfirmationService from 'primevue/confirmationservice'
 import 'primeicons/primeicons.css'
 import './style.css'
 import { OmAura } from './theme.js'
@@ -11,4 +12,5 @@ createApp(App)
   .use(PrimeVue, {
     theme: { preset: OmAura, options: { darkModeSelector: '.om-dark' } },
   })
+  .use(ConfirmationService)
   .mount('#app')

@@ -27,6 +27,15 @@ function dsOpen(mpn, componentType) {
   const cat = inferCategory(componentType)
   if (mpn && cat) openDatasheet(mpn, cat)
 }
+
+// The pipeline's why-string starts with the status word ("partial: deviates
+// on package…"); strip it where the status is already shown alongside.
+function whyText(data) {
+  const w = data.match_detail?.why || data.notes || ''
+  return data.status && w.toLowerCase().startsWith(`${data.status.toLowerCase()}:`)
+    ? w.slice(data.status.length + 1).trim()
+    : w
+}
 </script>
 
 <template>
@@ -91,13 +100,13 @@ function dsOpen(mpn, componentType) {
         </Column>
         <Column header="Why">
           <template #body="{ data }">
-            <span class="why-line">{{ data.match_detail?.why || data.notes || '—' }}</span>
+            <span class="why-line">{{ whyText(data) || '—' }}</span>
           </template>
         </Column>
         <template #expansion="{ data }">
           <div class="mx-detail">
             <div class="mx-why-row">
-              <div class="mx-why"><b>Why {{ data.status }}:</b> {{ data.match_detail?.why || data.notes }}</div>
+              <div class="mx-why"><b>Why {{ data.status }}:</b> {{ whyText(data) }}</div>
               <div v-if="inferCategory(data.component_type)" class="mx-ds-btns">
                 <Button v-if="data.original_mpn" icon="pi pi-file" :label="data.original_mpn" size="small"
                         text severity="secondary" @click="dsOpen(data.original_mpn, data.component_type)" />

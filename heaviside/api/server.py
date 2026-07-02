@@ -1923,12 +1923,18 @@ def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
             if not sub:
                 continue
             for inner_key in list(sub.keys()):
-                mi = sub[inner_key].get("manufacturerInfo") or sub.get("manufacturerInfo")
-                if mi is None:
-                    mi = sub.get("manufacturerInfo")
+                # Inner values may be lists (e.g. distributorsInfo) — only
+                # dicts can nest a manufacturerInfo.
+                inner = sub[inner_key]
+                mi = (
+                    inner.get("manufacturerInfo") if isinstance(inner, dict) else None
+                ) or sub.get("manufacturerInfo")
                 if mi is None:
                     break
-                ref = mi.get("reference") or mi.get("name", "")
+                # Capacitors / resistors carry the MPN in part.partNumber, not
+                # in manufacturerInfo.reference.
+                part = (mi.get("datasheetInfo") or {}).get("part") or {}
+                ref = mi.get("reference") or part.get("partNumber") or mi.get("name", "")
                 if ref.lower() == mpn_lo:
                     return {"category": category, "mpn": mpn, "data": env}
     raise HTTPException(status_code=404, detail=f"MPN '{mpn}' not found in {category}")

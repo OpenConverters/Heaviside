@@ -28,12 +28,16 @@ const TECH_LABELS = {
   'tantalum-mno2': 'Tantalum MnO₂', 'tantalum-polymer': 'Tantalum Poly', 'tantalum-wet': 'Tantalum Wet',
   'supercapacitor-edlc': 'Supercap', 'thin-film-silicon': 'Thin Film',
   inductor: 'Inductor', transformer: 'Transformer', chipBead: 'Chip Bead', commonModeChoke: 'CMC',
+  coupledInductor: 'Coupled Inductor',
   boardToBoard: 'Board-to-Board', dataInterface: 'Data Interface', pinHeaderSocket: 'Pin Header/Socket',
   wireToBoard: 'Wire-to-Board', circular: 'Circular', terminalBlock: 'Terminal Block',
-  fpcFfc: 'FPC/FFC', cardEdge: 'Card Edge', power: 'Power',
+  fpcFfc: 'FPC/FFC', cardEdge: 'Card Edge', power: 'Power', rf: 'RF',
 }
 function techName(t) {
-  return TECH_LABELS[t] || t.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  return TECH_LABELS[t] || t
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')   // split camelCase enums
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase())
 }
 
 // ── Data ─────────────────────────────────────────────────────────────────────
@@ -86,7 +90,7 @@ onMounted(async () => {
     data.value = await api.catalogOverview()
     countUp(data.value.total)
   } catch (e) {
-    error.value = String(e)
+    error.value = e?.message ?? String(e)
   } finally {
     loading.value = false
   }
@@ -355,7 +359,7 @@ onMounted(async () => {
 .ov-mfr-n { font-size: .68rem; color: var(--p-surface-400); text-align: right; }
 
 /* parameter coverage */
-.ov-cover-row { display: grid; grid-template-columns: 56px 1fr; align-items: baseline; gap: .5rem; }
+.ov-cover-row { display: grid; grid-template-columns: minmax(56px, max-content) 1fr; align-items: baseline; gap: .5rem; }
 .ov-cover-k { font-size: .66rem; font-weight: 600; color: var(--p-surface-400);
   text-transform: uppercase; letter-spacing: .04em; }
 .ov-cover-v { font-size: .74rem; color: var(--p-surface-100); }

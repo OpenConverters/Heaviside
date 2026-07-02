@@ -4,6 +4,8 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Tag from 'primevue/tag'
 import Button from 'primevue/button'
+import ConfirmDialog from 'primevue/confirmdialog'
+import { useConfirm } from 'primevue/useconfirm'
 import ResultViewer from '../components/ResultViewer.vue'
 import PipelineFlow from '../components/PipelineFlow.vue'
 import { api, myJobs } from '../api.js'
@@ -12,8 +14,11 @@ import { jobSeverity } from '../status.js'
 // open-job: a job_id from a #/jobs/<id> deep link — auto-opened on mount.
 const props = defineProps({ openJob: { type: String, default: null } })
 
+const confirm = useConfirm()
+
 const jobs = ref([])
 const loading = ref(false)
+const loaded = ref(false)       // first fetch finished — distinguishes empty from loading
 const expanded = ref({})        // PrimeVue row expansion state (keyed by job_id)
 let timer = null
 
@@ -36,13 +41,25 @@ async function load() {
       if (job && !expanded.value[job.job_id]) expanded.value[job.job_id] = job
     }
   } catch (e) { /* keep prior */ }
-  finally { loading.value = false }
+  finally { loading.value = false; loaded.value = true }
 }
 const isActive = (s) => s === 'queued' || s === 'running'
 async function act(job) {
-  if (isActive(job.status)) await api.cancelJob(job.job_id)
-  else { await api.deleteJob(job.job_id); myJobs.remove(job.job_id) }
-  load()
+  if (isActive(job.status)) { await api.cancelJob(job.job_id); load(); return }
+  // Deletion is irreversible (drops the result + report) and this button sits
+  // where Cancel was a poll earlier — always confirm.
+  confirm.require({
+    header: 'Delete job',
+    message: `Delete job ${job.job_id}? Its result and report are removed permanently.`,
+    icon: 'pi pi-trash',
+    rejectProps: { label: 'Keep', severity: 'secondary', outlined: true },
+    acceptProps: { label: 'Delete', severity: 'danger' },
+    accept: async () => {
+      await api.deleteJob(job.job_id)
+      myJobs.remove(job.job_id)
+      load()
+    },
+  })
 }
 // Open a result viewer for a finished job.
 async function viewById(jobId, kind) {
@@ -56,6 +73,9 @@ async function viewById(jobId, kind) {
     viewer.value.kind = k === 'design' ? 'design' : 'crossref'
     viewer.value.title = (k || 'job') + ' · ' + jobId
     viewer.value.result = job.result || {}
+  } catch (e) {
+    viewer.value.kind = ''
+    viewer.value.title = `job · ${jobId} — ${e?.message ?? e}`
   } finally { viewer.value.loading = false }
 }
 const view = (job) => viewById(job.job_id, job.kind)
@@ -127,10 +147,11 @@ onUnmounted(() => clearInterval(timer))
       <template #expansion="{ data }">
         <PipelineFlow :stages="data.stages || []" :status="data.status" />
       </template>
-      <template #empty><span class="muted">No jobs yet.</span></template>
+      <template #empty><span class="muted">{{ loaded ? 'No jobs yet.' : 'Loading…' }}</span></template>
     </DataTable>
   </div>
 
+  <ConfirmDialog :pt="{ root: { class: 'om-dark' } }" />
   <ResultViewer v-model:visible="viewer.visible" :title="viewer.title"
                 :kind="viewer.kind" :result="viewer.result" :loading="viewer.loading"
                 :pdf-url="viewer.jobId ? api.reportPdfUrl(viewer.jobId) : ''" />

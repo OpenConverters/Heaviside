@@ -152,11 +152,15 @@ header.hv {
 @media (max-width: 760px) { .grid3, .grid4 { grid-template-columns: 1fr 1fr; } }
 .fld-label { display: block; font-family: var(--mono); font-size: .64rem; text-transform: uppercase;
   letter-spacing: .1em; color: var(--p-surface-400); font-weight: 500; margin-bottom: .32rem; }
+.field { min-width: 0; }
 .field > .p-inputnumber, .field > .p-select, .field > .p-inputtext,
 .field > .p-textarea { width: 100%; }
+/* The inner input keeps its intrinsic ~20ch width unless told otherwise,
+   which forces horizontal overflow on narrow viewports. */
+.field .p-inputnumber-input { width: 100%; min-width: 0; }
 
 /* ============== Output rails ============== */
-.rail { display: flex; align-items: flex-end; gap: .7rem; margin-bottom: .5rem; }
+.rail { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .7rem; margin-bottom: .5rem; }
 .rail .field { flex: 1; margin: 0; }
 .rail-tag { align-self: center; font-family: var(--mono); font-size: .7rem; font-weight: 600; color: var(--ch1);
   background: rgba(60, 224, 200, .1); border: 1px solid rgba(60, 224, 200, .35);

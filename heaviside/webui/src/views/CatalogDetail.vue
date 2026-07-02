@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
+import { parseSheet, sectionVisible, fmtMTM, hasAny } from '../datasheetParsers.js'
 
 const props = defineProps({ mpn: String, category: String })
 const emit = defineEmits(['close'])
@@ -17,292 +18,12 @@ onMounted(async () => {
     const r = await fetch(`/catalog/${props.category}/${encodeURIComponent(props.mpn)}/detail`)
     if (!r.ok) throw new Error(`${r.status}`)
     data.value = await r.json()
-  } catch (e) { error.value = String(e) }
+  } catch (e) { error.value = e?.message ?? String(e) }
   finally { loading.value = false }
 })
 
-// ── Value formatters ──────────────────────────────────────────────────────────
-function fmtVal(v, digits = 3) {
-  if (v == null) return null
-  const abs = Math.abs(v)
-  if (abs === 0) return '0'
-  if (abs >= 1e9) return `${+(v / 1e9).toPrecision(digits)} G`
-  if (abs >= 1e6) return `${+(v / 1e6).toPrecision(digits)} M`
-  if (abs >= 1e3) return `${+(v / 1e3).toPrecision(digits)} k`
-  if (abs >= 1)   return `${+v.toPrecision(digits)} `
-  if (abs >= 1e-3) return `${+(v * 1e3).toPrecision(digits)} m`
-  if (abs >= 1e-6) return `${+(v * 1e6).toPrecision(digits)} µ`
-  if (abs >= 1e-9) return `${+(v * 1e9).toPrecision(digits)} n`
-  if (abs >= 1e-12) return `${+(v * 1e12).toPrecision(digits)} p`
-  return `${+v.toPrecision(digits)} `
-}
-function fmtU(v, unit) { const s = fmtVal(v); return s != null ? `${s}${unit}` : '—' }
-function scalar(v) {
-  if (v == null) return null
-  if (typeof v === 'number') return v
-  return v.nominal ?? v.typical ?? v.maximum ?? v.minimum ?? null
-}
-function minTypMax(v) {
-  if (v == null) return [null, null, null]
-  if (typeof v === 'number') return [null, v, null]
-  return [v.minimum ?? null, v.nominal ?? v.typical ?? null, v.maximum ?? null]
-}
-function fmtMTM([mn, ty, mx], unit) {
-  if (!unit) return { min: mn ?? '—', typ: ty ?? '—', max: mx ?? '—' }
-  return {
-    min: mn != null ? fmtU(mn, unit) : '—',
-    typ: ty != null ? fmtU(ty, unit) : '—',
-    max: mx != null ? fmtU(mx, unit) : '—',
-  }
-}
-function hasAny(mtm, unit) {
-  const f = fmtMTM(mtm, unit)
-  return f.min !== '—' || f.typ !== '—' || f.max !== '—'
-}
-
-// ── Per-category parsers (same logic as ComponentDatasheet.vue) ───────────────
-function parseMosfet(env) {
-  const mi = env?.semiconductor?.mosfet?.manufacturerInfo ?? {}
-  const di = mi.datasheetInfo ?? {}
-  const p  = di.part ?? {}
-  const el = di.electrical ?? {}
-  const th = di.thermal ?? {}
-  const me = di.mechanical ?? {}
-  return {
-    title: mi.reference ?? mi.name ?? '—',
-    manufacturer: mi.name ?? '—',
-    status: mi.status,
-    datasheetUrl: mi.datasheetUrl,
-    tags: [p.technology, p.subType, p.case].filter(Boolean),
-    headline: [
-      { sym: 'V_DS',     label: 'Drain-Source Voltage',    val: fmtU(el.drainSourceVoltage, 'V') },
-      { sym: 'R_DS(on)', label: 'On Resistance',           val: fmtU(el.onResistance, 'Ω') },
-      { sym: 'I_D',      label: 'Continuous Drain Current', val: fmtU(el.continuousDrainCurrent, 'A') },
-    ],
-    sections: [
-      { title: 'Absolute Maximum Ratings', rows: [
-        { param: 'Drain-Source Voltage',    sym: 'V_DS',      mtm: [null, el.drainSourceVoltage, null], unit: 'V' },
-        { param: 'Gate-Source Voltage',     sym: 'V_GS',      mtm: [null, el.gateSourceVoltageMax, null], unit: 'V' },
-        { param: 'Continuous Drain Current', sym: 'I_D',      mtm: [null, el.continuousDrainCurrent, null], unit: 'A' },
-        { param: 'Pulsed Drain Current',    sym: 'I_D(pulse)', mtm: [null, el.pulsedDrainCurrent, null], unit: 'A' },
-        { param: 'Power Dissipation',       sym: 'P_D',       mtm: [null, el.powerDissipation, null], unit: 'W' },
-      ]},
-      { title: 'Static Characteristics', rows: [
-        { param: 'On Resistance',           sym: 'R_DS(on)', mtm: minTypMax(el.onResistance), unit: 'Ω', note: el.onResistanceVgs ? `@ Vgs=${el.onResistanceVgs}V, Id=${el.onResistanceId}A` : null },
-        { param: 'Gate Threshold Voltage',  sym: 'V_GS(th)', mtm: minTypMax(el.gateThresholdVoltage), unit: 'V' },
-        { param: 'Body Diode Forward Voltage', sym: 'V_SD', mtm: [null, el.bodyDiodeForwardVoltage, null], unit: 'V' },
-      ]},
-      { title: 'Dynamic Characteristics', rows: [
-        { param: 'Input Capacitance',             sym: 'C_iss', mtm: [null, scalar(el.inputCapacitance), null], unit: 'F' },
-        { param: 'Output Capacitance',            sym: 'C_oss', mtm: [null, scalar(el.outputCapacitance), null], unit: 'F' },
-        { param: 'Reverse Transfer Capacitance',  sym: 'C_rss', mtm: [null, scalar(el.reverseTransferCapacitance), null], unit: 'F' },
-        { param: 'Total Gate Charge',             sym: 'Q_g',   mtm: [null, scalar(el.totalGateCharge), null], unit: 'C' },
-        { param: 'Gate-Source Charge',            sym: 'Q_gs',  mtm: [null, scalar(el.gateSourceCharge), null], unit: 'C' },
-        { param: 'Gate-Drain Charge',             sym: 'Q_gd',  mtm: [null, scalar(el.gateDrainCharge), null], unit: 'C' },
-        { param: 'Reverse Recovery Charge',       sym: 'Q_rr',  mtm: [null, scalar(el.reverseRecoveryCharge), null], unit: 'C' },
-        { param: 'Figure of Merit',               sym: 'FOM',   mtm: [null, scalar(el.figureOfMerit), null], unit: 'Ω·C' },
-      ]},
-      { title: 'Thermal', rows: [
-        { param: 'Junction-to-Case Resistance',   sym: 'R_θJC',    mtm: [null, th.thermalResistanceJunctionCase, null], unit: '°C/W' },
-        { param: 'Junction-to-Ambient Resistance', sym: 'R_θJA',   mtm: [null, th.thermalResistanceJunctionAmbient, null], unit: '°C/W' },
-        { param: 'Max Junction Temperature',      sym: 'T_J(max)', mtm: [null, th.junctionTemperatureMax, null], unit: '°C' },
-      ]},
-      { title: 'Package', rows: [
-        { param: 'Assembly', sym: '', mtm: [null, null, null], str: me.assemblyType ?? me.case ?? '—' },
-        { param: 'Length',   sym: 'L', mtm: minTypMax(me.length), unit: 'm' },
-        { param: 'Width',    sym: 'W', mtm: minTypMax(me.width), unit: 'm' },
-        { param: 'Height',   sym: 'H', mtm: minTypMax(me.height), unit: 'm' },
-      ]},
-    ],
-  }
-}
-
-function parseDiode(env) {
-  const mi = env?.semiconductor?.diode?.manufacturerInfo ?? {}
-  const di = mi.datasheetInfo ?? {}
-  const p  = di.part ?? {}
-  const el = di.electrical ?? {}
-  const th = di.thermal ?? {}
-  const me = di.mechanical ?? {}
-  return {
-    title: mi.reference ?? '—',
-    manufacturer: mi.name ?? '—',
-    status: mi.status,
-    datasheetUrl: mi.datasheetUrl,
-    tags: [p.technology, p.subType, p.case].filter(Boolean),
-    headline: [
-      { sym: 'V_RRM',   label: 'Repetitive Peak Reverse Voltage', val: fmtU(el.reverseVoltage, 'V') },
-      { sym: 'I_F(avg)', label: 'Average Forward Current',        val: fmtU(el.forwardCurrent, 'A') },
-      { sym: 'V_F',      label: 'Forward Voltage',                val: fmtU(el.forwardVoltage, 'V') },
-    ],
-    sections: [
-      { title: 'Absolute Maximum Ratings', rows: [
-        { param: 'Repetitive Peak Reverse Voltage', sym: 'V_RRM',  mtm: [null, el.reverseVoltage, null], unit: 'V' },
-        { param: 'Average Forward Current',         sym: 'I_F(avg)', mtm: [null, el.forwardCurrent, null], unit: 'A' },
-        { param: 'Non-Repetitive Surge Current',    sym: 'I_FSM',  mtm: [null, el.surgeCurrent, null], unit: 'A' },
-        { param: 'Power Dissipation',               sym: 'P_D',    mtm: [null, el.powerDissipation, null], unit: 'W' },
-      ]},
-      { title: 'Electrical Characteristics', rows: [
-        { param: 'Forward Voltage',         sym: 'V_F',  mtm: [null, el.forwardVoltage, null], unit: 'V', note: el.forwardVoltageAt ? `@ If=${el.forwardVoltageAt}A` : null },
-        { param: 'Reverse Leakage Current', sym: 'I_R',  mtm: [null, el.reverseLeakageCurrent, null], unit: 'A' },
-        { param: 'Junction Capacitance',    sym: 'C_j',  mtm: [null, el.junctionCapacitance, null], unit: 'F', note: el.junctionCapacitanceVr ? `@ Vr=${el.junctionCapacitanceVr}V` : null },
-        { param: 'Reverse Recovery Charge', sym: 'Q_rr', mtm: [null, el.reverseRecoveryCharge, null], unit: 'C' },
-      ]},
-      { title: 'Thermal', rows: [
-        { param: 'Junction-to-Case Resistance',    sym: 'R_θJC',    mtm: [null, th.thermalResistanceJunctionCase, null], unit: '°C/W' },
-        { param: 'Junction-to-Ambient Resistance', sym: 'R_θJA',    mtm: [null, th.thermalResistanceJunctionAmbient, null], unit: '°C/W' },
-        { param: 'Max Junction Temperature',       sym: 'T_J(max)', mtm: [null, th.junctionTemperatureMax, null], unit: '°C' },
-        { param: 'Min Junction Temperature',       sym: 'T_J(min)', mtm: [null, th.junctionTemperatureMin, null], unit: '°C' },
-      ]},
-      { title: 'Package', rows: [
-        { param: 'Assembly', sym: '', mtm: [null, null, null], str: me.assemblyType ?? '—' },
-        { param: 'Length',   sym: 'L', mtm: minTypMax(me.length), unit: 'm' },
-        { param: 'Width',    sym: 'W', mtm: minTypMax(me.width), unit: 'm' },
-        { param: 'Height',   sym: 'H', mtm: minTypMax(me.height), unit: 'm' },
-      ]},
-    ],
-  }
-}
-
-function parseCap(env) {
-  const mi = env?.capacitor?.manufacturerInfo ?? {}
-  const di = mi.datasheetInfo ?? {}
-  const p  = di.part ?? {}
-  const el = di.electrical ?? {}
-  const th = di.thermal ?? {}
-  const me = di.mechanical ?? {}
-  const dims = me.dimensions ?? {}
-  const shape = me.shape ?? {}
-  return {
-    title: p.partNumber ?? '—',
-    manufacturer: mi.name ?? '—',
-    status: mi.status,
-    datasheetUrl: mi.datasheetUrl,
-    tags: [p.technology, p.case, p.series].filter(Boolean),
-    headline: [
-      { sym: 'C',   label: 'Capacitance',               val: fmtU(scalar(el.capacitance), 'F') },
-      { sym: 'V_R', label: 'Rated Voltage',              val: fmtU(el.ratedVoltage, 'V') },
-      { sym: 'ESR', label: 'Equivalent Series Resistance', val: fmtU(el.esr, 'Ω') },
-    ],
-    sections: [
-      { title: 'Electrical Characteristics', rows: [
-        { param: 'Capacitance',         sym: 'C',     mtm: minTypMax(el.capacitance), unit: 'F' },
-        { param: 'Rated Voltage (DC)',   sym: 'V_R',   mtm: [null, el.ratedVoltage ?? el.voltageRatedDcMax, null], unit: 'V' },
-        { param: 'Dissipation Factor',  sym: 'tan δ', mtm: [null, el.dissipationFactor, null], unit: '', note: el.dissipationFactorFrequency ? `@ ${fmtU(el.dissipationFactorFrequency, 'Hz')}` : null },
-        { param: 'ESR',                 sym: 'ESR',   mtm: [null, el.esr, null], unit: 'Ω', note: el.esrFrequency ? `@ ${fmtU(el.esrFrequency, 'Hz')}` : null },
-        { param: 'Ripple Current',      sym: 'I_R',   mtm: [null, el.rippleCurrent, null], unit: 'A', note: el.rippleCurrentFrequency ? `@ ${fmtU(el.rippleCurrentFrequency, 'Hz')}, ${el.rippleCurrentTemperature}°C` : null },
-        { param: 'Leakage Current',     sym: 'I_L',   mtm: [null, el.leakageCurrent, null], unit: 'A' },
-        { param: 'Insulation Resistance', sym: 'R_ins', mtm: [null, el.insulationResistance, null], unit: 'Ω' },
-      ]},
-      { title: 'Thermal', rows: [
-        { param: 'Operating Temperature', sym: 'T_op', mtm: [th.temperature?.minimum ?? null, null, th.temperature?.maximum ?? null], unit: '°C' },
-      ]},
-      { title: 'Package', rows: [
-        { param: 'Assembly', sym: '', mtm: [null, null, null], str: shape.assembly ?? '—' },
-        { param: 'Shape',    sym: '', mtm: [null, null, null], str: shape.shapeType ?? '—' },
-        { param: 'Diameter', sym: 'ø', mtm: minTypMax(dims.diameter ?? me.diameter), unit: 'm' },
-        { param: 'Length',   sym: 'L', mtm: minTypMax(dims.length ?? me.length), unit: 'm' },
-        { param: 'Width',    sym: 'W', mtm: minTypMax(dims.width ?? me.width), unit: 'm' },
-        { param: 'Height',   sym: 'H', mtm: minTypMax(dims.height ?? me.height), unit: 'm' },
-      ]},
-    ],
-  }
-}
-
-function parseRes(env) {
-  const mi = env?.resistor?.manufacturerInfo ?? {}
-  const di = mi.datasheetInfo ?? {}
-  const p  = di.part ?? {}
-  const el = di.electrical ?? {}
-  const th = di.thermal ?? {}
-  const me = di.mechanical ?? {}
-  return {
-    title: p.partNumber ?? '—',
-    manufacturer: mi.name ?? '—',
-    status: mi.status,
-    datasheetUrl: mi.datasheetUrl,
-    tags: [p.technology, p.case, p.series].filter(Boolean),
-    headline: [
-      { sym: 'R',   label: 'Resistance',    val: fmtU(scalar(el.resistance), 'Ω') },
-      { sym: 'Tol', label: 'Tolerance',     val: el.tolerance != null ? `${+(el.tolerance * 100).toPrecision(3)}%` : '—' },
-      { sym: 'P',   label: 'Power Rating',  val: fmtU(el.powerRating, 'W') },
-    ],
-    sections: [
-      { title: 'Electrical Characteristics', rows: [
-        { param: 'Resistance',            sym: 'R',    mtm: minTypMax(el.resistance), unit: 'Ω' },
-        { param: 'Tolerance',             sym: 'Tol',  mtm: [null, null, null], str: el.tolerance != null ? `±${+(el.tolerance * 100).toPrecision(3)}%` : '—' },
-        { param: 'Temperature Coefficient', sym: 'TCR', mtm: [null, el.temperatureCoefficient, null], unit: 'ppm/°C' },
-        { param: 'Power Rating',          sym: 'P',    mtm: [null, el.powerRating, null], unit: 'W', note: el.powerRatingTemperature ? `@ ${el.powerRatingTemperature}°C` : null },
-        { param: 'Max Voltage',           sym: 'V_max', mtm: [null, el.maxVoltage, null], unit: 'V' },
-      ]},
-      { title: 'Thermal', rows: [
-        { param: 'Operating Temperature', sym: 'T_op', mtm: [th.operatingTemperature?.minimum ?? null, null, th.operatingTemperature?.maximum ?? null], unit: '°C' },
-      ]},
-      { title: 'Package', rows: [
-        { param: 'Assembly', sym: '', mtm: [null, null, null], str: me.assemblyType ?? '—' },
-        { param: 'Shape',    sym: '', mtm: [null, null, null], str: me.shapeType ?? '—' },
-        { param: 'Length',   sym: 'L', mtm: minTypMax(me.length), unit: 'm' },
-        { param: 'Width',    sym: 'W', mtm: minTypMax(me.width), unit: 'm' },
-        { param: 'Height',   sym: 'H', mtm: minTypMax(me.height), unit: 'm' },
-      ]},
-    ],
-  }
-}
-
-function parseMag(env) {
-  const mi = env?.magnetic?.manufacturerInfo ?? {}
-  const di = mi.datasheetInfo ?? {}
-  const p  = di.part ?? {}
-  const elRaw = di.electrical ?? []
-  const el = Array.isArray(elRaw) ? (elRaw[0] ?? {}) : elRaw
-  const th = di.thermal ?? {}
-  const me = di.mechanical ?? {}
-  const ratedI = el.ratedCurrents?.[0] ?? null
-  return {
-    title: mi.reference ?? '—',
-    manufacturer: mi.name ?? '—',
-    status: mi.status,
-    datasheetUrl: mi.datasheetUrl,
-    tags: [mi.family, el.subtype ?? 'inductor', p.caseCode, p.material, p.shielded ? 'shielded' : null].filter(Boolean),
-    headline: [
-      { sym: 'L',     label: 'Inductance',              val: fmtU(scalar(el.inductance), 'H') },
-      { sym: 'I_sat', label: 'Saturation Current (peak)', val: fmtU(el.saturationCurrentPeak, 'A') },
-      { sym: 'DCR',   label: 'DC Resistance',           val: fmtU(scalar(el.dcResistance), 'Ω') },
-    ],
-    sections: [
-      { title: 'Electrical Characteristics', rows: [
-        { param: 'Inductance',                sym: 'L',       mtm: minTypMax(el.inductance), unit: 'H' },
-        { param: 'DC Resistance',             sym: 'DCR',     mtm: minTypMax(el.dcResistance), unit: 'Ω' },
-        { param: 'Saturation Current (peak)', sym: 'I_sat',   mtm: [null, el.saturationCurrentPeak, null], unit: 'A' },
-        { param: 'Rated Current',             sym: 'I_rated', mtm: [null, ratedI, null], unit: 'A' },
-        { param: 'Self-Resonant Frequency',   sym: 'SRF',     mtm: [null, el.selfResonantFrequency, null], unit: 'Hz' },
-      ]},
-      { title: 'Thermal', rows: [
-        { param: 'Operating Temperature', sym: 'T_op', mtm: [th.operatingTemperature?.minimum ?? null, null, th.operatingTemperature?.maximum ?? null], unit: '°C' },
-      ]},
-      { title: 'Package', rows: [
-        { param: 'Case Code',     sym: '', mtm: [null, null, null], str: p.caseCode ?? '—' },
-        { param: 'Material',      sym: '', mtm: [null, null, null], str: p.material ?? '—' },
-        { param: 'Winding Style', sym: '', mtm: [null, null, null], str: p.windingStyle ?? '—' },
-        { param: 'Length',        sym: 'L', mtm: minTypMax(me.length), unit: 'm' },
-        { param: 'Width',         sym: 'W', mtm: minTypMax(me.width), unit: 'm' },
-        { param: 'Height',        sym: 'H', mtm: minTypMax(me.height), unit: 'm' },
-      ]},
-    ],
-  }
-}
-
-const sheet = computed(() => {
-  if (!data.value) return null
-  const env = data.value.data
-  const cat = data.value.category
-  if (cat === 'mosfets')    return parseMosfet(env)
-  if (cat === 'diodes')     return parseDiode(env)
-  if (cat === 'capacitors') return parseCap(env)
-  if (cat === 'resistors')  return parseRes(env)
-  if (cat === 'magnetics')  return parseMag(env)
-  return null
-})
+const sheet = computed(() =>
+  data.value ? parseSheet(data.value.category, data.value.data) : null)
 </script>
 
 <template>
@@ -329,6 +50,7 @@ const sheet = computed(() => {
           <Tag v-if="sheet.status" :value="sheet.status"
                :severity="sheet.status === 'production' ? 'success' : 'secondary'" class="detail-tag" />
         </div>
+        <p v-if="sheet.description" class="detail-desc">{{ sheet.description }}</p>
         <a v-if="sheet.datasheetUrl" :href="sheet.datasheetUrl" target="_blank"
            rel="noopener" class="detail-pdf mono">
           ↗ Manufacturer Datasheet
@@ -346,7 +68,7 @@ const sheet = computed(() => {
 
       <!-- ── Parameter sections ── -->
       <div class="detail-sections">
-        <div v-for="sec in sheet.sections" :key="sec.title" class="detail-section">
+        <div v-for="sec in sheet.sections.filter(sectionVisible)" :key="sec.title" class="detail-section">
           <div class="detail-sec-title">{{ sec.title }}</div>
           <table class="detail-table">
             <thead>
@@ -379,6 +101,12 @@ const sheet = computed(() => {
         </div>
       </div>
     </template>
+
+    <!-- Data arrived but no datasheet view exists for this category. -->
+    <div v-else-if="data" class="detail-state muted">
+      No datasheet view for {{ props.category }} yet — the part data is in the
+      catalog API at <span class="mono">/catalog/{{ props.category }}/{{ props.mpn }}/detail</span>.
+    </div>
   </div>
 </template>
 
@@ -419,6 +147,13 @@ const sheet = computed(() => {
 }
 .detail-tags { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .6rem; }
 .detail-tag { font-size: .65rem !important; }
+.detail-desc {
+  margin: 0 0 .6rem;
+  max-width: 68ch;
+  font-size: .78rem;
+  line-height: 1.5;
+  color: var(--p-surface-300);
+}
 .detail-pdf { font-size: .72rem; color: var(--ch1); text-decoration: none; }
 .detail-pdf:hover { text-decoration: underline; }
 

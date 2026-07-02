@@ -21,9 +21,16 @@ export const myJobs = {
   has(id) { return myJobs.all().has(id) },
 }
 
+// Prefer the server's error `detail` (FastAPI convention) over a bare status.
+async function httpError(r, url) {
+  let detail = null
+  try { detail = (await r.json()).detail } catch (e) { /* non-JSON body */ }
+  if (detail == null) return new Error(`${url} → ${r.status}`)
+  return new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+}
 async function jget(url) {
   const r = await fetch(url)
-  if (!r.ok) throw new Error(`${url} → ${r.status}`)
+  if (!r.ok) throw await httpError(r, url)
   return r.json()
 }
 async function jpost(url, body) {
@@ -32,7 +39,7 @@ async function jpost(url, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!r.ok) throw new Error(`${url} → ${r.status}`)
+  if (!r.ok) throw await httpError(r, url)
   return r.json()
 }
 
@@ -79,11 +86,7 @@ async function uploadCrossref(path, file, target) {
     `/jobs/crossref/${path}?target_manufacturer=${encodeURIComponent(target)}`,
     { method: 'POST', body: fd },
   )
-  if (!r.ok) {
-    let detail = `${r.status}`
-    try { detail = (await r.json()).detail || detail } catch (e) { /* keep status */ }
-    throw new Error(`upload → ${detail}`)
-  }
+  if (!r.ok) throw await httpError(r, `/jobs/crossref/${path}`)
   return r.json()
 }
 

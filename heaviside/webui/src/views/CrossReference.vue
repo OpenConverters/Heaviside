@@ -50,13 +50,21 @@ async function run() {
       if (!url.value.trim()) throw new Error('enter a design URL first')
       ;({ job_id } = await api.submitCrossrefUrl({ url: url.value.trim(), target_manufacturer: target.value }))
     } else {
-      let bom
-      try { bom = JSON.parse(bomText.value) } catch (e) { throw new Error('BOM is not valid JSON') }
-      ;({ job_id } = await api.submitCrossref({ source_bom: bom, target_manufacturer: target.value }))
+      const text = bomText.value.trim()
+      if (!text) throw new Error('Paste a BOM first — a JSON list or CSV/TSV rows.')
+      let bom = null
+      try { bom = JSON.parse(text) } catch (e) { /* not JSON — treat as CSV/TSV */ }
+      if (bom) {
+        ;({ job_id } = await api.submitCrossref({ source_bom: bom, target_manufacturer: target.value }))
+      } else {
+        // Pasted CSV/TSV rows go through the same parser as an uploaded file.
+        const f = new File([text], 'pasted_bom.csv', { type: 'text/csv' })
+        ;({ job_id } = await api.submitCrossrefBom(f, target.value))
+      }
     }
     myJobs.add(job_id)
     location.hash = `#/jobs/${job_id}`
-  } catch (e) { error.value = String(e) }
+  } catch (e) { error.value = e?.message ?? String(e) }
   finally { running.value = false }
 }
 </script>
@@ -76,9 +84,10 @@ async function run() {
     </div>
 
     <div v-if="mode === 'bom'" class="field" style="margin-top:.4rem">
-      <label class="fld-label">Source BOM (JSON list of components)</label>
+      <label class="fld-label">Source BOM (JSON list or CSV/TSV rows)</label>
       <Textarea v-model="bomText" rows="8" style="width:100%"
-                placeholder='[{"ref_des":"L1","component_type":"magnetic","value":"4.7uH"}]' />
+                placeholder='[{"ref_des":"L1","component_type":"magnetic","value":"4.7uH"}] — or CSV rows with a header line' />
+      <p class="muted" style="font-size:.8rem">Paste a JSON component list, or CSV/TSV rows with a header line. Recognised columns: MPN / Part Number, Manufacturer, Category/Type, Ref, Value, Voltage.</p>
     </div>
     <div v-else-if="mode === 'csv'" class="field" style="margin-top:.4rem">
       <label class="fld-label">BOM file (CSV, TSV, or .xlsx)</label>
