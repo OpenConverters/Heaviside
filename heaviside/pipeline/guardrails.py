@@ -66,6 +66,39 @@ _TAS_KIND_TO_FILES = {
     "diode": ["diodes.ndjson"],
 }
 
+# Catalogue file → CR canonical category, for the reverse question: "which
+# category is this MPN?". Ordered by corpus size ascending so the cheapest
+# indexes are consulted first.
+_TAS_FILE_TO_KIND = {
+    "mosfets.ndjson": "mosfet",
+    "diodes.ndjson": "diode",
+    "magnetics.ndjson": "magnetic",
+    "connectors.ndjson": "connector",
+    "resistors.ndjson": "resistor",
+    "capacitors.ndjson": "capacitor",
+}
+
+
+def lookup_mpn_category(part_number: str, *, tas_data_dir: Path | None = None) -> str | None:
+    """Authoritative CR category for an MPN, from the internal catalogue.
+
+    Returns the canonical category of the catalogue file the MPN is indexed
+    in, or ``None`` when the part is not catalogued. Used to classify BOM rows
+    that carry only a part number — the catalogue answers instead of an LLM
+    guessing from the MPN's shape.
+    """
+    if not part_number or not part_number.strip():
+        return None
+    root = tas_data_dir or _TAS_DATA_DEFAULT
+    mpn_l = part_number.strip().lower()
+    for fname, kind in _TAS_FILE_TO_KIND.items():
+        path = root / fname
+        if not path.is_file():
+            continue
+        if _tas_file_index(path).get(mpn_l) is not None:
+            return kind
+    return None
+
 
 def _flat_record_from_env(env: dict, mi: dict) -> dict:
     """Extract the commonly-needed fields from an envelope's manufacturerInfo.
@@ -114,7 +147,14 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
 
     index: dict[str, dict] = {}
     for _lineno, env in iter_envelopes(path):
-        for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
+        for top_key in (
+            "capacitor",
+            "semiconductor",
+            "resistor",
+            "magnetics",
+            "magnetic",
+            "connector",
+        ):
             sub = env.get(top_key)
             if not isinstance(sub, dict):
                 continue
@@ -125,9 +165,13 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
                 mi = record.get("manufacturerInfo")
                 if not isinstance(mi, dict):
                     continue
-                ref = mi.get("reference")
-                if isinstance(ref, str) and ref.strip():
-                    index.setdefault(ref.strip().lower(), _flat_record_from_env(env, mi))
+                # Key by reference AND part.partNumber: capacitors/resistors
+                # carry the MPN only in part.partNumber (no reference), and
+                # were previously invisible to every index-based lookup.
+                part = (mi.get("datasheetInfo") or {}).get("part") or {}
+                for ref in (mi.get("reference"), part.get("partNumber")):
+                    if isinstance(ref, str) and ref.strip():
+                        index.setdefault(ref.strip().lower(), _flat_record_from_env(env, mi))
     # Only reached after the FULL scan succeeds — never cache a partial index.
     _TAS_INDEX_CACHE[path.name] = index
     return index

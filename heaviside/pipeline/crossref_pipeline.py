@@ -1392,6 +1392,20 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
     # don't come back (no silent data loss).
     _reconcile_crossref_coverage(state, bom_for_llm)
 
+    # The LLM must not relabel parts: component_type in its output is an echo.
+    # Restore the engine-derived category (type column / description keywords /
+    # catalogue lookup) — an LLM guessing "connector" from a numeric MPN would
+    # otherwise stick to the row through every downstream check and the report.
+    _types_by_ref = {
+        c["ref_des"]: c["component_type"]
+        for c in bom_for_llm
+        if c.get("ref_des") and c.get("component_type")
+    }
+    for _row in state.crossref_result:
+        known = _types_by_ref.get(_row.get("ref_des"))
+        if known and _row.get("component_type") != known:
+            _row["component_type"] = known
+
     logger.info("CR stage 3: crossref produced %d rows", len(state.crossref_result))
     return state
 
@@ -2545,6 +2559,14 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         if not cat:
             cat = _infer_component_type(row)
+        if not cat:
+            # No type column and no description signal (e.g. a pasted bare
+            # part number) — ask the internal catalogue, which is authoritative,
+            # instead of leaving the row for the LLM to guess a category from
+            # the MPN's shape.
+            from heaviside.pipeline.guardrails import lookup_mpn_category
+
+            cat = lookup_mpn_category(str(row.get("original_mpn") or "")) or ""
         if cat:
             row["component_type"] = cat
         else:
