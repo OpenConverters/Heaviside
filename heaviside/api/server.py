@@ -56,6 +56,61 @@ app = FastAPI(
 
 
 # ---------------------------------------------------------------------------
+# Auth + resource guards
+# ---------------------------------------------------------------------------
+
+# State-changing / cost-bearing requests (job submission burns LLM tokens +
+# ngspice minutes; DELETE destroys results; the from-url fetch is an SSRF
+# surface) require an API key when one is configured. Reads (GET) stay open for
+# the UI and liveness probes.
+_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _expected_api_key() -> str | None:
+    import os
+
+    return os.environ.get("HEAVISIDE_API_KEY") or None
+
+
+if _expected_api_key() is None:
+    logger.warning(
+        "HEAVISIDE_API_KEY is not set — state-changing endpoints (job submission, "
+        "deletion, URL fetch) accept UNAUTHENTICATED requests. Set HEAVISIDE_API_KEY "
+        "to require a Bearer token / X-API-Key header."
+    )
+
+
+@app.middleware("http")
+async def _require_api_key(request: Any, call_next: Any) -> Any:
+    import secrets
+
+    from fastapi.responses import JSONResponse
+
+    expected = _expected_api_key()
+    if expected and request.method in _MUTATING_METHODS:
+        presented: str | None = None
+        auth = request.headers.get("authorization")
+        if auth and auth.lower().startswith("bearer "):
+            presented = auth[7:].strip()
+        else:
+            presented = request.headers.get("x-api-key")
+        if not presented or not secrets.compare_digest(presented, expected):
+            return JSONResponse({"detail": "invalid or missing API key"}, status_code=401)
+    return await call_next(request)
+
+
+async def _job_queue_full_handler(request: Any, exc: Exception) -> Any:
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse({"detail": str(exc)}, status_code=429)
+
+
+from heaviside.api.jobs import JobQueueFull  # noqa: E402  (after app is defined)
+
+app.add_exception_handler(JobQueueFull, _job_queue_full_handler)
+
+
+# ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
 
@@ -967,6 +1022,17 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
     engineer it, then cross-reference its BOM to the target manufacturer."""
     from heaviside.api.jobs import registry
     from heaviside.api.telemetry import wrap_job
+    from heaviside.pipeline.url_fetch import UnsafeURLError, guard_public_url
+
+    # SSRF: validate the target synchronously so an internal/metadata URL is a
+    # clean 400 (not a queued job), before spending any worker time on it.
+    _pre = req.url.strip()
+    if not _pre.lower().startswith(("http://", "https://")):
+        _pre = "https://" + _pre
+    try:
+        guard_public_url(_pre)
+    except UnsafeURLError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     def run(update: Any) -> dict[str, Any]:
         import os

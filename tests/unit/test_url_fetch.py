@@ -61,6 +61,9 @@ def test_httpx_404_is_not_a_bot_block(monkeypatch):
     escalation). Use httpx.MockTransport to exercise the real _fetch_httpx body."""
     import httpx
 
+    # SSRF guard is orthogonal to bot-block classification and would do real
+    # DNS on the fake host — stub it so this stays hermetic.
+    monkeypatch.setattr(url_fetch, "guard_public_url", lambda u: None)
     transport = httpx.MockTransport(lambda req: httpx.Response(404, text="not found"))
     real_client = httpx.Client
 
@@ -76,6 +79,7 @@ def test_httpx_404_is_not_a_bot_block(monkeypatch):
 def test_httpx_403_classifies_as_bot_block(monkeypatch):
     import httpx
 
+    monkeypatch.setattr(url_fetch, "guard_public_url", lambda u: None)
     transport = httpx.MockTransport(lambda req: httpx.Response(403, text="denied"))
     real_client = httpx.Client
     monkeypatch.setattr(
@@ -87,3 +91,18 @@ def test_httpx_403_classifies_as_bot_block(monkeypatch):
 
 def test_bot_block_statuses_cover_the_usual_suspects():
     assert {403, 429, 503}.issubset(url_fetch._BOT_BLOCK_STATUSES)
+
+
+def test_redirect_to_private_ip_is_blocked(monkeypatch):
+    """A public URL that 302s to a private/loopback address must be blocked at
+    the redirect hop (the SSRF happens at the connection, before final_url)."""
+    import httpx
+
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(302, headers={"location": "http://127.0.0.1/evil"})
+    )
+    real_client = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real_client(**{**kw, "transport": transport}))
+    # Literal public IP as the entry point resolves without network.
+    with pytest.raises(url_fetch.UnsafeURLError):
+        url_fetch._fetch_httpx("http://1.1.1.1/start", timeout=5)

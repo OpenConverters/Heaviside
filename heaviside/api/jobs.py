@@ -39,6 +39,15 @@ _DEFAULT_JOBS_DIR = Path(
 # process and can't be resumed; only completed results need to outlive it).
 _TERMINAL = {"done", "error", "cancelled"}
 
+# Cap on in-flight (queued + running) jobs. Each job burns real LLM tokens and
+# CPU/ngspice minutes, so an unbounded queue is a trivial resource-exhaustion
+# vector. Tune via HEAVISIDE_MAX_INFLIGHT_JOBS.
+_MAX_INFLIGHT_JOBS = int(os.environ.get("HEAVISIDE_MAX_INFLIGHT_JOBS", "50"))
+
+
+class JobQueueFull(RuntimeError):
+    """Raised by submit() when too many jobs are already queued/running."""
+
 
 @dataclass
 class Stage:
@@ -144,6 +153,12 @@ class JobRegistry:
         callable it can call to publish a human-readable progress string."""
         job_id = uuid.uuid4().hex[:12]
         with self._lock:
+            inflight = sum(1 for j in self._jobs.values() if j.status in ("queued", "running"))
+            if inflight >= _MAX_INFLIGHT_JOBS:
+                raise JobQueueFull(
+                    f"{inflight} jobs already queued/running (max {_MAX_INFLIGHT_JOBS}); "
+                    "retry once the queue drains"
+                )
             self._jobs[job_id] = Job(
                 id=job_id, kind=kind,
                 created_monotonic=time.monotonic(), created_wall=time.time(),

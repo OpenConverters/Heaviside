@@ -23,9 +23,64 @@ shortcuts).
 from __future__ import annotations
 
 import contextlib
+import ipaddress
+import socket
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
-__all__ = ["DocumentFetchError", "FetchedDocument", "fetch_document"]
+__all__ = [
+    "DocumentFetchError",
+    "FetchedDocument",
+    "UnsafeURLError",
+    "fetch_document",
+    "guard_public_url",
+]
+
+# Redirects are followed manually so each hop can be re-validated (a public URL
+# can 302 to a private one — the SSRF happens at the connection, before we ever
+# see the final URL).
+_MAX_REDIRECTS = 5
+
+
+class UnsafeURLError(RuntimeError):
+    """Raised when a URL targets a non-public / non-http(s) endpoint (SSRF)."""
+
+
+def guard_public_url(url: str) -> None:
+    """Reject a URL that is not http(s) or resolves to a non-public address.
+
+    Blocks the SSRF class where a user-supplied URL points the server at
+    localhost, the cloud metadata endpoint (169.254.169.254), or any private /
+    link-local / reserved range. Every resolved address must be global; a host
+    that resolves to a mix of public and private addresses is rejected.
+
+    Note: local DNS resolution here can differ from what the HTTP client later
+    connects to (DNS rebinding / a configured outbound proxy) — that residual
+    is out of scope; this closes the direct and per-redirect-hop vectors.
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        raise UnsafeURLError(f"unsupported URL scheme {parts.scheme!r} (only http/https)")
+    host = parts.hostname
+    if not host:
+        raise UnsafeURLError(f"URL has no host: {url!r}")
+    try:
+        infos = socket.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80))
+    except socket.gaierror as exc:
+        raise UnsafeURLError(f"cannot resolve host {host!r}: {exc}") from exc
+    for info in infos:
+        addr = info[4][0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        # An IPv4-mapped IPv6 address (::ffff:a.b.c.d) must be judged on the v4.
+        if getattr(ip, "ipv4_mapped", None) is not None:
+            ip = ip.ipv4_mapped
+        if not ip.is_global or ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            raise UnsafeURLError(
+                f"host {host!r} resolves to non-public address {addr} — refused (SSRF guard)"
+            )
 
 # A current desktop-Chrome header set. Kept together so the UA and the
 # Sec-CH-UA client hints agree (a mismatch is itself a bot tell).
@@ -73,6 +128,7 @@ class FetchedDocument:
 def fetch_document(url: str, *, timeout: float = 90.0) -> FetchedDocument:
     """Fetch ``url`` as bytes, escalating httpx → headless browser on a CDN
     bot-block. Raises :class:`DocumentFetchError` if no layer succeeds."""
+    guard_public_url(url)  # SSRF: refuse non-public targets before connecting
     httpx_status: int | None = None
     httpx_error: str | None = None
     try:
@@ -129,15 +185,29 @@ def _proxy() -> str | None:
 def _fetch_httpx(url: str, *, timeout: float) -> FetchedDocument:
     import httpx
 
+    # Redirects are followed MANUALLY so each hop is SSRF-validated before we
+    # connect to it (httpx's own follow_redirects would connect first).
     kwargs: dict = {
-        "follow_redirects": True, "timeout": timeout, "headers": _BROWSER_HEADERS,
+        "follow_redirects": False, "timeout": timeout, "headers": _BROWSER_HEADERS,
     }
     proxy = _proxy()
     if proxy:
         kwargs["proxy"] = proxy
+    current = url
     try:
         with httpx.Client(**kwargs) as client:
-            resp = client.get(url)
+            for _hop in range(_MAX_REDIRECTS + 1):
+                guard_public_url(current)  # re-validate every hop
+                resp = client.get(current)
+                nxt = resp.next_request
+                if resp.is_redirect and nxt is not None:
+                    current = str(nxt.url)
+                    continue
+                break
+            else:
+                raise DocumentFetchError(
+                    f"too many redirects (> {_MAX_REDIRECTS}) fetching {url!r}"
+                )
     except httpx.HTTPError as exc:
         raise DocumentFetchError(f"transport error fetching {url!r}: {exc}") from exc
 
