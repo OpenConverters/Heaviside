@@ -1439,12 +1439,16 @@ def _asymmetric_half_bridge_op_budget(
     ipri = iout / n
 
     budget: dict[str, float | None] = {}
+    # AHB switches are driven COMPLEMENTARILY: Q1 (control) conducts D, Q2 (the
+    # reset/low-side switch) conducts the OFF fraction (1-D). Both at `duty`
+    # mis-sizes Q2's conduction loss for D != 0.5.
+    q_duty = {"Q1": duty, "Q2": 1.0 - duty}
     for qname in ("Q1", "Q2"):
         budget.update(
             _mosfet_loss(
                 _find_named(tas, qname),
                 qname,
-                duty=duty,
+                duty=q_duty[qname],
                 i_on=ipri,
                 vds_off=vin,
                 fsw=fsw,
@@ -1932,13 +1936,22 @@ def _isolated_buck_op_budget(
     duty = vout_pri / vin if vin > 0 else 0.0
 
     # Primary winding (= buck inductor) current: own load + reflected
-    # secondaries. Secondary i reflects Iout_i / N_i to the primary.
+    # secondaries. Secondary i reflects Iout_i / N_i to the primary. Each
+    # secondary rail REQUIRES its own turns ratio — a silent 1.0 default would
+    # make a real n=20 rail reflect 20x too much current into the primary
+    # sizing (or too little), feeding a wrong current to the gate.
     ratios = spec.get("desiredTurnsRatios") or []
+    n_secondary = len(iouts) - 1
+    if n_secondary > 0 and len(ratios) < n_secondary:
+        raise AnalystError(
+            f"spec.desiredTurnsRatios has {len(ratios)} entr(y/ies) but the design has "
+            f"{n_secondary} secondary rail(s) — each needs its own turns ratio (no default)"
+        )
     i_l_pri = iout_pri
     for i in range(1, len(iouts)):
-        n_i = float(ratios[i - 1]) if (i - 1) < len(ratios) else 1.0
+        n_i = float(ratios[i - 1])
         if n_i <= 0:
-            n_i = 1.0
+            raise AnalystError(f"spec.desiredTurnsRatios[{i - 1}] must be > 0, got {n_i}")
         i_l_pri += float(iouts[i]) / n_i
 
     # Q1 (HS) + T1 + per-rail D_out{i}/C_out{i} from the generic budget. The

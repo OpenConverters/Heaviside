@@ -8,8 +8,10 @@ import pytest
 
 from heaviside.pipeline.analyst import (
     AnalystError,
+    _asymmetric_half_bridge_op_budget,
     _cuk_op_budget,
     _flyback_op_budget,
+    _isolated_buck_op_budget,
     _sepic_op_budget,
     _turns_ratio,
     _zeta_op_budget,
@@ -353,6 +355,71 @@ def test_output_diode_conduction_is_iout_times_vf(budget_fn) -> None:
 # ---------------------------------------------------------------------------
 # Isolated budgets: required physics must raise, not silently default
 # ---------------------------------------------------------------------------
+
+
+def test_ahb_switches_have_complementary_duty() -> None:
+    """AHB Q1 conducts D, Q2 conducts (1-D). vin=100, vout=12, n=2 -> D=0.24.
+    ipri = Iout/n = 2.5 A, Rds=0.01. Q1_cond = 0.24*2.5^2*0.01, Q2_cond uses
+    (1-0.24). The copy-paste gave both D, halving-plus Q2's conduction loss."""
+    spec = {
+        "inputVoltage": {"nominal": 100.0},
+        "desiredTurnsRatios": [2.0],
+        "operatingPoints": [
+            {"outputVoltages": [12.0], "outputCurrents": [5.0], "switchingFrequency": 2e5}
+        ],
+    }
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "circuit": {
+                        "components": [
+                            {"name": "Q1", "rds_on": 0.01},
+                            {"name": "Q2", "rds_on": 0.01},
+                        ]
+                    }
+                }
+            ]
+        }
+    }
+    budget = _asymmetric_half_bridge_op_budget(tas, spec)
+    d, ipri, rds = 0.24, 2.5, 0.01
+    assert budget["Q1_conduction"] == pytest.approx(d * ipri**2 * rds, rel=1e-6)
+    assert budget["Q2_conduction"] == pytest.approx((1.0 - d) * ipri**2 * rds, rel=1e-6)
+    # Complementary => not equal at D != 0.5.
+    assert budget["Q2_conduction"] != pytest.approx(budget["Q1_conduction"], rel=1e-6)
+
+
+def test_isolated_buck_requires_turns_ratio_per_secondary_rail() -> None:
+    """A flybuck secondary rail reflects Iout_i/n_i to the primary; a missing
+    per-rail turns ratio must raise, not silently reflect at n=1 (a real n=20
+    rail would 20x the reflected current)."""
+    spec = {
+        "inputVoltage": {"nominal": 48.0},
+        # two rails but no turns ratios for the secondary
+        "operatingPoints": [
+            {
+                "outputVoltages": [5.0, 12.0],
+                "outputCurrents": [3.0, 1.0],
+                "switchingFrequency": 2e5,
+            }
+        ],
+    }
+    with pytest.raises(AnalystError, match="turns ratio"):
+        _isolated_buck_op_budget({"topology": {"stages": []}}, spec)
+
+
+def test_isolated_buck_single_rail_needs_no_secondary_ratio() -> None:
+    """A single-rail isolated buck (no secondaries) does not require any
+    secondary turns ratio."""
+    spec = {
+        "inputVoltage": {"nominal": 48.0},
+        "operatingPoints": [
+            {"outputVoltages": [5.0], "outputCurrents": [3.0], "switchingFrequency": 2e5}
+        ],
+    }
+    # Should not raise (no secondary rails to reflect).
+    _isolated_buck_op_budget({"topology": {"stages": []}}, spec)
 
 
 def test_turns_ratio_raises_when_missing() -> None:
