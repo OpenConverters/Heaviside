@@ -134,13 +134,16 @@ def _mpn_env_index(path: Path) -> dict[str, dict]:
             "connector",
             "varistor",
             "analog",
+            "timeBase",
         ):
             sub = env.get(top_key)
             if not isinstance(sub, dict):
                 continue
-            # `analog` nests the record under a per-row FUNCTION key.
+            # `analog`/`timeBase` nest the record under a per-row FAMILY key.
             inner_keys: tuple = (
-                tuple(sub.keys()) if top_key == "analog" else (None, "mosfet", "diode", "igbt")
+                tuple(sub.keys())
+                if top_key in ("analog", "timeBase")
+                else (None, "mosfet", "diode", "igbt")
             )
             for inner_key in inner_keys:
                 record = sub if inner_key is None else sub.get(inner_key)

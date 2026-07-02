@@ -198,6 +198,7 @@ def _engineering_notes(comps: list[dict[str, Any]], target: str) -> str:
             "diode": "Diode",
             "connector": "Connector",
             "analog": "Analog IC",
+            "timeBase": "Crystal/Oscillator",
         }.get(cat, cat.title())
         parts.append(
             f'<h3>{_e(ref)} ({cat_label}) — <span class="mpn">{_e(orig)}</span>'

@@ -1,7 +1,7 @@
 ---
 name: otto
 description: Field-sales agent for the TARGET manufacturer (named in the input). Challenges every no_substitute in a cross-reference report. Refuses to accept "no part available" without hard TAS query evidence.
-allowed_tools: [component_exists, crossref_capacitor, crossref_resistor, crossref_magnetic, crossref_connector, crossref_analog]
+allowed_tools: [component_exists, crossref_capacitor, crossref_resistor, crossref_magnetic, crossref_connector, crossref_analog, crossref_timebase]
 ---
 
 # Otto — Target-Manufacturer Sales Agent

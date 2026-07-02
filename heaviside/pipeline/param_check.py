@@ -307,6 +307,56 @@ PARAM_SPECS: dict[str, list[ParamSpec]] = {
         ParamSpec("resolution", "Resolution", "bit", HIGHER_BETTER, 1.0),
         ParamSpec("sample_rate", "Sample rate", "S/s", HIGHER_BETTER, 0.9),
     ],
+    # Time bases (TBAS: crystals, XOs, TCXO/VCXO/OCXO, MEMS). Frequency IS
+    # the part — exact match only. Technology is identity (a MEMS clock is
+    # not a quartz crystal; an active XO is not a passive crystal). A
+    # crystal's load capacitance sets the oscillation frequency in-circuit:
+    # a different CL pulls the clock off frequency, so it is exact-match
+    # (5% window absorbs rounding, splits the 8/10/12.5/18/20 pF steps).
+    # Tolerance/stability/aging are read in ppm; ESR must be low enough for
+    # the oscillator circuit's negative resistance to start the crystal.
+    "timeBase": [
+        ParamSpec(
+            "subtype",
+            "Family",
+            "",
+            EXACT_MATCH,
+            0.0,
+            missing_substitute="exclude",
+            unverified_demotes=True,
+        ),
+        ParamSpec(
+            "technology",
+            "Technology",
+            "",
+            EXACT_MATCH,
+            0.0,
+            missing_substitute="exclude",
+            unverified_demotes=True,
+        ),
+        ParamSpec(
+            "frequency",
+            "Frequency",
+            "Hz",
+            EXACT_MATCH,
+            1e-4,
+            missing_substitute="exclude",
+            unverified_demotes=True,
+        ),
+        ParamSpec("load_capacitance_pF", "Load C", "pF", EXACT_MATCH, 0.05, unverified_demotes=True),
+        ParamSpec("output_type", "Output", "", EXACT_MATCH, 0.0),
+        ParamSpec("mode", "Mode", "", EXACT_MATCH, 0.0),
+        ParamSpec("tolerance_ppm", "Tolerance", "ppm", LOWER_BETTER, 2.0),
+        ParamSpec("stability_ppm", "Stability", "ppm", LOWER_BETTER, 2.0),
+        ParamSpec("aging_ppm_y", "Aging/yr", "ppm", LOWER_BETTER, 2.0),
+        ParamSpec("esr", "ESR", "Ω", LOWER_BETTER, 1.5),
+        ParamSpec("supply_min_V", "Vsupply min", "V", LOWER_BETTER, 0.0, abs_tol=0.3),
+        ParamSpec("supply_max_V", "Vsupply max", "V", HIGHER_BETTER, 0.9),
+        ParamSpec("current_consumption", "Isupply", "A", LOWER_BETTER, 3.0),
+        ParamSpec("temp_min_C", "T min", "°C", LOWER_BETTER, 0.0, abs_tol=15.0),
+        ParamSpec("temp_max_C", "T max", "°C", HIGHER_BETTER, 0.0, abs_tol=15.0),
+        ParamSpec("package", "Package", "", EXACT_MATCH, 0.0),
+    ],
 }
 
 

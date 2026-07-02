@@ -1387,6 +1387,7 @@ _CATALOG_UNITS: dict[str, list[str]] = {
     "magnetics": ["H", "A", "Ω"],
     "connectors": ["V", "A", "pos"],
     "analog": ["Hz", "V", "V"],
+    "timebases": ["Hz", "ppm", "F"],
 }
 
 _CATALOG_FILES: dict[str, str] = {
@@ -1397,6 +1398,7 @@ _CATALOG_FILES: dict[str, str] = {
     "magnetics": "magnetics.ndjson",
     "connectors": "connectors.ndjson",
     "analog": "analog_ics.ndjson",
+    "timebases": "timebases.ndjson",
 }
 
 _CATALOG_LABELS: dict[str, list[str]] = {
@@ -1407,6 +1409,7 @@ _CATALOG_LABELS: dict[str, list[str]] = {
     "magnetics": ["L", "Isat", "DCR"],
     "connectors": ["V", "I/contact", "Pos"],
     "analog": ["GBW", "Vos", "Vs max"],
+    "timebases": ["f", "Tol", "CL"],
 }
 
 
@@ -1601,6 +1604,36 @@ def _catalog_projectors() -> dict[str, Any]:
             "_p3n": p3n,
         }
 
+    def _timebase(env: dict[str, Any]) -> dict[str, Any] | None:
+        from heaviside.pipeline.crossref_pipeline import _analog_subtype_block
+
+        subtype, record = _analog_subtype_block(env.get("timeBase"))
+        if record is None:
+            return None
+        mi = record.get("manufacturerInfo") or {}
+        ref, name = mi.get("reference"), mi.get("name")
+        if not isinstance(ref, str) or not isinstance(name, str):
+            return None
+        elec = (mi.get("datasheetInfo") or {}).get("electrical") or {}
+        p1n = elec.get("frequency")
+        p2n = elec.get("frequencyTolerance")  # fractional (2e-05 = 20 ppm)
+        p3n = elec.get("loadCapacitance")
+        p1n = p1n if isinstance(p1n, (int, float)) else None
+        p2n = p2n if isinstance(p2n, (int, float)) else None
+        p3n = p3n if isinstance(p3n, (int, float)) else None
+        return {
+            "mpn": ref,
+            "manufacturer": name,
+            "tech": elec.get("technology") or subtype or "",
+            "p1": _fmt_eng(p1n, "Hz"),
+            "p2": f"{p2n * 1e6:g} ppm" if p2n is not None else None,
+            "p3": _fmt_eng(p3n, "F"),
+            "status": mi.get("status", ""),
+            "_p1n": p1n,
+            "_p2n": p2n,
+            "_p3n": p3n,
+        }
+
     return {
         "mosfets": ("mosfets.ndjson", _mosfet),
         "diodes": ("diodes.ndjson", _diode),
@@ -1609,6 +1642,7 @@ def _catalog_projectors() -> dict[str, Any]:
         "magnetics": ("magnetics.ndjson", _mag),
         "connectors": ("connectors.ndjson", _connector),
         "analog": ("analog_ics.ndjson", _analog),
+        "timebases": ("timebases.ndjson", _timebase),
     }
 
 
@@ -1947,6 +1981,7 @@ def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
         "magnetics": "magnetics.ndjson",
         "connectors": "connectors.ndjson",
         "analog": "analog_ics.ndjson",
+        "timebases": "timebases.ndjson",
     }
     if category not in _NDJSON:
         raise HTTPException(status_code=404, detail=f"unknown category '{category}'")
@@ -1954,19 +1989,29 @@ def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
     mpn_lo = mpn.strip().lower()
     for _lineno, env in iter_envelopes(path):
         # Locate the manufacturerInfo dict regardless of the envelope key.
-        for key in ("semiconductor", "capacitor", "resistor", "magnetic", "connector", "analog"):
+        for key in (
+            "semiconductor",
+            "capacitor",
+            "resistor",
+            "magnetic",
+            "connector",
+            "analog",
+            "timeBase",
+        ):
             sub = env.get(key, {})
             if not sub:
                 continue
             for inner_key in list(sub.keys()):
                 # Inner values may be lists (e.g. distributorsInfo) — only
-                # dicts can nest a manufacturerInfo.
+                # dicts can nest a manufacturerInfo. A TBAS document's first
+                # child may be `inputs` (no manufacturerInfo) with the real
+                # record under a later sibling — keep scanning, don't break.
                 inner = sub[inner_key]
                 mi = (
                     inner.get("manufacturerInfo") if isinstance(inner, dict) else None
                 ) or sub.get("manufacturerInfo")
                 if mi is None:
-                    break
+                    continue
                 # Capacitors / resistors carry the MPN in part.partNumber, not
                 # in manufacturerInfo.reference.
                 part = (mi.get("datasheetInfo") or {}).get("part") or {}

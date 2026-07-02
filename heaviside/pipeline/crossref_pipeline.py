@@ -94,6 +94,7 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         "varistor": "varistors.ndjson",
         "connector": "connectors.ndjson",
         "analog": "analog_ics.ndjson",
+        "timeBase": "timebases.ndjson",
     }
 
     target_mfr_lower = _normalize_manufacturer(state.target_manufacturer)
@@ -391,7 +392,10 @@ def _analog_subtype_block(analog_block: Any) -> tuple[str | None, dict[str, Any]
     The analog envelope nests one level deeper than the other categories and
     the inner key is the FUNCTION (operationalAmplifier / comparator / adc /
     …), which varies per row — so the fixed-path descent the other categories
-    use can't reach it."""
+    use can't reach it. TBAS time-base documents share the shape one level
+    down ({"timeBase": {"inputs": …, "oscillator": {...}}}): the family key
+    (oscillator/timer/latch) is found the same way — it is the sibling of
+    inputs/outputs that carries a manufacturerInfo."""
     if isinstance(analog_block, dict):
         for key, record in analog_block.items():
             if isinstance(record, dict) and "manufacturerInfo" in record:
@@ -401,13 +405,14 @@ def _analog_subtype_block(analog_block: Any) -> tuple[str | None, dict[str, Any]
 
 def _category_record(env: dict[str, Any], category: str) -> dict[str, Any] | None:
     """The record dict holding ``manufacturerInfo`` for a TAS envelope,
-    descending the category's base path (and the analog subtype level)."""
+    descending the category's base path (and the analog/timeBase subtype
+    level)."""
     cur: Any = env
     for k in _BASE_PATHS.get(category, ()):
         if not isinstance(cur, dict):
             return None
         cur = cur.get(k)
-    if category == "analog":
+    if category in ("analog", "timeBase"):
         _, cur = _analog_subtype_block(cur)
     return cur if isinstance(cur, dict) else None
 
@@ -502,6 +507,7 @@ _BASE_PATHS: dict[str, tuple[str, ...]] = {
     "mosfet": ("semiconductor", "mosfet"),
     "diode": ("semiconductor", "diode"),
     "analog": ("analog",),
+    "timeBase": ("timeBase",),
 }
 
 
@@ -1247,6 +1253,161 @@ def _rank_analog_candidates(
     return [c for _, c in scored[:max_results]]
 
 
+def _timebase_attrs(env: dict[str, Any]) -> dict[str, Any]:
+    """Substitution-relevant attributes of a TBAS time-base envelope."""
+    subtype, record = _analog_subtype_block((env or {}).get("timeBase"))
+    if record is None:
+        return {}
+    ds = (record.get("manufacturerInfo") or {}).get("datasheetInfo") or {}
+    elec = ds.get("electrical") or {}
+    supply = elec.get("supply") or {}
+    temp = (ds.get("thermal") or {}).get("operatingTemperature") or {}
+    out = {
+        "subtype": subtype,  # oscillator / timer / latch
+        "technology": elec.get("technology"),  # quartzCrystal / mems / tcxo / …
+        "frequency": elec.get("frequency"),
+        "mode": elec.get("mode"),
+        "output_type": elec.get("outputType"),
+        "tolerance": elec.get("frequencyTolerance"),  # fractional (2e-05 = 20 ppm)
+        "stability": elec.get("frequencyStability"),
+        "load_capacitance": elec.get("loadCapacitance"),
+        "esr": elec.get("equivalentSeriesResistance"),
+        "supply_min": supply.get("minimumSupplyVoltage"),
+        "supply_max": supply.get("maximumSupplyVoltage"),
+        "temp_min": temp.get("minimum"),
+        "temp_max": temp.get("maximum"),
+        "package": (ds.get("part") or {}).get("case") or (ds.get("part") or {}).get("package"),
+    }
+    return {k: v for k, v in out.items() if v is not None}
+
+
+_TB_FREQ_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(k|m|g)?hz\b", re.I)
+_TB_CL_RE = re.compile(r"(\d+(?:\.\d+)?)\s*pf\b", re.I)
+_TB_TECH_WORDS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\btcxo\b", re.I), "tcxo"),
+    (re.compile(r"\bvcxo\b", re.I), "vcxo"),
+    (re.compile(r"\bocxo\b", re.I), "ocxo"),
+    (re.compile(r"\bmems\b", re.I), "mems"),
+    (re.compile(r"ceramic\s*resonator", re.I), "ceramicResonator"),
+    # "crystal oscillator" (an ACTIVE clock) must win over bare "crystal".
+    (re.compile(r"crystal\s*(?:clock\s*)?oscillator|\bxo\b", re.I), "crystalOscillator"),
+    (re.compile(r"crystal|\bxtal\b|quartz", re.I), "quartzCrystal"),
+    (re.compile(r"\boscillator\b|\bosc\b", re.I), "crystalOscillator"),
+]
+
+
+def _timebase_attrs_from_text(comp: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort time-base attributes (technology, frequency, CL) from the
+    BOM row's free text — the fallback when the original is not catalogued."""
+    text = " ".join(
+        str(v)
+        for k, v in comp.items()
+        if v and not k.startswith("_") and isinstance(v, (str, int, float))
+    )
+    out: dict[str, Any] = {}
+    m = _TB_FREQ_RE.search(text)
+    if m:
+        mult = {"k": 1e3, "m": 1e6, "g": 1e9}.get((m.group(2) or "").lower(), 1.0)
+        out["frequency"] = float(m.group(1)) * mult
+    m = _TB_CL_RE.search(text)
+    if m:
+        out["load_capacitance"] = float(m.group(1)) * 1e-12
+    for pat, tech in _TB_TECH_WORDS:
+        if pat.search(text):
+            out["technology"] = tech
+            break
+    if out:
+        out["subtype"] = "oscillator"
+    return out
+
+
+def _rank_timebase_candidates(
+    comp: dict[str, Any],
+    all_candidates: list[dict[str, Any]],
+    max_results: int,
+) -> list[dict[str, Any]]:
+    """Time-base (crystal / oscillator) ranking: identity attributes are HARD
+    GATES. Frequency must match exactly (it IS the part); technology must
+    match (a MEMS clock is not a quartz crystal, an active XO is not a
+    passive crystal); a crystal's load capacitance must match (wrong CL pulls
+    the oscillator off frequency); an active oscillator's output type must
+    match (CMOS vs LVDS are different interfaces). Tolerance/stability/ESR
+    and temperature coverage rank the survivors. Returns [] when nothing is
+    known about the original."""
+    src_env = comp.get("_source_env")
+    attrs = _timebase_attrs(src_env) if isinstance(src_env, dict) else {}
+    if not attrs:
+        attrs = _timebase_attrs_from_text(comp)
+    if not attrs:
+        return []
+
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for cand in all_candidates:
+        c = _timebase_attrs(cand)
+        if not c:
+            continue
+        if _attr_mismatch_str(attrs, c, "subtype"):
+            continue
+        if _attr_mismatch_str(attrs, c, "technology"):
+            continue
+        # Frequency is the identity of a time base — 1e-4 relative window
+        # absorbs catalogue rounding only.
+        if _attr_mismatch_num(attrs, c, "frequency", 1e-4):
+            continue
+        if _attr_mismatch_str(attrs, c, "output_type"):
+            continue
+        if _attr_mismatch_str(attrs, c, "mode"):
+            continue
+        # Crystal load capacitance: standardized steps (8/10/12.5/18/20 pF)
+        # are NOT interchangeable without re-deriving the load caps.
+        if _attr_mismatch_num(attrs, c, "load_capacitance", 0.05):
+            continue
+        score = 0.0
+        for key, worse_penalty in (("tolerance", 2.0), ("stability", 2.0), ("esr", 1.5)):
+            o, cv = attrs.get(key), c.get(key)
+            if o is not None and cv is not None and float(o) > 0 and float(cv) > float(o):
+                score += min(worse_penalty, float(cv) / float(o) - 1.0)
+            elif o is not None and cv is None:
+                score += 0.75
+        if (
+            attrs.get("temp_min") is not None
+            and c.get("temp_min") is not None
+            and float(c["temp_min"]) > float(attrs["temp_min"])
+        ):
+            score += 1.0
+        if (
+            attrs.get("temp_max") is not None
+            and c.get("temp_max") is not None
+            and float(c["temp_max"]) < float(attrs["temp_max"])
+        ):
+            score += 1.0
+        if (
+            attrs.get("supply_min") is not None
+            and c.get("supply_min") is not None
+            and float(c["supply_min"]) > float(attrs["supply_min"]) + 0.3
+        ):
+            score += 3.0
+        if (
+            attrs.get("supply_max") is not None
+            and c.get("supply_max") is not None
+            and float(c["supply_max"]) < float(attrs["supply_max"]) * 0.9
+        ):
+            score += 3.0
+        if (
+            attrs.get("package")
+            and c.get("package")
+            and _ident_norm(attrs["package"]) != _ident_norm(c["package"])
+        ):
+            score += 0.3
+        # Prefer candidates whose identity attributes are verifiable.
+        for key, pen in (("load_capacitance", 0.75), ("technology", 0.5)):
+            if attrs.get(key) is not None and c.get(key) is None:
+                score += pen
+        scored.append((score, cand))
+    scored.sort(key=lambda x: x[0])
+    return [c for _, c in scored[:max_results]]
+
+
 def _rank_candidates(
     comp: dict[str, Any],
     category: str,
@@ -1261,12 +1422,15 @@ def _rank_candidates(
         parse_resistance,
     )
 
-    # Connectors and analog ICs are matched on identity attributes, not a
-    # parsed value string — they have their own rankers with hard gates.
+    # Connectors, analog ICs and time bases are matched on identity
+    # attributes, not a parsed value string — they have their own rankers
+    # with hard gates.
     if category == "connector":
         return _rank_connector_candidates(comp, all_candidates, max_results)
     if category == "analog":
         return _rank_analog_candidates(comp, all_candidates, max_results)
+    if category == "timeBase":
+        return _rank_timebase_candidates(comp, all_candidates, max_results)
 
     value_str = str(comp.get("value", ""))
     package = str(comp.get("package", "")).lower()
@@ -2149,6 +2313,46 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             }
         except (KeyError, TypeError):
             pass
+    elif category == "timeBase":
+        try:
+            subtype, record = _analog_subtype_block(env.get("timeBase"))
+            if record is None:
+                raise KeyError("timeBase")
+            mi = record["manufacturerInfo"]
+            attrs = _timebase_attrs(env)
+
+            def _ppm(v: Any) -> float | None:
+                # TBAS stores fractional ratios (2e-05); engineers read ppm.
+                return round(v * 1e6, 3) if isinstance(v, (int, float)) else None
+
+            ds = (mi.get("datasheetInfo") or {})
+            elec = ds.get("electrical") or {}
+            supply = elec.get("supply") or {}
+            summary = {
+                "mpn": mi.get("reference", "?"),
+                "subtype": subtype,
+                "technology": attrs.get("technology"),
+                "frequency": attrs.get("frequency"),
+                "mode": attrs.get("mode"),
+                "output_type": attrs.get("output_type"),
+                "tolerance_ppm": _ppm(attrs.get("tolerance")),
+                "stability_ppm": _ppm(attrs.get("stability")),
+                "aging_ppm_y": _ppm(elec.get("agingPerYear")),
+                "load_capacitance_pF": (
+                    round(attrs["load_capacitance"] * 1e12, 3)
+                    if attrs.get("load_capacitance") is not None
+                    else None
+                ),
+                "esr": attrs.get("esr"),
+                "supply_min_V": attrs.get("supply_min"),
+                "supply_max_V": attrs.get("supply_max"),
+                "current_consumption": supply.get("currentConsumption"),
+                "temp_min_C": attrs.get("temp_min"),
+                "temp_max_C": attrs.get("temp_max"),
+                "package": attrs.get("package", ""),
+            }
+        except (KeyError, TypeError):
+            pass
     # Physical body size for every category, so the LLM (and the reader) can
     # see whether a substitute fits the original's board space.
     if summary:
@@ -2767,6 +2971,14 @@ _CATEGORY_ALIASES = {
     "receptacle": "connector",
     "terminal_block": "connector",
     "terminal block": "connector",
+    "crystal": "timeBase",
+    "xtal": "timeBase",
+    "oscillator": "timeBase",
+    "resonator": "timeBase",
+    "timebase": "timeBase",
+    "time_base": "timeBase",
+    "tcxo": "timeBase",
+    "vcxo": "timeBase",
 }
 
 # Categories the pipeline recognises as-is. A component_type that is neither one
@@ -2786,6 +2998,7 @@ _CR_CANONICAL_CATEGORIES = frozenset(
         "chipBead",
         "varistor",
         "analog",
+        "timeBase",
     }
 )
 
@@ -2891,6 +3104,14 @@ def _infer_component_type(row: dict[str, Any]) -> str:
         )
     ):
         return "connector"
+    # Time-base parts. The keywords also appear inside IC descriptions
+    # ("crystal oscillator driver", "controller with internal oscillator") —
+    # only classify as a time base when no IC word co-occurs.
+    if any(
+        w in text
+        for w in ("CRYSTAL", "XTAL", "RESONATOR", "TCXO", "VCXO", "OCXO", "OSCILLATOR")
+    ) and not any(w in text for w in ("REG", "CONTROLLER", "CONVERTER", "PWM", "DRIVER")):
+        return "timeBase"
     if any(
         w in text
         for w in (
@@ -3514,6 +3735,7 @@ def _stage_param_check(state: CrossRefState) -> None:
         "chipBead": "magnetics.ndjson",
         "connector": "connectors.ndjson",
         "analog": "analog_ics.ndjson",
+        "timeBase": "timebases.ndjson",
     }
     rows = state.crossref_result
 
@@ -3699,6 +3921,7 @@ def _ondemand_candidates(
         "varistor": "varistors.ndjson",
         "connector": "connectors.ndjson",
         "analog": "analog_ics.ndjson",
+        "timeBase": "timebases.ndjson",
     }
     if category not in files:
         return []

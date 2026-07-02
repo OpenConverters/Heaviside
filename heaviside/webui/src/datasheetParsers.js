@@ -425,6 +425,69 @@ function parseAnalog(env) {
   }
 }
 
+function parseTimeBase(env) {
+  // TBAS documents nest the record under the family key
+  // ({ timeBase: { inputs: …, oscillator: {...} } }) — find the sibling of
+  // inputs/outputs that carries a manufacturerInfo.
+  const block = env?.timeBase ?? {}
+  const subtype = Object.keys(block).find((k) => block[k]?.manufacturerInfo)
+  if (!subtype) return null
+  const rec = block[subtype]
+  const mi = rec.manufacturerInfo ?? {}
+  const di = mi.datasheetInfo ?? {}
+  const p  = di.part ?? {}
+  const el = di.electrical ?? {}
+  const su = el.supply ?? {}
+  const th = di.thermal ?? {}
+  const me = di.mechanical ?? {}
+  const opt = (v) => (v != null ? String(v) : undefined)
+  const ppm = (v) => (v != null ? `${(v * 1e6).toLocaleString(undefined, { maximumFractionDigits: 3 })} ppm` : undefined)
+  return {
+    title: mi.reference ?? p.partNumber ?? '—',
+    manufacturer: mi.name ?? '—',
+    status: mi.status,
+    datasheetUrl: mi.datasheetUrl,
+    description: p.description ?? mi.description,
+    tags: [words(el.technology ?? subtype), mi.series, p.package ?? p.case, words(el.mode), words(el.outputType)].filter(Boolean),
+    headline: [
+      { sym: 'f',   label: 'Frequency',       val: fmtU(el.frequency, 'Hz') },
+      { sym: '±f',  label: 'Tolerance',       val: ppm(el.frequencyTolerance) ?? '—' },
+      { sym: 'C_L', label: 'Load Capacitance', val: fmtU(el.loadCapacitance, 'F') },
+    ],
+    sections: [
+      { title: 'Frequency', rows: [
+        { param: 'Frequency',           sym: 'f',    mtm: [null, el.frequency, null], unit: 'Hz' },
+        { param: 'Frequency Tolerance', sym: '±f',   mtm: [null, null, null], str: ppm(el.frequencyTolerance) },
+        { param: 'Frequency Stability', sym: 'Δf/f', mtm: [null, null, null], str: ppm(el.frequencyStability) },
+        { param: 'Aging per Year',      sym: '',     mtm: [null, null, null], str: ppm(el.agingPerYear) },
+        { param: 'Mode',                sym: '',     mtm: [null, null, null], str: opt(words(el.mode)) },
+        { param: 'Pull Range',          sym: '',     mtm: [null, null, null], str: ppm(el.pullRange) },
+        { param: 'RMS Phase Jitter',    sym: '',     mtm: [null, el.rmsPhaseJitter, null], unit: 's' },
+      ]},
+      { title: 'Electrical', rows: [
+        { param: 'Technology',        sym: '',     mtm: [null, null, null], str: opt(words(el.technology)) },
+        { param: 'Load Capacitance',  sym: 'C_L',  mtm: [null, el.loadCapacitance, null], unit: 'F' },
+        { param: 'ESR',               sym: 'ESR',  mtm: [null, el.equivalentSeriesResistance, null], unit: 'Ω' },
+        { param: 'Built-in Capacitance', sym: 'C_0', mtm: [null, el.builtInCapacitance, null], unit: 'F' },
+        { param: 'Output Type',       sym: '',     mtm: [null, null, null], str: opt(words(el.outputType)) },
+        { param: 'Enable Function',   sym: '',     mtm: [null, null, null], str: opt(words(el.enableFunction)) },
+        { param: 'Startup Time',      sym: 't_su', mtm: [null, el.startupTime, null], unit: 's' },
+      ]},
+      { title: 'Supply', rows: [
+        { param: 'Supply Voltage',      sym: 'V_S', mtm: [su.minimumSupplyVoltage ?? null, null, su.maximumSupplyVoltage ?? null], unit: 'V' },
+        { param: 'Current Consumption', sym: 'I_S', mtm: [null, su.currentConsumption, null], unit: 'A' },
+      ]},
+      { title: 'Environmental & Package', rows: [
+        { param: 'Operating Temperature', sym: 'T_op', mtm: [th.operatingTemperature?.minimum ?? null, null, th.operatingTemperature?.maximum ?? null], unit: '°C' },
+        { param: 'Package', sym: '', mtm: [null, null, null], str: opt(p.package ?? p.case ?? me.case) },
+        { param: 'Length',  sym: 'L', mtm: minTypMax(me.length), unit: 'm' },
+        { param: 'Width',   sym: 'W', mtm: minTypMax(me.width), unit: 'm' },
+        { param: 'Height',  sym: 'H', mtm: minTypMax(me.height), unit: 'm' },
+      ]},
+    ],
+  }
+}
+
 const PARSERS = {
   mosfets: parseMosfet,
   diodes: parseDiode,
@@ -433,6 +496,7 @@ const PARSERS = {
   magnetics: parseMag,
   connectors: parseConnector,
   analog: parseAnalog,
+  timebases: parseTimeBase,
 }
 
 // Copy text to the clipboard; falls back to execCommand for non-secure

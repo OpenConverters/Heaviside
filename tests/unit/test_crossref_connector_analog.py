@@ -17,7 +17,9 @@ from heaviside.pipeline.crossref_pipeline import (
     _connector_attrs,
     _rank_analog_candidates,
     _rank_connector_candidates,
+    _rank_timebase_candidates,
     _summarize_candidate,
+    _timebase_attrs,
 )
 from heaviside.pipeline.param_check import (
     FAIL,
@@ -343,3 +345,109 @@ def test_analog_attrs_reads_subtype_dynamically() -> None:
     attrs = _analog_attrs(_analog_env("X", subtype="adc", channels=8, gbw=None, vos=None))
     assert attrs["subtype"] == "adc"
     assert attrs["channels"] == 8
+
+
+# ── time bases (TBAS: crystals / oscillators) ────────────────────────────────
+
+
+def _tb_env(
+    mpn: str,
+    *,
+    mfr: str = "Würth Elektronik",
+    technology: str = "quartzCrystal",
+    frequency: float = 32768.0,
+    tolerance: float | None = 2e-5,
+    load_capacitance: float | None = 1.25e-11,
+    esr: float | None = 70e3,
+    output_type: str | None = "none",
+    temp: tuple[float, float] = (-40.0, 85.0),
+    with_inputs: bool = True,
+) -> dict:
+    elec: dict = {"technology": technology, "frequency": frequency}
+    if tolerance is not None:
+        elec["frequencyTolerance"] = tolerance
+    if load_capacitance is not None:
+        elec["loadCapacitance"] = load_capacitance
+    if esr is not None:
+        elec["equivalentSeriesResistance"] = esr
+    if output_type is not None:
+        elec["outputType"] = output_type
+    doc: dict = {
+        "oscillator": {
+            "manufacturerInfo": {
+                "name": mfr,
+                "reference": mpn,
+                "status": "production",
+                "datasheetInfo": {
+                    "part": {"partNumber": mpn, "package": "3215"},
+                    "electrical": elec,
+                    "thermal": {
+                        "operatingTemperature": {"minimum": temp[0], "maximum": temp[1]}
+                    },
+                },
+            }
+        }
+    }
+    if with_inputs:
+        # TBAS documents may carry inputs BEFORE the family key — the subtype
+        # descent must skip it, not give up at the first sibling.
+        doc = {"inputs": {"designRequirements": {"name": mpn}}, **doc}
+    return {"timeBase": doc}
+
+
+def test_timebase_attrs_skip_inputs_sibling() -> None:
+    attrs = _timebase_attrs(_tb_env("X1", with_inputs=True))
+    assert attrs["subtype"] == "oscillator"
+    assert attrs["frequency"] == 32768.0
+    assert attrs["technology"] == "quartzCrystal"
+
+
+def test_timebase_ranker_gates_frequency_technology_cl() -> None:
+    orig = _tb_env("ORIG", mfr="Abracon")
+    comp = {"ref_des": "Y1", "component_type": "timeBase", "_source_env": orig}
+    cands = [
+        _tb_env("W-25M", frequency=25e6),  # wrong frequency
+        _tb_env("W-MEMS", technology="mems"),  # wrong technology
+        _tb_env("W-CL18", load_capacitance=1.8e-11),  # wrong load capacitance
+        _tb_env("W-GOOD"),
+    ]
+    ranked = _rank_timebase_candidates(comp, cands, 10)
+    mpns = [_summarize_candidate(c, "timeBase")["mpn"] for c in ranked]
+    assert mpns == ["W-GOOD"]
+
+
+def test_timebase_ranker_text_fallback() -> None:
+    comp = {
+        "ref_des": "Y1",
+        "component_type": "timeBase",
+        "description": "CRYSTAL 32.768KHZ 12.5PF SMD",
+    }
+    cands = [_tb_env("W-25M", frequency=25e6), _tb_env("W-32K", frequency=32768.0)]
+    ranked = _rank_timebase_candidates(comp, cands, 10)
+    mpns = [_summarize_candidate(c, "timeBase")["mpn"] for c in ranked]
+    assert mpns == ["W-32K"]
+
+
+def test_timebase_params_verdicts() -> None:
+    o = _summarize_candidate(_tb_env("O", mfr="Abracon", tolerance=2e-5, esr=50e3), "timeBase")
+    good = _summarize_candidate(_tb_env("S", tolerance=1e-5, esr=40e3), "timeBase")
+    res = evaluate_params("timeBase", o, good)
+    assert _verdict(res, "frequency") == PASS
+    assert _verdict(res, "technology") == PASS
+    assert _verdict(res, "load_capacitance_pF") == PASS
+    assert _verdict(res, "tolerance_ppm") == PASS
+    assert _verdict(res, "esr") == PASS
+
+    worse = _summarize_candidate(
+        _tb_env("S2", frequency=32768.0, tolerance=1e-4, esr=200e3, load_capacitance=1.8e-11),
+        "timeBase",
+    )
+    res = evaluate_params("timeBase", o, worse)
+    assert _verdict(res, "load_capacitance_pF") == FAIL  # 18 pF ≠ 12.5 pF
+    assert _verdict(res, "tolerance_ppm") == FAIL  # 100 ppm vs 20 ppm, beyond 2×
+    assert _verdict(res, "esr") == FAIL  # 200k vs 50k, beyond 1.5×
+
+
+def test_timebase_unknown_original_returns_nothing() -> None:
+    comp = {"ref_des": "Y1", "component_type": "timeBase", "original_mpn": "XYZ"}
+    assert _rank_timebase_candidates(comp, [_tb_env("W-GOOD")], 10) == []

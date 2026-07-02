@@ -82,6 +82,7 @@ REPO_MAP: dict[str, Path] = {
     "ctas": ROOT / "CTAS" / "schemas",
     "aas": ROOT / "AAS" / "schemas",
     "conas": ROOT / "CONAS" / "schemas",
+    "tbas": ROOT / "TBAS" / "schemas",
     "tas": ROOT / "TAS" / "schemas",
     "cias": ROOT / "CIAS" / "schemas",
 }

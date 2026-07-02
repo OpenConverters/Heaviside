@@ -227,6 +227,35 @@ RANKING RULES:
   `partial` with a "footprint change" note.
 - Quiescent current matters for battery/low-power originals (≤ 3× original).
 
+### Crystals / Oscillators (time bases)
+
+When `_original_specs` is provided it is the original's real catalogue record.
+
+HARD GATES:
+- **Frequency** must match EXACTLY — it is the part. There is no "nearby"
+  crystal; 24.000 MHz is not 25.000 MHz.
+- **Technology** must match exactly: quartz crystal ≠ MEMS oscillator ≠
+  ceramic resonator; a passive crystal is never an active XO/TCXO/VCXO/OCXO
+  substitute and vice versa (an XO drives itself; a crystal needs the MCU's
+  oscillator circuit).
+- **Load capacitance** (crystals): must match — a different CL pulls the
+  oscillation frequency in-circuit. Swapping CL means re-deriving the two
+  load capacitors: flag as `partial` at best.
+- **Output type** (active oscillators): CMOS / LVDS / LVPECL / HCSL /
+  clipped-sine are different electrical interfaces — must match.
+- **Overtone mode** must match (fundamental vs 3rd overtone changes the
+  oscillator circuit).
+
+RANKING RULES:
+- Frequency tolerance and stability (ppm) ≤ original (≤2× flags a WARN).
+- ESR ≤ original × 1.5 — a higher-ESR crystal may not start against the
+  oscillator's negative resistance; note when ESR increased.
+- Aging per year ≤ original where known.
+- Operating temperature range must cover the original's.
+- Active oscillators: supply window must cover the original's; current
+  consumption ≤ 3× original.
+- Package/case should match for a drop-in; a size change is `partial`.
+
 ## Dependency Flags
 
 Flag these cascading effects (do not redesign, just flag):

@@ -68,12 +68,14 @@ _TAS_KIND_TO_FILES = {
     "diode": ["diodes.ndjson"],
     "connector": ["connectors.ndjson"],
     "analog": ["analog_ics.ndjson"],
+    "timeBase": ["timebases.ndjson"],
 }
 
 # Catalogue file → CR canonical category, for the reverse question: "which
 # category is this MPN?". Ordered by corpus size ascending so the cheapest
 # indexes are consulted first.
 _TAS_FILE_TO_KIND = {
+    "timebases.ndjson": "timeBase",
     "analog_ics.ndjson": "analog",
     "mosfets.ndjson": "mosfet",
     "diodes.ndjson": "diode",
@@ -176,15 +178,18 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
             "magnetic",
             "connector",
             "analog",
+            "timeBase",
         ):
             sub = env.get(top_key)
             if not isinstance(sub, dict):
                 continue
-            # `analog` nests the record under a per-row FUNCTION key
-            # (operationalAmplifier / comparator / adc / …) — descend every
-            # child; the fixed inner keys cover the semiconductor split.
+            # `analog`/`timeBase` nest the record under a per-row FAMILY key
+            # (operationalAmplifier / oscillator / …) — descend every child;
+            # the fixed inner keys cover the semiconductor split.
             inner_keys: tuple = (
-                tuple(sub.keys()) if top_key == "analog" else (None, "mosfet", "diode", "igbt")
+                tuple(sub.keys())
+                if top_key in ("analog", "timeBase")
+                else (None, "mosfet", "diode", "igbt")
             )
             for inner_key in inner_keys:
                 record = sub if inner_key is None else sub.get(inner_key)
@@ -682,6 +687,7 @@ _ROW_TYPE_TO_FILE_KIND = {
     "diode": "diode",
     "connector": "connector",
     "analog": "analog",
+    "timeBase": "timeBase",
 }
 
 

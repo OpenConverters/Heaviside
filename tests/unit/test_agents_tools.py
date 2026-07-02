@@ -39,6 +39,7 @@ EXPECTED_TOOL_NAMES = {
     "crossref_magnetic",
     "crossref_connector",
     "crossref_analog",
+    "crossref_timebase",
 }
 
 

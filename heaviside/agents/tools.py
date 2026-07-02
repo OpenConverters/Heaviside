@@ -786,6 +786,90 @@ def _crossref_analog_impl(
     )
 
 
+def _crossref_timebase_impl(
+    target_manufacturer: str,
+    frequency_hz: float | None = None,
+    technology: str | None = None,
+    load_capacitance_f: float | None = None,
+    max_results: int = 50,
+) -> str:
+    """Query the internal time-base (crystal / oscillator) DB from a target
+    manufacturer.
+
+    Args:
+        target_manufacturer: Manufacturer to search (substring match,
+            case/punctuation-insensitive).
+        frequency_hz: Optional exact frequency in hertz (SI). Matches within
+            0.01% — frequency IS the part; there is no "nearby" crystal.
+        technology: Optional technology filter — one of "quartzCrystal",
+            "ceramicResonator", "crystalOscillator", "tcxo", "vcxo", "ocxo",
+            "mems", "siliconRC", "programmable". ALWAYS pass it when the
+            original's technology is known — a MEMS oscillator is never a
+            quartz-crystal substitute.
+        load_capacitance_f: Optional load capacitance in farads (crystals).
+            Matches within 5% — a different CL pulls the clock off frequency.
+        max_results: Cap on returned candidates (truncation is flagged in
+            the response, never silent).
+
+    Returns:
+        JSON string with ``total_matches``, ``candidates`` (mpn, technology,
+        frequency, tolerance_ppm, stability_ppm, load_capacitance_pF, esr,
+        package, …) and a ``truncated`` flag.
+    """
+    import json as _json
+    import os
+    from pathlib import Path
+
+    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.pipeline.crossref_pipeline import (
+        _extract_manufacturer,
+        _normalize_manufacturer,
+        _summarize_candidate,
+        _timebase_attrs,
+    )
+
+    tas_dir = Path(
+        os.environ.get(
+            "HEAVISIDE_TAS_DATA_DIR",
+            str(Path(__file__).resolve().parents[2] / "TAS" / "data"),
+        )
+    )
+    path = tas_dir / "timebases.ndjson"
+
+    target = _normalize_manufacturer(target_manufacturer)
+    matches: list[dict] = []
+    if path.exists():
+        for _lineno, env in iter_envelopes(path):
+            mfr = _extract_manufacturer(env, "timeBase")
+            if not mfr or target not in _normalize_manufacturer(mfr):
+                continue
+            attrs = _timebase_attrs(env)
+            if technology is not None and attrs.get("technology") != technology:
+                continue
+            if frequency_hz is not None:
+                f = attrs.get("frequency")
+                if f is None or abs(float(f) - frequency_hz) > 1e-4 * frequency_hz:
+                    continue
+            if load_capacitance_f is not None:
+                cl = attrs.get("load_capacitance")
+                if cl is None or abs(float(cl) - load_capacitance_f) > 0.05 * load_capacitance_f:
+                    continue
+            matches.append(env)
+
+    n = max(1, min(int(max_results), 200))
+    summaries = [_summarize_candidate(env, "timeBase") for env in matches[:n]]
+    return _json.dumps(
+        {
+            "category": "timeBase",
+            "target_manufacturer": target_manufacturer,
+            "total_matches": len(matches),
+            "returned": len(summaries),
+            "truncated": len(matches) > n,
+            "candidates": summaries,
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Strands decoration (the agent-facing surface)
 # ---------------------------------------------------------------------------
@@ -805,6 +889,7 @@ crossref_resistor = tool(_crossref_resistor_impl, name="crossref_resistor")
 crossref_magnetic = tool(_crossref_magnetic_impl, name="crossref_magnetic")
 crossref_connector = tool(_crossref_connector_impl, name="crossref_connector")
 crossref_analog = tool(_crossref_analog_impl, name="crossref_analog")
+crossref_timebase = tool(_crossref_timebase_impl, name="crossref_timebase")
 
 
 # ---------------------------------------------------------------------------
@@ -830,6 +915,7 @@ TOOL_REGISTRY: dict[str, Any] = {
     "crossref_magnetic": crossref_magnetic,
     "crossref_connector": crossref_connector,
     "crossref_analog": crossref_analog,
+    "crossref_timebase": crossref_timebase,
 }
 
 
@@ -851,6 +937,7 @@ RAW_FUNCTIONS: dict[str, Any] = {
     "crossref_magnetic": _crossref_magnetic_impl,
     "crossref_connector": _crossref_connector_impl,
     "crossref_analog": _crossref_analog_impl,
+    "crossref_timebase": _crossref_timebase_impl,
 }
 
 
