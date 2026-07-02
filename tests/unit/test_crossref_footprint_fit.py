@@ -6,15 +6,16 @@ matching criterion. The rule (per product spec) applies to every category:
 the substitute must occupy no more board space than the original, smaller is
 better, and oversize is heavily penalised but still selectable as a last resort.
 """
+
 from __future__ import annotations
 
 from heaviside.pipeline.crossref_pipeline import (
+    _OVERSIZE_BASE,
     _candidate_summaries_for_llm,
     _eia_dims_from_case,
+    _envelope_reference,
     _extract_dimensions,
     _footprint_penalty,
-    _envelope_reference,
-    _OVERSIZE_BASE,
     _rank_candidates,
 )
 
@@ -187,8 +188,8 @@ def test_exact_value_resistor_outranks_near_value_same_package():
     so an EXACT-value part must rank above a near-value part even when the
     near-value one shares the original's package and the exact one is in a
     smaller (but fitting) footprint."""
-    exact_0603 = _res("EXACT-47-0603", 47.0, "0603")   # exact value, smaller pkg
-    near_1206 = _res("NEAR-39-1206", 39.0, "1206")     # 17% off, same pkg as source
+    exact_0603 = _res("EXACT-47-0603", 47.0, "0603")  # exact value, smaller pkg
+    near_1206 = _res("NEAR-39-1206", 39.0, "1206")  # 17% off, same pkg as source
     comp = {"value": "47", "component_type": "resistor", "package": "1206"}
     ranked = _rank_candidates(comp, "resistor", [near_1206, exact_0603], max_results=10)
     assert _envelope_reference(ranked[0], "resistor") == "EXACT-47-0603"
@@ -212,5 +213,5 @@ def test_resistor_value_dominates_footprint_smaller_is_better():
         comp, "resistor", [wrong_0402, exact_0603, exact_0402], max_results=10
     )
     order = [_envelope_reference(c, "resistor") for c in ranked]
-    assert order[0] == "EXACT-47-0402"          # exact value, smallest fitting
-    assert order[-1] == "WRONG-33-0402"          # wrong value ranks last
+    assert order[0] == "EXACT-47-0402"  # exact value, smallest fitting
+    assert order[-1] == "WRONG-33-0402"  # wrong value ranks last

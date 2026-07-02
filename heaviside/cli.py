@@ -56,7 +56,9 @@ def _load_spec(path: Path) -> dict[str, Any]:
 @app.command()
 def design(
     topology: str = typer.Argument(..., help="Canonical topology name (e.g. 'buck', 'dab')."),
-    spec: Path = typer.Option(..., "--spec", "-s", help="JSON file with the Heaviside converter spec."),
+    spec: Path = typer.Option(
+        ..., "--spec", "-s", help="JSON file with the Heaviside converter spec."
+    ),
     out: Path | None = typer.Option(
         None, "--out", "-o", help="Write the TAS to FILE (default: stdout)."
     ),
@@ -123,7 +125,7 @@ def design(
 
         try:
             tas = _ka.design_from_hs_spec(topology, spec_json)
-        except Exception as exc:  # noqa: BLE001 - surface any Kirchhoff design failure with its type
+        except Exception as exc:
             typer.echo(f"error: Kirchhoff design failed ({type(exc).__name__}): {exc}", err=True)
             raise typer.Exit(code=3) from None
         if realism:
@@ -148,7 +150,7 @@ def design(
 
         try:
             outcome = design_converter(topology, spec_json, use_llm=False, with_reviewers=False)
-        except Exception as exc:  # noqa: BLE001 - surface any realize failure with its type
+        except Exception as exc:
             typer.echo(f"error: design failed ({type(exc).__name__}): {exc}", err=True)
             raise typer.Exit(code=5) from None
         tas = outcome.tas
@@ -793,9 +795,7 @@ def _run_integrity_audit(
                 "guard_failure_count": len(r.guard_failures),
                 "exact_duplicate_groups": len(r.exact_duplicates),
                 "exact_duplicate_rows": sum(len(v) for v in r.exact_duplicates.values()),
-                "mpn_over_limit": dict(
-                    sorted(r.mpn_over_limit.items(), key=lambda x: -x[1])[:50]
-                ),
+                "mpn_over_limit": dict(sorted(r.mpn_over_limit.items(), key=lambda x: -x[1])[:50]),
                 "mpn_over_limit_count": len(r.mpn_over_limit),
                 "domain_mismatches": [
                     {"line": f.line, "mpn": f.mpn, "reasons": f.reasons}

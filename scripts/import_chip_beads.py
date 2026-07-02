@@ -10,6 +10,7 @@ Usage:
 Prerequisites:
     Run scripts/export_chip_beads_to_heaviside.py in eb-modelling-heimdall first.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,8 +24,8 @@ sys.path.insert(0, str(REPO))
 from heaviside.librarian.guards import GuardRejectionError, guard_component
 from heaviside.librarian.tas import ValidationError
 
-SOURCE     = Path("/tmp/heaviside_chip_beads.ndjson")
-DEST       = REPO / "TAS" / "data" / "magnetics.ndjson"
+SOURCE = Path("/tmp/heaviside_chip_beads.ndjson")
+DEST = REPO / "TAS" / "data" / "magnetics.ndjson"
 QUARANTINE = REPO / "TAS" / "data" / "magnetics.quarantine_chip_beads.ndjson"
 
 # Catalog inductors/beads have no real core/coil decomposition.
@@ -62,6 +63,7 @@ def _clean_record(rec: dict) -> dict:
     - Drop model if None
     """
     import copy
+
     rec = copy.deepcopy(rec)
     mag = rec.get("magnetic", {})
 
@@ -92,9 +94,7 @@ def _clean_record(rec: dict) -> dict:
     mech = di.get("mechanical", {})
     for key in list(mech.keys()):
         v = mech[key]
-        if v is None:
-            del mech[key]
-        elif isinstance(v, dict) and all(val is None for val in v.values()):
+        if v is None or (isinstance(v, dict) and all(val is None for val in v.values())):
             del mech[key]
 
     # part: drop None-valued optional fields
@@ -107,14 +107,13 @@ def _clean_record(rec: dict) -> dict:
     for elec_item in di.get("electrical", []):
         for key in list(elec_item.keys()):
             v = elec_item[key]
-            if v is None:
-                del elec_item[key]
-            elif isinstance(v, dict) and all(val is None for val in v.values()):
+            if v is None or (isinstance(v, dict) and all(val is None for val in v.values())):
                 del elec_item[key]
         # impedancePoints: drop points where magnitude is non-numeric (Excel stub)
         if "impedancePoints" in elec_item:
             elec_item["impedancePoints"] = [
-                p for p in elec_item["impedancePoints"]
+                p
+                for p in elec_item["impedancePoints"]
                 if isinstance((p.get("impedance") or {}).get("magnitude"), (int, float))
             ]
             if not elec_item["impedancePoints"]:
@@ -123,8 +122,7 @@ def _clean_record(rec: dict) -> dict:
         # measurement artifacts near/above SRF — drop those points.
         if "resistancePoints" in elec_item:
             elec_item["resistancePoints"] = [
-                p for p in elec_item["resistancePoints"]
-                if p.get("resistance", 0) >= 0
+                p for p in elec_item["resistancePoints"] if p.get("resistance", 0) >= 0
             ]
             if not elec_item["resistancePoints"]:
                 del elec_item["resistancePoints"]
@@ -132,8 +130,7 @@ def _clean_record(rec: dict) -> dict:
         # is physically meaningful but not representable — drop those points.
         if "reactancePoints" in elec_item:
             elec_item["reactancePoints"] = [
-                p for p in elec_item["reactancePoints"]
-                if p.get("reactance", 0) >= 0
+                p for p in elec_item["reactancePoints"] if p.get("reactance", 0) >= 0
             ]
             if not elec_item["reactancePoints"]:
                 del elec_item["reactancePoints"]

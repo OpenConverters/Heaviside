@@ -160,8 +160,10 @@ class JobRegistry:
                     "retry once the queue drains"
                 )
             self._jobs[job_id] = Job(
-                id=job_id, kind=kind,
-                created_monotonic=time.monotonic(), created_wall=time.time(),
+                id=job_id,
+                kind=kind,
+                created_monotonic=time.monotonic(),
+                created_wall=time.time(),
             )
         self._queue.put((job_id, fn))
         return job_id
@@ -275,8 +277,12 @@ class JobRegistry:
             if job is None or job.status not in _TERMINAL:
                 return
             snapshot = {
-                "id": job.id, "kind": job.kind, "status": job.status,
-                "result": job.result, "error": job.error, "progress": job.progress,
+                "id": job.id,
+                "kind": job.kind,
+                "status": job.status,
+                "result": job.result,
+                "error": job.error,
+                "progress": job.progress,
                 "created_wall": job.created_wall,
                 "stages": [
                     {"name": s.name, "status": s.status, "duration_s": s.duration_s()}
@@ -308,16 +314,23 @@ class JobRegistry:
                 logger.warning("skipping unreadable persisted job %s: %s", path.name, exc)
                 continue
             stages = [
-                Stage(name=s.get("name", "?"), status=s.get("status", "done"),
-                      started=0.0,
-                      ended=s.get("duration_s") if s.get("duration_s") is not None else None)
+                Stage(
+                    name=s.get("name", "?"),
+                    status=s.get("status", "done"),
+                    started=0.0,
+                    ended=s.get("duration_s") if s.get("duration_s") is not None else None,
+                )
                 for s in (d.get("stages") or [])
             ]
             job = Job(
-                id=d.get("id", path.stem), kind=d.get("kind", "?"),
-                status=d.get("status", "done"), result=d.get("result"),
-                error=d.get("error"), progress=d.get("progress", ""),
-                created_wall=d.get("created_wall"), stages=stages,
+                id=d.get("id", path.stem),
+                kind=d.get("kind", "?"),
+                status=d.get("status", "done"),
+                result=d.get("result"),
+                error=d.get("error"),
+                progress=d.get("progress", ""),
+                created_wall=d.get("created_wall"),
+                stages=stages,
             )
             self._jobs[job.id] = job
         if self._jobs:
@@ -345,8 +358,7 @@ class JobRegistry:
                 # User pressed Cancel mid-run — a clean stop, not a failure.
                 logger.info("job %s cancelled mid-run", job_id)
                 self._finalize_stages(job_id, errored=True)  # running stage → not "done"
-                self._set(job_id, status="cancelled",
-                          progress="cancelled by user", result=None)
+                self._set(job_id, status="cancelled", progress="cancelled by user", result=None)
             except Exception as exc:
                 # Log the failure (the worker used to swallow it silently — the
                 # traceback only lived in the job's result), then persist it.
@@ -364,7 +376,7 @@ class JobRegistry:
                 if done_job is not None and done_job.status == "done" and self.on_job_done:
                     try:
                         self.on_job_done(job_id)  # e.g. pre-render the report PDF
-                    except Exception:  # noqa: BLE001 - best-effort, never fail the job
+                    except Exception:
                         logger.exception("on_job_done hook failed for %s", job_id)
                 self._queue.task_done()
 

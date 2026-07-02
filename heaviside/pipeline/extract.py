@@ -178,8 +178,12 @@ def _already_isat_enriched(comp: Mapping[str, Any]) -> bool:
     isat = comp.get("isat")
     ipk = comp.get("ipeak_worst")
     return (
-        isinstance(isat, (int, float)) and not isinstance(isat, bool) and isat > 0
-        and isinstance(ipk, (int, float)) and not isinstance(ipk, bool) and ipk > 0
+        isinstance(isat, (int, float))
+        and not isinstance(isat, bool)
+        and isat > 0
+        and isinstance(ipk, (int, float))
+        and not isinstance(ipk, bool)
+        and ipk > 0
     )
 
 
@@ -592,8 +596,13 @@ def _enrich_buck(tas: dict, spec: Mapping[str, Any]) -> None:
         )
     A_e, N, b_sat = _mas_isat_inputs(mas, "buck inductor MAS")
     isat, isat_prov = _compute_isat_authoritative(
-        mas, L, b_sat=b_sat, N=N, A_e=A_e,
-        temperature_c=_ISAT_DESIGN_TEMP_C, topology_label="buck",
+        mas,
+        L,
+        b_sat=b_sat,
+        N=N,
+        A_e=A_e,
+        temperature_c=_ISAT_DESIGN_TEMP_C,
+        topology_label="buck",
     )
 
     # Stamp results
@@ -715,7 +724,7 @@ def _enrich_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     )
     b_sat = _conservative_bsat(sat)
     op = _require(spec, ("operatingPoints",), "boost spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         mas,
         L,
@@ -881,7 +890,7 @@ def _enrich_flyback(tas: dict, spec: Mapping[str, Any]) -> None:
     ipeak_worst = I_in_max / d_max + ripple_worst / 2.0
 
     op = _require(spec, ("operatingPoints",), "flyback spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         mas,
         Lm,
@@ -1029,7 +1038,7 @@ def _enrich_non_isolated_buckboost(
     mas1 = _read_mas(c1, f"{topology_name} L1 MAS")
     A_e1, N1, b_sat1 = _mas_isat_inputs(mas1, f"{topology_name} L1 MAS")
     op = _require(spec, ("operatingPoints",), f"{topology_name} spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat_L1, isat_prov_L1 = _compute_isat_authoritative(
         mas1,
         L1_H,
@@ -1440,7 +1449,7 @@ def _enrich_forward_family(
         raise EnrichmentError(f"{where}.operatingPoints[0].switchingFrequency: positive number")
     fsw = float(fsw)
     n_rails = len(vouts)
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
 
     # T1 lives in the isolation stage; read its turns ratios per rail.
     _, _, t1_comp = _find_magnetic_in_stage_role(
@@ -1615,7 +1624,7 @@ def _enrich_isolated_buck(tas: dict, spec: Mapping[str, Any]) -> None:
     ripple_worst = vout * (1.0 - d_min) / (L_worst * fsw)
     ipeak_worst = iout + ripple_worst / 2.0
     op = _require(spec, ("operatingPoints",), "isolated_buck spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         mas,
         L_pri,
@@ -1726,7 +1735,7 @@ def _enrich_isolated_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     A_e, _, b_sat = _mas_isat_inputs(mas, "isolated_buck_boost T1 MAS")
     N_pri = _winding_turns_by_name(mas, "pri", "isolated_buck_boost T1 MAS")
     op = _require(spec, ("operatingPoints",), "isolated_buck_boost spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         mas,
         L_pri,
@@ -1857,7 +1866,7 @@ def _enrich_push_pull(tas: dict, spec: Mapping[str, Any]) -> None:
     ripple_worst = vout * (1.0 - d_eff_min) / (L_worst * fsw_eff)
     ipeak_worst = iout + ripple_worst / 2.0
     op = _require(spec, ("operatingPoints",), "push_pull spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         lout_mas,
         L_out,
@@ -1992,7 +2001,7 @@ def _enrich_asymmetric_half_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     ripple_worst = vout * (1.0 - d_eff_min) / (L_worst * fsw_eff)
     ipeak_worst = iout + ripple_worst / 2.0
     op = _require(spec, ("operatingPoints",), "asymmetric_half_bridge spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         lout_mas,
         L_out,
@@ -2145,7 +2154,7 @@ def _enrich_weinberg(tas: dict, spec: Mapping[str, Any]) -> None:
     iL_avg_max = iout * vout / (vmin * float(efficiency))  # input current at Vin_min
     ipeak_worst = iL_avg_max + ripple_worst / 2.0
     op = _require(spec, ("operatingPoints",), "weinberg spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         l1_mas,
         L,
@@ -2295,7 +2304,7 @@ def _enrich_four_switch_buck_boost(tas: dict, spec: Mapping[str, Any]) -> None:
     mas = _read_mas(comp, "four_switch_buck_boost L1 MAS")
     A_e, N, b_sat = _mas_isat_inputs(mas, "four_switch_buck_boost L1 MAS")
     op = _require(spec, ("operatingPoints",), "four_switch_buck_boost spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         mas,
         L,
@@ -2436,7 +2445,7 @@ def _enrich_llc(tas: dict, spec: Mapping[str, Any]) -> None:
     ipeak_worst = M_max * i_load_pk + i_mag_pk
 
     op = _require(spec, ("operatingPoints",), "llc spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         lr_full_mas,
         L_r,
@@ -2561,7 +2570,7 @@ def _enrich_phase_shifted_full_bridge(tas: dict, spec: Mapping[str, Any]) -> Non
     vouts = op0.get("outputVoltages") or [vout]
     iouts = op0.get("outputCurrents") or [iout]
     n_rails = len(vouts)
-    t_amb = float(op0.get("ambientTemperature", 25.0))
+    float(op0.get("ambientTemperature", 25.0))
 
     # T1 in the isolation stage — windings pri / sec0 / sec1 / …
     _, _, t1_comp = _find_magnetic_in_stage_role(
@@ -2785,7 +2794,7 @@ def _enrich_dual_active_bridge(tas: dict, spec: Mapping[str, Any]) -> None:
     L_r_worst = 0.8 * L_r
     ipeak_worst = (vmin + nV2) * d_at_vmin / (4.0 * fsw * L_r_worst)
     op = _require(spec, ("operatingPoints",), "dual_active_bridge spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         lr_full_mas,
         L_r,
@@ -2889,7 +2898,7 @@ def _enrich_cllc(tas: dict, spec: Mapping[str, Any]) -> None:
     i_mag_pk = vmax / (4.0 * L_m_worst * fsw)
 
     op = _require(spec, ("operatingPoints",), "cllc spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         t1_mas,
         L_m,
@@ -3035,7 +3044,7 @@ def _enrich_clllc(tas: dict, spec: Mapping[str, Any]) -> None:
 
     ipeak_worst = M_max * i_load_pk + i_mag_pk
     op = _require(spec, ("operatingPoints",), "clllc spec")[0]
-    t_amb = float(op.get("ambientTemperature", 25.0))
+    float(op.get("ambientTemperature", 25.0))
     isat, isat_prov = _compute_isat_authoritative(
         lr1_full_mas,
         L_r1,

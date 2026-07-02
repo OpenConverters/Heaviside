@@ -46,12 +46,11 @@ from __future__ import annotations
 import math
 import re
 import time
-from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from heaviside._pyom_cache import cached_call
 from heaviside.topologies.registry import TopologyEntry, get
 
 ExtraComponentsMode = Literal["IDEAL", "REAL"]
@@ -157,9 +156,7 @@ def _apply_pyom_settings(ext: Any) -> Any:
         )
     ext.set_settings(dict(_HEAVISIDE_PYOM_SETTINGS))
     applied = ext.get_settings()
-    wrong = {
-        k: applied.get(k) for k, v in _HEAVISIDE_PYOM_SETTINGS.items() if applied.get(k) != v
-    }
+    wrong = {k: applied.get(k) for k, v in _HEAVISIDE_PYOM_SETTINGS.items() if applied.get(k) != v}
     if wrong:
         raise BridgeError(
             f"PyOpenMagnetics did not accept settings {wrong} "
@@ -221,9 +218,7 @@ def _import_pyom_vendor() -> Any:
         # The module name must match the .so's PyInit_PyOpenMagnetics
         # export; the module is deliberately NOT registered in
         # sys.modules so it never shadows the installed package.
-        spec = importlib.util.spec_from_file_location(
-            "PyOpenMagnetics", str(_PYOM_VENDOR_SO)
-        )
+        spec = importlib.util.spec_from_file_location("PyOpenMagnetics", str(_PYOM_VENDOR_SO))
         if spec is None or spec.loader is None:
             raise BridgeError(f"cannot build an import spec for {_PYOM_VENDOR_SO}")
         mod = importlib.util.module_from_spec(spec)
@@ -245,8 +240,20 @@ def _import_pyom_vendor() -> Any:
 # product are already enforced inside the fast path, so only the density filters
 # are needed here. Each op is {filter, invert, log, strictlyRequired, weight}.
 _HEAVISIDE_MAGNETIC_FILTER_FLOW: list[dict[str, Any]] = [
-    {"filter": "Dc Current Density", "invert": True, "log": False, "strictlyRequired": True, "weight": 1.0},
-    {"filter": "Effective Current Density", "invert": True, "log": False, "strictlyRequired": True, "weight": 1.0},
+    {
+        "filter": "Dc Current Density",
+        "invert": True,
+        "log": False,
+        "strictlyRequired": True,
+        "weight": 1.0,
+    },
+    {
+        "filter": "Effective Current Density",
+        "invert": True,
+        "log": False,
+        "strictlyRequired": True,
+        "weight": 1.0,
+    },
 ]
 
 
@@ -301,9 +308,7 @@ def _advise_magnetics_fast(
         # PyOM tunnels an MKF-internal exception through `data` as a STRING (not a list),
         # e.g. "Exception: [GAP_INVALID_DIMENSIONS] Gap Area is not set". Surface it verbatim
         # so the real MKF cause is diagnosable instead of an opaque "no data list".
-        raise BridgeError(
-            f"calculate_advised_magnetics_fast raised inside MKF ({label}): {data}"
-        )
+        raise BridgeError(f"calculate_advised_magnetics_fast raised inside MKF ({label}): {data}")
     if not isinstance(data, list):
         raise BridgeError(
             f"calculate_advised_magnetics_fast response has no 'data' "
@@ -431,7 +436,11 @@ def _spec_with_per_op_fsw(spec: dict[str, Any]) -> dict[str, Any]:
     if fsw is None:
         return spec
     spec["operatingPoints"] = [
-        ({**op, "switchingFrequency": op.get("switchingFrequency", fsw)} if isinstance(op, Mapping) else op)
+        (
+            {**op, "switchingFrequency": op.get("switchingFrequency", fsw)}
+            if isinstance(op, Mapping)
+            else op
+        )
         for op in ops
     ]
     return spec
@@ -545,11 +554,13 @@ def _main_magnetic_seed_from_ktas(
 
     # 2. structural fallback (name-independent: transformer-if-present else inductor)
     if chosen is None:
+
         def _n_windings(seed: Any) -> int:
             if not isinstance(seed, Mapping):
                 return 0
             tr = ((seed.get("designRequirements") or {}).get("turnsRatios")) or []
             return len(tr) + 1  # turnsRatios carries (windings - 1) entries
+
         transformers = [(n, s) for n, s in seeds if _n_windings(s) >= 2]
         if len(transformers) == 1:
             chosen = transformers[0]
@@ -632,9 +643,7 @@ def design_magnetics_at_fsw(
             )
     ops = converter_spec.get("operatingPoints")
     if not isinstance(ops, list) or not ops:
-        raise BridgeError(
-            "design_magnetics_at_fsw: spec has no operatingPoints to stamp fsw onto."
-        )
+        raise BridgeError("design_magnetics_at_fsw: spec has no operatingPoints to stamp fsw onto.")
     if not fast:
         raise BridgeError(
             "design_magnetics_at_fsw: the Kirchhoff seam designs the main magnetic "
@@ -644,8 +653,7 @@ def design_magnetics_at_fsw(
         )
     spec_f = dict(converter_spec)
     spec_f["operatingPoints"] = [
-        {**op, "switchingFrequency": float(fsw_hz)} if isinstance(op, Mapping) else op
-        for op in ops
+        {**op, "switchingFrequency": float(fsw_hz)} if isinstance(op, Mapping) else op for op in ops
     ]
     # Cutover (abt #48): design the MAIN magnetic from Kirchhoff's per-topology
     # seed instead of MKF's process_converter. Kirchhoff sizes L for this fsw;
@@ -661,7 +669,9 @@ def design_magnetics_at_fsw(
     # designer later PINS already clears the gate (the della-Pollock realize stamps it verbatim and
     # does not re-add headroom). Mirrors full_design._design_ktas_magnetics' fresh-design scaling.
     return design_magnetic_from_mas_inputs(
-        _seed_with_isat_margin(seed, _GATE_ISAT_MARGIN), max_results=max_results, core_mode=core_mode
+        _seed_with_isat_margin(seed, _GATE_ISAT_MARGIN),
+        max_results=max_results,
+        core_mode=core_mode,
     )
 
 
@@ -984,9 +994,7 @@ def _ipeak_worst_from_stress(topology: str, spec: Mapping[str, Any]) -> float | 
     return float(s.id_stress)
 
 
-def _ipeak_worst_magnetizing(
-    spec: Mapping[str, Any], *, bidirectional: bool
-) -> float | None:
+def _ipeak_worst_magnetizing(spec: Mapping[str, Any], *, bidirectional: bool) -> float | None:
     """Peak MAGNETIZING current of a transformer core — the quantity that
     saturates it (the secondary balances the load component, so the load current
     does NOT set the flux).
@@ -1048,9 +1056,7 @@ _IPEAK_WORST: dict[str, Any] = {
     "flyback": lambda spec: _ipeak_worst_from_stress("flyback", spec),
     "sepic": lambda spec: _ipeak_worst_from_stress("sepic", spec),
     "zeta": lambda spec: _ipeak_worst_from_stress("zeta", spec),
-    "four_switch_buck_boost": lambda spec: _ipeak_worst_from_stress(
-        "four_switch_buck_boost", spec
-    ),
+    "four_switch_buck_boost": lambda spec: _ipeak_worst_from_stress("four_switch_buck_boost", spec),
     # Hard-switched transformer families: the core saturates on the MAGNETIZING
     # current Vin·D/(Lm·fsw) (the load component is balanced by the secondary),
     # NOT the primary load current the stress deriver returns. Forward-class
@@ -1122,7 +1128,7 @@ def _isat_from_mas(
     return None
 
 
-def _candidate_inductance(cand: "MagneticDesign") -> float | None:
+def _candidate_inductance(cand: MagneticDesign) -> float | None:
     """The candidate's OWN authoritative magnetizing inductance — the L MKF
     actually built it to — or None if it can't be harvested.
 
@@ -1141,7 +1147,7 @@ def _candidate_inductance(cand: "MagneticDesign") -> float | None:
     return float(L) if isinstance(L, (int, float)) and L > 0 else None
 
 
-def _ipeak_from_mas(cand: "MagneticDesign") -> float | None:
+def _ipeak_from_mas(cand: MagneticDesign) -> float | None:
     """Peak MAGNETIZING current for the saturation check, read straight from MKF's SIMULATED
     excitation — the real flux-driving current PyOM computed for this exact magnetic, NOT an
     analytical Heaviside formula (house rule: magnetics/current math lives in MKF).
@@ -1254,7 +1260,7 @@ def magnetizing_peaks_per_op(mas: Mapping[str, Any]) -> list[float | None]:
 
 
 def _turns_ratio_duty_feasible(
-    cand: "MagneticDesign", *, tol: float = 0.01
+    cand: MagneticDesign, *, tol: float = 0.01
 ) -> tuple[bool, str | None]:
     """``(feasible, reason)`` — reject a transformer candidate whose REALIZED step-down turns ratio
     (N_primary / N_secondary, from the integer-rounded coil) exceeds the ratio MKF DERIVED to be duty-
@@ -1307,7 +1313,11 @@ def _turns_ratio_duty_feasible(
 
 
 def _leakage_feasible(
-    entry: TopologyEntry, spec: Mapping[str, Any], cand: "MagneticDesign", *, max_xlk_over_rload: float = 1.0
+    entry: TopologyEntry,
+    spec: Mapping[str, Any],
+    cand: MagneticDesign,
+    *,
+    max_xlk_over_rload: float = 1.0,
 ) -> tuple[bool, str | None]:
     """``(feasible, reason)`` — reject a hard-switched isolated transformer candidate whose SERIES LEAKAGE
     reactance exceeds the reflected load, so power cannot transfer through the transformer.
@@ -1344,21 +1354,40 @@ def _leakage_feasible(
     if not isinstance(ops, list) or not ops or not isinstance(ops[0], Mapping):
         return True, None
     op = ops[0]
-    vouts, iouts, fsw = op.get("outputVoltages"), op.get("outputCurrents"), op.get("switchingFrequency")
-    if not (isinstance(vouts, list) and vouts and isinstance(iouts, list) and iouts
-            and isinstance(fsw, (int, float)) and fsw > 0):
+    vouts, iouts, fsw = (
+        op.get("outputVoltages"),
+        op.get("outputCurrents"),
+        op.get("switchingFrequency"),
+    )
+    if not (
+        isinstance(vouts, list)
+        and vouts
+        and isinstance(iouts, list)
+        and iouts
+        and isinstance(fsw, (int, float))
+        and fsw > 0
+    ):
         return True, None
     vout, iout = vouts[0], iouts[0]
-    if not (isinstance(vout, (int, float)) and isinstance(iout, (int, float)) and vout > 0 and iout > 0):
+    if not (
+        isinstance(vout, (int, float)) and isinstance(iout, (int, float)) and vout > 0 and iout > 0
+    ):
         return True, None
     rload_reflected = (float(vout) / float(iout)) * n * n
     try:
         pyom = _import_pyom()
         out = pyom.calculate_leakage_inductance(dict(cand.magnetic), float(fsw), 0)
         per = out.get("leakageInductancePerWinding") if isinstance(out, Mapping) else None
-        llk = per[1].get("nominal") if isinstance(per, list) and len(per) > 1 and isinstance(per[1], Mapping) else None
+        llk = (
+            per[1].get("nominal")
+            if isinstance(per, list) and len(per) > 1 and isinstance(per[1], Mapping)
+            else None
+        )
     except Exception:
-        return True, None  # cannot evaluate leakage → keep MKF's pick (surface, don't silently hide)
+        return (
+            True,
+            None,
+        )  # cannot evaluate leakage → keep MKF's pick (surface, don't silently hide)
     if not isinstance(llk, (int, float)) or llk <= 0:
         return True, None
     xlk = 2.0 * math.pi * float(fsw) * float(llk)
@@ -1371,7 +1400,7 @@ def _leakage_feasible(
 
 
 def _isat_margin_inputs(
-    entry: TopologyEntry, spec: Mapping[str, Any], cand: "MagneticDesign"
+    entry: TopologyEntry, spec: Mapping[str, Any], cand: MagneticDesign
 ) -> tuple[float | None, float | None]:
     """``(Ipeak_worst, L_for_guard)`` for an isat-margin check on ``cand``.
 
@@ -1470,4 +1499,3 @@ def select_fast_by_isat_margin(
         )
         clearing = [c for c in widened if _clears(c)]
     return clearing if clearing else candidates
-

@@ -33,7 +33,6 @@ from heaviside.bridge import (
     _isat_from_mas,
     select_fast_by_isat_margin,
 )
-from heaviside.topologies.registry import get
 from tests.unit._real_mas import isat_of, real_magnetic
 
 # Real magnetics whose PyOM Isat@100 °C straddles the buck threshold
@@ -135,6 +134,7 @@ def test_isat_from_mas_returns_none_for_malformed_mas() -> None:
     }
     assert _isat_from_mas(half_baked, L_henries=22e-6) is None
 
+
 # ---------------------------------------------------------------------------
 # select_fast_by_isat_margin — the post-filter on the stage-2 path (abt #48).
 # design_magnetics_fast (Kirchhoff-seeded + PyOM-designed) is mocked so we drive
@@ -167,7 +167,9 @@ def test_select_fast_disabled_when_min_ratio_zero(monkeypatch) -> None:
     """min_isat_ratio=0 short-circuits the filter — escape hatch, returns the pool."""
     cands = [_candidate(score=3.0, **_FAIL), _candidate(score=2.0, **_PASS)]
     monkeypatch.setattr(bridge, "design_magnetics_fast", lambda *a, **k: list(cands))
-    assert select_fast_by_isat_margin("buck", _BUCK_SPEC, n_candidates=2, min_isat_ratio=0.0) == cands
+    assert (
+        select_fast_by_isat_margin("buck", _BUCK_SPEC, n_candidates=2, min_isat_ratio=0.0) == cands
+    )
 
 
 def test_select_fast_passes_through_without_ipeak_fn(monkeypatch) -> None:

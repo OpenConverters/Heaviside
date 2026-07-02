@@ -28,6 +28,7 @@ Usage::
     scripts/backfill_semiconductor_electrical.py --category mosfets
     scripts/backfill_semiconductor_electrical.py --category mosfets --limit 50 --dry-run
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,16 +43,16 @@ import httpx
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from heaviside.librarian.fetcher import (  # noqa: E402
+from heaviside.librarian.fetcher import (
     DigiKeyClient,
     MouserClient,
     load_credentials,
 )
-from heaviside.librarian.fetcher.convert import (  # noqa: E402
+from heaviside.librarian.fetcher.base import IncompleteSourceError
+from heaviside.librarian.fetcher.convert import (
     _extract_gate_threshold,
     _extract_required_numeric,
 )
-from heaviside.librarian.fetcher.base import IncompleteSourceError  # noqa: E402
 
 DATA = REPO / "TAS" / "data"
 JOBS = Path.home() / ".heaviside" / "jobs"
@@ -108,7 +109,10 @@ def extract_fields(params: dict[str, str], want: list[str]) -> dict[str, Any]:
                 out[field] = _extract_gate_threshold(source="src", mpn="x", params=params)
             else:
                 out[field] = _extract_required_numeric(
-                    source="src", mpn="x", params=params, field=field,
+                    source="src",
+                    mpn="x",
+                    params=params,
+                    field=field,
                     candidates=CANDIDATES[field],
                 )
         except IncompleteSourceError:
@@ -132,7 +136,9 @@ class TransientNetworkError(Exception):
     not marked notfound and not crash the campaign."""
 
 
-def digikey_params(client: DigiKeyClient, token_holder: dict, mpn: str, margin: int) -> dict[str, str] | None:
+def digikey_params(
+    client: DigiKeyClient, token_holder: dict, mpn: str, margin: int
+) -> dict[str, str] | None:
     """Return Digi-Key parameter dict for the best MPN match, or None.
 
     Raises QuotaExhausted when the daily rate-limit budget is spent.
@@ -183,7 +189,11 @@ def digikey_params(client: DigiKeyClient, token_holder: dict, mpn: str, margin: 
         raw = products[0].get("Parameters") or []
         params = {}
         for e in raw:
-            if isinstance(e, dict) and isinstance(e.get("Parameter"), str) and isinstance(e.get("Value"), str):
+            if (
+                isinstance(e, dict)
+                and isinstance(e.get("Parameter"), str)
+                and isinstance(e.get("Value"), str)
+            ):
                 params[e["Parameter"]] = e["Value"]
         return params
     return None
@@ -234,8 +244,13 @@ def main() -> int:
     # Distributor API coverage varies by manufacturer; process highest-yield
     # first so the daily quota lands on parts most likely to resolve. Pure
     # ordering — every failing part is still attempted.
-    PRIORITY = {"Vishay": 0, "Texas Instruments": 1, "onsemi": 2,
-                "ON Semiconductor": 2, "Infineon": 3}
+    PRIORITY = {
+        "Vishay": 0,
+        "Texas Instruments": 1,
+        "onsemi": 2,
+        "ON Semiconductor": 2,
+        "Infineon": 3,
+    }
     for idx, line in enumerate(lines):
         if not line.strip():
             continue
@@ -252,9 +267,13 @@ def main() -> int:
     failing.sort(key=lambda t: t[0])
     failing = [(idx, mpn, miss) for _prio, idx, mpn, miss in failing]
 
-    todo = [t for t in failing if checkpoint.get(t[1], {}).get("status") not in ("done", "notfound")]
-    print(f"[{args.category}] {len(failing)} failing, {len(todo)} to attempt this run "
-          f"({len(failing)-len(todo)} already resolved/exhausted in checkpoint)")
+    todo = [
+        t for t in failing if checkpoint.get(t[1], {}).get("status") not in ("done", "notfound")
+    ]
+    print(
+        f"[{args.category}] {len(failing)} failing, {len(todo)} to attempt this run "
+        f"({len(failing) - len(todo)} already resolved/exhausted in checkpoint)"
+    )
 
     creds = load_credentials()
     dk = DigiKeyClient(creds.digikey)
@@ -272,8 +291,12 @@ def main() -> int:
             return
         for idx, fields in patches.items():
             rec = json.loads(lines[idx])
-            el = rec[disc[0]][disc[1]].setdefault("manufacturerInfo", {}).setdefault(
-                "datasheetInfo", {}).setdefault("electrical", {})
+            el = (
+                rec[disc[0]][disc[1]]
+                .setdefault("manufacturerInfo", {})
+                .setdefault("datasheetInfo", {})
+                .setdefault("electrical", {})
+            )
             for k, v in fields.items():
                 if k not in el or el[k] in (None, ""):
                     el[k] = v
@@ -301,7 +324,9 @@ def main() -> int:
                         found.update(extract_fields(params, miss))
                 except QuotaExhausted:
                     dk_dead = True
-                    print(f"  ! Digi-Key quota exhausted at part {processed}; switching to Mouser-only")
+                    print(
+                        f"  ! Digi-Key quota exhausted at part {processed}; switching to Mouser-only"
+                    )
                 except TransientNetworkError as exc:
                     transient = True
                     print(f"  ~ transient network error on {mpn}: {exc} (will retry next run)")
@@ -336,15 +361,20 @@ def main() -> int:
                 got = set(found)
                 status = "done" if not (set(miss) - got) else "partial"
                 stats["found_full" if status == "done" else "found_partial"] += 1
-                checkpoint[mpn] = {"status": status, "fields": sorted(got),
-                                   "remaining": sorted(set(miss) - got)}
+                checkpoint[mpn] = {
+                    "status": status,
+                    "fields": sorted(got),
+                    "remaining": sorted(set(miss) - got),
+                }
             else:
                 stats["notfound"] += 1
                 checkpoint[mpn] = {"status": "notfound", "fields": [], "remaining": miss}
 
             if processed % args.flush_every == 0:
                 flush()
-                print(f"  .. {processed}/{len(todo)} | dk_remaining={holder.get('dk_remaining')} | {stats}")
+                print(
+                    f"  .. {processed}/{len(todo)} | dk_remaining={holder.get('dk_remaining')} | {stats}"
+                )
 
             if dk_dead and (mu is None):
                 print("  ! Both sources exhausted; stopping.")
@@ -355,10 +385,14 @@ def main() -> int:
         if mu is not None:
             mu.close()
 
-    print(f"\n[{args.category}] done this run: processed={processed} {stats} "
-          f"dk_remaining={holder.get('dk_remaining')}")
+    print(
+        f"\n[{args.category}] done this run: processed={processed} {stats} "
+        f"dk_remaining={holder.get('dk_remaining')}"
+    )
     # Determine remaining work for orchestration.
-    still_pending = [t for t in failing if checkpoint.get(t[1], {}).get("status") not in ("done", "notfound")]
+    still_pending = [
+        t for t in failing if checkpoint.get(t[1], {}).get("status") not in ("done", "notfound")
+    ]
     print(f"[{args.category}] still pending after run: {len(still_pending)}")
     if still_pending and (dk_dead or (args.limit and processed >= args.limit)):
         return 2  # rate-limited / capped — resume later

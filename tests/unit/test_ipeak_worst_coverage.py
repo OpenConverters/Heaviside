@@ -13,6 +13,7 @@ and asserts:
     mis-gating;
   * a topology with no computer raises in the sweep (trap #7).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -30,7 +31,10 @@ _PREVIOUSLY_COVERED = ["buck", "boost", "cuk", "flyback"]
 # NOTE: dual_active_bridge is NOT resonant — it is a phase-shifted isolated bridge at a
 # freely-chosen fsw (square-wave, no LC tank), so it IS loss-swept and registered (like psfb).
 _MUST_STAY_UNREGISTERED = [
-    "llc", "cllc", "series_resonant", "common_mode_choke",
+    "llc",
+    "cllc",
+    "series_resonant",
+    "common_mode_choke",
 ]
 
 
@@ -39,8 +43,14 @@ _MUST_STAY_UNREGISTERED = [
 def _spec():
     return {
         "inputVoltage": {"minimum": 9, "nominal": 12, "maximum": 16},
-        "operatingPoints": [{"outputVoltages": [5.0], "outputCurrents": [2.0],
-                             "switchingFrequency": 300_000, "ambientTemperature": 25}],
+        "operatingPoints": [
+            {
+                "outputVoltages": [5.0],
+                "outputCurrents": [2.0],
+                "switchingFrequency": 300_000,
+                "ambientTemperature": 25,
+            }
+        ],
         "currentRippleRatio": 0.3,
     }
 
@@ -57,7 +67,7 @@ def test_newly_covered_registered(topo):
     assert bridge._IPEAK_WORST.get(topo) is not None
 
 
-@pytest.mark.parametrize("topo", _NEWLY_COVERED + ["cuk"])
+@pytest.mark.parametrize("topo", [*_NEWLY_COVERED, "cuk"])
 def test_ipeak_worst_matches_stress_formula(topo):
     """The computer must return exactly the stress deriver's id_stress — one
     formula, no drift between the post-filter and the realism gate."""
@@ -93,7 +103,7 @@ def test_unregistered_for_sweep(topo):
     assert bridge._IPEAK_WORST.get(topo) is None
 
 
-@pytest.mark.parametrize("topo", _NEWLY_COVERED + ["cuk"])
+@pytest.mark.parametrize("topo", [*_NEWLY_COVERED, "cuk"])
 def test_covered_topologies_have_a_stress_deriver(topo):
     # every covered buck-boost-class topology must also have a stress deriver
     # to read id_stress from (boost/flyback need topology-specific specs and
@@ -114,23 +124,39 @@ def test_sweep_raises_for_unregistered_topology():
 # --- transformer magnetizing-current Ipeak (forward/bridge/push-pull) --------
 
 _TRANSFORMERS_UNI = ["single_switch_forward", "two_switch_forward", "active_clamp_forward"]
-_TRANSFORMERS_BI = ["push_pull", "asymmetric_half_bridge",
-                    "phase_shifted_full_bridge", "phase_shifted_half_bridge", "weinberg",
-                    "dual_active_bridge"]  # phase-shifted isolated bridge, ±-excited like the others
+_TRANSFORMERS_BI = [
+    "push_pull",
+    "asymmetric_half_bridge",
+    "phase_shifted_full_bridge",
+    "phase_shifted_half_bridge",
+    "weinberg",
+    "dual_active_bridge",
+]  # phase-shifted isolated bridge, ±-excited like the others
 
 
 def test_magnetizing_ipeak_formula():
-    spec = {"inputVoltage": {"minimum": 36, "nominal": 48, "maximum": 60},
-            "maximumDutyCycle": 0.45, "desiredInductance": 1e-3,
-            "operatingPoints": [{"switchingFrequency": 200_000}]}
+    spec = {
+        "inputVoltage": {"minimum": 36, "nominal": 48, "maximum": 60},
+        "maximumDutyCycle": 0.45,
+        "desiredInductance": 1e-3,
+        "operatingPoints": [{"switchingFrequency": 200_000}],
+    }
     uni = bridge._ipeak_worst_magnetizing(spec, bidirectional=False)
     bi = bridge._ipeak_worst_magnetizing(spec, bidirectional=True)
     assert uni == pytest.approx(60 * 0.45 / (1e-3 * 200_000))  # ΔIm
-    assert bi == pytest.approx(uni / 2)                         # ±ΔIm/2
+    assert bi == pytest.approx(uni / 2)  # ±ΔIm/2
     # incomplete spec ⇒ None (no fabrication)
-    assert bridge._ipeak_worst_magnetizing(
-        {"inputVoltage": {"maximum": 60}, "maximumDutyCycle": 0.45,
-         "operatingPoints": [{"switchingFrequency": 2e5}]}, bidirectional=False) is None
+    assert (
+        bridge._ipeak_worst_magnetizing(
+            {
+                "inputVoltage": {"maximum": 60},
+                "maximumDutyCycle": 0.45,
+                "operatingPoints": [{"switchingFrequency": 2e5}],
+            },
+            bidirectional=False,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize("topo", _TRANSFORMERS_UNI + _TRANSFORMERS_BI)

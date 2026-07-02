@@ -37,9 +37,7 @@ def _configure_heaviside_logging() -> None:
     hlog = logging.getLogger("heaviside")
     if not any(getattr(h, "_heaviside", False) for h in hlog.handlers):
         handler = logging.StreamHandler()  # stderr
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         handler._heaviside = True  # type: ignore[attr-defined]
         hlog.addHandler(handler)
     hlog.setLevel(level)
@@ -421,7 +419,7 @@ def _crossref_outcome_dict(outcome: Any) -> dict[str, Any]:
             "substitute_voltage": c.substitute_voltage,
             "substitute_package": c.substitute_package,
             "status": c.status.value,
-            "match_detail": c.match_detail,   # per-parameter rationale (why this status)
+            "match_detail": c.match_detail,  # per-parameter rationale (why this status)
             "guardrail_fires": list(c.guardrail_fires),
             "notes": c.notes,
         }
@@ -467,7 +465,8 @@ def _design_job(
     # design. The frequency_sweep stage overrides this per-point when it lands.
     spec["operatingPoints"] = [
         {**o, "switchingFrequency": o.get("switchingFrequency", 500000)}
-        if isinstance(o, dict) else o
+        if isinstance(o, dict)
+        else o
         for o in (spec.get("operatingPoints") or [{}])
     ]
     op = (spec.get("operatingPoints") or [{}])[0]
@@ -497,8 +496,10 @@ def _design_job(
         def progress_cb(msg, pct):
             if hasattr(update, "start_stage"):
                 stage = (
-                    _DESIGN_STAGES[0] if pct < 15
-                    else _DESIGN_STAGES[1] if pct < 95
+                    _DESIGN_STAGES[0]
+                    if pct < 15
+                    else _DESIGN_STAGES[1]
+                    if pct < 95
                     else _DESIGN_STAGES[2]
                 )
                 update.start_stage(stage)
@@ -562,8 +563,12 @@ def submit_design(req: DesignRequest) -> dict[str, str]:
     job_id = registry.submit(
         "design",
         wrap_job(
-            lambda update: _design_job(req.spec, req.candidates_per_topology, req.topologies, update),
-            job_kind="design", input_type="spec", input_spec=req.spec,
+            lambda update: _design_job(
+                req.spec, req.candidates_per_topology, req.topologies, update
+            ),
+            job_kind="design",
+            input_type="spec",
+            input_spec=req.spec,
         ),
     )
     return {"job_id": job_id}
@@ -591,7 +596,7 @@ _CLOSED_LOOP_STAGES = [
 _STAGE_KEYWORDS: list[tuple[str, str]] = [
     ("Proposing", "Topology constraints"),
     ("base converter spec", "Converter spec"),
-    ("Sweep", "Frequency sweep"),          # "Sweeping…" and "Sweep done…"
+    ("Sweep", "Frequency sweep"),  # "Sweeping…" and "Sweep done…"
     ("Picking the magnetic", "Magnetic pick"),
     ("Reconciling", "Cross-OP reconcile"),
     ("Realizing converter", "Realize: real BOM + SPICE"),
@@ -610,7 +615,9 @@ def _stage_for_message(msg: str) -> str | None:
     return None
 
 
-def _design_converter_job(spec: dict[str, Any], topology: str | None, update: Any) -> dict[str, Any]:
+def _design_converter_job(
+    spec: dict[str, Any], topology: str | None, update: Any
+) -> dict[str, Any]:
     from heaviside.pipeline.converter_designer import design_converter
     from heaviside.report import render_html
 
@@ -626,10 +633,13 @@ def _design_converter_job(spec: dict[str, Any], topology: str | None, update: An
         supported = {"buck", "boost", "cuk", "sepic", "zeta", "four_switch_buck_boost"}
         names = [n for n in feasible_topology_names(spec) if n in supported]
         if not names:
-            return {"topology": None, "verdict": None,
-                    "html": "<p>No hard-switched single-inductor topology is feasible for "
-                            "this spec yet (the closed-loop designer covers buck/boost/cuk/"
-                            "sepic/zeta/4SBB). Use the standard designer for others.</p>"}
+            return {
+                "topology": None,
+                "verdict": None,
+                "html": "<p>No hard-switched single-inductor topology is feasible for "
+                "this spec yet (the closed-loop designer covers buck/boost/cuk/"
+                "sepic/zeta/4SBB). Use the standard designer for others.</p>",
+            }
         topo = names[0]
 
     def cb(msg: str, pct: int) -> None:
@@ -652,19 +662,21 @@ def _design_converter_job(spec: dict[str, Any], topology: str | None, update: An
     # Per-operating-point electrical summary so the interactive report can label
     # each waveform with its Vin/Vout/Iout (the waveforms themselves carry only
     # op_index + label). Built from the spec the design ran at — no fabrication.
-    vin = (spec.get("inputVoltage") or {})
+    vin = spec.get("inputVoltage") or {}
     op_summary: list[dict[str, Any]] = []
     for i, o in enumerate(spec.get("operatingPoints") or []):
         if not isinstance(o, dict):
             continue
-        op_summary.append({
-            "op_index": i,
-            "vin_nominal": vin.get("nominal"),
-            "output_voltages": o.get("outputVoltages"),
-            "output_currents": o.get("outputCurrents"),
-            "ambient_c": o.get("ambientTemperature"),
-            "fsw_hz": o.get("switchingFrequency") or design.fsw_hz,
-        })
+        op_summary.append(
+            {
+                "op_index": i,
+                "vin_nominal": vin.get("nominal"),
+                "output_voltages": o.get("outputVoltages"),
+                "output_currents": o.get("outputCurrents"),
+                "ambient_c": o.get("ambientTemperature"),
+                "fsw_hz": o.get("switchingFrequency") or design.fsw_hz,
+            }
+        )
 
     return {
         "topology": topo,
@@ -686,13 +698,17 @@ def submit_design_closed_loop(req: DesignRequest) -> dict[str, str]:
     from heaviside.api.telemetry import wrap_job
 
     topo = (req.topologies or [None])[0]
-    return {"job_id": registry.submit(
-        "design",
-        wrap_job(
-            lambda update: _design_converter_job(req.spec, topo, update),
-            job_kind="design", input_type="spec", input_spec=req.spec,
-        ),
-    )}
+    return {
+        "job_id": registry.submit(
+            "design",
+            wrap_job(
+                lambda update: _design_converter_job(req.spec, topo, update),
+                job_kind="design",
+                input_type="spec",
+                input_spec=req.spec,
+            ),
+        )
+    }
 
 
 def _pdf_cache_path(job_id: str):
@@ -721,11 +737,13 @@ def _build_job_pdf(job: Any, job_id: str) -> bytes | None:
 
     t0 = _t.monotonic()
     pdf = html_to_pdf(html)
-    logger.info("rendered PDF for job %s (%d bytes) in %.0fs", job_id, len(pdf), _t.monotonic() - t0)
+    logger.info(
+        "rendered PDF for job %s (%d bytes) in %.0fs", job_id, len(pdf), _t.monotonic() - t0
+    )
     return pdf
 
 
-def _ensure_pdf_cached(job_id: str) -> "Path | None":  # noqa: F821
+def _ensure_pdf_cached(job_id: str) -> Path | None:  # noqa: F821
     """Render + cache a finished job's PDF if not already cached. Returns the
     cache path (or None if the job has no report). Used by the pre-render hook
     and as the on-demand fallback."""
@@ -755,7 +773,7 @@ def _prerender_report_pdf(job_id: str) -> None:
         try:
             if _ensure_pdf_cached(job_id) is not None:
                 logger.info("pre-rendered report PDF cache for job %s", job_id)
-        except Exception as exc:  # noqa: BLE001 - best-effort
+        except Exception as exc:
             logger.warning("pre-render PDF for job %s failed: %s", job_id, exc)
 
     threading.Thread(target=_work, daemon=True).start()
@@ -766,7 +784,7 @@ try:
     from heaviside.api.jobs import registry as _registry
 
     _registry.on_job_done = _prerender_report_pdf
-except Exception:  # noqa: BLE001 - registry import is optional at import time
+except Exception:
     pass
 
 
@@ -902,11 +920,18 @@ def submit_crossref(req: CrossRefRequest) -> dict[str, str]:
         )
         return _crossref_outcome_dict(outcome)
 
-    return {"job_id": registry.submit("crossref", wrap_job(
-        run,
-        job_kind="crossref", input_type="bom_json",
-        input_bom=req.source_bom, target_manufacturer=req.target_manufacturer,
-    ))}
+    return {
+        "job_id": registry.submit(
+            "crossref",
+            wrap_job(
+                run,
+                job_kind="crossref",
+                input_type="bom_json",
+                input_bom=req.source_bom,
+                target_manufacturer=req.target_manufacturer,
+            ),
+        )
+    }
 
 
 @app.post("/jobs/crossref/from-pdf")
@@ -944,12 +969,19 @@ async def submit_crossref_from_pdf(
             os.unlink(tmp)
         return _crossref_outcome_dict(outcome)
 
-    return {"job_id": registry.submit("crossref_pdf", wrap_job(
-        run,
-        job_kind="crossref_pdf", input_type="pdf_file",
-        input_file_name=orig_name, input_file_data=raw,
-        target_manufacturer=target_manufacturer,
-    ))}
+    return {
+        "job_id": registry.submit(
+            "crossref_pdf",
+            wrap_job(
+                run,
+                job_kind="crossref_pdf",
+                input_type="pdf_file",
+                input_file_name=orig_name,
+                input_file_data=raw,
+                target_manufacturer=target_manufacturer,
+            ),
+        )
+    }
 
 
 @app.post("/jobs/crossref/from-bom")
@@ -992,12 +1024,20 @@ async def submit_crossref_from_bom(
         result["input_bom_rows"] = input_bom_rows
         return result
 
-    return {"job_id": registry.submit("crossref_bom", wrap_job(
-        run,
-        job_kind="crossref_bom", input_type="bom_file",
-        input_file_name=orig_name, input_file_data=raw,
-        input_bom=source_bom, target_manufacturer=target_manufacturer,
-    ))}
+    return {
+        "job_id": registry.submit(
+            "crossref_bom",
+            wrap_job(
+                run,
+                job_kind="crossref_bom",
+                input_type="bom_file",
+                input_file_name=orig_name,
+                input_file_data=raw,
+                input_bom=source_bom,
+                target_manufacturer=target_manufacturer,
+            ),
+        )
+    }
 
 
 class CrossRefUrlRequest(BaseModel):
@@ -1088,11 +1128,18 @@ def submit_crossref_from_url(req: CrossRefUrlRequest) -> dict[str, str]:
             )
         return _crossref_outcome_dict(outcome)
 
-    return {"job_id": registry.submit("crossref_url", wrap_job(
-        run,
-        job_kind="crossref_url", input_type="url",
-        input_url=req.url, target_manufacturer=req.target_manufacturer,
-    ))}
+    return {
+        "job_id": registry.submit(
+            "crossref_url",
+            wrap_job(
+                run,
+                job_kind="crossref_url",
+                input_type="url",
+                input_url=req.url,
+                target_manufacturer=req.target_manufacturer,
+            ),
+        )
+    }
 
 
 def _serialize_stages(job: Any) -> list[dict[str, Any]]:
@@ -1105,11 +1152,13 @@ def _serialize_stages(job: Any) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for s in stages:
         dur = s.duration_s(now=now)
-        out.append({
-            "name": s.name,
-            "status": s.status,
-            "duration_s": round(dur, 2) if dur is not None else None,
-        })
+        out.append(
+            {
+                "name": s.name,
+                "status": s.status,
+                "duration_s": round(dur, 2) if dur is not None else None,
+            }
+        )
     return out
 
 
@@ -1288,10 +1337,7 @@ def _merge_by_fold(counter: Mapping[str, int]) -> list[tuple[str, int]]:
         g = groups.setdefault(_fold(name), {"total": 0, "spellings": Counter()})
         g["total"] += cnt
         g["spellings"][name] += cnt
-    merged = [
-        (g["spellings"].most_common(1)[0][0], g["total"])
-        for g in groups.values()
-    ]
+    merged = [(g["spellings"].most_common(1)[0][0], g["total"]) for g in groups.values()]
     merged.sort(key=lambda x: -x[1])
     return merged
 
@@ -1334,11 +1380,11 @@ _MFR_CANONICAL: dict[str, str] = {}
 # SI unit per category parameter, parallel to _CATALOG_LABELS. "%" is a sentinel
 # meaning "format as a percentage" (used for resistor tolerance).
 _CATALOG_UNITS: dict[str, list[str]] = {
-    "mosfets":    ["V", "Ω", "A"],
-    "diodes":     ["V", "A", "V"],
+    "mosfets": ["V", "Ω", "A"],
+    "diodes": ["V", "A", "V"],
     "capacitors": ["F", "V", "Ω"],
-    "resistors":  ["Ω", "%", "W"],
-    "magnetics":  ["H", "A", "Ω"],
+    "resistors": ["Ω", "%", "W"],
+    "magnetics": ["H", "A", "Ω"],
     "connectors": ["V", "A", "pos"],
 }
 
@@ -1352,11 +1398,11 @@ _CATALOG_FILES: dict[str, str] = {
 }
 
 _CATALOG_LABELS: dict[str, list[str]] = {
-    "mosfets":    ["Vds", "Rds(on)", "Id"],
-    "diodes":     ["Vrrm", "If(avg)", "Vf"],
+    "mosfets": ["Vds", "Rds(on)", "Id"],
+    "diodes": ["Vrrm", "If(avg)", "Vf"],
     "capacitors": ["C", "V", "ESR"],
-    "resistors":  ["R", "Tol", "P"],
-    "magnetics":  ["L", "Isat", "DCR"],
+    "resistors": ["R", "Tol", "P"],
+    "magnetics": ["L", "Isat", "DCR"],
     "connectors": ["V", "I/contact", "Pos"],
 }
 
@@ -1369,7 +1415,9 @@ def _catalog_projectors() -> dict[str, Any]:
     numeric filtering and sorting. Callers strip the _* fields before
     returning to the API client.
     """
-    from heaviside.catalogue._reader import iter_envelopes  # noqa: F401 (unused here, kept for type ref)
+    from heaviside.catalogue._reader import (
+        iter_envelopes,  # noqa: F401 (unused here, kept for type ref)
+    )
     from heaviside.catalogue.selector import Capacitor, Diode, Mosfet, Resistor
 
     def _mosfet(env: dict[str, Any]) -> dict[str, Any] | None:
@@ -1377,12 +1425,16 @@ def _catalog_projectors() -> dict[str, Any]:
         if m is None:
             return None
         return {
-            "mpn": m.mpn, "manufacturer": m.manufacturer, "tech": m.technology,
+            "mpn": m.mpn,
+            "manufacturer": m.manufacturer,
+            "tech": m.technology,
             "p1": _fmt_eng(m.vds_rated, "V"),
             "p2": _fmt_eng(m.rds_on, "Ω"),
             "p3": _fmt_eng(m.id_continuous, "A"),
             "status": m.status,
-            "_p1n": m.vds_rated, "_p2n": m.rds_on, "_p3n": m.id_continuous,
+            "_p1n": m.vds_rated,
+            "_p2n": m.rds_on,
+            "_p3n": m.id_continuous,
         }
 
     def _diode(env: dict[str, Any]) -> dict[str, Any] | None:
@@ -1390,12 +1442,16 @@ def _catalog_projectors() -> dict[str, Any]:
         if d is None:
             return None
         return {
-            "mpn": d.mpn, "manufacturer": d.manufacturer, "tech": d.technology,
+            "mpn": d.mpn,
+            "manufacturer": d.manufacturer,
+            "tech": d.technology,
             "p1": _fmt_eng(d.vrrm_rated, "V"),
             "p2": _fmt_eng(d.if_avg_rated, "A"),
             "p3": _fmt_eng(d.vf_typ, "V"),
             "status": d.status,
-            "_p1n": d.vrrm_rated, "_p2n": d.if_avg_rated, "_p3n": d.vf_typ,
+            "_p1n": d.vrrm_rated,
+            "_p2n": d.if_avg_rated,
+            "_p3n": d.vf_typ,
         }
 
     def _cap(env: dict[str, Any]) -> dict[str, Any] | None:
@@ -1403,16 +1459,23 @@ def _catalog_projectors() -> dict[str, Any]:
         if c is None:
             return None
         try:
-            cap_tech = env["capacitor"]["manufacturerInfo"]["datasheetInfo"]["part"].get("technology") or ""
+            cap_tech = (
+                env["capacitor"]["manufacturerInfo"]["datasheetInfo"]["part"].get("technology")
+                or ""
+            )
         except (KeyError, TypeError):
             cap_tech = ""
         return {
-            "mpn": c.mpn, "manufacturer": c.manufacturer, "tech": cap_tech,
+            "mpn": c.mpn,
+            "manufacturer": c.manufacturer,
+            "tech": cap_tech,
             "p1": _fmt_eng(c.capacitance, "F"),
             "p2": _fmt_eng(c.v_rated, "V"),
             "p3": _fmt_eng(c.esr, "Ω"),
             "status": c.status,
-            "_p1n": c.capacitance, "_p2n": c.v_rated, "_p3n": c.esr if c.esr else None,
+            "_p1n": c.capacitance,
+            "_p2n": c.v_rated,
+            "_p3n": c.esr if c.esr else None,
         }
 
     def _res(env: dict[str, Any]) -> dict[str, Any] | None:
@@ -1420,7 +1483,9 @@ def _catalog_projectors() -> dict[str, Any]:
         if r is None:
             return None
         return {
-            "mpn": r.mpn, "manufacturer": r.manufacturer, "tech": "",
+            "mpn": r.mpn,
+            "manufacturer": r.manufacturer,
+            "tech": "",
             "p1": _fmt_eng(r.resistance, "Ω"),
             "p2": f"{r.tolerance * 100:.3g}%",
             "p3": _fmt_eng(r.power_rating, "W"),
@@ -1456,12 +1521,16 @@ def _catalog_projectors() -> dict[str, Any]:
         p2n = _scalar(el.get("saturationCurrentPeak"))
         p3n = _scalar(el.get("dcResistance"))
         return {
-            "mpn": ref, "manufacturer": name, "tech": el.get("subtype") or "",
+            "mpn": ref,
+            "manufacturer": name,
+            "tech": el.get("subtype") or "",
             "p1": _fmt_eng(p1n, "H"),
             "p2": _fmt_eng(p2n, "A"),
             "p3": _fmt_eng(p3n, "Ω"),
             "status": m.get("status", ""),
-            "_p1n": p1n, "_p2n": p2n, "_p3n": p3n,
+            "_p1n": p1n,
+            "_p2n": p2n,
+            "_p3n": p3n,
         }
 
     def _connector(env: dict[str, Any]) -> dict[str, Any] | None:
@@ -1486,20 +1555,24 @@ def _catalog_projectors() -> dict[str, Any]:
         p2n = _scalar(el.get("ratedCurrentPerContact"))
         p3n = _scalar(mech.get("positions"))
         return {
-            "mpn": ref, "manufacturer": name, "tech": fd.get("family") or "",
+            "mpn": ref,
+            "manufacturer": name,
+            "tech": fd.get("family") or "",
             "p1": _fmt_eng(p1n, "V"),
             "p2": _fmt_eng(p2n, "A"),
             "p3": f"{int(p3n)} pos" if p3n is not None else None,
             "status": mi.get("status", ""),
-            "_p1n": p1n, "_p2n": p2n, "_p3n": p3n,
+            "_p1n": p1n,
+            "_p2n": p2n,
+            "_p3n": p3n,
         }
 
     return {
-        "mosfets":    ("mosfets.ndjson",    _mosfet),
-        "diodes":     ("diodes.ndjson",     _diode),
+        "mosfets": ("mosfets.ndjson", _mosfet),
+        "diodes": ("diodes.ndjson", _diode),
         "capacitors": ("capacitors.ndjson", _cap),
-        "resistors":  ("resistors.ndjson",  _res),
-        "magnetics":  ("magnetics.ndjson",  _mag),
+        "resistors": ("resistors.ndjson", _res),
+        "magnetics": ("magnetics.ndjson", _mag),
         "connectors": ("connectors.ndjson", _connector),
     }
 
@@ -1572,14 +1645,19 @@ def _catalog_scan(
     if sort in ("p1", "p2", "p3"):
         key_field = f"_{sort}n"
         rev = order == "desc"
-        matched.sort(key=lambda r: (r[key_field] is None, -(r[key_field] or 0) if rev else (r[key_field] or 0)))
+        matched.sort(
+            key=lambda r: (
+                r[key_field] is None,
+                -(r[key_field] or 0) if rev else (r[key_field] or 0),
+            )
+        )
     elif sort == "mpn":
         matched.sort(key=lambda r: (r["mpn"] or "").lower(), reverse=(order == "desc"))
     elif sort == "mfr":
         matched.sort(key=lambda r: (r["manufacturer"] or "").lower(), reverse=(order == "desc"))
 
     total = len(matched)
-    page = matched[offset: offset + limit]
+    page = matched[offset : offset + limit]
     for row in page:
         row.pop("_p1n", None)
         row.pop("_p2n", None)
@@ -1758,8 +1836,7 @@ def _build_overview() -> dict[str, Any]:
         grand_total += count
 
     _MFR_CANONICAL = {
-        key: spellings.most_common(1)[0][0]
-        for key, spellings in global_spellings.items()
+        key: spellings.most_common(1)[0][0] for key, spellings in global_spellings.items()
     }
     _OVERVIEW_CACHE = {
         "total": grand_total,
@@ -1788,7 +1865,7 @@ def _warm_catalog_caches() -> None:
 
     t0 = time.monotonic()
     try:
-        _build_overview()      # also warms _MFR_CANONICAL (browse-row display)
+        _build_overview()  # also warms _MFR_CANONICAL (browse-row display)
         _build_stats()
         _manufacturer_counts()
         for category in _catalog_projectors():
@@ -1805,9 +1882,7 @@ def _warm_caches_on_startup() -> None:
     the server becomes ready instantly and health checks pass during the scan."""
     import threading
 
-    threading.Thread(
-        target=_warm_catalog_caches, name="catalog-cache-warm", daemon=True
-    ).start()
+    threading.Thread(target=_warm_catalog_caches, name="catalog-cache-warm", daemon=True).start()
 
 
 @app.get("/catalog/stats")
@@ -1884,11 +1959,19 @@ def catalog(
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
     total, rows = _catalog_scan(
-        category, query=q, tech=tech, sort=sort, order=order,
-        p1_min=p1_min, p1_max=p1_max,
-        p2_min=p2_min, p2_max=p2_max,
-        p3_min=p3_min, p3_max=p3_max,
-        limit=limit, offset=offset,
+        category,
+        query=q,
+        tech=tech,
+        sort=sort,
+        order=order,
+        p1_min=p1_min,
+        p1_max=p1_max,
+        p2_min=p2_min,
+        p2_max=p2_max,
+        p3_min=p3_min,
+        p3_max=p3_max,
+        limit=limit,
+        offset=offset,
     )
     return {
         "category": category,

@@ -3,10 +3,10 @@
 Tested with a fake FrequencySweepResult (no MKF); the design_provenance shape
 uses the uniform B1 envelope.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 import pytest
 
@@ -53,11 +53,13 @@ class _Result:
     worst_id_a: float = 3.2
     min_isat_ratio: float = 1.2
     front: list = field(default_factory=lambda: [_Cand()])
-    loss_curve: list = field(default_factory=lambda: [
-        _Point(150_000, True, 2, 3, 1.30, 1.05, 0.25, None),
-        _Point(250_000, True, 3, 3, 1.10, 0.80, 0.30, None),
-        _Point(600_000, False, 0, 3, None, None, None, "3 under 1.2x isat margin"),
-    ])
+    loss_curve: list = field(
+        default_factory=lambda: [
+            _Point(150_000, True, 2, 3, 1.30, 1.05, 0.25, None),
+            _Point(250_000, True, 3, 3, 1.10, 0.80, 0.30, None),
+            _Point(600_000, False, 0, 3, None, None, None, "3 under 1.2x isat margin"),
+        ]
+    )
     envelope_fet: _Fet = field(default_factory=_Fet)
 
     @property
@@ -66,8 +68,10 @@ class _Result:
 
 
 def _spec():
-    return {"inputVoltage": {"minimum": 9, "nominal": 12, "maximum": 16},
-            "operatingPoints": [{"outputVoltages": [3.3], "outputCurrents": [3]}]}
+    return {
+        "inputVoltage": {"minimum": 9, "nominal": 12, "maximum": 16},
+        "operatingPoints": [{"outputVoltages": [3.3], "outputCurrents": [3]}],
+    }
 
 
 def test_loss_curve_artifact_shape():

@@ -4,6 +4,7 @@ and REAL cost via the Moonshot balance API.
 
 Usage: .venv-web/bin/python scripts/e2e_design_cost.py
 """
+
 from __future__ import annotations
 
 import json
@@ -13,11 +14,12 @@ import urllib.request
 
 
 def _load_env() -> None:
-    for line in open(os.path.join(os.path.dirname(__file__), "..", ".env")):
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k, v.strip().strip('"').strip("'"))
+    with open(os.path.join(os.path.dirname(__file__), "..", ".env")) as _f:
+        for line in _f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k, v.strip().strip('"').strip("'"))
 
 
 def _balance() -> dict:
@@ -44,10 +46,14 @@ def main() -> None:
     # The minimal input a user submits in the web Designer: Vin window + one rail.
     spec = {
         "inputVoltage": {"minimum": 9, "nominal": 12, "maximum": 16},
-        "operatingPoints": [{
-            "outputVoltages": [3.3], "outputCurrents": [3],
-            "switchingFrequency": 500000, "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [3.3],
+                "outputCurrents": [3],
+                "switchingFrequency": 500000,
+                "ambientTemperature": 25,
+            }
+        ],
         "currentRippleRatio": 0.3,
     }
 
@@ -62,12 +68,18 @@ def main() -> None:
 
     restrict = os.environ.get("TOPOS")
     restrict_list = [t.strip() for t in restrict.split(",")] if restrict else None
-    print(f"=== running full_design (web /jobs/design pipeline) with Kimi "
-          f"[restrict={restrict_list or 'none (full screen)'}] ===", flush=True)
+    print(
+        f"=== running full_design (web /jobs/design pipeline) with Kimi "
+        f"[restrict={restrict_list or 'none (full screen)'}] ===",
+        flush=True,
+    )
     err = None
     try:
         _, stage2, outcomes = full_design(
-            spec, n_candidates_per_topology=2, parallel=True, progress_cb=cb,
+            spec,
+            n_candidates_per_topology=2,
+            parallel=True,
+            progress_cb=cb,
             restrict_topologies=restrict_list,
         )
     except Exception as exc:
@@ -99,9 +111,14 @@ def main() -> None:
     if err:
         print("pipeline error:", err)
     else:
-        best = next((o for o in outcomes if o.verdict_dict and o.verdict_dict.get("verdict") == "pass"), outcomes[0] if outcomes else None)
+        best = next(
+            (o for o in outcomes if o.verdict_dict and o.verdict_dict.get("verdict") == "pass"),
+            outcomes[0] if outcomes else None,
+        )
         if best:
-            print(f"topology={best.pick.topology.name}  verdict={best.verdict_dict.get('verdict') if best.verdict_dict else '?'}")
+            print(
+                f"topology={best.pick.topology.name}  verdict={best.verdict_dict.get('verdict') if best.verdict_dict else '?'}"
+            )
         print(f"outcomes={len(outcomes)}")
         try:
             for topo, reason in (stage2.failures or ())[:8]:

@@ -11,6 +11,7 @@ chained together (the integrated flow B9 will eventually wire into /design).
 Instrumented for wall-clock, per-stage time, tokens, and real Moonshot cost.
 Usage: TOPOS=buck .venv-web/bin/python scripts/e2e_new_designer.py
 """
+
 from __future__ import annotations
 
 import json
@@ -20,11 +21,12 @@ import urllib.request
 
 
 def _load_env() -> None:
-    for line in open(os.path.join(os.path.dirname(__file__), "..", ".env")):
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k, v.strip().strip('"').strip("'"))
+    with open(os.path.join(os.path.dirname(__file__), "..", ".env")) as _f:
+        for line in _f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k, v.strip().strip('"').strip("'"))
 
 
 def _balance() -> float | None:
@@ -42,7 +44,6 @@ def _balance() -> float | None:
 
 def main() -> None:
     _load_env()
-    from heaviside import bridge
     from heaviside.agents import magnetic_picker
     from heaviside.agents.llm_call import get_token_usage, reset_token_usage
     from heaviside.stages import (
@@ -56,10 +57,14 @@ def main() -> None:
     topology = os.environ.get("TOPOS", "buck")
     spec_raw = {
         "inputVoltage": {"minimum": 9, "nominal": 12, "maximum": 16},
-        "operatingPoints": [{
-            "outputVoltages": [3.3], "outputCurrents": [3],
-            "switchingFrequency": 500000, "ambientTemperature": 25,
-        }],
+        "operatingPoints": [
+            {
+                "outputVoltages": [3.3],
+                "outputCurrents": [3],
+                "switchingFrequency": 500000,
+                "ambientTemperature": 25,
+            }
+        ],
         "currentRippleRatio": 0.3,
     }
 
@@ -70,14 +75,17 @@ def main() -> None:
 
     def stamp(name: str, t_start: float) -> None:
         times[name] = round(time.monotonic() - t_start, 1)
-        print(f"  [{time.monotonic()-t0:6.1f}s] {name}: {times[name]}s", flush=True)
+        print(f"  [{time.monotonic() - t0:6.1f}s] {name}: {times[name]}s", flush=True)
 
     print(f"=== NEW designer pipeline · topology={topology} · Kimi ===", flush=True)
 
     # B2 — propose constraints (LLM)
     s = time.monotonic()
     constraints = topology_constraints.propose(spec_raw, topology, use_llm=True, check_tas=True)
-    stamp(f"B2 constraints (D={constraints.maximum_duty_cycle} Vds={constraints.maximum_drain_source_voltage} src={constraints.source})", s)
+    stamp(
+        f"B2 constraints (D={constraints.maximum_duty_cycle} Vds={constraints.maximum_drain_source_voltage} src={constraints.source})",
+        s,
+    )
 
     # B0 — build BASE spec
     s = time.monotonic()
@@ -87,10 +95,18 @@ def main() -> None:
     # B4 — frequency sweep
     s = time.monotonic()
     result = frequency_sweep.sweep(
-        topology, spec, f_lo_hz=100_000, f_hi_hz=1_000_000,
-        n_coarse=6, golden_iters=4, top_k=3, max_candidates_per_fsw=12,
+        topology,
+        spec,
+        f_lo_hz=100_000,
+        f_hi_hz=1_000_000,
+        n_coarse=6,
+        golden_iters=4,
+        top_k=3,
+        max_candidates_per_fsw=12,
     )
-    stamp(f"B4 frequency_sweep (fsw*={result.fsw_star_hz/1e3:.0f}kHz front={len(result.front)})", s)
+    stamp(
+        f"B4 frequency_sweep (fsw*={result.fsw_star_hz / 1e3:.0f}kHz front={len(result.front)})", s
+    )
 
     # B5 — suitability pick (LLM)
     s = time.monotonic()
@@ -119,10 +135,16 @@ def main() -> None:
     bal1 = _balance()
 
     print("\n=== DESIGN ===")
-    print(f"topology={topology}  fsw*={result.fsw_star_hz/1e3:.1f}kHz")
-    print(f"magnetic: {chosen.core_shape} / {chosen.core_material}  L={chosen.inductance_h*1e6:.1f}uH")
-    print(f"loss: total={chosen.total_loss_w:.3f}W (mag={chosen.magnetic_loss_w:.3f} sw={chosen.switching_loss_w:.3f})")
-    print(f"saturation: isat={chosen.isat_a:.2f}A vs ipeak={chosen.ipeak_worst_a:.2f}A (margin {chosen.isat_a/chosen.ipeak_worst_a:.2f}x)")
+    print(f"topology={topology}  fsw*={result.fsw_star_hz / 1e3:.1f}kHz")
+    print(
+        f"magnetic: {chosen.core_shape} / {chosen.core_material}  L={chosen.inductance_h * 1e6:.1f}uH"
+    )
+    print(
+        f"loss: total={chosen.total_loss_w:.3f}W (mag={chosen.magnetic_loss_w:.3f} sw={chosen.switching_loss_w:.3f})"
+    )
+    print(
+        f"saturation: isat={chosen.isat_a:.2f}A vs ipeak={chosen.ipeak_worst_a:.2f}A (margin {chosen.isat_a / chosen.ipeak_worst_a:.2f}x)"
+    )
     print(f"envelope FET: {result.envelope_fet.mpn}")
     print(f"reconcile feasible_all_ops={recon_ok}")
     print(f"provenance keys: {list(prov)}")

@@ -6,6 +6,7 @@ is the qualitative LLM layer that can move to a nearby cell with justification
 but never invents an index, and falls back to the deterministic pick with no
 API key. Tested with a fake sweep result + fake LLM (no MKF).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -14,7 +15,6 @@ from typing import Any
 import pytest
 
 from heaviside.agents import magnetic_picker as mp
-
 
 # --- minimal fakes mirroring frequency_sweep.SweepCandidate/Result ----------
 
@@ -28,14 +28,23 @@ class _FakeCand:
     ipeak_worst_a: float
     inductance_h: float
     scoring: float = 1.0
-    mas: dict = field(default_factory=lambda: {"magnetic": {
-        "core": {"functionalDescription": {"shape": {"name": "PQ 20/16"},
-                                            "material": {"name": "3C95"},
-                                            "gapping": [{"length": 1e-4}]},
-                 "processedDescription": {"effectiveParameters": {
-                     "effectiveArea": 6e-5, "effectiveVolume": 2e-6}}},
-        "coil": {"functionalDescription": [{"numberTurns": 12}]},
-    }})
+    mas: dict = field(
+        default_factory=lambda: {
+            "magnetic": {
+                "core": {
+                    "functionalDescription": {
+                        "shape": {"name": "PQ 20/16"},
+                        "material": {"name": "3C95"},
+                        "gapping": [{"length": 1e-4}],
+                    },
+                    "processedDescription": {
+                        "effectiveParameters": {"effectiveArea": 6e-5, "effectiveVolume": 2e-6}
+                    },
+                },
+                "coil": {"functionalDescription": [{"numberTurns": 12}]},
+            }
+        }
+    )
 
 
 @dataclass
@@ -46,11 +55,14 @@ class _FakeResult:
 
 def _result():
     # front ascending by total loss (as the sweep guarantees)
-    return _FakeResult(fsw_star_hz=250_000.0, front=[
-        _FakeCand(1.10, 0.80, 0.30, isat_a=5.0, ipeak_worst_a=3.2, inductance_h=22e-6),
-        _FakeCand(1.35, 1.00, 0.35, isat_a=6.0, ipeak_worst_a=3.2, inductance_h=20e-6),
-        _FakeCand(1.60, 1.20, 0.40, isat_a=8.0, ipeak_worst_a=3.2, inductance_h=18e-6),
-    ])
+    return _FakeResult(
+        fsw_star_hz=250_000.0,
+        front=[
+            _FakeCand(1.10, 0.80, 0.30, isat_a=5.0, ipeak_worst_a=3.2, inductance_h=22e-6),
+            _FakeCand(1.35, 1.00, 0.35, isat_a=6.0, ipeak_worst_a=3.2, inductance_h=20e-6),
+            _FakeCand(1.60, 1.20, 0.40, isat_a=8.0, ipeak_worst_a=3.2, inductance_h=18e-6),
+        ],
+    )
 
 
 # --- summary -----------------------------------------------------------------
@@ -98,17 +110,29 @@ def test_deterministic_pick_empty_front_raises():
 def test_llm_pick_falls_back_to_deterministic_without_key(monkeypatch):
     monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
     out = mp.pick_magnetic_from_sweep_llm(_result(), {"inputVoltage": {}})
-    assert out == {"index": 0, "source": "deterministic",
-                   "reason": "no API key — deterministic total-loss argmin"}
+    assert out == {
+        "index": 0,
+        "source": "deterministic",
+        "reason": "no API key — deterministic total-loss argmin",
+    }
 
 
 def test_llm_pick_uses_valid_index(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "fake")
-    monkeypatch.setattr(mp, "call_agent_json" if hasattr(mp, "call_agent_json") else "pareto_summary_from_sweep", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(
+        mp,
+        "call_agent_json" if hasattr(mp, "call_agent_json") else "pareto_summary_from_sweep",
+        lambda *a, **k: None,
+        raising=False,
+    )
     # patch the call inside the function's import site
     import heaviside.agents.llm_call as llm
-    monkeypatch.setattr(llm, "call_agent_json",
-                        lambda name, msg, **kw: {"index": 2, "reason": "in stock + better isat headroom"})
+
+    monkeypatch.setattr(
+        llm,
+        "call_agent_json",
+        lambda name, msg, **kw: {"index": 2, "reason": "in stock + better isat headroom"},
+    )
     out = mp.pick_magnetic_from_sweep_llm(_result(), {"inputVoltage": {}})
     assert out["index"] == 2
     assert out["source"] == "llm"
@@ -118,8 +142,10 @@ def test_llm_pick_uses_valid_index(monkeypatch):
 def test_llm_pick_rejects_invented_index(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "fake")
     import heaviside.agents.llm_call as llm
-    monkeypatch.setattr(llm, "call_agent_json",
-                        lambda name, msg, **kw: {"index": 9, "reason": "made up"})
+
+    monkeypatch.setattr(
+        llm, "call_agent_json", lambda name, msg, **kw: {"index": 9, "reason": "made up"}
+    )
     with pytest.raises(mp.MagneticPickerError, match="outside the front"):
         mp.pick_magnetic_from_sweep_llm(_result(), {"inputVoltage": {}})
 
@@ -127,7 +153,9 @@ def test_llm_pick_rejects_invented_index(monkeypatch):
 def test_llm_pick_malformed_response_raises(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "fake")
     import heaviside.agents.llm_call as llm
-    monkeypatch.setattr(llm, "call_agent_json",
-                        lambda name, msg, **kw: {"reason": "no index field"})
+
+    monkeypatch.setattr(
+        llm, "call_agent_json", lambda name, msg, **kw: {"reason": "no index field"}
+    )
     with pytest.raises(mp.MagneticPickerError):
         mp.pick_magnetic_from_sweep_llm(_result(), {"inputVoltage": {}})

@@ -26,7 +26,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-from collections import Counter, defaultdict
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -167,7 +167,7 @@ def vishay_api_lookup(mpn: str) -> tuple[str | None, str]:
             req = urllib.request.Request(api_url, headers=HEADERS)
             with urllib.request.urlopen(req, timeout=12) as resp:
                 data = json.loads(resp.read())
-        except Exception as e:
+        except Exception:
             continue
 
         hits = [h for h in data.get("hits", []) if h.get("_source", {}).get("type") == "DATSHT"]
@@ -225,7 +225,7 @@ def digikey_lookup(dk, mpn: str) -> tuple[str | None, str]:
                 ds = p.get("PrimaryDatasheet")
                 if ds and re.match(r"^https?://", ds) and "digikey.com" not in ds.lower():
                     # Return without mandatory PDF check (many mfr sites block HEAD from servers)
-                    return ds, f"DigiKey ExactManufacturerProducts PrimaryDatasheet"
+                    return ds, "DigiKey ExactManufacturerProducts PrimaryDatasheet"
         return None, "DigiKey: no exact match with datasheet"
     except Exception as e:
         return None, f"DigiKey error: {e}"
@@ -241,10 +241,7 @@ def get_body(row: dict, category: str) -> dict:
 def get_ds_mpn(body: dict) -> str | None:
     """Get the partNumber from datasheetInfo.part (used as patch key)."""
     return (
-        body.get("manufacturerInfo", {})
-        .get("datasheetInfo", {})
-        .get("part", {})
-        .get("partNumber")
+        body.get("manufacturerInfo", {}).get("datasheetInfo", {}).get("part", {}).get("partNumber")
     )
 
 
@@ -321,8 +318,9 @@ def run_vishay_campaign(
                 unresolved[mpn] = evidence
             done += 1
             if done % 500 == 0:
-                print(f"    [{category}] Vishay: {done}/{len(batch)} done, "
-                      f"{len(resolved)} resolved")
+                print(
+                    f"    [{category}] Vishay: {done}/{len(batch)} done, {len(resolved)} resolved"
+                )
 
     print(f"  Vishay: {len(resolved)}/{len(vishay_mpns)} resolved")
     return resolved, unresolved
@@ -359,7 +357,7 @@ def run_digikey_campaign(
         else:
             unresolved[mpn] = evidence
         if (i + 1) % 50 == 0:
-            print(f"    [{category}] DK: {i+1}/{len(dp_mpns)} done, {len(resolved)} resolved")
+            print(f"    [{category}] DK: {i + 1}/{len(dp_mpns)} done, {len(resolved)} resolved")
         time.sleep(delay)
 
     print(f"  DigiKey: {len(resolved)}/{len(dp_mpns)} resolved")
@@ -404,10 +402,16 @@ def run_category(
         return {"category": category, "bad_mpns": 0, "resolved": 0, "unresolved": 0}
 
     # Breakdown by URL type
-    vishay_count = sum(1 for u in mpn_to_url.values() if re.search(r"vishay\.com/en/search", u, re.I))
+    vishay_count = sum(
+        1 for u in mpn_to_url.values() if re.search(r"vishay\.com/en/search", u, re.I)
+    )
     dp_count = sum(1 for u in mpn_to_url.values() if re.search(r"datasheetpdf\.com", u, re.I))
-    ex_count = sum(1 for u in mpn_to_url.values() if re.search(r"^https?://(www\.)?example\.com", u, re.I))
-    print(f"  URL types: vishay-search={vishay_count}, datasheetpdf={dp_count}, example.com={ex_count}")
+    ex_count = sum(
+        1 for u in mpn_to_url.values() if re.search(r"^https?://(www\.)?example\.com", u, re.I)
+    )
+    print(
+        f"  URL types: vishay-search={vishay_count}, datasheetpdf={dp_count}, example.com={ex_count}"
+    )
 
     all_resolved: dict[str, tuple[str, str]] = {}
     all_unresolved: dict[str, str] = {}
@@ -431,7 +435,9 @@ def run_category(
     # example.com rows go to unresolved (synthetic placeholder, no automated resolution)
     for mpn, url in mpn_to_url.items():
         if re.search(r"^https?://(www\.)?example\.com", url, re.I):
-            all_unresolved[mpn] = "example.com placeholder — obsolete/synthetic part, no API resolution available"
+            all_unresolved[mpn] = (
+                "example.com placeholder — obsolete/synthetic part, no API resolution available"
+            )
 
     print(f"  Resolved: {len(all_resolved)}, Unresolved: {len(all_unresolved)}")
 
@@ -448,9 +454,7 @@ def run_category(
         "example_mpns": ex_count,
         "resolved": len(all_resolved),
         "unresolved": len(all_unresolved),
-        "unresolved_reasons": dict(Counter(
-            v.split(":")[0] for v in all_unresolved.values()
-        )),
+        "unresolved_reasons": dict(Counter(v.split(":")[0] for v in all_unresolved.values())),
     }
 
 
@@ -490,8 +494,11 @@ def main():
 
     total_bad = sum(s["bad_mpns"] for s in all_stats)
     total_res = sum(s["resolved"] for s in all_stats)
-    print(f"\nTotal: {total_res}/{total_bad} resolved "
-          f"({total_res/total_bad*100:.1f}%)" if total_bad else "")
+    print(
+        f"\nTotal: {total_res}/{total_bad} resolved ({total_res / total_bad * 100:.1f}%)"
+        if total_bad
+        else ""
+    )
 
     if dk is not None:
         dk.close()

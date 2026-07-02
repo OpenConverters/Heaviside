@@ -42,6 +42,7 @@ from heaviside.catalogue.selector import (
 
 _FAMILIES = ("semiconductor", "magnetic", "capacitor", "resistor", "analog", "controller")
 
+
 # Numerical convergence aids the Kirchhoff assembler injects into the IDEAL-switch
 # deck (Csn*/Rsn*/Csw* — see Kirchhoff TasAssembler::is_numerical_snubber). They tame
 # an ideal switch's infinite dV/dt; they are NOT physical parts to source (a real
@@ -71,9 +72,7 @@ def _has_all(req: dict[str, Any], keys: tuple[str, ...]) -> bool:
 _HV_SWITCHING_LOSS_VDS = 100.0
 
 
-def _mosfet_constraints(
-    req: dict[str, Any], *, op_fsw: float | None = None
-) -> MosfetConstraints:
+def _mosfet_constraints(req: dict[str, Any], *, op_fsw: float | None = None) -> MosfetConstraints:
     vds_min = float(req["ratedDrainSourceVoltage"])
     id_min = float(req["ratedContinuousDrainCurrent"])
     # For a HIGH-VOLTAGE stage, attach an operating point so select_mosfet can rank by total loss
@@ -182,12 +181,14 @@ def stamp_mkf_magnetic(
                 continue
             # Replace the magnetic seed's family slot; keep data.inputs (turnsRatios)
             # which the assembler needs to wire the subcircuit's P<i>± ports.
-            data["magnetic"] = {"modelOutputs": {"spiceSubcircuit": {"text": subckt, "reference": ref}}}
+            data["magnetic"] = {
+                "modelOutputs": {"spiceSubcircuit": {"text": subckt, "reference": ref}}
+            }
             stamped += 1
 
     if stamped == 0:
         raise KirchhoffFillError(
-            f"no magnetic component to stamp"
+            "no magnetic component to stamp"
             + (f" (name={component_name!r})" if component_name else "")
         )
     return {"reference": ref, "stamped": stamped}
@@ -219,10 +220,12 @@ def fill_kirchhoff_bom(
     # Converter-level quantities the controller selector needs (Vin, fsw) — read from
     # the TAS designRequirements so a controller seed can be sourced by topology+Vin+fsw.
     _dr = tas.get("inputs", {}).get("designRequirements", {})
+
     def _scalar(x: Any) -> float | None:
         if isinstance(x, dict):
             x = x.get("nominal") or x.get("minimum") or x.get("maximum")
         return float(x) if isinstance(x, (int, float)) else None
+
     _vin = _scalar(_dr.get("inputVoltage"))
     _fsw = _scalar(_dr.get("switchingFrequency"))
 
@@ -243,7 +246,9 @@ def fill_kirchhoff_bom(
 
             # Phase 0: numerical convergence aids are sim-only, never sourced.
             if _is_numerical_aid(name):
-                rec.update(filled=False, deferred="numerical convergence aid (sim-only, not sourced)")
+                rec.update(
+                    filled=False, deferred="numerical convergence aid (sim-only, not sourced)"
+                )
                 records.append(rec)
                 continue
 
@@ -252,8 +257,18 @@ def fill_kirchhoff_bom(
                     # A switch with no rating requirement cannot be sourced. This is either an
                     # unswept topology seed (surfaced, not faked) or a modelling artifact; defer
                     # rather than crash. Real switches carry req::mosfet (rated Vds/Id + max Rds_on).
-                    if not _has_all(req, ("ratedDrainSourceVoltage", "ratedContinuousDrainCurrent", "maximumOnResistance")):
-                        rec.update(filled=False, deferred="mosfet seed carries no rating requirement (unswept topology)")
+                    if not _has_all(
+                        req,
+                        (
+                            "ratedDrainSourceVoltage",
+                            "ratedContinuousDrainCurrent",
+                            "maximumOnResistance",
+                        ),
+                    ):
+                        rec.update(
+                            filled=False,
+                            deferred="mosfet seed carries no rating requirement (unswept topology)",
+                        )
                     else:
                         mc = _mosfet_constraints(req, op_fsw=_fsw)
                         # High-voltage stages carry an operating point -> rank by total loss (Coss
@@ -275,16 +290,23 @@ def fill_kirchhoff_bom(
                     if req.get("role") == "bodyDiode" or not _has_all(
                         req, ("ratedReverseVoltage", "ratedForwardCurrent")
                     ):
-                        rec.update(filled=False, deferred="diode seed carries no rating requirement (body diode / unswept)")
+                        rec.update(
+                            filled=False,
+                            deferred="diode seed carries no rating requirement (body diode / unswept)",
+                        )
                     else:
                         sel = select_diode(
-                            _diode_constraints(req), tiebreaker=diode_tiebreaker, tas_data_dir=tas_data_dir
+                            _diode_constraints(req),
+                            tiebreaker=diode_tiebreaker,
+                            tas_data_dir=tas_data_dir,
                         )
                         data["semiconductor"] = sel.chosen.raw_envelope["semiconductor"]
                         rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
                 elif family == "capacitor":
                     sel = select_capacitor(
-                        _capacitor_constraints(req), tiebreaker=capacitor_tiebreaker, tas_data_dir=tas_data_dir
+                        _capacitor_constraints(req),
+                        tiebreaker=capacitor_tiebreaker,
+                        tas_data_dir=tas_data_dir,
                     )
                     data["capacitor"] = sel.chosen.raw_envelope["capacitor"]
                     rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
@@ -295,8 +317,10 @@ def fill_kirchhoff_bom(
                         ResistorConstraints(
                             target_ohms=target_ohms,
                             max_tolerance=float(req.get("tolerance", 0.05)),
-                            max_value_deviation=0.2),
-                        tas_data_dir=tas_data_dir)
+                            max_value_deviation=0.2,
+                        ),
+                        tas_data_dir=tas_data_dir,
+                    )
                     env = sel.chosen.raw_envelope["resistor"]
                     # A resistor inside a CONTROL stage sets a precision control RATIO (the PFC/Vienna
                     # voltage-feedback divider, loop gains), and the deck's controller reference is derived
@@ -307,8 +331,11 @@ def fill_kirchhoff_bom(
                     # precision / trimmed divider): the sourced part fixes package/footprint, the value is
                     # the control parameter. Power-path resistors (snubber/sense/bias) keep the match.
                     if st.get("role") == "control":
-                        elec = env.setdefault("manufacturerInfo", {}).setdefault("datasheetInfo", {}) \
-                                  .setdefault("electrical", {})
+                        elec = (
+                            env.setdefault("manufacturerInfo", {})
+                            .setdefault("datasheetInfo", {})
+                            .setdefault("electrical", {})
+                        )
                         elec["resistance"] = {"nominal": target_ohms}
                         rec["control_exact_ohms"] = target_ohms
                     data["resistor"] = env
@@ -326,7 +353,9 @@ def fill_kirchhoff_bom(
                     _cat = req.get("category")
                     _cat = _cat if isinstance(_cat, str) and _cat else None
                     if topology is None or _vin is None or _fsw is None:
-                        rec.update(filled=False, deferred="controller: need topology + Vin + fsw to source")
+                        rec.update(
+                            filled=False, deferred="controller: need topology + Vin + fsw to source"
+                        )
                     else:
                         # A missing control IC is a CATALOG GAP, surfaced (filled=False with the
                         # reason) — NOT a hard failure that sinks an otherwise-valid power design
@@ -335,14 +364,23 @@ def fill_kirchhoff_bom(
                         try:
                             sel = select_controller(
                                 ControllerConstraints(
-                                    topology=topology, vin_nom=_vin,
-                                    fsw_khz=_fsw / 1000.0, integrated_fet=None, category=_cat),
-                                tas_data_dir=tas_data_dir)
+                                    topology=topology,
+                                    vin_nom=_vin,
+                                    fsw_khz=_fsw / 1000.0,
+                                    integrated_fet=None,
+                                    category=_cat,
+                                ),
+                                tas_data_dir=tas_data_dir,
+                            )
                             data["controller"] = sel.chosen.raw_envelope
-                            rec.update(mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req)
+                            rec.update(
+                                mpn=sel.chosen.mpn, filled=True, selection=sel, requirement=req
+                            )
                         except SelectionError:
-                            rec.update(filled=False,
-                                       deferred=f"no catalog control IC for {topology}/{_cat or 'any'}")
+                            rec.update(
+                                filled=False,
+                                deferred=f"no catalog control IC for {topology}/{_cat or 'any'}",
+                            )
                 else:
                     rec.update(filled=False, deferred=f"no filler for {family}/{kind}")
             except SelectionError as exc:
@@ -354,9 +392,7 @@ def fill_kirchhoff_bom(
     return records
 
 
-def unify_hs_tas_semiconductors(
-    hs_tas: dict[str, Any], fill_records: list[dict[str, Any]]
-) -> int:
+def unify_hs_tas_semiconductors(hs_tas: dict[str, Any], fill_records: list[dict[str, Any]]) -> int:
     """Re-stamp HS's TAS power semiconductors (MOSFET/diode) with the parts the
     Kirchhoff-requirement fill chose — so the realism gate validates exactly the
     devices the Kirchhoff sim used. This makes Kirchhoff's per-component
@@ -386,6 +422,7 @@ def unify_hs_tas_semiconductors(
                 continue
             rec = by_kind[kind].pop(0)
             sel, req = rec["selection"], rec["requirement"]
+
             # Swap only the PART (ratings/Rds_on/Qg from the Kirchhoff selection);
             # PRESERVE the operating stress HS already stamped (vds_stress / v_reverse
             # = the actual switch voltage at the operating point). The Kirchhoff
@@ -396,15 +433,18 @@ def unify_hs_tas_semiconductors(
             # only if HS left no stress (then the check is conservative, not wrong).
             def _pos(v: Any, fallback: float) -> float:
                 return float(v) if isinstance(v, (int, float)) and v > 0 else float(fallback)
+
             if kind == "mosfet":
                 _stamp_mosfet(
-                    comp, sel,
+                    comp,
+                    sel,
                     stress_vds=_pos(comp.get("vds_stress"), req["ratedDrainSourceVoltage"]),
                     stress_id=_pos(comp.get("id_stress"), req["ratedContinuousDrainCurrent"]),
                 )
             else:
                 _stamp_diode(
-                    comp, sel,
+                    comp,
+                    sel,
                     stress_vr=_pos(comp.get("v_reverse"), req["ratedReverseVoltage"]),
                     stress_if_avg=_pos(comp.get("if_avg_stress"), req["ratedForwardCurrent"]),
                 )

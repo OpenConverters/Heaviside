@@ -127,15 +127,17 @@ def pareto_summary_from_sweep(result: Any) -> list[dict[str, Any]]:
     for i, cand in enumerate(result.front):
         d = MagneticDesign(scoring=float(cand.scoring), mas=cand.mas, elapsed_s=0.0)
         row = _candidate_summary(d, index=i)
-        row.update({
-            "total_loss_w": _round(cand.total_loss_w),
-            "magnetic_loss_w": _round(cand.magnetic_loss_w),
-            "switching_loss_w": _round(cand.switching_loss_w),
-            "fsw_hz": fsw,
-            "isat_a": _round(cand.isat_a, 3),
-            "ipeak_worst_a": _round(cand.ipeak_worst_a, 3),
-            "inductance_uh": _round(cand.inductance_h * 1e6, 3),
-        })
+        row.update(
+            {
+                "total_loss_w": _round(cand.total_loss_w),
+                "magnetic_loss_w": _round(cand.magnetic_loss_w),
+                "switching_loss_w": _round(cand.switching_loss_w),
+                "fsw_hz": fsw,
+                "isat_a": _round(cand.isat_a, 3),
+                "ipeak_worst_a": _round(cand.ipeak_worst_a, 3),
+                "inductance_uh": _round(cand.inductance_h * 1e6, 3),
+            }
+        )
         rows.append(row)
     return rows
 
@@ -181,8 +183,11 @@ def pick_magnetic_from_sweep_llm(
     n = len(front)
 
     if not os.environ.get("MOONSHOT_API_KEY"):
-        return {"index": 0, "source": "deterministic",
-                "reason": "no API key — deterministic total-loss argmin"}
+        return {
+            "index": 0,
+            "source": "deterministic",
+            "reason": "no API key — deterministic total-loss argmin",
+        }
 
     from heaviside.agents.llm_call import LLMCallError, call_agent_json
 
@@ -201,7 +206,7 @@ def pick_magnetic_from_sweep_llm(
                 "index from this list (you cannot invent one). Prefer index 0 unless "
                 "a qualitative reason — stock, manufacturability, gapability, "
                 "turn-count sanity, exotic core/material — justifies a nearby cell. "
-                "Return JSON {\"index\": <int>, \"reason\": \"<1-2 sentences>\"}."
+                'Return JSON {"index": <int>, "reason": "<1-2 sentences>"}.'
             ),
         }
         msg = json.dumps(payload)
@@ -252,10 +257,13 @@ def pick_magnetic_from_sweep_llm(
     pick = outcome.output
     assert pick is not None
     if not outcome.approved and outcome.objections:
-        pick = {**pick, "reason": (
-            f"{pick['reason']} [reviewers (unresolved after {outcome.rounds} rounds): "
-            f"{'; '.join(outcome.objections)}]"
-        )}
+        pick = {
+            **pick,
+            "reason": (
+                f"{pick['reason']} [reviewers (unresolved after {outcome.rounds} rounds): "
+                f"{'; '.join(outcome.objections)}]"
+            ),
+        }
     return pick
 
 
@@ -296,15 +304,15 @@ def pick_best_pareto(
 
         return min(range(len(designs)), key=lambda i: _vol(designs[i]))
     if criteria == "highest_isat_headroom":
-        from heaviside.bridge import _isat_from_mas, _harvest_authoritative_inductance
+        from heaviside.bridge import _harvest_authoritative_inductance, _isat_from_mas
 
         def _isat_for(d: MagneticDesign) -> float:
             try:
                 L = float(_harvest_authoritative_inductance(d.mas))
-            except Exception:
+            except Exception as exc:
                 raise MagneticPickerError(
                     f"candidate has no harvestable inductance: shape={d.core_shape_name!r}"
-                )
+                ) from exc
             isat = _isat_from_mas(d.magnetic, L)
             if isat is None:
                 raise MagneticPickerError(

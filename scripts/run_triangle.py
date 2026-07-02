@@ -95,7 +95,6 @@ def extract_designer_bom(tas: dict, spec: dict | None = None) -> list[dict[str, 
 
 
 def run_one(name: str) -> dict[str, Any]:
-    from heaviside.agents.llm_call import get_token_usage, reset_token_usage
     from heaviside.pipeline.cre import CREState
     from heaviside.pipeline.cre_pipeline import (
         _stage0_extract_pdf,
@@ -105,6 +104,8 @@ def run_one(name: str) -> dict[str, Any]:
         _stage2_65_extract_rdson,
         _stage2_reverse_engineer,
     )
+
+    from heaviside.agents.llm_call import get_token_usage, reset_token_usage
     from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
     from heaviside.pipeline.full_design import full_design
 

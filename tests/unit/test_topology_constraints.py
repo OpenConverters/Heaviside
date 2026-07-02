@@ -6,20 +6,28 @@ RAISES on a violation (never silently clamps); with no API key the deterministic
 fallback is used. The LLM is exercised via a fake (monkeypatched call_agent_json)
 for determinism; a real-LLM smoke test is opt-in.
 """
+
 from __future__ import annotations
 
 import os
 
 import pytest
 
-from heaviside.stages import converter_spec_build, topology_constraints as tc
+from heaviside.stages import converter_spec_build
+from heaviside.stages import topology_constraints as tc
 
 
 def _spec():
     return {
         "inputVoltage": {"minimum": 9, "nominal": 12, "maximum": 16},
-        "operatingPoints": [{"outputVoltages": [3.3], "outputCurrents": [3],
-                             "switchingFrequency": 300_000, "ambientTemperature": 25}],
+        "operatingPoints": [
+            {
+                "outputVoltages": [3.3],
+                "outputCurrents": [3],
+                "switchingFrequency": 300_000,
+                "ambientTemperature": 25,
+            }
+        ],
         "currentRippleRatio": 0.3,
     }
 
@@ -99,7 +107,8 @@ def test_propose_no_key_uses_deterministic(monkeypatch):
 def test_propose_llm_path_with_fake(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "fake-key")
     monkeypatch.setattr(
-        tc, "_propose_llm",
+        tc,
+        "_propose_llm",
         lambda spec, topo: tc.DesignConstraints(0.45, 60.0, "llm", "fake"),
     )
     c = tc.propose(_spec(), "flyback", check_tas=False)
@@ -111,7 +120,8 @@ def test_propose_llm_path_with_fake(monkeypatch):
 def test_propose_llm_out_of_band_raises(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "fake-key")
     monkeypatch.setattr(
-        tc, "_propose_llm",
+        tc,
+        "_propose_llm",
         lambda spec, topo: tc.DesignConstraints(0.99, 60.0, "llm"),  # duty out of band
     )
     with pytest.raises(tc.TopologyConstraintError, match="maximumDutyCycle"):
@@ -121,13 +131,15 @@ def test_propose_llm_out_of_band_raises(monkeypatch):
 def test_propose_llm_malformed_response_raises(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "fake-key")
     monkeypatch.setattr(
-        tc, "call_agent_json" if hasattr(tc, "call_agent_json") else "_propose_llm",
+        tc,
+        "call_agent_json" if hasattr(tc, "call_agent_json") else "_propose_llm",
         lambda *a, **k: (_ for _ in ()).throw(tc.TopologyConstraintError("malformed")),
         raising=False,
     )
     # _propose_llm itself raises on a malformed object; simulate via patch
     monkeypatch.setattr(
-        tc, "_propose_llm",
+        tc,
+        "_propose_llm",
         lambda spec, topo: (_ for _ in ()).throw(
             tc.TopologyConstraintError("malformed constraint object")
         ),

@@ -15,6 +15,7 @@ import pytest
 
 from heaviside import bridge
 
+
 def _mas(*, scoring: float, shape: str, material: str, n_windings: int) -> dict:
     """Build a minimal MAS-shaped design dict."""
     return {
@@ -70,6 +71,7 @@ def _single_magnetic_tas() -> dict:
             "interStageConnections": [],
         }
     }
+
 
 def test_attach_single_magnetic_replaces_placeholder() -> None:
     tas = _single_magnetic_tas()
@@ -349,9 +351,19 @@ def test_main_magnetic_seed_missing_inputs_raises():
     from heaviside.topologies import get
 
     entry = get("buck")
-    tas = {"topology": {"stages": [{"circuit": {"components": [
-        {"name": "L1", "data": {"magnetic": {}}}  # no "inputs" seed
-    ]}}]}}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "circuit": {
+                        "components": [
+                            {"name": "L1", "data": {"magnetic": {}}}  # no "inputs" seed
+                        ]
+                    }
+                }
+            ]
+        }
+    }
     with pytest.raises(bridge.BridgeError, match="no MAS Inputs seed"):
         bridge._main_magnetic_seed_from_ktas(entry, tas)
 

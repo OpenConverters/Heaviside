@@ -21,16 +21,20 @@ deterministically.
 
 from __future__ import annotations
 
+import enum
 import os
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
+
 try:
     from enum import StrEnum
 except ImportError:  # Python < 3.11
-    from enum import Enum
-    class StrEnum(str, Enum):  # type: ignore[no-redef]
+
+    class StrEnum(enum.StrEnum):  # type: ignore[no-redef]
         pass
+
+
 from pathlib import Path
 from typing import Any, Final
 
@@ -882,13 +886,23 @@ def select_capacitor(
 # are the cases that diverge (e.g. "cllcResonantConverter" → "cllc_resonant" ≠ "cllc"),
 # so without these the selector silently rejects correctly-tagged controllers for them.
 _CTAS_TOPOLOGY = {
-    "buckConverter": "buck", "boostConverter": "boost", "buckBoostConverter": "buck_boost",
-    "flybackConverter": "flyback", "forwardConverter": "forward", "llcResonantConverter": "llc",
-    "powerFactorCorrection": "power_factor_correction", "sepicConverter": "sepic",
-    "cukConverter": "cuk", "zetaConverter": "zeta", "pushPullConverter": "push_pull",
-    "phaseShiftedFullBridge": "phase_shifted_full_bridge", "dualActiveBridge": "dual_active_bridge",
-    "cllcResonantConverter": "cllc", "clllcResonantConverter": "clllc",
-    "seriesResonantConverter": "series_resonant", "viennaRectifierConverter": "vienna",
+    "buckConverter": "buck",
+    "boostConverter": "boost",
+    "buckBoostConverter": "buck_boost",
+    "flybackConverter": "flyback",
+    "forwardConverter": "forward",
+    "llcResonantConverter": "llc",
+    "powerFactorCorrection": "power_factor_correction",
+    "sepicConverter": "sepic",
+    "cukConverter": "cuk",
+    "zetaConverter": "zeta",
+    "pushPullConverter": "push_pull",
+    "phaseShiftedFullBridge": "phase_shifted_full_bridge",
+    "dualActiveBridge": "dual_active_bridge",
+    "cllcResonantConverter": "cllc",
+    "clllcResonantConverter": "clllc",
+    "seriesResonantConverter": "series_resonant",
+    "viennaRectifierConverter": "vienna",
 }
 
 
@@ -928,7 +942,11 @@ class Controller:
     def from_envelope(cls, env: Mapping[str, Any]) -> Controller | None:
         # CTAS nested: controller.manufacturerInfo.datasheetInfo.{function, electrical}.
         ctrl = env.get("controller") if isinstance(env.get("controller"), Mapping) else env
-        mi = ctrl.get("manufacturerInfo") if isinstance(ctrl.get("manufacturerInfo"), Mapping) else {}
+        mi = (
+            ctrl.get("manufacturerInfo")
+            if isinstance(ctrl.get("manufacturerInfo"), Mapping)
+            else {}
+        )
         ds = mi.get("datasheetInfo") if isinstance(mi.get("datasheetInfo"), Mapping) else {}
         fn = ds.get("function") if isinstance(ds.get("function"), Mapping) else {}
         part = ds.get("part") if isinstance(ds.get("part"), Mapping) else {}
@@ -943,7 +961,9 @@ class Controller:
             if isinstance(t, str)
         )
         el = ds.get("electrical") if isinstance(ds.get("electrical"), Mapping) else {}
-        vref_blk = el.get("referenceVoltage") if isinstance(el.get("referenceVoltage"), Mapping) else {}
+        vref_blk = (
+            el.get("referenceVoltage") if isinstance(el.get("referenceVoltage"), Mapping) else {}
+        )
         vref_raw = vref_blk.get("nominal")
         vref = float(vref_raw) if isinstance(vref_raw, (int, float)) and vref_raw > 0 else None
         ds_url = ctrl.get("datasheetUrl") or mi.get("datasheetUrl")
@@ -973,7 +993,9 @@ class ControllerConstraints:
     vin_nom: float  # nominal input voltage (volts) — must be in range
     fsw_khz: float  # switching frequency (kHz) — must be in range
     integrated_fet: bool | None  # True/False to require; None = don't care
-    category: str | None = None  # CTAS function.category to require (e.g. "pwmController"); None = any
+    category: str | None = (
+        None  # CTAS function.category to require (e.g. "pwmController"); None = any
+    )
 
 
 @dataclass(frozen=True, slots=True)

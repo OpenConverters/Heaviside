@@ -24,6 +24,7 @@ Usage:
   scripts/backfill_infineon_producttable.py --tables power-mosfets [coolmos-...] [--dry-run]
   scripts/backfill_infineon_producttable.py --cached /tmp/ifx_data.json  # reuse a fetch
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,11 +36,20 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DATA = REPO / "TAS" / "data" / "mosfets.ndjson"
-REQ = ["drainSourceVoltage", "onResistance", "continuousDrainCurrent",
-       "gateThresholdVoltage", "totalGateCharge"]
-PMAP = {308: ("drainSourceVoltage", 1.0), 394: ("onResistance", 1e-3),
-        286: ("continuousDrainCurrent", 1.0), 313: ("gateThresholdVoltage", 1.0),
-        382: ("totalGateCharge", 1e-9)}
+REQ = [
+    "drainSourceVoltage",
+    "onResistance",
+    "continuousDrainCurrent",
+    "gateThresholdVoltage",
+    "totalGateCharge",
+]
+PMAP = {
+    308: ("drainSourceVoltage", 1.0),
+    394: ("onResistance", 1e-3),
+    286: ("continuousDrainCurrent", 1.0),
+    313: ("gateThresholdVoltage", 1.0),
+    382: ("totalGateCharge", 1e-9),
+}
 
 
 def norm(s: str) -> str:
@@ -49,6 +59,7 @@ def norm(s: str) -> str:
 def fetch_table(table: str) -> list:
     """Fetch one Infineon product-table's JSON via a headless browser context."""
     from playwright.sync_api import sync_playwright
+
     page_url = f"https://www.infineon.com/product-table/{table}?page=1"
     with sync_playwright() as p:
         b = p.chromium.launch(headless=True)
@@ -58,8 +69,10 @@ def fetch_table(table: str) -> list:
         pg.wait_for_timeout(4000)
         # familyIds come from the producttable element's data-queryparam
         qp = pg.get_attribute('[data-component="producttable"]', "data-queryparam") or ""
-        api = (f"https://www.infineon.com/dataApi/en/product-table/{table}"
-               f".product-table.en.json?collectionName=&familyIds={qp}")
+        api = (
+            f"https://www.infineon.com/dataApi/en/product-table/{table}"
+            f".product-table.en.json?collectionName=&familyIds={qp}"
+        )
         resp = ctx.request.get(api, headers={"Referer": page_url})
         if resp.status != 200:
             raise RuntimeError(f"{table}: HTTP {resp.status}")
@@ -84,7 +97,7 @@ def build_index(rows: list) -> dict:
     idx = {}
     for r in rows:
         fields = {}
-        for pv in (r.get("parameterValues") or []):
+        for pv in r.get("parameterValues") or []:
             pid = pv.get("parameterId")
             if pid not in PMAP:
                 continue
@@ -100,12 +113,18 @@ def build_index(rows: list) -> dict:
                 if obj:
                     fields[name] = obj
             else:
-                v = next((pv[k] for k in ("valueMax", "valueNumber", "valueMin")
-                          if pv.get(k) is not None), None)
+                v = next(
+                    (
+                        pv[k]
+                        for k in ("valueMax", "valueNumber", "valueMin")
+                        if pv.get(k) is not None
+                    ),
+                    None,
+                )
                 if v is not None:
                     fields[name] = round(v * scale, 12)
         fam = r.get("familyId")
-        for o in (r.get("opns") or []):
+        for o in r.get("opns") or []:
             for key in (o.get("opnName"), o.get("productName")):
                 if key:
                     idx[norm(key)] = (fields, fam)
@@ -135,7 +154,8 @@ def main() -> int:
 
     rows = []
     if args.cached:
-        rows = _find_rows(json.load(open(args.cached)))
+        with open(args.cached) as _cf:
+            rows = _find_rows(json.load(_cf))
     else:
         for t in args.tables:
             r = fetch_table(t)
@@ -155,7 +175,7 @@ def main() -> int:
         rec = json.loads(s)
         mf = rec["semiconductor"]["mosfet"]
         mi = mf.get("manufacturerInfo", {})
-        man = (mi.get("manufacturer") or mi.get("name") or "")
+        man = mi.get("manufacturer") or mi.get("name") or ""
         di = mi.get("datasheetInfo", {})
         el = di.get("electrical", {})
         miss = [x for x in REQ if x not in el or el[x] in (None, "")]

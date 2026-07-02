@@ -88,18 +88,18 @@ def _sort_key(ref_des: str) -> tuple[str, int]:
 def _status_label(status: str, target: str) -> tuple[str, str]:
     """(display_text, css_class)"""
     return {
-        "exact":          ("[OK] Recommended", ""),
-        "recommended":    ("[OK] Recommended", ""),
-        "partial":        ("~ Partial",         ""),
-        "no_substitute":  ("- No substitute",   "conf-muted"),
-        "keep_original":  (f"- (already {target})", "conf-muted"),
+        "exact": ("[OK] Recommended", ""),
+        "recommended": ("[OK] Recommended", ""),
+        "partial": ("~ Partial", ""),
+        "no_substitute": ("- No substitute", "conf-muted"),
+        "keep_original": (f"- (already {target})", "conf-muted"),
     }.get(status, (status, ""))
 
 
 def _confidence(comp: dict[str, Any]) -> tuple[str, str]:
     """(label, css_class)"""
     status = comp.get("status", "")
-    notes  = (comp.get("notes") or "").lower()
+    notes = (comp.get("notes") or "").lower()
     if status in ("no_substitute", "keep_original"):
         return "-", "conf-muted"
     if status == "exact":
@@ -121,12 +121,12 @@ def _confidence(comp: dict[str, Any]) -> tuple[str, str]:
 
 def _short_note(comp: dict[str, Any]) -> str:
     """Compact one-liner note from match_detail params + notes text."""
-    md   = comp.get("match_detail") or {}
+    md = comp.get("match_detail") or {}
     note = (comp.get("notes") or "").strip()
     bits: list[str] = []
     for p in md.get("params", []):
         o, s = p.get("original") or "", p.get("substitute") or ""
-        verd = p.get("verdict", "")
+        p.get("verdict", "")
         name = p.get("name", "")
         if o and s and o != s:
             bits.append(f"{name}: {o}→{s}")
@@ -152,21 +152,29 @@ def _engineering_notes(comps: list[dict[str, Any]], target: str) -> str:
         status = comp.get("status", "")
         if status == "no_substitute":
             continue
-        md   = comp.get("match_detail") or {}
+        md = comp.get("match_detail") or {}
         params = md.get("params", [])
         if not params:
             continue
         # Only include components with detailed params (value, voltage, package)
-        ref  = comp.get("ref_des", "?")
+        ref = comp.get("ref_des", "?")
         orig = comp.get("original_mpn", "?")
-        sub  = comp.get("substitute_mpn", "?")
+        sub = comp.get("substitute_mpn", "?")
         note = (comp.get("notes") or "").strip()
-        cat  = comp.get("component_type", "")
+        cat = comp.get("component_type", "")
         # Build compare table. The verdict marker makes a parameter that falls
         # outside the allowed margin (e.g. ESR/ripple/Isat) visible at a glance.
-        _MARK = {"pass": "✓", "same": "✓", "exact": "✓", "exceeds": "✓",
-                 "warn": "⚠", "lower": "⚠", "differs": "⚠",
-                 "fail": "✗", "unverified": "?"}
+        _MARK = {
+            "pass": "✓",
+            "same": "✓",
+            "exact": "✓",
+            "exceeds": "✓",
+            "warn": "⚠",
+            "lower": "⚠",
+            "differs": "⚠",
+            "fail": "✗",
+            "unverified": "?",
+        }
         rows: list[str] = []
         for p in params:
             o = _e(p.get("original") or "—")
@@ -182,9 +190,13 @@ def _engineering_notes(comps: list[dict[str, Any]], target: str) -> str:
             )
         if not rows:
             continue
-        cat_label = {"capacitor": "Capacitor", "resistor": "Resistor",
-                     "magnetic": "Inductor/Magnetic", "mosfet": "MOSFET",
-                     "diode": "Diode"}.get(cat, cat.title())
+        cat_label = {
+            "capacitor": "Capacitor",
+            "resistor": "Resistor",
+            "magnetic": "Inductor/Magnetic",
+            "mosfet": "MOSFET",
+            "diode": "Diode",
+        }.get(cat, cat.title())
         parts.append(
             f'<h3>{_e(ref)} ({cat_label}) — <span class="mpn">{_e(orig)}</span>'
             f' → <span class="mpn">{_e(sub)}</span></h3>'
@@ -193,19 +205,17 @@ def _engineering_notes(comps: list[dict[str, Any]], target: str) -> str:
             '<table class="cmp-tbl"><colgroup>'
             '<col class="c-param"><col class="c-orig2"><col class="c-sub2">'
             '<col class="c-verdict">'
-            '</colgroup>'
-            f'<tr><th>Parameter</th><th>Original ({_e(orig)})</th>'
-            f'<th>Substitute ({_e(sub)})</th><th></th></tr>'
+            "</colgroup>"
+            f"<tr><th>Parameter</th><th>Original ({_e(orig)})</th>"
+            f"<th>Substitute ({_e(sub)})</th><th></th></tr>"
         )
         parts.extend(rows)
-        parts.append('</table>')
+        parts.append("</table>")
         if note:
             # Bold first sentence if it looks like a label
             first, *rest = re.split(r"(?<=[:.])\s", note, maxsplit=1)
             if rest and len(first) < 40 and first.endswith(":"):
-                parts.append(
-                    f'<p><strong>{_e(first)}</strong> {_e(" ".join(rest))}</p>'
-                )
+                parts.append(f"<p><strong>{_e(first)}</strong> {_e(' '.join(rest))}</p>")
             else:
                 parts.append(f"<p>{_e(note)}</p>")
     return "\n".join(parts)
@@ -215,20 +225,27 @@ def _recommendations(comps: list[dict[str, Any]]) -> list[str]:
     """Derive actionable recommendations from substitution patterns."""
     recs: list[str] = []
     # Package upsizes
-    upsized = [c for c in comps if c.get("status") in ("recommended", "partial")
-               and any(k in (c.get("notes") or "").lower()
-                       for k in ("upsize", "size class", "larger"))]
+    upsized = [
+        c
+        for c in comps
+        if c.get("status") in ("recommended", "partial")
+        and any(k in (c.get("notes") or "").lower() for k in ("upsize", "size class", "larger"))
+    ]
     if upsized:
         refs = ", ".join(c["ref_des"] for c in upsized[:6])
         if len(upsized) > 6:
-            refs += f" (+{len(upsized)-6} more)"
+            refs += f" (+{len(upsized) - 6} more)"
         recs.append(
             f"<li><span class='rec-label'>Package upsizes ({refs}):</span> "
             "Verify PCB keepout clearances and component height against adjacent parts.</li>"
         )
     # Package downsizes
-    downsized = [c for c in comps if c.get("status") in ("recommended", "partial")
-                 and "downsize" in (c.get("notes") or "").lower()]
+    downsized = [
+        c
+        for c in comps
+        if c.get("status") in ("recommended", "partial")
+        and "downsize" in (c.get("notes") or "").lower()
+    ]
     if downsized:
         refs = ", ".join(c["ref_des"] for c in downsized[:4])
         recs.append(
@@ -236,8 +253,12 @@ def _recommendations(comps: list[dict[str, Any]]) -> list[str]:
             "Verify power dissipation and pad geometry before committing to smaller footprint.</li>"
         )
     # THT → SMD conversions
-    tht = [c for c in comps if "tht" in (c.get("notes") or "").lower()
-           or "through-hole" in (c.get("notes") or "").lower()]
+    tht = [
+        c
+        for c in comps
+        if "tht" in (c.get("notes") or "").lower()
+        or "through-hole" in (c.get("notes") or "").lower()
+    ]
     if tht:
         refs = ", ".join(c["ref_des"] for c in tht[:4])
         recs.append(
@@ -249,7 +270,7 @@ def _recommendations(comps: list[dict[str, Any]]) -> list[str]:
     if no_sub:
         refs = ", ".join(c["ref_des"] for c in no_sub[:6])
         if len(no_sub) > 6:
-            refs += f" (+{len(no_sub)-6} more)"
+            refs += f" (+{len(no_sub) - 6} more)"
         recs.append(
             f"<li><span class='rec-label'>Not replaced ({refs}):</span> "
             "Source from original manufacturer or request targeted catalogue search.</li>"
@@ -264,26 +285,24 @@ def render_crossref_html(
     circuit_context: str = "",
 ) -> str:
     """Render a crossref outcome dict as a Proteus-style standalone HTML report."""
-    comps  = sorted(outcome.get("components", []), key=lambda c: _sort_key(c["ref_des"]))
+    comps = sorted(outcome.get("components", []), key=lambda c: _sort_key(c["ref_des"]))
     target = outcome.get("target_manufacturer", "?")
 
     # ── Stats ────────────────────────────────────────────────────────────────
-    total        = len(comps)
-    status_cnt   = Counter(c["status"] for c in comps)
-    already      = status_cnt.get("exact", 0)
-    newly_repl   = status_cnt.get("recommended", 0) + status_cnt.get("partial", 0)
-    no_sub       = status_cnt.get("no_substitute", 0)
-    keep         = status_cnt.get("keep_original", 0)
+    total = len(comps)
+    status_cnt = Counter(c["status"] for c in comps)
+    already = status_cnt.get("exact", 0)
+    newly_repl = status_cnt.get("recommended", 0) + status_cnt.get("partial", 0)
+    no_sub = status_cnt.get("no_substitute", 0)
+    keep = status_cnt.get("keep_original", 0)
     # "trivial" = keep_original (no-change)
-    scope        = total - keep
-    coverage     = already + newly_repl
-    cov_pct      = f"{100 * coverage / scope:.0f}%" if scope else "N/A"
+    scope = total - keep
+    coverage = already + newly_repl
+    cov_pct = f"{100 * coverage / scope:.0f}%" if scope else "N/A"
 
     parts: list[str] = []
     parts.append("<!DOCTYPE html><html><head><meta charset='utf-8'>")
-    parts.append(
-        f"<title>{_e(title or f'{target} Cross-Reference Report')}</title>"
-    )
+    parts.append(f"<title>{_e(title or f'{target} Cross-Reference Report')}</title>")
     parts.append(f"<style>{_CSS}</style></head><body>")
 
     # ── Header ───────────────────────────────────────────────────────────────
@@ -302,12 +321,12 @@ def render_crossref_html(
     parts.append("<h2>Executive Summary</h2>")
     parts.append('<table class="summary-tbl"><colgroup><col><col></colgroup>')
     rows_summary = [
-        ("Components reviewed",                  str(total)),
+        ("Components reviewed", str(total)),
         (f"Already {target} (no change required)", str(already + keep)),
-        ("Trivial passives (0Ω jumpers / DNP)",   "—"),
+        ("Trivial passives (0Ω jumpers / DNP)", "—"),
         ("Substitutable scope (real engineering work)", str(scope)),
-        (f"{target} substitutions offered",       f"{coverage} ({cov_pct} of substitutable scope)"),
-        ("No equivalent available",               str(no_sub)),
+        (f"{target} substitutions offered", f"{coverage} ({cov_pct} of substitutable scope)"),
+        ("No equivalent available", str(no_sub)),
     ]
     for i, (metric, value) in enumerate(rows_summary):
         cls = "last-row" if i == len(rows_summary) - 1 else "data-row"
@@ -333,12 +352,12 @@ def render_crossref_html(
         "<th>Status</th><th>Conf.</th><th>Notes</th></tr>"
     )
     for i, c in enumerate(comps):
-        sl, _  = _status_label(c["status"], target)
+        sl, _ = _status_label(c["status"], target)
         cl, cc = _confidence(c)
-        sub    = c.get("substitute_mpn") or "—"
-        orig   = c.get("original_mpn")   or "—"
-        note   = _short_note(c)
-        cls    = "last-row" if i == len(comps) - 1 else "data-row"
+        sub = c.get("substitute_mpn") or "—"
+        orig = c.get("original_mpn") or "—"
+        note = _short_note(c)
+        cls = "last-row" if i == len(comps) - 1 else "data-row"
         parts.append(
             f'<tr class="{cls}">'
             f"<td>{_e(c['ref_des'])}</td>"
@@ -370,7 +389,7 @@ def render_crossref_html(
         )
         parts.append("<tr><th>Ref</th><th>Original PN</th><th>Reason</th></tr>")
         for i, c in enumerate(not_replaced):
-            cls  = "last-row" if i == len(not_replaced) - 1 else "data-row"
+            cls = "last-row" if i == len(not_replaced) - 1 else "data-row"
             note = (c.get("notes") or "—").strip()
             # Use first sentence only for brevity
             reason = re.split(r"(?<=[.!?])\s", note)[0]
@@ -393,9 +412,9 @@ def render_crossref_html(
 
     # ── Appendix: Guardrails / Otto / Reviewer (collapsed for print) ─────────
     guardrails = outcome.get("guardrail_log", [])
-    otto       = outcome.get("otto_log", {})
-    verdicts   = outcome.get("review_verdicts", [])
-    diags      = outcome.get("diagnostics", [])
+    otto = outcome.get("otto_log", {})
+    verdicts = outcome.get("review_verdicts", [])
+    diags = outcome.get("diagnostics", [])
 
     if guardrails or otto.get("challenges") or verdicts or diags:
         parts.append('<div class="no-print">')
@@ -403,8 +422,8 @@ def render_crossref_html(
             parts.append("<h2>Guardrail Fires</h2>")
             for g in guardrails:
                 parts.append(
-                    f"<p>G{_e(g.get('guardrail_id','?'))} "
-                    f"{_e(g.get('ref_des','?'))}: {_e(g.get('reason',''))}</p>"
+                    f"<p>G{_e(g.get('guardrail_id', '?'))} "
+                    f"{_e(g.get('ref_des', '?'))}: {_e(g.get('reason', ''))}</p>"
                 )
         if otto.get("challenges"):
             parts.append("<h2>Otto Challenge Log</h2>")
@@ -419,20 +438,26 @@ def render_crossref_html(
             verified = {v["ref_des"] for v in otto.get("verified", [])}
             rejected = {r["ref_des"] for r in otto.get("rejected", [])}
             for i, ch in enumerate(otto["challenges"]):
-                ref      = ch.get("ref_des", "?")
-                verdict  = ch.get("verdict", "?")
+                ref = ch.get("ref_des", "?")
+                verdict = ch.get("verdict", "?")
                 proposal = ch.get("counter_proposal") or "—"
-                check    = ("Verified" if ref in verified
-                            else "Rejected" if ref in rejected
-                            else "N/A" if verdict == "CONFIRMED" else "—")
-                cls = "last-row" if i == len(otto["challenges"])-1 else "data-row"
+                check = (
+                    "Verified"
+                    if ref in verified
+                    else "Rejected"
+                    if ref in rejected
+                    else "N/A"
+                    if verdict == "CONFIRMED"
+                    else "—"
+                )
+                cls = "last-row" if i == len(otto["challenges"]) - 1 else "data-row"
                 parts.append(
                     f'<tr class="{cls}"><td>{_e(ref)}</td><td>{_e(verdict)}</td>'
                     f"<td>{_e(proposal)}</td><td>{_e(check)}</td></tr>"
                 )
             parts.append("</table>")
         for v in verdicts:
-            vc  = v.get("verdict", "?").upper()
+            vc = v.get("verdict", "?").upper()
             parts.append(f"<h2>Reviewer Verdict: {_e(vc)}</h2>")
             if v.get("summary"):
                 parts.append(f"<p>{_e(v['summary'])}</p>")
@@ -444,9 +469,7 @@ def render_crossref_html(
                 parts.append(f"<p>{_e(d)}</p>")
         parts.append("</div>")
 
-    parts.append(
-        '<div class="footer">Generated by Heaviside CR Pipeline · OpenConverters</div>'
-    )
+    parts.append('<div class="footer">Generated by Heaviside CR Pipeline · OpenConverters</div>')
     parts.append("</body></html>")
     return "\n".join(parts)
 

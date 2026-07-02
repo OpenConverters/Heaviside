@@ -11,42 +11,43 @@ Live prod bug (BLM31PG500SN1, a Murata 50Ω@100MHz ferrite bead):
 These guard the classification, the multi-column value recovery, and the
 impedance ranking that surfaces the closest Würth bead.
 """
+
 from __future__ import annotations
 
 from heaviside.pipeline.bom_import import parse_bom_file
 from heaviside.pipeline.crossref import CrossRefState
 from heaviside.pipeline.crossref_pipeline import (
     _chip_bead_impedance_at_100mhz,
-    _envelope_reference,
     _infer_component_type,
     _normalize_bom,
     _stage1_prefetch,
     _value_from_description,
 )
 
-
 # --- classification --------------------------------------------------------
 
 
 def test_ferrite_chip_without_inductance_is_chipbead():
-    """"Ferrite Chip … 3A, 2 Pin" (Murata BLM wording) is a bead, not an inductor."""
-    assert _infer_component_type(
-        {"description": "Ferrite Chip, 1 Function(s), 3A, 2 Pin(s)"}
-    ) == "chipBead"
+    """ "Ferrite Chip … 3A, 2 Pin" (Murata BLM wording) is a bead, not an inductor."""
+    assert (
+        _infer_component_type({"description": "Ferrite Chip, 1 Function(s), 3A, 2 Pin(s)"})
+        == "chipBead"
+    )
 
 
 def test_ferrite_bead_is_chipbead():
-    assert _infer_component_type(
-        {"description": "Ferrite Beads Multi-Layer 600Ohm 100MHz 1A 0805"}
-    ) == "chipBead"
+    assert (
+        _infer_component_type({"description": "Ferrite Beads Multi-Layer 600Ohm 100MHz 1A 0805"})
+        == "chipBead"
+    )
 
 
 def test_ferrite_chip_inductor_stays_magnetic():
     """A ferrite part that DOES declare inductance is an inductor, not a bead."""
     assert _infer_component_type({"description": "Ferrite Chip Inductor 10uH"}) == "magnetic"
-    assert _infer_component_type(
-        {"description": "Inductor Power Shielded Ferrite 15uH"}
-    ) == "magnetic"
+    assert (
+        _infer_component_type({"description": "Inductor Power Shielded Ferrite 15uH"}) == "magnetic"
+    )
 
 
 def test_classification_reads_secondary_description_columns():
@@ -93,9 +94,7 @@ def test_blm_ferrite_bead_classified_valued_and_matched():
     # (2) impedance recovered from the IPN column → 50 (Ω)
     assert row["value"] == "50"
     # (3) prefetch returns Würth beads ranked by impedance near 50 Ω
-    state = _stage1_prefetch(
-        CrossRefState(source_bom=nb, target_manufacturer="Würth Elektronik")
-    )
+    state = _stage1_prefetch(CrossRefState(source_bom=nb, target_manufacturer="Würth Elektronik"))
     cands = state.candidates_by_ref[row["ref_des"]]
     assert cands, "expected Würth chip-bead candidates"
     top_z = _chip_bead_impedance_at_100mhz(cands[0])

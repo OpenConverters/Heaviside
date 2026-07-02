@@ -3,21 +3,21 @@
 Reclassify 31 WE-CBA records in magnetics.ndjson from subtype:inductor
 to subtype:chipBead and backfill impedance curves from Heimdall data.
 """
+
 from __future__ import annotations
 
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from scripts.import_chip_beads import _clean_record  # noqa: E402
+from scripts.import_chip_beads import _clean_record
 
-DEST    = REPO / "TAS" / "data" / "magnetics.ndjson"
-SOURCE  = Path("/tmp/heaviside_chip_beads.ndjson")
+DEST = REPO / "TAS" / "data" / "magnetics.ndjson"
+SOURCE = Path("/tmp/heaviside_chip_beads.ndjson")
 
 WE_CBA_FAMILIES = {"WE-CBA High Current", "WE-CBA Wide Band", "WE-CBA High Speed"}
 

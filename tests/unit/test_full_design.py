@@ -16,13 +16,11 @@ import pytest
 from heaviside.pipeline.full_design import (
     DesignOutcome,
     FullDesignError,
-    RealizeError,
     TopologyPick,
     _order_topologies_by_lessons,
     _outcome_sort_key,
     _parse_topology_selector_response,
     stage1_topology_screen,
-    stage3_realize,
 )
 from heaviside.pipeline.topology_screen import (
     reconcile_topology_choices,
@@ -203,9 +201,7 @@ def test_order_topologies_mixed_signal_is_neutral() -> None:
 
 def test_order_topologies_preserves_membership_and_count() -> None:
     chosen = ["buck", "boost", "flyback", "forward", "sepic"]
-    ordered = _order_topologies_by_lessons(
-        chosen, preferred=["forward", "sepic"], warned=["buck"]
-    )
+    ordered = _order_topologies_by_lessons(chosen, preferred=["forward", "sepic"], warned=["buck"])
     # Pure reordering: same set, same count, nothing invented or dropped.
     assert sorted(ordered) == sorted(chosen)
     assert len(ordered) == len(chosen)

@@ -23,6 +23,7 @@ AND ``|Δfsw*| / fsw* < fsw_rel_tol`` AND the design is feasible at all OPs.
 The wrapper is pure: it drives an injected ``step`` callable (one
 sweep→pick→reconcile→re-seed pass) so it is fully unit-testable without MKF.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -35,7 +36,7 @@ class RefinementStalled(RuntimeError):
     oscillated between two near-equal designs. Surfaced to the reviewer with the
     full iteration history — never silently resolved by picking one."""
 
-    def __init__(self, history: "list[RefinementState]", reason: str) -> None:
+    def __init__(self, history: list[RefinementState], reason: str) -> None:
         self.history = history
         super().__init__(
             f"{reason} after {len(history)} iteration(s): "
@@ -104,23 +105,32 @@ def refine(
         state = step(prev)
         # normalise the iteration index so callers can't desync it
         state = RefinementState(
-            iteration=i, fet_mpn=state.fet_mpn, fsw_hz=state.fsw_hz,
-            feasible=state.feasible, constraints=state.constraints, feedback=state.feedback,
+            iteration=i,
+            fet_mpn=state.fet_mpn,
+            fsw_hz=state.fsw_hz,
+            feasible=state.feasible,
+            constraints=state.constraints,
+            feedback=state.feedback,
         )
         history.append(state)
 
         if _is_ab_oscillation(history):
-            raise RefinementStalled(
-                history, "oscillation between two near-equal designs"
-            )
+            raise RefinementStalled(history, "oscillation between two near-equal designs")
 
-        if prev is not None and state.feasible \
-                and state.fet_mpn == prev.fet_mpn \
-                and _fsw_settled(state, prev, fsw_rel_tol):
+        if (
+            prev is not None
+            and state.feasible
+            and state.fet_mpn == prev.fet_mpn
+            and _fsw_settled(state, prev, fsw_rel_tol)
+        ):
             return RefinementResult(
-                converged=True, final=state, history=history,
-                reason=(f"FET {state.fet_mpn!r} stable and "
-                        f"|Δfsw|/fsw < {fsw_rel_tol:g} at iteration {i}"),
+                converged=True,
+                final=state,
+                history=history,
+                reason=(
+                    f"FET {state.fet_mpn!r} stable and "
+                    f"|Δfsw|/fsw < {fsw_rel_tol:g} at iteration {i}"
+                ),
             )
         prev = state
 

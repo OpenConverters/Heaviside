@@ -49,7 +49,7 @@ class PhysicsValidatorUnavailable(RuntimeError):
 class PhysicsInvalidError(RuntimeError):
     """A part carries at least one ``IMPOSSIBLE`` physics finding."""
 
-    def __init__(self, mpn: str, findings: "tuple[PhysicsFinding, ...]") -> None:
+    def __init__(self, mpn: str, findings: tuple[PhysicsFinding, ...]) -> None:
         self.mpn = mpn
         self.findings = findings
         detail = "; ".join(f"{f.code}: {f.message}" for f in findings) or "(no detail)"
@@ -144,9 +144,7 @@ def validate_physics(record: dict[str, Any]) -> PhysicsVerdict:
     return _coerce(_load().validate(record))
 
 
-def assert_physically_valid(
-    record: dict[str, Any], *, mpn: str | None = None
-) -> PhysicsVerdict:
+def assert_physically_valid(record: dict[str, Any], *, mpn: str | None = None) -> PhysicsVerdict:
     """Raise :class:`PhysicsInvalidError` if the part has any ``IMPOSSIBLE``
     finding; otherwise return the verdict (carrying any ``SUSPICIOUS`` findings
     and the list of ``skipped`` checks for the caller to log)."""

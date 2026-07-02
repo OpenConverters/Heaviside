@@ -14,6 +14,7 @@ The unstructured PDF/image path (LLM) lands in a sibling function on top
 of this engine; it returns the SAME :class:`BomComponent` list, so the
 deterministic normalize/dedup/validate below is shared and tested once.
 """
+
 from __future__ import annotations
 
 import csv
@@ -36,38 +37,81 @@ PEAS_CATEGORIES = ("capacitor", "magnetic", "semiconductor", "resistor", "contro
 # names (capacitors/magnetics/diodes/...) the LLM extractor emits, so a
 # reverse-engineered BOM normalizes the same as a hand-written one.
 _CATEGORY_ALIASES: dict[str, str] = {
-    "capacitor": "capacitor", "capacitors": "capacitor", "cap": "capacitor",
+    "capacitor": "capacitor",
+    "capacitors": "capacitor",
+    "cap": "capacitor",
     "mlcc": "capacitor",
-    "inductor": "magnetic", "inductors": "magnetic", "magnetic": "magnetic",
-    "magnetics": "magnetic", "choke": "magnetic", "transformer": "magnetic",
-    "ferrite": "magnetic", "ferrite_bead": "magnetic", "ferrite bead": "magnetic",
+    "inductor": "magnetic",
+    "inductors": "magnetic",
+    "magnetic": "magnetic",
+    "magnetics": "magnetic",
+    "choke": "magnetic",
+    "transformer": "magnetic",
+    "ferrite": "magnetic",
+    "ferrite_bead": "magnetic",
+    "ferrite bead": "magnetic",
     "bead": "magnetic",
-    "resistor": "resistor", "resistors": "resistor", "res": "resistor",
-    "mosfet": "semiconductor", "mosfets": "semiconductor",
-    "diode": "semiconductor", "diodes": "semiconductor",
-    "transistor": "semiconductor", "igbt": "semiconductor", "igbts": "semiconductor",
-    "bjt": "semiconductor", "semiconductor": "semiconductor",
-    "fet": "semiconductor", "rectifier": "semiconductor", "tvs": "semiconductor",
-    "ic": "controller", "controller": "controller", "controllers": "controller",
+    "resistor": "resistor",
+    "resistors": "resistor",
+    "res": "resistor",
+    "mosfet": "semiconductor",
+    "mosfets": "semiconductor",
+    "diode": "semiconductor",
+    "diodes": "semiconductor",
+    "transistor": "semiconductor",
+    "igbt": "semiconductor",
+    "igbts": "semiconductor",
+    "bjt": "semiconductor",
+    "semiconductor": "semiconductor",
+    "fet": "semiconductor",
+    "rectifier": "semiconductor",
+    "tvs": "semiconductor",
+    "ic": "controller",
+    "controller": "controller",
+    "controllers": "controller",
     "regulator": "controller",
 }
 
 # source column header (lowercased) -> canonical field
 _COLUMN_ALIASES: dict[str, str] = {
-    "ref_des": "ref_des", "refdes": "ref_des", "ref": "ref_des",
-    "designator": "ref_des", "reference": "ref_des", "designators": "ref_des",
-    "type": "category", "category": "category", "component_type": "category",
-    "mpn": "mpn", "part": "mpn", "part_number": "mpn", "partnumber": "mpn",
-    "manufacturer part number": "mpn", "manufacturer_part_number": "mpn",
-    "manufacturer": "manufacturer", "mfr": "manufacturer", "mfg": "manufacturer",
-    "value": "value", "val": "value",
-    "voltage": "rated_voltage", "rated_voltage": "rated_voltage",
-    "rated voltage": "rated_voltage", "vdc": "rated_voltage",
-    "package": "package", "footprint": "package", "case": "package", "size": "package",
-    "technology": "technology", "dielectric": "technology", "tempco": "technology",
+    "ref_des": "ref_des",
+    "refdes": "ref_des",
+    "ref": "ref_des",
+    "designator": "ref_des",
+    "reference": "ref_des",
+    "designators": "ref_des",
+    "type": "category",
+    "category": "category",
+    "component_type": "category",
+    "mpn": "mpn",
+    "part": "mpn",
+    "part_number": "mpn",
+    "partnumber": "mpn",
+    "manufacturer part number": "mpn",
+    "manufacturer_part_number": "mpn",
+    "manufacturer": "manufacturer",
+    "mfr": "manufacturer",
+    "mfg": "manufacturer",
+    "value": "value",
+    "val": "value",
+    "voltage": "rated_voltage",
+    "rated_voltage": "rated_voltage",
+    "rated voltage": "rated_voltage",
+    "vdc": "rated_voltage",
+    "package": "package",
+    "footprint": "package",
+    "case": "package",
+    "size": "package",
+    "technology": "technology",
+    "dielectric": "technology",
+    "tempco": "technology",
     "temperature coefficient": "technology",
-    "qty": "quantity", "quantity": "quantity", "qnty": "quantity",
-    "notes": "notes", "note": "notes", "description": "notes",
+    "qty": "quantity",
+    "quantity": "quantity",
+    "qnty": "quantity",
+    "notes": "notes",
+    "note": "notes",
+    "description": "notes",
 }
 
 _VALUE_PARSE_UNIT = {"capacitor": "F", "magnetic": "H", "resistor": "Ω"}
@@ -134,18 +178,24 @@ def _component_from_fields(fields: Mapping[str, Any]) -> BomComponent | None:
         ref_des=ref,
         category=category,
         mpn=str(mpn).strip() if mpn not in (None, "") else None,
-        manufacturer=(str(fields["manufacturer"]).strip()
-                      if fields.get("manufacturer") not in (None, "") else None),
+        manufacturer=(
+            str(fields["manufacturer"]).strip()
+            if fields.get("manufacturer") not in (None, "")
+            else None
+        ),
         value=value,
         value_si=value_si,
         rated_voltage=_to_float(fields.get("rated_voltage")),
-        package=(str(fields["package"]).strip()
-                 if fields.get("package") not in (None, "") else None),
-        technology=(str(fields["technology"]).strip()
-                    if fields.get("technology") not in (None, "") else None),
+        package=(
+            str(fields["package"]).strip() if fields.get("package") not in (None, "") else None
+        ),
+        technology=(
+            str(fields["technology"]).strip()
+            if fields.get("technology") not in (None, "")
+            else None
+        ),
         quantity=quantity,
-        notes=(str(fields["notes"]).strip()
-               if fields.get("notes") not in (None, "") else None),
+        notes=(str(fields["notes"]).strip() if fields.get("notes") not in (None, "") else None),
         raw=dict(fields),
     )
 
@@ -157,9 +207,11 @@ def _map_row(row: Mapping[str, Any]) -> dict[str, Any]:
         if k is None:
             continue
         key = str(k).strip().lower()
-        canon = (_COLUMN_ALIASES.get(key)
-                 or _COLUMN_ALIASES.get(key.replace(" ", "_"))
-                 or _COLUMN_ALIASES.get(key.replace("_", " ")))
+        canon = (
+            _COLUMN_ALIASES.get(key)
+            or _COLUMN_ALIASES.get(key.replace(" ", "_"))
+            or _COLUMN_ALIASES.get(key.replace("_", " "))
+        )
         if canon and (canon not in mapped or mapped[canon] in (None, "")):
             mapped[canon] = v
     return mapped
@@ -187,6 +239,7 @@ def _expand_grouped_refs(comp: BomComponent) -> list[BomComponent]:
     out = []
     for r in expanded:
         from dataclasses import replace
+
         out.append(replace(comp, ref_des=r, quantity=1))
     return out
 
@@ -207,8 +260,8 @@ def extract_bom_from_csv(source: str | Path) -> list[BomComponent]:
     """Deterministic engine: a CSV file (or CSV text) -> BomComponents."""
     text = (
         Path(source).read_text(encoding="utf-8")
-        if isinstance(source, Path) or (isinstance(source, str) and "\n" not in source
-                                        and Path(source).exists())
+        if isinstance(source, Path)
+        or (isinstance(source, str) and "\n" not in source and Path(source).exists())
         else str(source)
     )
     reader = csv.DictReader(io.StringIO(text))
@@ -257,8 +310,14 @@ _REFDES_RE = re.compile(r"(?<![\w-])(?:FB|MH|[CRLDQUJYT])\d{1,3}(?!\w)")
 # Fields whose presence makes a BOM row "more populated"; on a ref-des collision
 # during a merge we keep the row that fills more of these (more useful to CR).
 _MERGE_RICHNESS_FIELDS = (
-    "mpn", "value", "value_si", "technology",
-    "manufacturer", "rated_voltage", "package", "notes",
+    "mpn",
+    "value",
+    "value_si",
+    "technology",
+    "manufacturer",
+    "rated_voltage",
+    "package",
+    "notes",
 )
 
 
@@ -284,9 +343,7 @@ def _refdes_coverage(bom: list[BomComponent], expected: set[str]) -> float:
 
 def _richness(comp: BomComponent) -> int:
     """How many of the CR-relevant fields this row actually fills."""
-    return sum(
-        1 for f in _MERGE_RICHNESS_FIELDS if getattr(comp, f) not in (None, "")
-    )
+    return sum(1 for f in _MERGE_RICHNESS_FIELDS if getattr(comp, f) not in (None, ""))
 
 
 def _merge_boms(primary: list[BomComponent], secondary: list[BomComponent]) -> list[BomComponent]:
@@ -309,7 +366,7 @@ def _merge_boms(primary: list[BomComponent], secondary: list[BomComponent]) -> l
 _MPN_IS_VALUE_RE = re.compile(r"^\s*[\d.,]+\s*[pnuµmkKM]?\s*(F|Ω|Ohm|H)\b", re.I)
 
 
-def _row_looks_garbled(comp: "BomComponent") -> bool:
+def _row_looks_garbled(comp: BomComponent) -> bool:
     """A deterministically-parsed row whose ``mpn`` is really a *value*
     ("330 uF", "10 kΩ") — the tell that pdfplumber mis-cellularised an atypical
     table row (a terse description + a multi-word manufacturer/part), so the real
@@ -383,24 +440,35 @@ def extract_bom_from_pdf(
                     logger.info(
                         "bom_extract[%s]: deterministic parse OK (%d comps, %.0f%%), but "
                         "%d row(s) look garbled (%s) — LLM-refining those",
-                        ref, len(det_bom), det_cov * 100, len(garbled),
+                        ref,
+                        len(det_bom),
+                        det_cov * 100,
+                        len(garbled),
                         ", ".join(str(c.ref_des) for c in garbled[:6]),
                     )
-                    llm_by_ref = {c.ref_des: c
-                                  for c in extract_bom_from_rows(_extract_full_bom_rows(pdf_text, ref))}
-                    det_bom = [llm_by_ref.get(c.ref_des, c) if c.ref_des in grefs else c
-                               for c in det_bom]
+                    llm_by_ref = {
+                        c.ref_des: c
+                        for c in extract_bom_from_rows(_extract_full_bom_rows(pdf_text, ref))
+                    }
+                    det_bom = [
+                        llm_by_ref.get(c.ref_des, c) if c.ref_des in grefs else c for c in det_bom
+                    ]
                     return det_bom
                 logger.info(
                     "bom_extract[%s]: deterministic BOM-table parse — %d components, "
                     "coverage %.0f%% of %d designators (no LLM)",
-                    ref, len(det_bom), det_cov * 100, len(expected),
+                    ref,
+                    len(det_bom),
+                    det_cov * 100,
+                    len(expected),
                 )
                 return det_bom
             logger.info(
                 "bom_extract[%s]: deterministic table coverage %.0f%% < %.0f%% — "
                 "falling back to LLM census",
-                ref, det_cov * 100, _COVERAGE_OK_THRESHOLD * 100,
+                ref,
+                det_cov * 100,
+                _COVERAGE_OK_THRESHOLD * 100,
             )
 
     bom = extract_bom_from_rows(_extract_full_bom_rows(pdf_text, ref))
@@ -418,7 +486,10 @@ def extract_bom_from_pdf(
     logger.warning(
         "bom_extract[%s]: first draw covers %.0f%% of %d detected designators "
         "(below %.0f%%) — re-extracting to recover dropped rows",
-        ref, coverage * 100, len(expected), _COVERAGE_OK_THRESHOLD * 100,
+        ref,
+        coverage * 100,
+        len(expected),
+        _COVERAGE_OK_THRESHOLD * 100,
     )
     for _ in range(_MAX_EXTRA_DRAWS):
         bom = _merge_boms(bom, extract_bom_from_rows(_extract_full_bom_rows(pdf_text, ref)))
@@ -431,8 +502,13 @@ def extract_bom_from_pdf(
         logger.warning(
             "bom_extract[%s]: KNOWN-INCOMPLETE BOM — after %d draws coverage is "
             "%.0f%% (%d/%d designators); missing %d: %s",
-            ref, _MAX_EXTRA_DRAWS + 1, coverage * 100,
-            len(expected) - len(missing), len(expected), len(missing), missing,
+            ref,
+            _MAX_EXTRA_DRAWS + 1,
+            coverage * 100,
+            len(expected) - len(missing),
+            len(expected),
+            len(missing),
+            missing,
         )
     return bom
 

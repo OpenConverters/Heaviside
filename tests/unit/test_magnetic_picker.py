@@ -125,7 +125,7 @@ def test_pick_highest_isat_headroom_returns_index_of_max_isat(monkeypatch) -> No
     ]
     # Stub out PyOM calls so the unit test only verifies the "pick highest" logic,
     # not the PyOM integration (covered by the integration suite).
-    _isat_values = {id(d.magnetic): v for d, v in zip(designs, [5.0, 12.0, 8.0])}
+    _isat_values = {id(d.magnetic): v for d, v in zip(designs, [5.0, 12.0, 8.0], strict=False)}
     monkeypatch.setattr("heaviside.bridge._harvest_authoritative_inductance", lambda mas: 10e-6)
     monkeypatch.setattr("heaviside.bridge._isat_from_mas", lambda mag, L: _isat_values[id(mag)])
     assert pick_best_pareto(designs, criteria="highest_isat_headroom") == 1

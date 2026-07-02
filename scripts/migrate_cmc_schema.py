@@ -17,6 +17,7 @@ keep their existing inductor schema.
 Usage:
   python scripts/migrate_cmc_schema.py [--dry-run]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -64,10 +65,7 @@ def _migrate_electrical(
         new["ratedCurrents"] = [old_el["saturationCurrentPeak"]]
 
     # Number of lines: REDEXPERT gives the actual value; fall back to coil count
-    if re_data and re_data.get("lines"):
-        n_lines = int(re_data["lines"])
-    else:
-        n_lines = max(2, num_windings)
+    n_lines = int(re_data["lines"]) if re_data and re_data.get("lines") else max(2, num_windings)
 
     # dcResistance (single, old) → dcResistances (per line, new)
     old_dcr = old_el.get("dcResistance", {})
@@ -98,9 +96,7 @@ def _migrate_electrical(
         imp = _f(re_data.get("impedance"))
         if imp is not None:
             # Signal CMCs (WE-CNSW, WE-SL, …) are impedance-spec'd at 100 MHz
-            new["impedancePoints"] = [
-                {"frequency": 100_000_000.0, "impedance": {"magnitude": imp}}
-            ]
+            new["impedancePoints"] = [{"frequency": 100_000_000.0, "impedance": {"magnitude": imp}}]
 
     return new
 
@@ -109,7 +105,9 @@ def migrate(dry_run: bool) -> None:
     print("Fetching REDEXPERT CMC families 3 and 23 …")
     c = RedexpertClient()
     re3 = {str(p["orderCode"]): p for p in c.products("3").get("results", []) if p.get("orderCode")}
-    re23 = {str(p["orderCode"]): p for p in c.products("23").get("results", []) if p.get("orderCode")}
+    re23 = {
+        str(p["orderCode"]): p for p in c.products("23").get("results", []) if p.get("orderCode")
+    }
     c.close()
     print(f"  Family 3 (power): {len(re3)} parts")
     print(f"  Family 23 (signal): {len(re23)} parts")

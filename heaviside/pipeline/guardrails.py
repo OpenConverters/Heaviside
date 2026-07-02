@@ -81,9 +81,9 @@ def _flat_record_from_env(env: dict, mi: dict) -> dict:
         elec = {}
     part_info = di.get("part") or {}
     cap_obj = elec.get("capacitance")
-    cap_val = (cap_obj.get("nominal") if isinstance(cap_obj, dict) else cap_obj)
+    cap_val = cap_obj.get("nominal") if isinstance(cap_obj, dict) else cap_obj
     res_obj = elec.get("resistance")
-    res_val = (res_obj.get("nominal") if isinstance(res_obj, dict) else res_obj)
+    res_val = res_obj.get("nominal") if isinstance(res_obj, dict) else res_obj
     return {
         "capacitance": cap_val,
         "voltage": elec.get("ratedVoltage"),
@@ -192,10 +192,7 @@ def _mpn_exists_in_tas(
     # Use the per-file MPN index (built once, cached) so checking N substitutes
     # is O(total catalogue) rather than re-reading every NDJSON file per MPN.
     mpn_l = mpn.strip().lower()
-    for ndjson_file in root.glob("*.ndjson"):
-        if mpn_l in _tas_file_index(ndjson_file):
-            return True
-    return False
+    return any(mpn_l in _tas_file_index(ndjson_file) for ndjson_file in root.glob("*.ndjson"))
 
 
 # ---------------------------------------------------------------------------
@@ -1003,8 +1000,7 @@ def _gstack_multiple_caveats(
             comp["status"] = "partial"
             comp["notes"] = (
                 f"GUARDRAIL GStack: MULTIPLE COMPROMISES — {guardrail_hits} "
-                f"concurrent caveats; verify carefully before use. "
-                + (comp.get("notes") or "")
+                f"concurrent caveats; verify carefully before use. " + (comp.get("notes") or "")
             )
             fires.append(
                 _make_fire(

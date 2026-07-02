@@ -5,10 +5,10 @@ Every stamped design number must be auditable via a uniform
 reports a sourceless real part as UNAVAILABLE (origin un-auditable), never
 silently trusts it.
 """
+
 from __future__ import annotations
 
 from heaviside import provenance
-
 
 # ---------------------------------------------------------------------------
 # inputs_hash — deterministic + order-independent
@@ -56,7 +56,9 @@ def test_make_rejects_empty_required_fields():
 def test_is_complete_rejects_partial_or_absent():
     assert not provenance.is_complete(None)
     assert not provenance.is_complete({})
-    assert not provenance.is_complete({"producer": "p", "method": "m", "source_ref": "s"})  # no hash
+    assert not provenance.is_complete(
+        {"producer": "p", "method": "m", "source_ref": "s"}
+    )  # no hash
     assert not provenance.is_complete(
         {"producer": "p", "method": "m", "source_ref": "s", "inputs_hash": ""}  # empty
     )
@@ -101,16 +103,30 @@ def test_ensure_canonical_returns_none_for_nonmapping():
 
 
 def test_stamp_components_walks_tas_and_canonicalises():
-    tas = {"topology": {"stages": [
-        {"circuit": {"components": [
-            {"name": "Q1", "mpn": "AO4423",
-             "selection_provenance": {"category": "mosfet", "mpn": "AO4423",
-                                      "tiebreaker": "lowest_qg",
-                                      "constraints": {"vds_min": 48}}},
-            {"name": "R1", "tj_provenance": {"method": "Rth_ja*P"}},
-            {"name": "NODE"},  # nothing to stamp
-        ]}},
-    ]}}
+    tas = {
+        "topology": {
+            "stages": [
+                {
+                    "circuit": {
+                        "components": [
+                            {
+                                "name": "Q1",
+                                "mpn": "AO4423",
+                                "selection_provenance": {
+                                    "category": "mosfet",
+                                    "mpn": "AO4423",
+                                    "tiebreaker": "lowest_qg",
+                                    "constraints": {"vds_min": 48},
+                                },
+                            },
+                            {"name": "R1", "tj_provenance": {"method": "Rth_ja*P"}},
+                            {"name": "NODE"},  # nothing to stamp
+                        ]
+                    }
+                },
+            ]
+        }
+    }
     n = provenance.stamp_components(tas)
     assert n == 2
     comps = tas["topology"]["stages"][0]["circuit"]["components"]
@@ -138,8 +154,12 @@ def _provenance_check(report):
 def test_realism_gate_passes_with_complete_provenance():
     from heaviside.pipeline.realism import CheckStatus, evaluate_tas
 
-    prov = provenance.make(producer="catalogue.select_mosfet", method="lowest_qg",
-                           source_ref="AO4423", inputs={"vds_min": 48})
+    prov = provenance.make(
+        producer="catalogue.select_mosfet",
+        method="lowest_qg",
+        source_ref="AO4423",
+        inputs={"vds_min": 48},
+    )
     report = evaluate_tas(_tas_with_part(prov), topology="buck")
     assert _provenance_check(report).status is CheckStatus.PASS
 
@@ -158,4 +178,6 @@ def test_realism_gate_not_applicable_without_selected_parts():
     from heaviside.pipeline.realism import CheckStatus, evaluate_tas
 
     tas = {"topology": {"stages": [{"circuit": {"components": [{"name": "NODE"}]}}]}}
-    assert _provenance_check(evaluate_tas(tas, topology="buck")).status is CheckStatus.NOT_APPLICABLE
+    assert (
+        _provenance_check(evaluate_tas(tas, topology="buck")).status is CheckStatus.NOT_APPLICABLE
+    )

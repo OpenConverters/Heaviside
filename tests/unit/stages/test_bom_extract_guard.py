@@ -12,6 +12,7 @@ CR run-to-run variance. These tests pin the recovery behaviour:
   not dielectric codes (C0G), package sizes (0402), or qualification tags
   (AEC-Q200).
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -30,17 +31,24 @@ def _make_full_rows() -> list[dict]:
     (24 total) plus the rest of the board (resistors / inductors / IC / bead)."""
     rows: list[dict] = []
     for i in range(1, 21):  # 20 real ceramics, fully populated
-        rows.append({
-            "ref_des": f"C{i}", "category": "capacitor", "mpn": f"GRM{i}KA",
-            "value": "1uF", "technology": "X7R", "rated_voltage": "25V",
-            "package": "0603", "manufacturer": "MURATA",
-        })
+        rows.append(
+            {
+                "ref_des": f"C{i}",
+                "category": "capacitor",
+                "mpn": f"GRM{i}KA",
+                "value": "1uF",
+                "technology": "X7R",
+                "rated_voltage": "25V",
+                "package": "0603",
+                "manufacturer": "MURATA",
+            }
+        )
     for i in range(21, 25):  # 4 OPTION (DNP) caps — sparse rows, still designators
-        rows.append({"ref_des": f"C{i}", "category": "capacitor",
-                     "value": "OPTION", "package": "0603"})
+        rows.append(
+            {"ref_des": f"C{i}", "category": "capacitor", "value": "OPTION", "package": "0603"}
+        )
     for i in range(1, 9):  # 8 resistors
-        rows.append({"ref_des": f"R{i}", "category": "resistor",
-                     "mpn": f"ERJ{i}", "value": "10k"})
+        rows.append({"ref_des": f"R{i}", "category": "resistor", "mpn": f"ERJ{i}", "value": "10k"})
     rows += [
         {"ref_des": "L1", "category": "inductor", "mpn": "XEL4020", "value": "2.2uH"},
         {"ref_des": "L2", "category": "inductor", "mpn": "744438", "value": "4.7uH"},
@@ -53,9 +61,7 @@ def _make_full_rows() -> list[dict]:
 def _pdf_text_for(rows: list[dict]) -> str:
     """A BOM-table-like source text that mentions every row's designator, so the
     detector recovers the full expected designator set from the text alone."""
-    body = "\n".join(
-        f'{r["ref_des"]} 1 {r.get("mpn", "")} {r.get("value", "")}' for r in rows
-    )
+    body = "\n".join(f"{r['ref_des']} 1 {r.get('mpn', '')} {r.get('value', '')}" for r in rows)
     return "Bill of Materials\nRef Qty MPN Value\n" + body
 
 
@@ -65,16 +71,16 @@ def _cap_refs(bom: list[BomComponent]) -> set[str]:
 
 # --- the headline recovery test -----------------------------------------
 
+
 def test_under_covered_first_draw_is_recovered_by_merge():
     """First draw drops the 20 real ceramics (leaving only the 4 OPTION caps);
     the second draw is complete. The guard must DETECT the under-coverage,
     re-extract, and the MERGED result must contain all 24 cap designators."""
     full = _make_full_rows()
     # "the fixture with the 20 real ceramics removed, leaving the 4 OPTION caps"
-    partial = [r for r in full
-               if not (r["category"] == "capacitor" and r.get("value") != "OPTION")]
-    assert len(_cap_refs(extract_full := bx.extract_bom_from_rows(partial))) == 4
-    del extract_full
+    partial = [r for r in full if not (r["category"] == "capacitor" and r.get("value") != "OPTION")]
+    extract_full = bx.extract_bom_from_rows(partial)
+    assert len(_cap_refs(extract_full)) == 4
 
     pdf_text = _pdf_text_for(full)
 
@@ -108,8 +114,10 @@ def test_complete_first_draw_does_not_retry():
 def test_guard_skipped_for_tiny_input():
     """Too few detected designators -> no trustworthy coverage signal -> accept
     the single draw as-is (no retry), even if it looks sparse."""
-    rows = [{"ref_des": "C1", "category": "capacitor", "value": "1uF"},
-            {"ref_des": "U1", "category": "ic", "mpn": "LT8640"}]
+    rows = [
+        {"ref_des": "C1", "category": "capacitor", "value": "1uF"},
+        {"ref_des": "U1", "category": "ic", "mpn": "LT8640"},
+    ]
     pdf_text = "U1 1 LT8640\nC1 1 1uF"  # only 2 designators (< the guard minimum)
 
     with patch.object(bx, "_extract_full_bom_rows", side_effect=[rows]) as m:
@@ -124,8 +132,7 @@ def test_persistent_under_coverage_logs_known_incomplete(caplog):
     LOUD 'KNOWN-INCOMPLETE' warning rather than silently passing it off as
     complete (per the no-silent-shortcuts rule)."""
     full = _make_full_rows()
-    partial = [r for r in full
-               if not (r["category"] == "capacitor" and r.get("value") != "OPTION")]
+    partial = [r for r in full if not (r["category"] == "capacitor" and r.get("value") != "OPTION")]
     pdf_text = _pdf_text_for(full)
 
     # Every draw is the same bad partial -> coverage never reaches the threshold.
@@ -141,6 +148,7 @@ def test_persistent_under_coverage_logs_known_incomplete(caplog):
 
 # --- the reference-designator detector ----------------------------------
 
+
 def test_refdes_detector_finds_designators_not_codes():
     """The detector counts real designators (C1..C25, R1..R22, FB1, U1, L2,
     MH4) but NOT dielectric codes (C0G), package sizes (0402/0603/1206), or
@@ -154,7 +162,7 @@ def test_refdes_detector_finds_designators_not_codes():
         "Bill of Materials\n"
         + " ".join(designators)
         + "\nNotes: dielectric C0G, package 0402 0603 1206, X7R, 50V, AEC-Q200, "
-          "MPN GCM31CL81H105KA55L ERJ-3EKF1001V, controller LT83401"
+        "MPN GCM31CL81H105KA55L ERJ-3EKF1001V, controller LT83401"
     )
     refs = _detect_expected_refdes(text)
 
@@ -173,17 +181,19 @@ def test_refdes_detector_ignores_lowercase_and_ranges_start_only():
 
 # --- the merge primitive -------------------------------------------------
 
+
 def test_merge_prefers_richer_row_and_unions_refs():
     sparse_c1 = BomComponent(ref_des="C1", category="capacitor")  # bare
-    rich_c1 = BomComponent(ref_des="C1", category="capacitor", mpn="GRM1",
-                           value="1uF", value_si=1e-6, technology="X7R")
+    rich_c1 = BomComponent(
+        ref_des="C1", category="capacitor", mpn="GRM1", value="1uF", value_si=1e-6, technology="X7R"
+    )
     only_in_b = BomComponent(ref_des="C2", category="capacitor", mpn="GRM2")
 
     merged = _merge_boms([sparse_c1], [rich_c1, only_in_b])
     by_ref = {c.ref_des: c for c in merged}
 
     assert set(by_ref) == {"C1", "C2"}  # union of designators
-    assert by_ref["C1"].mpn == "GRM1"   # the richer C1 row won the collision
+    assert by_ref["C1"].mpn == "GRM1"  # the richer C1 row won the collision
     # symmetric: richer row in the PRIMARY position must also be kept
     merged2 = _merge_boms([rich_c1], [sparse_c1])
     assert {c.ref_des: c for c in merged2}["C1"].mpn == "GRM1"

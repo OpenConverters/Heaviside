@@ -49,7 +49,6 @@ auditable operation; see :func:`describe_lock`.
 
 from __future__ import annotations
 
-import contextlib
 import datetime as _dt
 import fcntl
 import json

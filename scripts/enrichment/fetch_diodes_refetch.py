@@ -23,8 +23,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from heaviside.librarian.fetcher.auth import load_credentials
 from heaviside.librarian.fetcher.base import IncompleteSourceError
@@ -49,17 +50,15 @@ DIGIKEY_PRODUCT_URL = "https://www.digikey.com/en/products/result?keywords={mpn}
 
 def _vr(row: dict[str, Any]) -> float:
     return float(
-        row["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"][
-            "electrical"
-        ]["reverseVoltage"]
+        row["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"]["electrical"][
+            "reverseVoltage"
+        ]
     )
 
 
 def _subtype(row: dict[str, Any]) -> str:
     return str(
-        row["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"]["part"][
-            "subType"
-        ]
+        row["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"]["part"]["subType"]
     )
 
 
@@ -133,9 +132,9 @@ def load_existing_mpns(path: Path) -> set[str]:
                 continue
             rec = json.loads(line)
             mpns.add(
-                rec["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"][
-                    "part"
-                ]["partNumber"]
+                rec["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"]["part"][
+                    "partNumber"
+                ]
             )
     return mpns
 
@@ -208,10 +207,7 @@ def main() -> int:
                             "datasheetUrl": product.get("PrimaryDatasheet") or "",
                         }
                     )
-            print(
-                f"[{camp['name']}] accepted {len(accepted) - n_before} "
-                f"(cap {camp['cap']})"
-            )
+            print(f"[{camp['name']}] accepted {len(accepted) - n_before} (cap {camp['cap']})")
 
     print(f"total accepted: {len(accepted)}")
     print("skip summary:", json.dumps(skip_log, indent=2, sort_keys=True))

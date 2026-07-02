@@ -29,7 +29,10 @@ import re
 import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from heaviside.pipeline.re_state import REState
 
 from heaviside.agents.llm_call import (
     LLMCallError,
@@ -87,7 +90,7 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         "capacitor": "capacitors.ndjson",
         "resistor": "resistors.ndjson",
         "magnetic": "magnetics.ndjson",
-        "chipBead": "magnetics.ndjson",   # subtype-filtered at scan time
+        "chipBead": "magnetics.ndjson",  # subtype-filtered at scan time
         "varistor": "varistors.ndjson",
         "connector": "connectors.ndjson",
     }
@@ -277,9 +280,7 @@ def _stage1_5_librarian(state: CrossRefState) -> CrossRefState:
         # simply skip distributor gap-filling (the internal DB still drives the
         # crossref). Phrase it as a skipped optional step, not an error.
         logger.info("CR stage 1.5: Digi-Key gap-fill unavailable (%s) — skipping", exc)
-        state.diagnostics.append(
-            f"librarian gap-fill skipped (Digi-Key not configured): {exc}"
-        )
+        state.diagnostics.append(f"librarian gap-fill skipped (Digi-Key not configured): {exc}")
         return state
 
     target_mfr = state.target_manufacturer
@@ -429,21 +430,25 @@ def _extract_value(env: dict[str, Any], category: str) -> float | None:
             v = res.get("nominal") if isinstance(res, dict) else res
             return float(v) if v is not None else None
         elif category == "magnetic":
-            elec = _magnetic_elec(env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"])
+            elec = _magnetic_elec(
+                env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+            )
             ind = elec.get("inductance")
             v = ind.get("nominal") if isinstance(ind, dict) else ind
             return float(v) if v is not None else None
         elif category == "chipBead":
             return _chip_bead_impedance_at_100mhz(env)
         elif category == "varistor":
-            vv = (env["varistor"]["manufacturerInfo"]["datasheetInfo"]
-                  ["electrical"].get("varistorVoltage"))
+            vv = env["varistor"]["manufacturerInfo"]["datasheetInfo"]["electrical"].get(
+                "varistorVoltage"
+            )
             v = vv.get("nominal") if isinstance(vv, dict) else vv
             return float(v) if v is not None else None
         elif category == "connector":
             # Primary sorting value: rated current per contact
-            v = (env["connector"]["manufacturerInfo"]["datasheetInfo"]
-                 ["electrical"].get("ratedCurrentPerContact"))
+            v = env["connector"]["manufacturerInfo"]["datasheetInfo"]["electrical"].get(
+                "ratedCurrentPerContact"
+            )
             return float(v) if v is not None else None
     except (KeyError, TypeError, ValueError):
         pass
@@ -508,9 +513,7 @@ _EIA_CHIP_DIMENSIONS_M: dict[str, tuple[float, float]] = {
     "2220": (0.0057, 0.0050),
     "2225": (0.0057, 0.0064),
 }
-_EIA_CODE_RE = re.compile(
-    r"(?<!\d)(01005|0201|0402|0603|0805|1206|1210|1812|2010|2220|2225)(?!\d)"
-)
+_EIA_CODE_RE = re.compile(r"(?<!\d)(01005|0201|0402|0603|0805|1206|1210|1812|2010|2220|2225)(?!\d)")
 
 
 def _dim_value(d: Any) -> float | None:
@@ -586,23 +589,23 @@ def _extract_dimensions(
 # terms sit in the 0–5 range, so OVERSIZE_BASE dominates them: any candidate
 # that fits always outranks any candidate that doesn't, yet an oversize part
 # stays finite-scored so it can win when it's the only option.
-_FIT_AREA_WEIGHT = 0.5          # fitting parts: penalty = weight × area ratio
-_OVERSIZE_BASE = 10.0           # flat floor applied to any part that overflows
-_OVERSIZE_SCALE = 8.0           # extra penalty per unit of worst linear overflow
-_UNKNOWN_DIM_PENALTY = 2.0      # candidate size unknown → can't confirm it fits
-_DIM_TOLERANCE = 1.02           # 2 % slack for rounding / termination spread
+_FIT_AREA_WEIGHT = 0.5  # fitting parts: penalty = weight × area ratio
+_OVERSIZE_BASE = 10.0  # flat floor applied to any part that overflows
+_OVERSIZE_SCALE = 8.0  # extra penalty per unit of worst linear overflow
+_UNKNOWN_DIM_PENALTY = 2.0  # candidate size unknown → can't confirm it fits
+_DIM_TOLERANCE = 1.02  # 2 % slack for rounding / termination spread
 # A substitute up to ~one EIA case size larger (e.g. 0402→0603, ≈0.6 linear
 # overflow) is an ACCEPTABLE PARTIAL substitution for bypass/decoupling parts —
 # offered with a "verify board fit" caveat rather than dropped. Its penalty
 # stays below _OVERSIZE_BASE so the fit filter keeps it and the matcher sees it;
 # ≥2 sizes up remains a heavily-penalised last resort.
-_SLIGHTLY_OVERSIZE_OVERFLOW = 0.65   # worst-linear overflow that counts as one size up
+_SLIGHTLY_OVERSIZE_OVERFLOW = 0.65  # worst-linear overflow that counts as one size up
 # Kept small (penalty ≈1–2.6) so an EXACT-value part one size up still outranks a
 # near-value fitting part — otherwise the value-match the user actually needs is
 # pushed out of the top-N by closer-fitting wrong-value parts. Still above any
 # true fit (≤_FIT_AREA_WEIGHT≈0.5) so a same-size match always wins when it exists.
-_SLIGHTLY_OVERSIZE_BASE = 1.0        # partial floor: above any true fit, below _OVERSIZE_BASE
-_SLIGHTLY_OVERSIZE_SCALE = 2.5       # gentle per-overflow slope (one size up stays < value-match weight)
+_SLIGHTLY_OVERSIZE_BASE = 1.0  # partial floor: above any true fit, below _OVERSIZE_BASE
+_SLIGHTLY_OVERSIZE_SCALE = 2.5  # gentle per-overflow slope (one size up stays < value-match weight)
 
 # Weight applied to the value-distance term so the primary electrical value
 # (resistance/inductance/capacitance) dominates package/footprint when ranking
@@ -642,11 +645,14 @@ def _footprint_penalty(
     if fits:
         area_ratio = (c_long * c_short) / (s_long * s_short)
         return _FIT_AREA_WEIGHT * area_ratio
-    overflow = max(
-        c_long / s_long,
-        c_short / s_short,
-        (c_h / s_h) if (s_h and c_h) else 1.0,
-    ) - 1.0
+    overflow = (
+        max(
+            c_long / s_long,
+            c_short / s_short,
+            (c_h / s_h) if (s_h and c_h) else 1.0,
+        )
+        - 1.0
+    )
     overflow = max(overflow, 0.0)
     if overflow <= _SLIGHTLY_OVERSIZE_OVERFLOW:
         # ~one EIA case size larger: an acceptable PARTIAL (verify board fit).
@@ -703,16 +709,43 @@ def _eia_dielectric_codes() -> tuple[str, ...]:
     if not codes:
         raise RuntimeError(f"CAS dielectric code map at {path} is empty")
     return codes
+
+
 # Manufacturer ceramic-MLCC series prefixes (the dielectric is positional
 # in these MPNs, not a literal substring, so a prefix map is how we tell a
 # Murata GRM / TDK CGA / Samsung CL etc. is a ceramic).
 _CERAMIC_MPN_PREFIXES = (
-    "GRM", "GCM", "GRT", "GJM", "GMD", "GA3", "GCJ", "GQM",  # Murata
-    "CGA", "CKG", "CGJ",  # TDK (+ bare C#### handled below)
-    "CL03", "CL05", "CL10", "CL21", "CL31", "CL32", "CL05", "CL", # Samsung
-    "AC0", "CC0", "CC1", "CC2",  # Yageo
-    "WCAP-CSGP", "WCAP-CSMH", "WCAP-CSSA", "WCAP-CSST",  # Würth
-    "C0402", "C0603", "C0805", "C1206",  # Kemet/generic
+    "GRM",
+    "GCM",
+    "GRT",
+    "GJM",
+    "GMD",
+    "GA3",
+    "GCJ",
+    "GQM",  # Murata
+    "CGA",
+    "CKG",
+    "CGJ",  # TDK (+ bare C#### handled below)
+    "CL03",
+    "CL05",
+    "CL10",
+    "CL21",
+    "CL31",
+    "CL32",
+    "CL05",
+    "CL",  # Samsung
+    "AC0",
+    "CC0",
+    "CC1",
+    "CC2",  # Yageo
+    "WCAP-CSGP",
+    "WCAP-CSMH",
+    "WCAP-CSSA",
+    "WCAP-CSST",  # Würth
+    "C0402",
+    "C0603",
+    "C0805",
+    "C1206",  # Kemet/generic
 )
 
 
@@ -738,8 +771,11 @@ def _capacitor_technology_family(technology: str | None) -> str | None:
         return None
     if "thin-film" in t or "thin film" in t:
         return "thin-film-silicon"
-    if "ceramic" in t or "mlcc" in t or any(
-        len(c) >= 3 and c.lower() in t for c in _eia_dielectric_codes()):
+    if (
+        "ceramic" in t
+        or "mlcc" in t
+        or any(len(c) >= 3 and c.lower() in t for c in _eia_dielectric_codes())
+    ):
         return "ceramic"
     if "tantal" in t:
         return "tantalum"
@@ -747,8 +783,10 @@ def _capacitor_technology_family(technology: str | None) -> str | None:
         return "niobium"
     if "alum" in t or "electrolytic" in t or "polymer" in t or "hybrid" in t:
         return "aluminum"
-    if any(k in t for k in ("film", "polyprop", "polyest", "paper", "pps",
-                            "polyphenylene", "mkt", "mkp")):
+    if any(
+        k in t
+        for k in ("film", "polyprop", "polyest", "paper", "pps", "polyphenylene", "mkt", "mkp")
+    ):
         return "film"
     if "supercap" in t or "edlc" in t or "super cap" in t:
         return "supercapacitor"
@@ -847,9 +885,11 @@ def _rank_candidates(
         target_val = parse_resistance(value_str)  # impedance in Ω
     elif category == "varistor" and value_str:
         from heaviside.pipeline.value_parse import parse_voltage
+
         target_val = parse_voltage(value_str)
     elif category == "connector" and value_str:
         from heaviside.pipeline.value_parse import parse_current
+
         target_val = parse_current(value_str)
 
     if target_val is None:
@@ -1055,16 +1095,13 @@ def _rank_candidates(
                 # that keeps ceramic↔tantalum↔wet-electrolytic apart.
                 src_tech = str(comp.get("technology") or comp.get("dielectric") or "")
                 tech_penalty = (
-                    1.5 if (_is_polymer_cap(src_tech) and _is_polymer_cap(cand_tech))
-                    else 6.0
+                    1.5 if (_is_polymer_cap(src_tech) and _is_polymer_cap(cand_tech)) else 6.0
                 )
 
         # Footprint fit (all categories): the substitute must occupy no more
         # board space than the original. Smaller is better; oversize is heavily
         # penalised but still finite-scored so it can win when nothing fits.
-        footprint_penalty = _footprint_penalty(
-            source_dims, _extract_dimensions(cand, category)
-        )
+        footprint_penalty = _footprint_penalty(source_dims, _extract_dimensions(cand, category))
         # A candidate that overflows the original's board space (footprint
         # penalty hit the oversize floor) is a LAST RESORT — see filter below.
         is_oversize = footprint_penalty >= _OVERSIZE_BASE
@@ -1192,10 +1229,10 @@ def _merge_preclassified(state: CrossRefState) -> None:
 # 16k. _reconcile_crossref_coverage is the backstop that retries (and ultimately
 # raises on) any rows that still don't come back. The char cap stays a request-
 # side safety net.
-_CROSSREF_BATCH_MAX_PARTS = 60          # sized to the 16k REPLY budget, not the request
-_CROSSREF_RETRY_MAX_PARTS = 20          # retry dropped rows in tiny batches that can't truncate
-_CROSSREF_BATCH_CHARS = 400_000         # request-side safety net: ~175k tokens, under limit
-_CROSSREF_MAX_CONCURRENCY = 12          # batches run in parallel (I/O-bound, cost-neutral)
+_CROSSREF_BATCH_MAX_PARTS = 60  # sized to the 16k REPLY budget, not the request
+_CROSSREF_RETRY_MAX_PARTS = 20  # retry dropped rows in tiny batches that can't truncate
+_CROSSREF_BATCH_CHARS = 400_000  # request-side safety net: ~175k tokens, under limit
+_CROSSREF_MAX_CONCURRENCY = 12  # batches run in parallel (I/O-bound, cost-neutral)
 # Review (Ray/Nicola) batching: the rows are TRIMMED (small), so larger batches
 # are fine; the reviewer verdict is aggregated across batches. Keep well under
 # the 262k limit incl. the per-batch guardrail fires + reviewer system prompt.
@@ -1277,9 +1314,12 @@ def _crossref_llm_batched(
             errors.append(f"batch {bi}/{len(batches)}: {err}")
     logger.info(
         "cross-referencer: %d item(s) in %d batch(es) %s -> %d rows, %d error(s) in %.0fs",
-        len(items), len(batches),
+        len(items),
+        len(batches),
         "concurrent" if (concurrent and len(batches) > 1) else "sequential",
-        len(rows), len(errors), time.monotonic() - t0,
+        len(rows),
+        len(errors),
+        time.monotonic() - t0,
     )
     return rows, errors
 
@@ -1379,9 +1419,11 @@ def _run_crossref_batches(
     batches = _batch_for_llm(entries, max_parts=max_parts)
     if len(batches) > 1:
         logger.info(
-            "CR stage 3: %d components split into %d batches (≤%d each) "
-            "run %d-way concurrently",
-            len(entries), len(batches), max_parts, _CROSSREF_MAX_CONCURRENCY,
+            "CR stage 3: %d components split into %d batches (≤%d each) run %d-way concurrently",
+            len(entries),
+            len(batches),
+            max_parts,
+            _CROSSREF_MAX_CONCURRENCY,
         )
 
     def _run_batch(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
@@ -1394,9 +1436,7 @@ def _run_crossref_batches(
             indent=2,
         )
         try:
-            data = call_agent_json(
-                "cross-referencer", user_msg, max_tokens=16384, max_retries=2
-            )
+            data = call_agent_json("cross-referencer", user_msg, max_tokens=16384, max_retries=2)
             return data.get("crossref", []), None
         except LLMCallError as exc:
             return [], str(exc)
@@ -1431,9 +1471,7 @@ def _run_crossref_batches(
     return results, failed_batches
 
 
-def _reconcile_crossref_coverage(
-    state: CrossRefState, bom_for_llm: list[dict[str, Any]]
-) -> None:
+def _reconcile_crossref_coverage(state: CrossRefState, bom_for_llm: list[dict[str, Any]]) -> None:
     """Guarantee every component sent to the cross-referencer comes back.
 
     The LLM can silently omit rows when its reply hits the output-token cap, so
@@ -1451,14 +1489,13 @@ def _reconcile_crossref_coverage(
     logger.warning(
         "CR stage 3: cross-referencer omitted %d/%d component row(s) "
         "(likely output truncation) — retrying in small batches",
-        len(missing), len(bom_for_llm),
+        len(missing),
+        len(bom_for_llm),
     )
     state.diagnostics.append(
         f"cross-referencer omitted {len(missing)} row(s); retried dropped components"
     )
-    retry_rows, _ = _run_crossref_batches(
-        state, missing, max_parts=_CROSSREF_RETRY_MAX_PARTS
-    )
+    retry_rows, _ = _run_crossref_batches(state, missing, max_parts=_CROSSREF_RETRY_MAX_PARTS)
     retry_by_ref = {r.get("ref_des"): r for r in retry_rows}
     for entry in missing:
         ref = _ref_of(entry)
@@ -1695,9 +1732,7 @@ def _candidate_summaries_for_llm(
         if source_dims:
             # 3-state: True (fits) / "one_size_larger" (partial, verify fit) /
             # False (≥2 sizes over) / "unknown".
-            summ["fits_original"] = _footprint_tier(
-                source_dims, _extract_dimensions(c, category)
-            )
+            summ["fits_original"] = _footprint_tier(source_dims, _extract_dimensions(c, category))
         out.append(summ)
     return out
 
@@ -1990,7 +2025,7 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
                 )
                 raws.append(raw)
                 challenges.extend(extract_json_block(raw).get("challenges", []))
-            except Exception as exc:  # noqa: BLE001 - Otto is best-effort
+            except Exception as exc:
                 state.diagnostics.append(f"otto challenge batch failed: {exc}")
 
         state.otto_log = {
@@ -2131,9 +2166,13 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
     fires_by_ref: dict[str, list[Any]] = {}
     for f in state.guardrail_log or []:
         fires_by_ref.setdefault(f.get("ref_des"), []).append(f)
-    batches = _batch_for_llm(trimmed_xref, max_chars=_REVIEW_BATCH_CHARS, max_parts=_REVIEW_BATCH_MAX_PARTS)
+    batches = _batch_for_llm(
+        trimmed_xref, max_chars=_REVIEW_BATCH_CHARS, max_parts=_REVIEW_BATCH_MAX_PARTS
+    )
     if len(batches) > 1:
-        logger.info("CR stage 7: review split into %d batches (%d rows)", len(batches), len(trimmed_xref))
+        logger.info(
+            "CR stage 7: review split into %d batches (%d rows)", len(batches), len(trimmed_xref)
+        )
 
     _SCOPE = (
         "[SCOPE: CROSS-REFERENCE — component substitution validity only "
@@ -2179,8 +2218,10 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
             workers = min(_CROSSREF_MAX_CONCURRENCY, len(_batch_list))
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 outcomes = list(
-                    pool.map(lambda a: _review_one(reviewer_name, a[0], a[1]),
-                             list(enumerate(_batch_list, 1)))
+                    pool.map(
+                        lambda a, rn=reviewer_name: _review_one(rn, a[0], a[1]),
+                        list(enumerate(_batch_list, 1)),
+                    )
                 )
         else:
             outcomes = [_review_one(reviewer_name, 1, _batch_list[0])]
@@ -2209,7 +2250,9 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
         }
         state.review_verdicts.append(verdict_data)
         state.reviewer_log += f"\n--- {reviewer_name.upper()} ---\n{json.dumps(verdict_data)}\n"
-        logger.info("CR stage 7: %s %s (%d batches)", reviewer_name, verdict_data["verdict"], len(batches))
+        logger.info(
+            "CR stage 7: %s %s (%d batches)", reviewer_name, verdict_data["verdict"], len(batches)
+        )
 
     # Pass/fail is decided by the MOST RECENT Ray verdict (Nicola advisory for
     # now). `any` over the whole history would let an early approval mask a
@@ -2250,11 +2293,20 @@ _CATEGORY_ALIASES = {
 # of these nor an alias above (e.g. a JEDEC/package code like "c0402h32" wrongly
 # mapped into the type column) is treated as unknown → re-inferred from the
 # description rather than trusted.
-_CR_CANONICAL_CATEGORIES = frozenset({
-    "capacitor", "resistor", "magnetic", "mosfet", "diode",
-    "semiconductor", "controller", "connector",
-    "chipBead", "varistor",
-})
+_CR_CANONICAL_CATEGORIES = frozenset(
+    {
+        "capacitor",
+        "resistor",
+        "magnetic",
+        "mosfet",
+        "diode",
+        "semiconductor",
+        "controller",
+        "connector",
+        "chipBead",
+        "varistor",
+    }
+)
 
 
 def _humanize_value(value: str, category: str) -> str:
@@ -2271,8 +2323,15 @@ def _humanize_value(value: str, category: str) -> str:
     if v == 0:
         return value
 
-    units = {"capacitor": "F", "resistor": "Ω", "magnetic": "H", "inductor": "H",
-             "chipBead": "Ω", "varistor": "V", "connector": "A"}
+    units = {
+        "capacitor": "F",
+        "resistor": "Ω",
+        "magnetic": "H",
+        "inductor": "H",
+        "chipBead": "Ω",
+        "varistor": "V",
+        "connector": "A",
+    }
     unit = units.get(category, "")
     if not unit:
         return value
@@ -2327,19 +2386,50 @@ def _infer_component_type(row: dict[str, Any]) -> str:
         return "chipBead"
     if any(w in text for w in ("VARISTOR", "MOV ", " MOV", "VDR ")):
         return "varistor"
-    if any(w in text for w in ("CONNECTOR", "CONN ", "TERMINAL BLOCK", "SCREW TERMINAL",
-                               "PIN HEADER", "SOCKET HEADER", "WIRE-TO-BOARD",
-                               "BOARD-TO-BOARD", "CRIMP", "SKEDD", "WR-TBL",
-                               "WR-PHD", "WR-WTB", "WR-BTB", "WR-MPC", "SMA CONN",
-                               "BNC CONN", "M12 CONN")):
+    if any(
+        w in text
+        for w in (
+            "CONNECTOR",
+            "CONN ",
+            "TERMINAL BLOCK",
+            "SCREW TERMINAL",
+            "PIN HEADER",
+            "SOCKET HEADER",
+            "WIRE-TO-BOARD",
+            "BOARD-TO-BOARD",
+            "CRIMP",
+            "SKEDD",
+            "WR-TBL",
+            "WR-PHD",
+            "WR-WTB",
+            "WR-BTB",
+            "WR-MPC",
+            "SMA CONN",
+            "BNC CONN",
+            "M12 CONN",
+        )
+    ):
         return "connector"
-    if any(w in text for w in ("INDUCTOR", "IND ", "CHOKE", "FERRITE", "TRANSFORMER",
-                               "XFMR", "COIL", "UH ", "MH ")):
+    if any(
+        w in text
+        for w in (
+            "INDUCTOR",
+            "IND ",
+            "CHOKE",
+            "FERRITE",
+            "TRANSFORMER",
+            "XFMR",
+            "COIL",
+            "UH ",
+            "MH ",
+        )
+    ):
         return "magnetic"
     if any(w in text for w in ("RESISTOR", "RES ", "RES-", "OHM", "KOHM")):
         return "resistor"
-    if any(w in text for w in ("CAP CER", "CAPACITOR", "MLCC", "CER CAP", "CAP ",
-                               "UF", "NF", "PF")):
+    if any(
+        w in text for w in ("CAP CER", "CAPACITOR", "MLCC", "CER CAP", "CAP ", "UF", "NF", "PF")
+    ):
         return "capacitor"
     return ""  # IC / diode / etc. — not a substitutable passive
 
@@ -2726,39 +2816,54 @@ def build_match_detail(row: dict[str, Any]) -> dict[str, Any]:
     o_val, s_val = row.get("original_value", ""), row.get("substitute_value", "")
     if o_val or s_val:
         v = _param_verdict(
-            _parse_value_si(o_val, cat), _parse_value_si(s_val, cat),
+            _parse_value_si(o_val, cat),
+            _parse_value_si(s_val, cat),
             higher_is_ok=(cat == "capacitor"),  # bypass/bulk caps tolerate higher
         )
-        params.append({"name": "value", "original": str(o_val), "substitute": str(s_val),
-                       "verdict": v})
+        params.append(
+            {"name": "value", "original": str(o_val), "substitute": str(s_val), "verdict": v}
+        )
 
     # voltage rating — higher is good, lower is a downgrade
     o_v, s_v = row.get("original_voltage", ""), row.get("substitute_voltage", "")
     if o_v or s_v:
-        params.append({"name": "voltage", "original": str(o_v), "substitute": str(s_v),
-                       "verdict": _param_verdict(_to_volts(o_v), _to_volts(s_v),
-                                                 higher_is_ok=True)})
+        params.append(
+            {
+                "name": "voltage",
+                "original": str(o_v),
+                "substitute": str(s_v),
+                "verdict": _param_verdict(_to_volts(o_v), _to_volts(s_v), higher_is_ok=True),
+            }
+        )
 
     # package — string equality (case/space-insensitive)
     o_p = str(row.get("original_package", "")).strip().lower()
     s_p = str(row.get("substitute_package", "")).strip().lower()
     if o_p or s_p:
         verdict = "same" if (o_p and o_p == s_p) else ("differs" if (o_p and s_p) else "n/a")
-        params.append({"name": "package", "original": row.get("original_package", ""),
-                       "substitute": row.get("substitute_package", ""), "verdict": verdict})
+        params.append(
+            {
+                "name": "package",
+                "original": row.get("original_package", ""),
+                "substitute": row.get("substitute_package", ""),
+                "verdict": verdict,
+            }
+        )
 
     # Spec-driven electrical parameters (ESR, ripple, dielectric, Rds_on, Qg,
     # Coss, Vf, Qrr, TCR, Isat, DCR, SRF, …) resolved from the internal DB by
     # _stage_param_check. The report renders these generically alongside the
     # core value/voltage/package params above.
     for pr in row.get("_param_results", []):
-        params.append({
-            "name": pr.get("label") or pr["name"],
-            "original": pr.get("original", ""),
-            "substitute": pr.get("substitute", ""),
-            "verdict": pr.get("verdict", ""),
-            "note": pr.get("note", ""),
-        })
+        params.append(
+            {
+                "name": pr.get("label") or pr["name"],
+                "original": pr.get("original", ""),
+                "substitute": pr.get("substitute", ""),
+                "verdict": pr.get("verdict", ""),
+                "note": pr.get("note", ""),
+            }
+        )
 
     # derive a one-line "why" from the parameter verdicts + status
     deviations = [p.get("name") for p in params if p["verdict"] in ("differs", "lower", "fail")]
@@ -2927,8 +3032,11 @@ def _best_inkind_candidate(
         if orig_v is not None and cand_v is not None and cand_v < orig_v:
             continue
         # chemistry family must match for caps (stops ceramic<->tantalum<->alu drift)
-        if (cat == "capacitor" and orig_fam is not None
-                and _capacitor_technology_family(s.get("technology")) != orig_fam):
+        if (
+            cat == "capacitor"
+            and orig_fam is not None
+            and _capacitor_technology_family(s.get("technology")) != orig_fam
+        ):
             continue
         # value window
         if orig_vsi and cand_vsi:
@@ -2943,7 +3051,11 @@ def _best_inkind_candidate(
             within_tight = abs(cand_vsi - orig_vsi) <= tight * orig_vsi
         else:
             within_tight = False
-        status = "recommended" if (within_tight and (orig_v is None or cand_v is not None)) else "partial"
+        status = (
+            "recommended"
+            if (within_tight and (orig_v is None or cand_v is not None))
+            else "partial"
+        )
         return {
             "substitute_pn": s.get("mpn"),
             "substitute_value": s.get("value", ""),
@@ -3024,8 +3136,10 @@ def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
             cands = _ondemand_candidates(state.target_manufacturer, cat, comp, ondemand_cache)
             if cands:
                 logger.info(
-                    "CR stage 6.5: prefetch had 0 candidates for %s (%s); "
-                    "fetched %d on-demand", ref, cat, len(cands)
+                    "CR stage 6.5: prefetch had 0 candidates for %s (%s); fetched %d on-demand",
+                    ref,
+                    cat,
+                    len(cands),
                 )
         if not cands:
             continue
@@ -3099,6 +3213,7 @@ def run_crossref_pipeline(
     ``progress`` (optional) is called as ``progress(message, pct)`` before
     each stage so a caller (the Jobs UI) can render granular per-stage state.
     """
+
     def _say(msg: str, pct: int) -> None:
         if progress is not None:
             with contextlib.suppress(Exception):
@@ -3269,8 +3384,9 @@ def run_crossref_with_cre(
     # --- RE stages: extract and simulate ---
     # Carry the review flag + progress sink so the high-risk extraction stages
     # (competitor specs, reverse-engineered BOM) run under Ray+Nicola review.
-    re_state = REState(reference=reference, pdf_path=pdf_path,
-                         review_llm=review_llm, progress=progress)
+    re_state = REState(
+        reference=reference, pdf_path=pdf_path, review_llm=review_llm, progress=progress
+    )
     if pdf_text is not None:
         # Pre-extracted text (e.g. an HTML app-note fetched from a URL):
         # seed it directly so stage 0 skips PDF extraction.
@@ -3319,6 +3435,7 @@ def run_crossref_with_cre(
     # stage names map by keyword, so they render correctly regardless of pct.
     cr_progress = None
     if progress is not None:
+
         def cr_progress(msg: str, pct: int) -> None:
             _say(msg, 30 + int(pct * 0.70))
 

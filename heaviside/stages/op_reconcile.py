@@ -21,9 +21,10 @@ The pure core (:func:`reconcile_margins`) operates on already-evaluated per-OP
 numbers so it is fully unit-testable without MKF; :func:`reconcile` is the thin
 convenience that builds those numbers from MKF isat + the stress engine.
 """
+
 from __future__ import annotations
 
-import math
+import itertools
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -34,7 +35,7 @@ class InfeasibleAtOP(RuntimeError):
     points. Carries the binding OP and the per-OP margins so the caller can
     re-seed or surface — never silently accept the design."""
 
-    def __init__(self, report: "ReconciliationReport", reason: str) -> None:
+    def __init__(self, report: ReconciliationReport, reason: str) -> None:
         self.report = report
         self.binding_op_index = report.binding_op_index
         super().__init__(
@@ -106,10 +107,16 @@ def reconcile_margins(
         else:
             thermal_ratio = None
             thermal_ok = None  # thermal not evaluable at this OP
-        margins.append(OpMargin(
-            op_index=e.op_index, isat_ratio=isat_ratio, sat_feasible=sat_ok,
-            thermal_ratio=thermal_ratio, thermal_feasible=thermal_ok, label=e.label,
-        ))
+        margins.append(
+            OpMargin(
+                op_index=e.op_index,
+                isat_ratio=isat_ratio,
+                sat_feasible=sat_ok,
+                thermal_ratio=thermal_ratio,
+                thermal_feasible=thermal_ok,
+                label=e.label,
+            )
+        )
 
     binding = min(margins, key=lambda m: m.isat_ratio)
     feasible_all = all(m.feasible for m in margins)
@@ -131,8 +138,10 @@ def reconcile_margins(
         feedback["thermal_infeasible_ops"] = therm_fail
 
     report = ReconciliationReport(
-        per_op=margins, binding_op_index=binding.op_index,
-        feasible_all_ops=feasible_all, constraint_feedback=feedback,
+        per_op=margins,
+        binding_op_index=binding.op_index,
+        feasible_all_ops=feasible_all,
+        constraint_feedback=feedback,
     )
     if raise_on_infeasible and not feasible_all:
         why = []
@@ -208,7 +217,7 @@ def fsw_load_law(points: Sequence[LoadPoint]) -> list[LoadPoint]:
     if not points:
         raise ValueError("fsw_load_law: no load points")
     ordered = sorted(points, key=lambda p: p.load_fraction)
-    for a, b in zip(ordered, ordered[1:]):
+    for a, b in itertools.pairwise(ordered):
         # as load increases, fsw must not increase (QR/DCM: light load → high fsw)
         if b.fsw_hz > a.fsw_hz + 1e-6:
             raise ValueError(

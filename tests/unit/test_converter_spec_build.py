@@ -4,6 +4,7 @@ Fast unit tests for the deterministic BASE-schema converter-spec builder, plus
 a guarded integration test capturing the verified finding that MKF derives the
 magnetizing inductance itself and IGNORES an injected ``desiredInductance``.
 """
+
 from __future__ import annotations
 
 import copy

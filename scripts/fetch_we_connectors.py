@@ -15,6 +15,7 @@ continued across quota windows.
 Usage:
     scripts/fetch_we_connectors.py [--dry-run] [--limit N]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +31,7 @@ import httpx
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from heaviside.librarian.fetcher.auth import load_credentials  # noqa: E402
+from heaviside.librarian.fetcher.auth import load_credentials
 
 DATA = REPO / "TAS" / "data"
 JOBS = Path.home() / ".heaviside" / "jobs"
@@ -43,64 +44,64 @@ DK_KEYWORD_URL = "https://api.digikey.com/Search/v3/Products/Keyword"
 # polarity: inferred from series name; None → must be extracted from DK params
 _SERIES_MAP: list[dict[str, Any]] = [
     # Terminal blocks
-    {"series": "WR-TBL",    "family": "terminalBlock", "polarity": "genderless"},
+    {"series": "WR-TBL", "family": "terminalBlock", "polarity": "genderless"},
     # Pin headers / socket headers
-    {"series": "WR-PHD",    "family": "pinHeaderSocket", "polarity": None},
+    {"series": "WR-PHD", "family": "pinHeaderSocket", "polarity": None},
     # Board-to-board / mezzanine
-    {"series": "WR-BTB",    "family": "boardToBoard",  "polarity": None},
-    {"series": "WR-MM",     "family": "boardToBoard",  "polarity": None},
+    {"series": "WR-BTB", "family": "boardToBoard", "polarity": None},
+    {"series": "WR-MM", "family": "boardToBoard", "polarity": None},
     # Wire-to-board
-    {"series": "WR-WTB",   "family": "wireToBoard",   "polarity": "female"},
-    {"series": "WR-BHD",   "family": "wireToBoard",   "polarity": "female"},
-    {"series": "WR-CAB",   "family": "wireToBoard",   "polarity": "genderless"},
-    {"series": "WR-MPC",   "family": "wireToBoard",   "polarity": "female"},
-    {"series": "WR-RAST",  "family": "wireToBoard",   "polarity": None},
-    {"series": "WR-FAST",  "family": "wireToBoard",   "polarity": None},
-    {"series": "WR-NPC",   "family": "wireToBoard",   "polarity": None},
-    {"series": "REDFIT",   "family": "wireToBoard",   "polarity": "genderless"},
+    {"series": "WR-WTB", "family": "wireToBoard", "polarity": "female"},
+    {"series": "WR-BHD", "family": "wireToBoard", "polarity": "female"},
+    {"series": "WR-CAB", "family": "wireToBoard", "polarity": "genderless"},
+    {"series": "WR-MPC", "family": "wireToBoard", "polarity": "female"},
+    {"series": "WR-RAST", "family": "wireToBoard", "polarity": None},
+    {"series": "WR-FAST", "family": "wireToBoard", "polarity": None},
+    {"series": "WR-NPC", "family": "wireToBoard", "polarity": None},
+    {"series": "REDFIT", "family": "wireToBoard", "polarity": "genderless"},
     # FPC / FFC
-    {"series": "WR-FPC",   "family": "fpcFfc",        "polarity": "genderless"},
-    {"series": "WR-FFC",   "family": "fpcFfc",        "polarity": "genderless"},
+    {"series": "WR-FPC", "family": "fpcFfc", "polarity": "genderless"},
+    {"series": "WR-FFC", "family": "fpcFfc", "polarity": "genderless"},
     # Card edge
-    {"series": "WR-CRD",   "family": "cardEdge",      "polarity": "genderless"},
+    {"series": "WR-CRD", "family": "cardEdge", "polarity": "genderless"},
     # Data interface (modular jacks, D-sub, USB, HDMI)
-    {"series": "WR-MJ",    "family": "dataInterface",  "polarity": "female"},
-    {"series": "WR-DSUB",  "family": "dataInterface",  "polarity": None},
-    {"series": "WR-USB",   "family": "dataInterface",  "polarity": None},
-    {"series": "WR-COM",   "family": "dataInterface",  "polarity": None},
+    {"series": "WR-MJ", "family": "dataInterface", "polarity": "female"},
+    {"series": "WR-DSUB", "family": "dataInterface", "polarity": None},
+    {"series": "WR-USB", "family": "dataInterface", "polarity": None},
+    {"series": "WR-COM", "family": "dataInterface", "polarity": None},
     # Circular (M12)
-    {"series": "WR-CIRC",  "family": "circular",      "polarity": None},
+    {"series": "WR-CIRC", "family": "circular", "polarity": None},
     # RF coaxial
-    {"series": "WR-SMA",   "family": "rf",            "polarity": None},
-    {"series": "WR-RSMA",  "family": "rf",            "polarity": None},
-    {"series": "WR-BNC",   "family": "rf",            "polarity": None},
-    {"series": "WR-TNC",   "family": "rf",            "polarity": None},
-    {"series": "WR-MCX",   "family": "rf",            "polarity": None},
-    {"series": "WR-MMCX",  "family": "rf",            "polarity": None},
-    {"series": "WR-UMRF",  "family": "rf",            "polarity": None},
-    {"series": "WR-SMP",   "family": "rf",            "polarity": None},
-    {"series": "WR-SMB",   "family": "rf",            "polarity": None},
+    {"series": "WR-SMA", "family": "rf", "polarity": None},
+    {"series": "WR-RSMA", "family": "rf", "polarity": None},
+    {"series": "WR-BNC", "family": "rf", "polarity": None},
+    {"series": "WR-TNC", "family": "rf", "polarity": None},
+    {"series": "WR-MCX", "family": "rf", "polarity": None},
+    {"series": "WR-MMCX", "family": "rf", "polarity": None},
+    {"series": "WR-UMRF", "family": "rf", "polarity": None},
+    {"series": "WR-SMP", "family": "rf", "polarity": None},
+    {"series": "WR-SMB", "family": "rf", "polarity": None},
     # DC power jacks
-    {"series": "WR-DC",    "family": "power",         "polarity": None},
+    {"series": "WR-DC", "family": "power", "polarity": None},
     # LED connectors
-    {"series": "WR-LECO",  "family": "power",         "polarity": None},
+    {"series": "WR-LECO", "family": "power", "polarity": None},
 ]
 
 # Digi-Key parameter names → CONAS paths
 # Each entry: (dk_param_name, unit_hint) for parsing
-_PARAM_CURRENT      = ("Current Rating (Amps)", "A")
-_PARAM_VOLTAGE      = ("Voltage Rating", "V")
-_PARAM_POSITIONS    = ("Number of Positions", None)
-_PARAM_ROWS         = ("Number of Rows", None)
+_PARAM_CURRENT = ("Current Rating (Amps)", "A")
+_PARAM_VOLTAGE = ("Voltage Rating", "V")
+_PARAM_POSITIONS = ("Number of Positions", None)
+_PARAM_ROWS = ("Number of Rows", None)
 _PARAM_PITCH_MATING = ("Pitch - Mating", "m")
-_PARAM_MOUNTING     = ("Mounting Type", None)
-_PARAM_GENDER       = ("Gender", None)
-_PARAM_ORIENTATION  = ("Connector Style", None)
+_PARAM_MOUNTING = ("Mounting Type", None)
+_PARAM_GENDER = ("Gender", None)
+_PARAM_ORIENTATION = ("Connector Style", None)
 _PARAM_CONTACT_PLATING = ("Contact Finish", None)
-_PARAM_TEMP_MIN     = ("Operating Temperature", None)
-_PARAM_INS_RESIST   = ("Insulation Resistance (Min)", None)
+_PARAM_TEMP_MIN = ("Operating Temperature", None)
+_PARAM_INS_RESIST = ("Insulation Resistance (Min)", None)
 _PARAM_MATING_CYCLES = ("Mating Cycles Rated", None)
-_PARAM_LOCKING      = ("Locking Feature", None)
+_PARAM_LOCKING = ("Locking Feature", None)
 
 
 def _float_value(s: str, unit_hint: str | None = None) -> float | None:
@@ -113,7 +114,7 @@ def _float_value(s: str, unit_hint: str | None = None) -> float | None:
     if not s or s.strip() in ("-", "N/A", "~", ""):
         return None
     # DK pitch format: '0.276" (7.00mm)' — prefer the mm value in parens
-    mm_in_parens = re.search(r'\((\d+\.?\d*)\s*mm\)', s)
+    mm_in_parens = re.search(r"\((\d+\.?\d*)\s*mm\)", s)
     if mm_in_parens and unit_hint == "m":
         return float(mm_in_parens.group(1)) * 1e-3
     # Drop trailing range, grab first number
@@ -244,7 +245,7 @@ def _convert(product: dict[str, Any], series_cfg: dict[str, Any]) -> dict[str, A
     desc_text = desc.get("DetailedDescription") or desc.get("ProductDescription") or ""
     url = product.get("DatasheetUrl") or product.get("PrimaryDatasheet") or ""
     family_val = product.get("Family", {})
-    family_text = family_val.get("Value") or ""
+    family_val.get("Value") or ""
 
     # Required: ratedCurrentPerContact
     # DK uses many names depending on connector family
@@ -280,14 +281,18 @@ def _convert(product: dict[str, Any], series_cfg: dict[str, Any]) -> dict[str, A
         or _float_value(params.get("Pitch"), unit_hint="m")
         or _float_value(params.get("Pitch - Termination to Termination"), unit_hint="m")
     )
-    positions = _int_value(params.get("Number of Positions")
-                           or params.get("Positions")
-                           or params.get("Positions Per Level"))
-    rows = _int_value(params.get("Number of Rows") or params.get("Rows")
-                      or params.get("Number of Levels"))
+    positions = _int_value(
+        params.get("Number of Positions")
+        or params.get("Positions")
+        or params.get("Positions Per Level")
+    )
+    rows = _int_value(
+        params.get("Number of Rows") or params.get("Rows") or params.get("Number of Levels")
+    )
     mounting = _mounting_to_style(params.get("Mounting Type") or params.get("Mounting Style"))
     orientation = _orientation_to_conas(
-        params.get("Connector Style") or params.get("Termination Direction")
+        params.get("Connector Style")
+        or params.get("Termination Direction")
         or params.get("Mating Orientation")
     )
     mating_cycles = _int_value(params.get("Mating Cycles Rated") or params.get("Durability"))
@@ -321,15 +326,18 @@ def _convert(product: dict[str, Any], series_cfg: dict[str, Any]) -> dict[str, A
         "ratedCurrentPerContact": i_rated,
         "ratedVoltage": v_rated,
     }
-    contact_resistance = _float_value(params.get("Contact Resistance (Max)") or
-                                       params.get("Contact Resistance"))
+    contact_resistance = _float_value(
+        params.get("Contact Resistance (Max)") or params.get("Contact Resistance")
+    )
     if contact_resistance is not None:
         electrical["contactResistance"] = {"nominal": contact_resistance}
     ins_resist = _float_value(params.get("Insulation Resistance (Min)"))
     if ins_resist is not None:
         electrical["insulationResistance"] = ins_resist
-    dwv = _float_value(params.get("Dielectric Withstanding Voltage - Rated") or
-                       params.get("Dielectric Withstanding Voltage"))
+    dwv = _float_value(
+        params.get("Dielectric Withstanding Voltage - Rated")
+        or params.get("Dielectric Withstanding Voltage")
+    )
     if dwv is not None:
         electrical["dielectricWithstandingVoltage"] = dwv
 
@@ -391,7 +399,7 @@ def _search_page(
     for attempt in range(5):
         try:
             r = session.post(DK_KEYWORD_URL, headers=headers, json=body, timeout=40)
-        except httpx.TransportError as exc:
+        except httpx.TransportError:
             if attempt >= 4:
                 raise
             time.sleep(2 * (attempt + 1))
@@ -450,6 +458,7 @@ def _synthetic_dry_run() -> None:
 def _test_single_mpn(dk: Any, mpn: str) -> None:
     """Fetch and convert a single MPN for validation."""
     from heaviside.librarian.fetcher.auth import TokenCache
+
     with httpx.Client(timeout=40) as session:
         token_cache = TokenCache()
         cached = token_cache.load()
@@ -488,7 +497,11 @@ def _test_single_mpn(dk: Any, mpn: str) -> None:
         desc_obj = product.get("Description") or {}
         desc_str = desc_obj.get("DetailedDescription") or desc_obj.get("ProductDescription") or ""
         dk_fam = (product.get("Family") or {}).get("Value") or ""
-        cfg = _series_config(mpn, desc_str, dk_fam) or {"series": "UNKNOWN", "family": "terminalBlock", "polarity": None}
+        cfg = _series_config(mpn, desc_str, dk_fam) or {
+            "series": "UNKNOWN",
+            "family": "terminalBlock",
+            "polarity": None,
+        }
         record = _convert(product, cfg)
         print("\nCONAS record:")
         print(json.dumps(record, indent=2, ensure_ascii=False))
@@ -496,10 +509,15 @@ def _test_single_mpn(dk: Any, mpn: str) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Fetch Würth connectors from Digi-Key → CONAS")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="No DK API calls; just check code paths with synthetic data")
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="No DK API calls; just check code paths with synthetic data",
+    )
     ap.add_argument("--limit", type=int, default=0, help="Max parts per series (0=unlimited)")
-    ap.add_argument("--series", default="", help="Comma-separated series filter (e.g. 'WR-TBL,WR-PHD')")
+    ap.add_argument(
+        "--series", default="", help="Comma-separated series filter (e.g. 'WR-TBL,WR-PHD')"
+    )
     ap.add_argument("--test-mpn", default="", help="Fetch & print a single MPN for validation")
     args = ap.parse_args()
 
@@ -511,7 +529,9 @@ def main() -> None:
     creds = load_credentials()
     dk = creds.digikey
 
-    series_filter = {s.strip().upper() for s in args.series.split(",") if s.strip()} if args.series else set()
+    series_filter = (
+        {s.strip().upper() for s in args.series.split(",") if s.strip()} if args.series else set()
+    )
 
     if args.test_mpn:
         _test_single_mpn(dk, args.test_mpn)
@@ -544,6 +564,7 @@ def main() -> None:
     with httpx.Client(timeout=40) as session:
         # Get token
         from heaviside.librarian.fetcher.auth import TokenCache
+
         token_cache = TokenCache()
         cached = token_cache.load()
         if cached and token_cache.is_fresh(cached):
@@ -579,7 +600,7 @@ def main() -> None:
                 continue
 
             keyword = f"Würth {series_name}"
-            print(f"\n{'='*50}\nSeries: {series_name} ({cfg['family']})", flush=True)
+            print(f"\n{'=' * 50}\nSeries: {series_name} ({cfg['family']})", flush=True)
 
             offset = 0
             page_size = 50
@@ -609,14 +630,16 @@ def main() -> None:
                         continue
 
                     # Filter: must be a Würth Elektronik part
-                    mfr = (product.get("Manufacturer") or {})
+                    mfr = product.get("Manufacturer") or {}
                     mfr_name = mfr.get("Value") or ""
                     if "würth" not in mfr_name.lower() and "wurth" not in mfr_name.lower():
                         continue
 
                     # Determine series config from actual MPN + description
-                    desc = (product.get("Description") or {})
-                    desc_text = desc.get("DetailedDescription") or desc.get("ProductDescription") or ""
+                    desc = product.get("Description") or {}
+                    desc_text = (
+                        desc.get("DetailedDescription") or desc.get("ProductDescription") or ""
+                    )
                     dk_fam = (product.get("Family") or {}).get("Value") or ""
                     actual_cfg = _series_config(mpn, desc_text, dk_fam) or cfg
 
@@ -630,8 +653,10 @@ def main() -> None:
                         if not args.dry_run:
                             with quar_path.open("a") as f:
                                 # Store raw DK product for later processing
-                                f.write(json.dumps({"_mpn": mpn, "_reason": reason,
-                                                    "_dk": product}) + "\n")
+                                f.write(
+                                    json.dumps({"_mpn": mpn, "_reason": reason, "_dk": product})
+                                    + "\n"
+                                )
                     else:
                         total_written += 1
                         existing_mpns.add(mpn)
@@ -656,7 +681,7 @@ def main() -> None:
                 # Brief pause between pages to respect rate limits
                 time.sleep(0.5)
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"Written:     {total_written} connector records")
     print(f"Quarantined: {total_quarantine} (missing required fields)")
     if args.dry_run:

@@ -17,6 +17,7 @@ back as ``None`` (the renderer shows ``n/a`` or omits the row); we never invent 
 :func:`_resolve` (mirroring ``PEAS::resolve_dimensional_values``), never by
 hand-reading nominal/min/max. All magnetics numbers come from the MAS/MKF.
 """
+
 from __future__ import annotations
 
 import copy
@@ -147,41 +148,48 @@ _TOPO_THEORY: dict[str, str] = {
         "the off-time the current freewheels through the rectifier. The output voltage is "
         "set by the duty cycle, $V_{out} = D\\,V_{in}$, and is regulated by a feedback loop "
         "that modulates $D$. The design targets continuous-conduction mode (CCM) at full "
-        "load, with the inductor sized for the specified peak-to-peak current ripple."),
+        "load, with the inductor sized for the specified peak-to-peak current ripple."
+    ),
     "boost": (
         "The converter is a step-up (boost) topology. The switch periodically shorts the "
         "input inductor to ground, storing energy; when it opens, the inductor current is "
         "delivered to the output through the rectifier at a higher voltage, "
         "$V_{out} = V_{in}/(1-D)$. The loop regulates the output by modulating $D$; the "
-        "inductor is sized for CCM operation at the rated load."),
+        "inductor is sized for CCM operation at the rated load."
+    ),
     "flyback": (
         "The converter is an isolated flyback. During the on-time energy is stored in the "
         "coupled-inductor (transformer) magnetizing inductance; during the off-time it is "
         "transferred to the secondary and the output. The conversion ratio is "
         "$V_{out} = \\frac{N_s}{N_p}\\frac{D}{1-D}V_{in}$. Galvanic isolation is provided "
         "by the transformer; the magnetizing inductance is sized for the chosen "
-        "conduction mode and peak current."),
+        "conduction mode and peak current."
+    ),
     "forward": (
         "The converter is an isolated single-switch forward. Energy is transferred to the "
         "secondary during the switch on-time through the transformer (which carries no DC "
         "energy storage); the output inductor filters the rectified secondary voltage. "
         "$V_{out} = \\frac{N_s}{N_p} D\\,V_{in}$. A reset winding or clamp recovers the "
-        "magnetizing energy each cycle."),
+        "magnetizing energy each cycle."
+    ),
     "push_pull": (
         "The converter is an isolated push-pull. Two switches alternately drive the two "
         "halves of a center-tapped primary, so the transformer is excited symmetrically in "
         "both flux polarities and the core is fully utilised. The rectified, filtered "
         "secondary gives $V_{out} = \\frac{N_s}{N_p} D\\,V_{in}$ (with $D$ per switch). "
-        "Symmetric drive keeps the average flux near zero, avoiding staircase saturation."),
+        "Symmetric drive keeps the average flux near zero, avoiding staircase saturation."
+    ),
     "half_bridge": (
         "The converter is an isolated half-bridge. Two switches drive the transformer "
         "primary from a capacitor-divided rail, applying $\\pm V_{in}/2$ across the "
         "primary. The rectified secondary is filtered to the output, "
-        "$V_{out} = \\frac{N_s}{N_p} D\\,V_{in}$."),
+        "$V_{out} = \\frac{N_s}{N_p} D\\,V_{in}$."
+    ),
     "full_bridge": (
         "The converter is an isolated full-bridge. Four switches in two legs apply the full "
         "$\\pm V_{in}$ across the transformer primary, giving the highest power capability "
-        "of the bridge family. The rectified secondary is filtered to the output."),
+        "of the bridge family. The rectified secondary is filtered to the output."
+    ),
     "llc": (
         "The converter is an LLC resonant half-bridge. The half-bridge drives a series "
         "resonant tank (resonant inductor $L_r$, resonant capacitor $C_r$) in series with "
@@ -189,23 +197,30 @@ _TOPO_THEORY: dict[str, str] = {
         "varying the switching frequency around the series-resonant frequency "
         "$f_r = 1/(2\\pi\\sqrt{L_r C_r})$, which lets the primary switches turn on at zero "
         "voltage (ZVS) and the secondary rectifiers turn off at zero current (ZCS) over a "
-        "wide load range, for high efficiency."),
+        "wide load range, for high efficiency."
+    ),
     "pfc": (
         "The stage is a single-phase boost power-factor-correction (PFC) pre-regulator. The "
         "boost inductor current is shaped by the controller to follow the rectified line "
         "voltage, drawing near-unity-power-factor sinusoidal input current while regulating "
-        "the bulk output to a fixed DC voltage above the line peak."),
+        "the bulk output to a fixed DC voltage above the line peak."
+    ),
 }
 
 
 def _theory_for(topology: str, isolated: bool) -> str:
     if topology in _TOPO_THEORY:
         return _TOPO_THEORY[topology]
-    iso = ("It provides galvanic isolation through a transformer."
-           if isolated else "It is a non-isolated topology.")
-    return (f"The converter is a {topology.replace('_', ' ')} topology. {iso} "
-            "Output regulation is provided by the control loop modulating the switching "
-            "duty cycle (or frequency for resonant families).")
+    iso = (
+        "It provides galvanic isolation through a transformer."
+        if isolated
+        else "It is a non-isolated topology."
+    )
+    return (
+        f"The converter is a {topology.replace('_', ' ')} topology. {iso} "
+        "Output regulation is provided by the control loop modulating the switching "
+        "duty cycle (or frequency for resonant families)."
+    )
 
 
 # Friendly descriptions per BOM category.
@@ -218,8 +233,7 @@ _CAT_DESC: dict[str, str] = {
     "controller": "PWM / control IC",
     "resistor": "Resistor",
 }
-_POWER_CATS: set[str] = {
-    "mosfet", "diode", "capacitor", "inductor", "transformer", "magnetic"}
+_POWER_CATS: set[str] = {"mosfet", "diode", "capacitor", "inductor", "transformer", "magnetic"}
 
 
 # Loss-mechanism suffixes used by the analyst's loss-budget keys
@@ -242,7 +256,7 @@ def _split_loss_key(key: str) -> tuple[str, str]:
     """Split a loss-budget key into ``(refdes, mechanism_label)``."""
     idx = key.rfind("_")
     if idx > 0:
-        suffix = key[idx + 1:].lower()
+        suffix = key[idx + 1 :].lower()
         if suffix in _LOSS_MECH:
             return key[:idx], _LOSS_MECH[suffix]
     return key, "Total"
@@ -276,7 +290,8 @@ class ReportModel:
             topo = getattr(getattr(outcome, "pick", None), "topology", None)
             self.topology = getattr(topo, "name", None) or "converter"
         self.topo_label = _TOPO_LABEL.get(
-            self.topology, self.topology.replace("_", " ").title() + " Converter")
+            self.topology, self.topology.replace("_", " ").title() + " Converter"
+        )
 
         self.family = self._topology_family()
         fam = self.family or ""
@@ -302,8 +317,11 @@ class ReportModel:
                 self.ops = [o for o in ops if isinstance(o, Mapping)]
 
         # fsw*
-        self.fsw_hz = float(src.fsw_hz) if self.is_design else (
-            getattr(outcome, "fsw_optimal", None) or self._fsw_from_req())
+        self.fsw_hz = (
+            float(src.fsw_hz)
+            if self.is_design
+            else (getattr(outcome, "fsw_optimal", None) or self._fsw_from_req())
+        )
 
         # Simulation results (first op block)
         self.sim_op: Mapping[str, Any] = self._first_sim_op()
@@ -336,9 +354,7 @@ class ReportModel:
         self.waveforms = wfs or []
 
         # Stage names for the block diagram
-        self.stages = [
-            s.get("name") for s in self._stages() if isinstance(s.get("name"), str)
-        ]
+        self.stages = [s.get("name") for s in self._stages() if isinstance(s.get("name"), str)]
 
         # Phase-2 closed-loop re-sim caches (populated lazily; each is computed
         # at most once per model instance — the re-sim is the expensive part).
@@ -351,6 +367,7 @@ class ReportModel:
     def _topology_family(self) -> str | None:
         try:
             from heaviside.topologies import get as get_topology
+
             return get_topology(self.topology).family
         except Exception:
             return None
@@ -373,6 +390,7 @@ class ReportModel:
 
     def _extract_bom(self) -> list[dict[str, Any]]:
         from heaviside.pipeline.converter_designer import _extract_bom
+
         return _extract_bom(self.tas)
 
     def _extract_magnetics(self) -> list[dict[str, Any]]:
@@ -395,20 +413,22 @@ class ReportModel:
         dr = (mas.get("inputs") or {}).get("designRequirements") or {}
 
         windings = []
-        for w in (coil.get("functionalDescription") or []):
+        for w in coil.get("functionalDescription") or []:
             if not isinstance(w, Mapping):
                 continue
             wire = w.get("wire") or {}
-            windings.append({
-                "name": w.get("name"),
-                "side": w.get("isolationSide"),
-                "turns": w.get("numberTurns"),
-                "parallels": w.get("numberParallels"),
-                "wire_d": _resolve((wire.get("conductingDiameter")) or {}),
-            })
+            windings.append(
+                {
+                    "name": w.get("name"),
+                    "side": w.get("isolationSide"),
+                    "turns": w.get("numberTurns"),
+                    "parallels": w.get("numberParallels"),
+                    "wire_d": _resolve((wire.get("conductingDiameter")) or {}),
+                }
+            )
 
         turns_ratios = []
-        for tr in (dr.get("turnsRatios") or []):
+        for tr in dr.get("turnsRatios") or []:
             r = _resolve(tr)
             if r is not None:
                 turns_ratios.append(r)
@@ -431,37 +451,43 @@ class ReportModel:
                 winding_loss = float(wl["windingLosses"])
 
         front = self.sweep_front
-        out.append({
-            "mas": mas,
-            "refdes": self._magnetic_refdes(),
-            "role": "Transformer" if (turns_ratios or self.isolated) else "Inductor",
-            "core_name": core.get("name"),
-            "shape": shape.get("name"),
-            "core_type": fd.get("type"),
-            "material": mat.get("name"),
-            "gapping": fd.get("gapping") or [],
-            "Ae": eff.get("effectiveArea"),
-            "le": eff.get("effectiveLength"),
-            "Ve": eff.get("effectiveVolume"),
-            "windings": windings,
-            "turns_ratios": turns_ratios,
-            "Lm": dr.get("magnetizingInductance"),
-            "Llk": dr.get("leakageInductance"),
-            "inductance_h": getattr(front, "inductance_h", None),
-            "isat_a": getattr(front, "isat_a", None),
-            "ipeak_a": getattr(front, "ipeak_worst_a", None),
-            "total_loss_w": getattr(front, "magnetic_loss_w", None),
-            "core_loss_w": core_loss,
-            "winding_loss_w": winding_loss,
-            "bpk_t": bpk,
-        })
+        out.append(
+            {
+                "mas": mas,
+                "refdes": self._magnetic_refdes(),
+                "role": "Transformer" if (turns_ratios or self.isolated) else "Inductor",
+                "core_name": core.get("name"),
+                "shape": shape.get("name"),
+                "core_type": fd.get("type"),
+                "material": mat.get("name"),
+                "gapping": fd.get("gapping") or [],
+                "Ae": eff.get("effectiveArea"),
+                "le": eff.get("effectiveLength"),
+                "Ve": eff.get("effectiveVolume"),
+                "windings": windings,
+                "turns_ratios": turns_ratios,
+                "Lm": dr.get("magnetizingInductance"),
+                "Llk": dr.get("leakageInductance"),
+                "inductance_h": getattr(front, "inductance_h", None),
+                "isat_a": getattr(front, "isat_a", None),
+                "ipeak_a": getattr(front, "ipeak_worst_a", None),
+                "total_loss_w": getattr(front, "magnetic_loss_w", None),
+                "core_loss_w": core_loss,
+                "winding_loss_w": winding_loss,
+                "bpk_t": bpk,
+            }
+        )
         return out
 
     def _magnetic_refdes(self) -> str:
         for stage in self._stages():
             for c in (stage.get("circuit") or {}).get("components") or []:
                 if isinstance(c, Mapping) and (c.get("category") or "").lower() in (
-                    "inductor", "transformer", "magnetic", "coupled_inductor"):
+                    "inductor",
+                    "transformer",
+                    "magnetic",
+                    "coupled_inductor",
+                ):
                     name = c.get("name")
                     if isinstance(name, str):
                         return name
@@ -490,12 +516,23 @@ class ReportModel:
                     continue
                 v = _resolve(o.get("voltage"))
                 p = None
-                if isinstance(op_outs, list) and i < len(op_outs) and isinstance(op_outs[i], Mapping):
+                if (
+                    isinstance(op_outs, list)
+                    and i < len(op_outs)
+                    and isinstance(op_outs[i], Mapping)
+                ):
                     p = op_outs[i].get("power")
                     p = float(p) if isinstance(p, (int, float)) else None
                 cur = (p / v) if (p is not None and v) else None
-                rails.append({"name": o.get("name"), "v": v, "i": cur, "p": p,
-                              "regulation": o.get("regulation")})
+                rails.append(
+                    {
+                        "name": o.get("name"),
+                        "v": v,
+                        "i": cur,
+                        "p": p,
+                        "regulation": o.get("regulation"),
+                    }
+                )
         return rails
 
     def pout(self) -> float | None:
@@ -527,17 +564,32 @@ class ReportModel:
         rows: list[dict[str, Any]] = []
 
         def row(param, sym, mn, ty, mx, unit, cond=""):
-            rows.append({"param": param, "sym": sym, "min": mn, "typ": ty,
-                         "max": mx, "unit": unit, "cond": cond})
+            rows.append(
+                {
+                    "param": param,
+                    "sym": sym,
+                    "min": mn,
+                    "typ": ty,
+                    "max": mx,
+                    "unit": unit,
+                    "cond": cond,
+                }
+            )
 
         row("Input voltage", "V_in", vin["min"], vin["nom"], vin["max"], "V", "DC")
         for i, r in enumerate(rails):
             tag = "" if len(rails) == 1 else f"[{i}]"
-            row(f"Output voltage{tag}", f"V_out{tag}", None, r["v"], None, "V",
-                str(r.get("regulation") or ""))
+            row(
+                f"Output voltage{tag}",
+                f"V_out{tag}",
+                None,
+                r["v"],
+                None,
+                "V",
+                str(r.get("regulation") or ""),
+            )
             if r["i"] is not None:
-                row(f"Output current{tag}", f"I_out{tag}", None, r["i"], None, "A",
-                    "full load")
+                row(f"Output current{tag}", f"I_out{tag}", None, r["i"], None, "A", "full load")
             if r["p"] is not None:
                 row(f"Output power{tag}", f"P_out{tag}", None, r["p"], None, "W", "")
         if self.fsw_hz:
@@ -567,8 +619,7 @@ class ReportModel:
         items: list[dict[str, Any]] = []
 
         def add(name, eq_tex, eq_html, result):
-            items.append({"name": name, "eq_tex": eq_tex, "eq_html": eq_html,
-                          "result": result})
+            items.append({"name": name, "eq_tex": eq_tex, "eq_html": eq_html, "result": result})
 
         # Duty cycle
         duty = self.tas.get("duty")
@@ -579,68 +630,98 @@ class ReportModel:
                 # substitution is WRONG — it prints 5/48 = 0.10 next to a regulated
                 # D of 0.36. Show the regulated operating-point duty as the measured
                 # value and leave the topology-specific closed form out.
-                add("Duty cycle (regulated)",
+                add(
+                    "Duty cycle (regulated)",
                     r"D\ \text{(regulated operating point)}",
                     "D (regulated operating point)",
-                    ("num", duty, 3))
+                    ("num", duty, 3),
+                )
             else:
-                add("Duty cycle",
-                    r"D = \frac{V_{out}}{V_{in}}" + (
-                        rf" = \frac{{{_g(vout)}}}{{{_g(vin['nom'])}}}" if vout else ""),
-                    "D = V<sub>out</sub> / V<sub>in</sub>" + (
-                        f" = {_g(vout)} / {_g(vin['nom'])}" if vout else ""),
-                    ("num", duty, 3))
+                add(
+                    "Duty cycle",
+                    r"D = \frac{V_{out}}{V_{in}}"
+                    + (rf" = \frac{{{_g(vout)}}}{{{_g(vin['nom'])}}}" if vout else ""),
+                    "D = V<sub>out</sub> / V<sub>in</sub>"
+                    + (f" = {_g(vout)} / {_g(vin['nom'])}" if vout else ""),
+                    ("num", duty, 3),
+                )
         elif vout and vin["nom"] and not self.isolated:
-            add("Duty cycle (approx.)",
+            add(
+                "Duty cycle (approx.)",
                 r"D \approx \frac{V_{out}}{V_{in}} = "
                 rf"\frac{{{_g(vout)}}}{{{_g(vin['nom'])}}}",
                 f"D ≈ V<sub>out</sub> / V<sub>in</sub> = {_g(vout)} / {_g(vin['nom'])}",
-                ("num", vout / vin["nom"], 3))
+                ("num", vout / vin["nom"], 3),
+            )
 
         # Turns ratio (transformer) — full primary-referred ratio list; the
         # effective step-down ratio is the largest.
         if mag and mag["turns_ratios"]:
             eff_n = max(mag["turns_ratios"])
-            add("Primary-referred turns ratio",
-                r"n = \frac{N_p}{N_s}", "n = N<sub>p</sub> / N<sub>s</sub>",
-                ("text", f"{_g(eff_n, 3)} : 1"))
+            add(
+                "Primary-referred turns ratio",
+                r"n = \frac{N_p}{N_s}",
+                "n = N<sub>p</sub> / N<sub>s</sub>",
+                ("text", f"{_g(eff_n, 3)} : 1"),
+            )
         if mag and mag["windings"]:
-            turn_list = [w.get("turns") for w in mag["windings"]
-                         if isinstance(w.get("turns"), (int, float))]
+            turn_list = [
+                w.get("turns") for w in mag["windings"] if isinstance(w.get("turns"), (int, float))
+            ]
             if turn_list and mag["role"] == "Transformer":
-                add("Winding turns",
+                add(
+                    "Winding turns",
                     r"N_{1..k} = " + ",\\,".join(str(int(t)) for t in turn_list),
                     "N<sub>1..k</sub> = " + ", ".join(str(int(t)) for t in turn_list),
-                    ("text", f"{len(turn_list)} windings"))
+                    ("text", f"{len(turn_list)} windings"),
+                )
             elif turn_list:
-                add("Inductor turns", rf"N = {int(turn_list[0])}",
-                    f"N = {int(turn_list[0])}", ("text", f"{int(turn_list[0])} turns"))
+                add(
+                    "Inductor turns",
+                    rf"N = {int(turn_list[0])}",
+                    f"N = {int(turn_list[0])}",
+                    ("text", f"{int(turn_list[0])} turns"),
+                )
 
         # Magnetizing / main inductance (from MAS designRequirements)
         if mag and mag.get("Lm") is not None:
             lm = _resolve(mag["Lm"])
-            label = "Magnetizing inductance" if mag["role"] == "Transformer" else "Output inductance"
+            label = (
+                "Magnetizing inductance" if mag["role"] == "Transformer" else "Output inductance"
+            )
             sym = "L_m" if mag["role"] == "Transformer" else "L"
-            add(label, sym + r" = \text{(MKF magnetic design)}",
-                f"{sym_html(sym)} = (MKF magnetic design)", ("si", lm, "H"))
+            add(
+                label,
+                sym + r" = \text{(MKF magnetic design)}",
+                f"{sym_html(sym)} = (MKF magnetic design)",
+                ("si", lm, "H"),
+            )
         elif mag and mag.get("inductance_h") is not None:
-            add("Output inductance", r"L = \text{(MKF magnetic design)}",
-                "L = (MKF magnetic design)", ("si", mag["inductance_h"], "H"))
+            add(
+                "Output inductance",
+                r"L = \text{(MKF magnetic design)}",
+                "L = (MKF magnetic design)",
+                ("si", mag["inductance_h"], "H"),
+            )
 
         # Peak inductor / winding current
         if mag and mag.get("ipeak_a") is not None:
-            add("Peak winding current (worst OP)",
+            add(
+                "Peak winding current (worst OP)",
                 r"I_{pk} = I_{out} + \tfrac{1}{2}\Delta I_L",
                 "I<sub>pk</sub> = I<sub>out</sub> + ½ ΔI<sub>L</sub>",
-                ("si", mag["ipeak_a"], "A"))
+                ("si", mag["ipeak_a"], "A"),
+            )
 
         # Output capacitor ripple (if we have a cap with stress)
         cap = next((b for b in self.bom if (b.get("category") or "") == "capacitor"), None)
         if cap and isinstance(cap.get("port_current"), (int, float)):
-            add("Output-cap RMS ripple current",
+            add(
+                "Output-cap RMS ripple current",
                 r"I_{C,rms}\ \text{(from triangular inductor ripple)}",
                 "I<sub>C,rms</sub> (from triangular inductor ripple)",
-                ("si", cap["port_current"], "A"))
+                ("si", cap["port_current"], "A"),
+            )
         return items
 
     def loss_rows(self) -> tuple[list[tuple[str, str, float]], dict[str, float], float]:
@@ -684,11 +765,27 @@ class ReportModel:
             pc, rc = r.get("port_current"), r.get("rated_current")
             ref = r.get("ref") or "?"
             if isinstance(pv, (int, float)) and isinstance(rv, (int, float)) and rv:
-                out.append({"ref": ref, "cat": cat, "kind": "V", "applied": float(pv),
-                            "rated": float(rv), "margin": (rv - pv) / rv})
+                out.append(
+                    {
+                        "ref": ref,
+                        "cat": cat,
+                        "kind": "V",
+                        "applied": float(pv),
+                        "rated": float(rv),
+                        "margin": (rv - pv) / rv,
+                    }
+                )
             if isinstance(pc, (int, float)) and isinstance(rc, (int, float)) and rc:
-                out.append({"ref": ref, "cat": cat, "kind": "I", "applied": float(pc),
-                            "rated": float(rc), "margin": (rc - pc) / rc})
+                out.append(
+                    {
+                        "ref": ref,
+                        "cat": cat,
+                        "kind": "I",
+                        "applied": float(pc),
+                        "rated": float(rc),
+                        "margin": (rc - pc) / rc,
+                    }
+                )
         return out
 
     def validated_checks(self) -> list[Mapping[str, Any]]:
@@ -696,8 +793,13 @@ class ReportModel:
         checks = self.verdict_dict.get("checks") if self.verdict_dict else None
         if not isinstance(checks, list):
             return []
-        return [c for c in checks if isinstance(c, Mapping)
-                and c.get("status") == "pass" and isinstance(c.get("margin"), (int, float))]
+        return [
+            c
+            for c in checks
+            if isinstance(c, Mapping)
+            and c.get("status") == "pass"
+            and isinstance(c.get("margin"), (int, float))
+        ]
 
     # ── Phase-2: closed-loop re-simulation (efficiency / regulation) ───────────
     #
@@ -724,14 +826,16 @@ class ReportModel:
         outs = ops[0].get("outputs")
         if not (isinstance(outs, list) and outs):
             return False
-        if not any(isinstance(o, Mapping) and isinstance(o.get("power"), (int, float))
-                   for o in outs):
+        if not any(
+            isinstance(o, Mapping) and isinstance(o.get("power"), (int, float)) for o in outs
+        ):
             return False
         rails = self.outputs()
         return bool(rails and rails[0].get("v"))
 
-    def _resim_regulated(self, *, power_scale: float = 1.0,
-                         vin: float | None = None) -> Mapping[str, Any] | None:
+    def _resim_regulated(
+        self, *, power_scale: float = 1.0, vin: float | None = None
+    ) -> Mapping[str, Any] | None:
         """One CLOSED-LOOP regulated operating point of the SAME design at a
         scaled load (and/or a different Vin), via Kirchhoff ``simulate_regulated``.
         Returns the op dict on a regulated point, else ``None`` (non-convergence
@@ -766,11 +870,18 @@ class ReportModel:
         return op
 
     @staticmethod
-    def _op_point(op: Mapping[str, Any], *, frac: float | None = None,
-                  vin: float | None = None) -> dict[str, Any]:
-        vo = float(op["vout"]); pin = float(op["pin"]); pout = float(op["pout"])
+    def _op_point(
+        op: Mapping[str, Any], *, frac: float | None = None, vin: float | None = None
+    ) -> dict[str, Any]:
+        vo = float(op["vout"])
+        pin = float(op["pin"])
+        pout = float(op["pout"])
         return {
-            "frac": frac, "vin": vin, "vout": vo, "pin": pin, "pout": pout,
+            "frac": frac,
+            "vin": vin,
+            "vout": vo,
+            "pin": pin,
+            "pout": pout,
             "eff": float(op["efficiency"]),
             "iout": (pout / vo) if vo else None,
         }
@@ -797,12 +908,15 @@ class ReportModel:
             pts.append(self._op_point(op, frac=frac))
         n_missing = len(_LOAD_SWEEP_FRACS) - len(pts)
         if not pts:
-            result["note"] = ("Multi-load re-simulation did not converge at any tested "
-                              "load, so the efficiency-vs-load curve is unavailable.")
+            result["note"] = (
+                "Multi-load re-simulation did not converge at any tested "
+                "load, so the efficiency-vs-load curve is unavailable."
+            )
         elif n_missing:
             result["note"] = (
                 f"{n_missing} of {len(_LOAD_SWEEP_FRACS)} load points did not converge and "
-                "were dropped; the curve shows the converged points only.")
+                "were dropped; the curve shows the converged points only."
+            )
         result["points"] = pts
         self._eff_load = result
         return result
@@ -833,8 +947,7 @@ class ReportModel:
         n_target = len(vins)
         for v in vins:
             # Reuse the cached nominal full-load op when Vin == nominal.
-            if (vnom is not None and abs(v - vnom) < 1e-9
-                    and self._full_load_op is not None):
+            if vnom is not None and abs(v - vnom) < 1e-9 and self._full_load_op is not None:
                 pts.append(self._op_point(self._full_load_op, vin=v))
                 continue
             op = self._resim_regulated(power_scale=1.0, vin=v)
@@ -843,11 +956,14 @@ class ReportModel:
             pts.append(self._op_point(op, vin=v))
         n_missing = n_target - len(pts)
         if not pts:
-            result["note"] = ("Line-regulation re-simulation did not converge, so the "
-                              "Vout-vs-Vin sweep is unavailable.")
+            result["note"] = (
+                "Line-regulation re-simulation did not converge, so the "
+                "Vout-vs-Vin sweep is unavailable."
+            )
         elif n_missing:
-            result["note"] = (f"{n_missing} of {n_target} line points did not converge and "
-                              "were dropped.")
+            result["note"] = (
+                f"{n_missing} of {n_target} line points did not converge and were dropped."
+            )
         result["points"] = pts
         self._line_reg = result
         return result
@@ -875,15 +991,25 @@ class ReportModel:
             "The two totals come from DIFFERENT models and are not expected to be "
             "bit-identical. The analyst budget sums closed-form per-mechanism losses "
             "(MOSFET conduction/switching, rectifier conduction/recovery, capacitor ESR"
-            + (", and the core+winding loss computed independently by MKF from the "
-               "design's flux/current waveforms" if has_mag else "")
+            + (
+                ", and the core+winding loss computed independently by MKF from the "
+                "design's flux/current waveforms"
+                if has_mag
+                else ""
+            )
             + "). The simulation total is the measured Pin-Pout at the regulated "
             "operating point, where the SPICE inductor subcircuit captures winding DCR "
             "and the saturable magnetizing inductance but models core loss and diode Vf "
             "differently. The gap is dominated by those magnetic-loss and rectifier "
-            "models; it is shown here rather than reconciled away.")
-        return {"analyst_total": analyst_total, "sim_total": sim_total,
-                "delta_w": delta, "delta_pct": pct, "note": note}
+            "models; it is shown here rather than reconciled away."
+        )
+        return {
+            "analyst_total": analyst_total,
+            "sim_total": sim_total,
+            "delta_w": delta,
+            "delta_pct": pct,
+            "note": note,
+        }
 
     # ── Phase-2: magnetic BOM rows ─────────────────────────────────────────────
 
@@ -900,22 +1026,26 @@ class ReportModel:
                 continue
             core = mag.get("core_name") or mag.get("shape")
             material = mag.get("material")
-            turn_list = [w.get("turns") for w in mag.get("windings") or []
-                         if isinstance(w.get("turns"), (int, float))]
+            turn_list = [
+                w.get("turns")
+                for w in mag.get("windings") or []
+                if isinstance(w.get("turns"), (int, float))
+            ]
             summary_parts = []
             if core:
                 summary_parts.append(str(core))
             if material:
                 summary_parts.append(str(material))
             if turn_list:
-                summary_parts.append(
-                    "N=" + ":".join(str(int(t)) for t in turn_list))
-            rows.append({
-                "ref": ref,
-                "role": mag.get("role") or "Inductor",
-                "category": (mag.get("role") or "inductor").lower(),
-                "summary": ", ".join(summary_parts) or "custom magnetic",
-            })
+                summary_parts.append("N=" + ":".join(str(int(t)) for t in turn_list))
+            rows.append(
+                {
+                    "ref": ref,
+                    "role": mag.get("role") or "Inductor",
+                    "category": (mag.get("role") or "inductor").lower(),
+                    "summary": ", ".join(summary_parts) or "custom magnetic",
+                }
+            )
         return rows
 
     # ── Phase-2: thermal (junction temperature) ────────────────────────────────
@@ -969,15 +1099,28 @@ class ReportModel:
                     margin = tjm - tj  # °C of headroom
             else:
                 any_na = True
-            rows.append({"ref": ref, "p_loss": p, "rth_ja": rth, "t_amb": amb,
-                         "tj": tj, "tj_max": tjm, "margin_c": margin})
+            rows.append(
+                {
+                    "ref": ref,
+                    "p_loss": p,
+                    "rth_ja": rth,
+                    "t_amb": amb,
+                    "tj": tj,
+                    "tj_max": tjm,
+                    "margin_c": margin,
+                }
+            )
         note = None
         if amb is None and rows:
-            note = ("Ambient temperature is not specified in the operating point, so "
-                    "junction temperatures cannot be estimated.")
+            note = (
+                "Ambient temperature is not specified in the operating point, so "
+                "junction temperatures cannot be estimated."
+            )
         elif any_na:
-            note = ("Devices without a datasheet thermal resistance (Rth,JA) show n/a -- "
-                    "no thermal resistance was fabricated.")
+            note = (
+                "Devices without a datasheet thermal resistance (Rth,JA) show n/a -- "
+                "no thermal resistance was fabricated."
+            )
         return {"rows": rows, "ambient_c": amb, "note": note}
 
     # ── Phase-2: schematic / connection table ──────────────────────────────────
@@ -1021,12 +1164,17 @@ class ReportModel:
                     if isinstance(comp, str):
                         pin = ep.get("pin")
                         comp_nets.setdefault(comp, []).append(
-                            (pin if isinstance(pin, str) else None,
-                             net_name if isinstance(net_name, str) else None))
+                            (
+                                pin if isinstance(pin, str) else None,
+                                net_name if isinstance(net_name, str) else None,
+                            )
+                        )
         if not comp_nets:
             return []
-        return [{"ref": ref, "type": comp_type.get(ref), "nets": comp_nets.get(ref, [])}
-                for ref in comp_type]
+        return [
+            {"ref": ref, "type": comp_type.get(ref), "nets": comp_nets.get(ref, [])}
+            for ref in comp_type
+        ]
 
 
 # Backwards-compatible alias (the class used to live in latex.py as _ReportModel).

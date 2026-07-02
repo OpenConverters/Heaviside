@@ -248,15 +248,15 @@ def vienna_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentS
     vout, iout = _vout_iout(spec, where, op_index=op_index)
     ripple = _ripple_pp(spec)
     pout = vout * iout
-    iphase_rms = pout / (3.0 * vmin)                 # per-phase line current of a balanced 3-phase input
-    iphase_pk = (2.0 ** 0.5) * iphase_rms
+    iphase_rms = pout / (3.0 * vmin)  # per-phase line current of a balanced 3-phase input
+    iphase_pk = (2.0**0.5) * iphase_rms
     return ComponentStresses(
-        vds_stress=vout / 2.0,                        # midpoint switch blocks the HALF bus
-        id_stress=iphase_pk * (1.0 + ripple / 2.0),   # per-phase boost-inductor peak
-        vr_stress=vout,                               # rail diode blocks the FULL bus
-        if_avg_stress=iout,                           # rail diode delivers the DC output current
-        v_working=vout,                               # output cap across the full bus
-        i_ripple=iout * ripple / (2.0 * 3.0 ** 0.5),
+        vds_stress=vout / 2.0,  # midpoint switch blocks the HALF bus
+        id_stress=iphase_pk * (1.0 + ripple / 2.0),  # per-phase boost-inductor peak
+        vr_stress=vout,  # rail diode blocks the FULL bus
+        if_avg_stress=iout,  # rail diode delivers the DC output current
+        v_working=vout,  # output cap across the full bus
+        i_ripple=iout * ripple / (2.0 * 3.0**0.5),
     )
 
 
@@ -1163,11 +1163,11 @@ __all__ = [
     "phase_shifted_full_bridge_stresses",
     "phase_shifted_half_bridge_stresses",
     "power_factor_correction_stresses",
-    "vienna_stresses",
     "push_pull_stresses",
     "sepic_stresses",
     "single_switch_forward_stresses",
     "two_switch_forward_stresses",
+    "vienna_stresses",
     "weinberg_stresses",
     "zeta_stresses",
 ]

@@ -8,19 +8,19 @@ regulatable Kirchhoff-style TAS plus a monkeypatched ``simulate_regulated`` make
 the closed-loop re-sim fast and deterministic. House rule (CLAUDE.md): a device
 without datasheet thermal data renders ``n/a`` — never a fabricated number.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace as NS
 
 import pytest
 
-from heaviside.report import model as report_model
 from heaviside.report.html import render_html
 from heaviside.report.latex import render_latex
 from heaviside.report.model import ReportModel
 
-
 # ── canned design fixtures ────────────────────────────────────────────────────
+
 
 def _mas() -> dict:
     """A compact-but-complete buck-inductor MAS (one winding, MKF loss outputs)."""
@@ -29,21 +29,28 @@ def _mas() -> dict:
             "core": {
                 "name": "T 17/9.5/7.0",
                 "functionalDescription": {
-                    "type": "toroidal", "gapping": [],
+                    "type": "toroidal",
+                    "gapping": [],
                     "material": {"name": "High Flux 160"},
                     "shape": {"name": "T 17/9.5/7.0"},
                 },
                 "processedDescription": {
                     "effectiveParameters": {
-                        "effectiveArea": 6.5e-5, "effectiveLength": 4.0e-2,
+                        "effectiveArea": 6.5e-5,
+                        "effectiveLength": 4.0e-2,
                         "effectiveVolume": 2.6e-6,
                     },
                 },
             },
             "coil": {
                 "functionalDescription": [
-                    {"name": "Primary", "isolationSide": "primary", "numberTurns": 37,
-                     "numberParallels": 1, "wire": {"conductingDiameter": {"nominal": 0.8e-3}}},
+                    {
+                        "name": "Primary",
+                        "isolationSide": "primary",
+                        "numberTurns": 37,
+                        "numberParallels": 1,
+                        "wire": {"conductingDiameter": {"nominal": 0.8e-3}},
+                    },
                 ],
             },
         },
@@ -55,9 +62,13 @@ def _mas() -> dict:
             "operatingPoints": [],
         },
         "outputs": [
-            {"coreLosses": {"coreLosses": 0.19,
-                            "magneticFluxDensity": {"processed": {"peak": 0.12}}},
-             "windingLosses": {"windingLosses": 0.53}},
+            {
+                "coreLosses": {
+                    "coreLosses": 0.19,
+                    "magneticFluxDensity": {"processed": {"peak": 0.12}},
+                },
+                "windingLosses": {"windingLosses": 0.53},
+            },
         ],
     }
 
@@ -70,63 +81,113 @@ def _tas() -> dict:
             "designRequirements": {
                 "efficiency": 0.9,
                 "inputVoltage": {"minimum": 36, "nominal": 48, "maximum": 60},
-                "outputs": [{"name": "out", "regulation": "voltage",
-                             "voltage": {"nominal": 12.0}}],
+                "outputs": [{"name": "out", "regulation": "voltage", "voltage": {"nominal": 12.0}}],
                 "switchingFrequency": {"nominal": 250000},
             },
-            "operatingPoints": [{
-                "name": "full_load", "inputVoltage": 48.0, "ambientTemperature": 25.0,
-                "outputs": [{"name": "out", "power": 36.0}],
-            }],
+            "operatingPoints": [
+                {
+                    "name": "full_load",
+                    "inputVoltage": 48.0,
+                    "ambientTemperature": 25.0,
+                    "outputs": [{"name": "out", "power": 36.0}],
+                }
+            ],
         },
         "duty": 0.25,
         "loss_budget": {
-            "Q1_conduction": 0.0021, "Q1_switching": 0.152,
-            "D1_conduction": 1.17, "D1_switching": 0.0,
-            "L1_core": None, "L1_dcr": None,
+            "Q1_conduction": 0.0021,
+            "Q1_switching": 0.152,
+            "D1_conduction": 1.17,
+            "D1_switching": 0.0,
+            "L1_core": None,
+            "L1_dcr": None,
         },
         "simulation_results": {
-            "op0": {"vin": 48.0, "iin": 0.79, "vout": 12.0, "iout": 3.0,
-                    "pin": 37.8, "pout": 36.0, "total_losses": 1.83, "efficiency": 0.9516},
+            "op0": {
+                "vin": 48.0,
+                "iin": 0.79,
+                "vout": 12.0,
+                "iout": 3.0,
+                "pin": 37.8,
+                "pout": 36.0,
+                "total_losses": 1.83,
+                "efficiency": 0.9516,
+            },
         },
         "topology": {
             "interStageConnections": [],
             "stages": [
-                {"name": "control", "circuit": {"components": [{"name": "U1"}],
-                                                "connections": []}},
-                {"name": "switchingCell", "circuit": {
-                    "components": [
-                        {"name": "Q1", "rth_ja": 40.0, "rth_jc": 0.85, "tj_max": 175.0,
-                         "vds_rated": 100.0, "vds_stress": 60.0,
-                         "selection_provenance": {"category": "mosfet", "mpn": "CSD19536",
-                                                  "manufacturer": "Texas Instruments"}},
-                        {"name": "L1", "isat": 8.0, "ipeak_worst": 3.6},
-                        {"name": "D1", "rth_ja": 62.0, "rth_jc": 1.0, "tj_max": 150.0,
-                         "vrrm_rated": 120.0, "v_reverse": 60.0,
-                         "selection_provenance": {"category": "diode", "mpn": "STPS",
-                                                  "manufacturer": "ST"}},
-                    ],
-                    "connections": [
-                        {"name": "vin_net", "endpoints": [
-                            {"component": "Q1", "pin": "drain"}, {"port": "vin"}]},
-                        {"name": "sw_node", "endpoints": [
-                            {"component": "Q1", "pin": "source"},
-                            {"component": "L1", "pin": "primary_start"},
-                            {"component": "D1", "pin": "cathode"}]},
-                        {"name": "gnd_net", "endpoints": [
-                            {"component": "D1", "pin": "anode"}, {"port": "gnd"}]},
-                        {"name": "vout_net", "endpoints": [
-                            {"component": "L1", "pin": "primary_end"}]},
-                    ],
-                }},
-                {"name": "filter", "circuit": {
-                    "components": [{"name": "Cout",
-                                    "selection_provenance": {"category": "capacitor"}}],
-                    "connections": [
-                        {"name": "out", "endpoints": [
-                            {"component": "Cout", "pin": "1"}, {"port": "in"}]},
-                    ],
-                }},
+                {"name": "control", "circuit": {"components": [{"name": "U1"}], "connections": []}},
+                {
+                    "name": "switchingCell",
+                    "circuit": {
+                        "components": [
+                            {
+                                "name": "Q1",
+                                "rth_ja": 40.0,
+                                "rth_jc": 0.85,
+                                "tj_max": 175.0,
+                                "vds_rated": 100.0,
+                                "vds_stress": 60.0,
+                                "selection_provenance": {
+                                    "category": "mosfet",
+                                    "mpn": "CSD19536",
+                                    "manufacturer": "Texas Instruments",
+                                },
+                            },
+                            {"name": "L1", "isat": 8.0, "ipeak_worst": 3.6},
+                            {
+                                "name": "D1",
+                                "rth_ja": 62.0,
+                                "rth_jc": 1.0,
+                                "tj_max": 150.0,
+                                "vrrm_rated": 120.0,
+                                "v_reverse": 60.0,
+                                "selection_provenance": {
+                                    "category": "diode",
+                                    "mpn": "STPS",
+                                    "manufacturer": "ST",
+                                },
+                            },
+                        ],
+                        "connections": [
+                            {
+                                "name": "vin_net",
+                                "endpoints": [{"component": "Q1", "pin": "drain"}, {"port": "vin"}],
+                            },
+                            {
+                                "name": "sw_node",
+                                "endpoints": [
+                                    {"component": "Q1", "pin": "source"},
+                                    {"component": "L1", "pin": "primary_start"},
+                                    {"component": "D1", "pin": "cathode"},
+                                ],
+                            },
+                            {
+                                "name": "gnd_net",
+                                "endpoints": [{"component": "D1", "pin": "anode"}, {"port": "gnd"}],
+                            },
+                            {
+                                "name": "vout_net",
+                                "endpoints": [{"component": "L1", "pin": "primary_end"}],
+                            },
+                        ],
+                    },
+                },
+                {
+                    "name": "filter",
+                    "circuit": {
+                        "components": [
+                            {"name": "Cout", "selection_provenance": {"category": "capacitor"}}
+                        ],
+                        "connections": [
+                            {
+                                "name": "out",
+                                "endpoints": [{"component": "Cout", "pin": "1"}, {"port": "in"}],
+                            },
+                        ],
+                    },
+                },
             ],
         },
     }
@@ -148,28 +209,38 @@ def _fake_simulate_regulated(tas, target_vout, topology, *, fidelity=None, tol=0
     pout = sum(o["power"] for o in op["outputs"] if isinstance(o.get("power"), (int, float)))
     vin = op.get("inputVoltage", 48.0)
     frac = pout / 36.0
-    eff = 0.90 + 0.055 * frac - 0.03 * frac * frac          # peaks mid-load
-    eff -= 0.0008 * (vin - 48.0)                             # mild line dependence
+    eff = 0.90 + 0.055 * frac - 0.03 * frac * frac  # peaks mid-load
+    eff -= 0.0008 * (vin - 48.0)  # mild line dependence
     pin = pout / eff
-    return {"regulated": True, "converged": True, "vout": float(target_vout),
-            "pin": pin, "pout": pout, "efficiency": eff, "control": "duty", "value": 0.25}
+    return {
+        "regulated": True,
+        "converged": True,
+        "vout": float(target_vout),
+        "pin": pin,
+        "pout": pout,
+        "efficiency": eff,
+        "control": "duty",
+        "value": 0.25,
+    }
 
 
 @pytest.fixture
 def patched_sim(monkeypatch):
     import heaviside.decomposer.kirchhoff_adapter as ka
+
     monkeypatch.setattr(ka, "simulate_regulated", _fake_simulate_regulated, raising=True)
     return ka
 
 
 # ── model-level data ──────────────────────────────────────────────────────────
 
+
 def test_efficiency_load_points_resim(patched_sim):
     m = ReportModel(_outcome())
     el = m.efficiency_load_points()
     pts = el["points"]
-    assert len(pts) == 5                       # bounded to the 5 load fractions
-    assert el["note"] is None                  # all converged
+    assert len(pts) == 5  # bounded to the 5 load fractions
+    assert el["note"] is None  # all converged
     fracs = [p["frac"] for p in pts]
     assert fracs == [0.2, 0.4, 0.6, 0.8, 1.0]
     # Real, load-dependent efficiency + measured Iout (= Pout/Vout).
@@ -180,7 +251,7 @@ def test_efficiency_load_points_resim(patched_sim):
 
 def test_line_regulation_points_resim(patched_sim):
     m = ReportModel(_outcome())
-    m.efficiency_load_points()                 # populates the full-load anchor
+    m.efficiency_load_points()  # populates the full-load anchor
     lr = m.line_regulation_points()
     pts = lr["points"]
     assert [p["vin"] for p in pts] == [36.0, 48.0, 60.0]
@@ -245,13 +316,20 @@ def test_schematic_rows_netlist():
 # ── rendered output (both renderers) ──────────────────────────────────────────
 
 _PHASE2_HTML_SECTIONS = [
-    "Efficiency & Regulation", "Efficiency vs Load", "Line Regulation",
-    "Analyst vs Simulation Reconciliation", "Thermal (Junction Temperature)",
+    "Efficiency & Regulation",
+    "Efficiency vs Load",
+    "Line Regulation",
+    "Analyst vs Simulation Reconciliation",
+    "Thermal (Junction Temperature)",
     "Schematic (Netlist)",
 ]
 _PHASE2_TEX_SECTIONS = [
-    r"Efficiency \& Regulation", "Efficiency vs Load", "Line Regulation",
-    "Reconciliation", "Thermal (Junction Temperature)", "Schematic (Netlist)",
+    r"Efficiency \& Regulation",
+    "Efficiency vs Load",
+    "Line Regulation",
+    "Reconciliation",
+    "Thermal (Junction Temperature)",
+    "Schematic (Netlist)",
 ]
 
 
@@ -259,9 +337,9 @@ def test_render_html_phase2_sections(patched_sim):
     h = render_html(_outcome())
     for s in _PHASE2_HTML_SECTIONS:
         assert s in h, f"missing HTML section: {s}"
-    assert "<svg" in h                         # efficiency-vs-load inline SVG
+    assert "<svg" in h  # efficiency-vs-load inline SVG
     assert "Custom magnetic" in h and "designed" in h
-    assert "97.5" in h                          # D1 junction temperature
+    assert "97.5" in h  # D1 junction temperature
 
 
 def test_render_latex_phase2_sections(patched_sim):
@@ -269,7 +347,7 @@ def test_render_latex_phase2_sections(patched_sim):
     for s in _PHASE2_TEX_SECTIONS:
         assert s in tex, f"missing LaTeX section: {s}"
     assert "Custom magnetic" in tex
-    assert r"\addplot" in tex                    # efficiency pgfplots curve
+    assert r"\addplot" in tex  # efficiency pgfplots curve
 
 
 def test_phase2_sections_omitted_without_resim(monkeypatch):

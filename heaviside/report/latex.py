@@ -30,6 +30,7 @@ Public API:
     render_latex(design_or_outcome) -> str          # the .tex source
     render_pdf(design_or_outcome, out_path) -> Path  # compiled PDF at out_path
 """
+
 from __future__ import annotations
 
 import shutil
@@ -40,9 +41,9 @@ from pathlib import Path
 from typing import Any
 
 from heaviside.report.model import (
-    ReportModel,
     _CAT_DESC,
     _POWER_CATS,
+    ReportModel,
     _resolve,
     sym_tex,
 )
@@ -140,6 +141,7 @@ def _pct(ratio: float | None, sig: int = 3) -> str:
 # Section renderers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _preamble() -> str:
     return r"""\documentclass[11pt,a4paper]{article}
 \usepackage[a4paper,margin=20mm]{geometry}
@@ -199,7 +201,8 @@ def _cover(m: ReportModel) -> list[str]:
     if m.passed:
         lines.append(
             r"\colorbox{passbg}{\color{passgreen}\textbf{\;Design validated "
-            r"$\checkmark$\; all applicable physics checks passed\;}}\\[1.0cm]")
+            r"$\checkmark$\; all applicable physics checks passed\;}}\\[1.0cm]"
+        )
     elif m.verdict:
         lines.append(r"\textbf{Verdict: " + _esc(str(m.verdict).upper()) + r"}\\[1.0cm]")
     lines += [
@@ -237,6 +240,7 @@ _STAGE_LABEL = {
 def _humanise_stage(name: str) -> str:
     """Title-case a stage name, splitting both camelCase and snake_case."""
     import re
+
     spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name).replace("_", " ")
     return " ".join(w.capitalize() for w in spaced.split())
 
@@ -274,8 +278,12 @@ def _block_diagram(m: ReportModel) -> list[str]:
 
 # siunitx unit macro per Key-Specifications unit token.
 _SPEC_UNIT_TEX = {
-    "V": r"\si{\volt}", "A": r"\si{\ampere}", "W": r"\si{\watt}",
-    "kHz": r"\si{\kilo\hertz}", "%": r"\si{\percent}", "--": "--",
+    "V": r"\si{\volt}",
+    "A": r"\si{\ampere}",
+    "W": r"\si{\watt}",
+    "kHz": r"\si{\kilo\hertz}",
+    "%": r"\si{\percent}",
+    "--": "--",
 }
 # Base-unit macro for auto-prefixed design-calc results.
 _CALC_UNIT_TEX = {"H": r"\henry", "A": r"\ampere", "V": r"\volt", "W": r"\watt"}
@@ -298,7 +306,8 @@ def _key_specs(m: ReportModel) -> list[str]:
     for r in m.key_spec_rows():
         lines.append(
             f"{_esc(r['param'])} & {sym_tex(r['sym'])} & {c(r['min'])} & {c(r['typ'])} & "
-            f"{c(r['max'])} & {_SPEC_UNIT_TEX[r['unit']]} & {_esc(r['cond'])} \\\\")
+            f"{c(r['max'])} & {_SPEC_UNIT_TEX[r['unit']]} & {_esc(r['cond'])} \\\\"
+        )
     lines += [r"\bottomrule", r"\end{tabular}", r"\end{center}"]
     return lines
 
@@ -322,22 +331,30 @@ def _calc_result_tex(result: tuple) -> str:
 
 def _design_calcs(m: ReportModel) -> list[str]:
     """Named quantity -> equation -> substituted numbers -> result."""
-    lines = [r"\section{Design Calculations}",
-             "The governing relations below are evaluated at the nominal operating "
-             "point with the values Heaviside selected for this design."]
+    lines = [
+        r"\section{Design Calculations}",
+        "The governing relations below are evaluated at the nominal operating "
+        "point with the values Heaviside selected for this design.",
+    ]
     items = m.design_calc_items()
     if not items:
-        lines.append(r"\textit{Design-calculation inputs were not available for this "
-                     r"topology in the current pipeline output.}")
+        lines.append(
+            r"\textit{Design-calculation inputs were not available for this "
+            r"topology in the current pipeline output.}"
+        )
         return lines
     lines.append(r"\begin{center}")
-    lines.append(r"\begin{tabular}{>{\raggedright}p{0.34\linewidth} c >{\raggedleft}p{0.28\linewidth}}")
+    lines.append(
+        r"\begin{tabular}{>{\raggedright}p{0.34\linewidth} c >{\raggedleft}p{0.28\linewidth}}"
+    )
     lines.append(r"\toprule")
     lines.append(r"Quantity & Relation & {Result} \tabularnewline")
     lines.append(r"\midrule")
     for it in items:
-        lines.append(rf"{_esc(it['name'])} & $\displaystyle {it['eq_tex']}$ & "
-                     rf"{_calc_result_tex(it['result'])} \tabularnewline")
+        lines.append(
+            rf"{_esc(it['name'])} & $\displaystyle {it['eq_tex']}$ & "
+            rf"{_calc_result_tex(it['result'])} \tabularnewline"
+        )
     lines.append(r"\bottomrule")
     lines.append(r"\end{tabular}")
     lines.append(r"\end{center}")
@@ -347,10 +364,12 @@ def _design_calcs(m: ReportModel) -> list[str]:
 def _magnetics(m: ReportModel) -> list[str]:
     if not m.magnetics:
         return []
-    lines = [r"\section{Magnetics Design}",
-             "All magnetic quantities below are computed by the MKF magnetic engine "
-             "(core geometry, flux density, saturation current and losses) --- not by a "
-             "re-derived analytical formula."]
+    lines = [
+        r"\section{Magnetics Design}",
+        "All magnetic quantities below are computed by the MKF magnetic engine "
+        "(core geometry, flux density, saturation current and losses) --- not by a "
+        "re-derived analytical formula.",
+    ]
     for mag in m.magnetics:
         lines.append(rf"\subsection{{{_esc(mag['role'])} ({_esc(mag['refdes'])})}}")
         lines.append(r"\begin{center}\begin{tabular}{l l}\toprule")
@@ -359,8 +378,11 @@ def _magnetics(m: ReportModel) -> list[str]:
             # ``k`` is author-controlled LaTeX (may contain math) — do NOT escape it.
             return rf"{k} & {v} \\"
 
-        gap = "Distributed / ungapped" if not mag["gapping"] else (
-            f"{len(mag['gapping'])} discrete gap(s)")
+        gap = (
+            "Distributed / ungapped"
+            if not mag["gapping"]
+            else (f"{len(mag['gapping'])} discrete gap(s)")
+        )
         rows = [
             ("Core", _esc(mag.get("core_name") or mag.get("shape") or "n/a")),
             ("Core shape", _esc(mag.get("shape") or "n/a")),
@@ -380,29 +402,27 @@ def _magnetics(m: ReportModel) -> list[str]:
             tt = f"{int(t)} turns" if isinstance(t, (int, float)) else "n/a"
             lines.append(kv(f"Winding: {_esc(label)}", f"{tt}, $\\varnothing$ {wd}"))
         if mag["turns_ratios"]:
-            lines.append(kv("Turns ratio(s)",
-                            ", ".join(f"{_num(r, 3)}:1" for r in mag["turns_ratios"])))
+            lines.append(
+                kv("Turns ratio(s)", ", ".join(f"{_num(r, 3)}:1" for r in mag["turns_ratios"]))
+            )
         # Inductance
         if mag.get("Lm") is not None:
             sym = "L_m" if mag["role"] == "Transformer" else "L"
-            lines.append(kv(f"${sym}$", _si(_resolve(mag['Lm']), r'\henry')))
+            lines.append(kv(f"${sym}$", _si(_resolve(mag["Lm"]), r"\henry")))
         elif mag.get("inductance_h") is not None:
             lines.append(kv("$L$", _si(mag["inductance_h"], r"\henry")))
         if mag.get("Llk") is not None:
-            lines.append(kv("Leakage $L_{lk}$", _si(_resolve(mag['Llk']), r"\henry")))
+            lines.append(kv("Leakage $L_{lk}$", _si(_resolve(mag["Llk"]), r"\henry")))
         # Saturation / peak
         if mag.get("isat_a") is not None:
-            lines.append(kv("Saturation current $I_{sat}$ (MKF)",
-                            _si(mag["isat_a"], r"\ampere")))
+            lines.append(kv("Saturation current $I_{sat}$ (MKF)", _si(mag["isat_a"], r"\ampere")))
         if mag.get("ipeak_a") is not None:
-            lines.append(kv("Peak current $I_{pk}$ (worst OP)",
-                            _si(mag["ipeak_a"], r"\ampere")))
+            lines.append(kv("Peak current $I_{pk}$ (worst OP)", _si(mag["ipeak_a"], r"\ampere")))
         if mag.get("isat_a") and mag.get("ipeak_a"):
             margin = (mag["isat_a"] - mag["ipeak_a"]) / mag["isat_a"]
             lines.append(kv("Saturation margin", _pct(margin)))
         if mag.get("bpk_t") is not None:
-            lines.append(kv("Peak flux density $B_{pk}$ (MKF)",
-                            _si(mag["bpk_t"], r"\tesla")))
+            lines.append(kv("Peak flux density $B_{pk}$ (MKF)", _si(mag["bpk_t"], r"\tesla")))
         # Losses
         if mag.get("core_loss_w") is not None:
             lines.append(kv("Core loss (MKF)", _si(mag["core_loss_w"], r"\watt")))
@@ -433,7 +453,9 @@ def _bom(m: ReportModel) -> list[str]:
 
     mag_rows = m.magnetic_bom_rows()
 
-    def emit(title: str, rows: list[dict[str, Any]], magnetics: list[dict[str, Any]] | None = None) -> None:
+    def emit(
+        title: str, rows: list[dict[str, Any]], magnetics: list[dict[str, Any]] | None = None
+    ) -> None:
         if not rows and not magnetics:
             return
         lines.append(rf"\subsection*{{{_esc(title)}}}")
@@ -448,13 +470,15 @@ def _bom(m: ReportModel) -> list[str]:
             lines.append(
                 f"{_esc(r.get('ref') or '?')} & 1 & {_esc(desc)} & "
                 f"{_esc(fmt_rating(r))} & {_esc(r.get('manufacturer') or '--')} & "
-                f"{{\\small\\texttt{{{_esc(r.get('mpn') or '--')}}}}} \\\\")
+                f"{{\\small\\texttt{{{_esc(r.get('mpn') or '--')}}}}} \\\\"
+            )
         # Custom (designed) magnetics — no MPN; summarised by core + turns.
         for mr in magnetics or []:
             desc = f"Custom magnetic --- {mr['summary']}"
             lines.append(
                 f"{_esc(mr['ref'])} & 1 & {_esc(desc)} & -- & "
-                r"Custom (designed) & {\small\texttt{designed}} \\")
+                r"Custom (designed) & {\small\texttt{designed}} \\"
+            )
         lines.append(r"\bottomrule")
         lines.append(r"\end{longtable}")
         lines.append(r"\end{center}")
@@ -467,7 +491,7 @@ def _bom(m: ReportModel) -> list[str]:
 
 
 def _coords(xs: Sequence[float], ys: Sequence[float], *, xscale: float = 1.0) -> str:
-    return " ".join(f"({x * xscale:.6g},{y:.6g})" for x, y in zip(xs, ys))
+    return " ".join(f"({x * xscale:.6g},{y:.6g})" for x, y in zip(xs, ys, strict=False))
 
 
 def _waveforms(m: ReportModel) -> list[str]:
@@ -524,10 +548,12 @@ def _efficiency_regulation(m: ReportModel) -> list[str]:
     lpts = lr["points"]
     if not pts and not lpts:
         return []
-    lines = [r"\section{Efficiency \& Regulation}",
-             "The realized design is re-simulated closed-loop (same parts, same "
-             "magnetic) across load and line; the curves below are measured operating "
-             "points, not re-designs."]
+    lines = [
+        r"\section{Efficiency \& Regulation}",
+        "The realized design is re-simulated closed-loop (same parts, same "
+        "magnetic) across load and line; the curves below are measured operating "
+        "points, not re-designs.",
+    ]
 
     # Efficiency vs load (pgfplots).
     if pts:
@@ -559,7 +585,8 @@ def _efficiency_regulation(m: ReportModel) -> list[str]:
         for p in pts:
             lines.append(
                 rf"{_num(p['iout'], 4)} & {_num(p['vout'], 4)} & "
-                rf"{_num(p['pout'], 4)} & {_num(p['eff'] * 100, 4)} \\")
+                rf"{_num(p['pout'], 4)} & {_num(p['eff'] * 100, 4)} \\"
+            )
         lines += [r"\bottomrule", r"\end{tabular}", r"\end{center}"]
     if el["note"]:
         lines.append(rf"\small\textit{{{_esc(el['note'])}}}")
@@ -579,7 +606,8 @@ def _efficiency_regulation(m: ReportModel) -> list[str]:
         for p in lpts:
             lines.append(
                 rf"{_num(p['vin'], 4)} & {_num(p['vout'], 4)} & "
-                rf"{_num(p['eff'] * 100, 4)} \\")
+                rf"{_num(p['eff'] * 100, 4)} \\"
+            )
         lines += [r"\bottomrule", r"\end{tabular}", r"\end{center}"]
         if lr["note"]:
             lines.append(rf"\small\textit{{{_esc(lr['note'])}}}")
@@ -592,11 +620,13 @@ def _thermal(m: ReportModel) -> list[str]:
     rows = th["rows"]
     if not rows:
         return []
-    lines = [r"\section{Thermal (Junction Temperature)}",
-             r"Estimated junction temperature $T_j = P_{loss}\cdot R_{\theta JA} + T_{amb}$ "
-             "per power device, with headroom to the rated $T_{j,max}$. The thermal "
-             "resistance and $T_{j,max}$ are from the selected part's datasheet; a device "
-             "without a datasheet $R_{\\theta JA}$ shows n/a (no value is fabricated)."]
+    lines = [
+        r"\section{Thermal (Junction Temperature)}",
+        r"Estimated junction temperature $T_j = P_{loss}\cdot R_{\theta JA} + T_{amb}$ "
+        "per power device, with headroom to the rated $T_{j,max}$. The thermal "
+        "resistance and $T_{j,max}$ are from the selected part's datasheet; a device "
+        "without a datasheet $R_{\\theta JA}$ shows n/a (no value is fabricated).",
+    ]
     lines += [
         r"\begin{center}",
         r"\begin{tabular}{l S[table-format=2.4] S[table-format=3.1] "
@@ -614,7 +644,8 @@ def _thermal(m: ReportModel) -> list[str]:
     for r in rows:
         lines.append(
             f"{_esc(r['ref'])} & {_num(r['p_loss'], 4)} & {c(r['rth_ja'], 3)} & "
-            f"{c(r['tj'], 4)} & {c(r['tj_max'], 4)} & {c(r['margin_c'], 3)} \\\\")
+            f"{c(r['tj'], 4)} & {c(r['tj_max'], 4)} & {c(r['margin_c'], 3)} \\\\"
+        )
     lines += [r"\bottomrule", r"\end{tabular}", r"\end{center}"]
     if isinstance(th["ambient_c"], (int, float)):
         lines.append(rf"\small Ambient $T_{{amb}} = {_num(th['ambient_c'], 3)}$\,\si{{\celsius}}.")
@@ -629,10 +660,12 @@ def _schematic(m: ReportModel) -> list[str]:
     rows = m.schematic_rows()
     if not rows:
         return []
-    lines = [r"\section{Schematic (Netlist)}",
-             "The realized circuit as a connection table (a rendered schematic image "
-             "is out of scope; the netlist is the honest interim). Each row lists a "
-             "component and the nets its pins connect to."]
+    lines = [
+        r"\section{Schematic (Netlist)}",
+        "The realized circuit as a connection table (a rendered schematic image "
+        "is out of scope; the netlist is the honest interim). Each row lists a "
+        "component and the nets its pins connect to.",
+    ]
     lines += [
         r"\begin{center}",
         r"\begin{longtable}{l l p{0.5\linewidth}}",
@@ -644,11 +677,11 @@ def _schematic(m: ReportModel) -> list[str]:
         if r["nets"]:
             nets = "; ".join(
                 (f"{_esc(pin)} $\\rightarrow$ {_esc(net)}" if pin else _esc(net))
-                for pin, net in r["nets"])
+                for pin, net in r["nets"]
+            )
         else:
             nets = "--"
-        lines.append(
-            f"{_esc(r['ref'])} & {_esc(r['type'] or '--')} & {nets} \\\\")
+        lines.append(f"{_esc(r['ref'])} & {_esc(r['type'] or '--')} & {nets} \\\\")
     lines += [r"\bottomrule", r"\end{longtable}", r"\end{center}"]
     return lines
 
@@ -663,7 +696,8 @@ def _loss_budget(m: ReportModel) -> list[str]:
             lines.append(
                 "Per-component loss attribution was not produced by the analyst for this "
                 f"design. The simulated total loss at full load is {_si(float(sim_total), r'\watt')}; "
-                "the per-component split is unavailable.")
+                "the per-component split is unavailable."
+            )
         else:
             lines.append(r"\textit{Loss-budget data was not available for this design.}")
         return lines
@@ -672,7 +706,8 @@ def _loss_budget(m: ReportModel) -> list[str]:
         "Per-component loss attribution at full load, from the analyst stage "
         "(MOSFET conduction/switching, rectifier conduction/recovery, magnetic "
         "core/winding, capacitor ESR). Magnetic losses are taken from the MKF "
-        "magnetic design.")
+        "magnetic design."
+    )
     # Table
     lines.append(r"\begin{center}")
     lines.append(r"\begin{tabular}{l l S[table-format=2.4] S[table-format=3.1]}")
@@ -692,7 +727,8 @@ def _loss_budget(m: ReportModel) -> list[str]:
         lines.append(
             rf"\small Cross-check: the closed-loop simulation reports a total loss of "
             rf"{_si(float(sim_total), r'\watt')} at full load "
-            rf"(efficiency {_pct(m.eta_sim())}).")
+            rf"(efficiency {_pct(m.eta_sim())})."
+        )
 
     # Phase-2: analyst-vs-sim reconciliation (surface the delta, don't hide it).
     recon = m.loss_reconciliation()
@@ -708,7 +744,11 @@ def _loss_budget(m: ReportModel) -> list[str]:
             rf"Simulation & {_num(recon['sim_total'], 4)} & measured $P_{{in}}-P_{{out}}$ (regulated) \\",
             r"\midrule",
             rf"\textbf{{Delta}} & {_num(recon['delta_w'], 4)} & "
-            + (rf"{_num(recon['delta_pct'], 3)}\,\% of sim" if recon["delta_pct"] is not None else "--")
+            + (
+                rf"{_num(recon['delta_pct'], 3)}\,\% of sim"
+                if recon["delta_pct"] is not None
+                else "--"
+            )
             + r" \\",
             r"\bottomrule",
             r"\end{tabular}",
@@ -719,7 +759,7 @@ def _loss_budget(m: ReportModel) -> list[str]:
     # Bar chart of per-component totals.
     if comp_total:
         items = sorted(comp_total.items(), key=lambda kv: -kv[1])
-        coords = " ".join(f"({i},{v:.6g})" for i, (_, v) in enumerate(items))
+        " ".join(f"({i},{v:.6g})" for i, (_, v) in enumerate(items))
         labels = ",".join(_esc(k) for k, _ in items)
         lines += [
             r"\begin{center}",
@@ -754,30 +794,36 @@ _CHECK_LABEL = {
 
 
 def _margins(m: ReportModel) -> list[str]:
-    lines = [r"\section{Design Margins / Component Stress}",
-             "Applied stress versus device rating for each power component, with the "
-             "headroom expressed affirmatively. Stresses are stamped from the simulated "
-             "operating point; ratings are from the selected parts' datasheets."]
+    lines = [
+        r"\section{Design Margins / Component Stress}",
+        "Applied stress versus device rating for each power component, with the "
+        "headroom expressed affirmatively. Stresses are stamped from the simulated "
+        "operating point; ratings are from the selected parts' datasheets.",
+    ]
 
     # Primary source: BOM stress view (applied vs rated, per component).
     stress_rows: list[str] = []
     for s in m.stress_rows():
         cat = s["cat"]
         if s["kind"] == "V":
-            param = {"mosfet": "$V_{ds}$", "diode": "$V_R$",
-                     "capacitor": "Working V"}.get(cat, "Voltage")
+            param = {"mosfet": "$V_{ds}$", "diode": "$V_R$", "capacitor": "Working V"}.get(
+                cat, "Voltage"
+            )
             unit = r"\si{\volt}"
         else:
             param = {"capacitor": "Ripple $I_{rms}$"}.get(cat, "Current")
             unit = r"\si{\ampere}"
         stress_rows.append(
             f"{_esc(s['ref'])} & {param} & {_num(s['applied'], 4)} & "
-            f"{_num(s['rated'], 4)} & {_num(s['margin'] * 100, 3)} & {unit} \\\\")
+            f"{_num(s['rated'], 4)} & {_num(s['margin'] * 100, 3)} & {unit} \\\\"
+        )
 
     if stress_rows:
         lines.append(r"\begin{center}")
-        lines.append(r"\begin{tabular}{l l S[table-format=4.3] S[table-format=4.3] "
-                     r"S[table-format=3.1] l}")
+        lines.append(
+            r"\begin{tabular}{l l S[table-format=4.3] S[table-format=4.3] "
+            r"S[table-format=3.1] l}"
+        )
         lines.append(r"\toprule")
         lines.append(r"Component & Parameter & {Applied} & {Rated} & {Margin \%} & Unit \\")
         lines.append(r"\midrule")
@@ -817,6 +863,7 @@ def _margins(m: ReportModel) -> list[str]:
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def render_latex(design_or_outcome: Any) -> str:
     """Render a :class:`ConverterDesign` (or legacy ``DesignOutcome``) as LaTeX
     source for a power-electronics design report. Returns the ``.tex`` string."""
@@ -853,7 +900,8 @@ def render_pdf(design_or_outcome: Any, out_path: str | Path) -> Path:
     if pdflatex is None:
         raise LatexCompileError(
             "pdflatex not found on PATH; install a LaTeX distribution (TeX Live) "
-            "to compile the design report to PDF.")
+            "to compile the design report to PDF."
+        )
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -866,23 +914,34 @@ def render_pdf(design_or_outcome: Any, out_path: str | Path) -> Path:
         log_tail = ""
         for _ in range(2):  # twice for TOC / references
             proc = subprocess.run(
-                [pdflatex, "-interaction=nonstopmode", "-halt-on-error",
-                 "-file-line-error", "report.tex"],
-                cwd=tmp_dir, capture_output=True, text=True, errors="replace",
+                [
+                    pdflatex,
+                    "-interaction=nonstopmode",
+                    "-halt-on-error",
+                    "-file-line-error",
+                    "report.tex",
+                ],
+                cwd=tmp_dir,
+                capture_output=True,
+                text=True,
+                errors="replace",
             )
             log_path = tmp_dir / "report.log"
             if log_path.exists():
-                log_tail = "\n".join(log_path.read_text(
-                    encoding="utf-8", errors="replace").splitlines()[-40:])
+                log_tail = "\n".join(
+                    log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-40:]
+                )
             if proc.returncode != 0:
                 raise LatexCompileError(
                     "pdflatex failed to compile the design report.\n"
                     f"--- LaTeX log (tail) ---\n{log_tail}\n"
-                    f"--- stdout (tail) ---\n{proc.stdout[-2000:]}")
+                    f"--- stdout (tail) ---\n{proc.stdout[-2000:]}"
+                )
         pdf_path = tmp_dir / "report.pdf"
         if not pdf_path.exists():
             raise LatexCompileError(
                 "pdflatex returned success but produced no PDF.\n"
-                f"--- LaTeX log (tail) ---\n{log_tail}")
+                f"--- LaTeX log (tail) ---\n{log_tail}"
+            )
         shutil.copyfile(pdf_path, out_path)
     return out_path

@@ -72,6 +72,7 @@ def kirchhoff_base(topology: str) -> str | None:
     that key off Kirchhoff's own artifacts (e.g. reference fixtures)."""
     return _HS_TO_KIRCHHOFF.get(topology)
 
+
 _MODULE: Any = None
 
 
@@ -192,9 +193,15 @@ def hs_spec_to_kirchhoff(hs_spec: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(v0, list) or not v0:
         raise KirchhoffSpecError("operatingPoints[0].outputVoltages must be a non-empty list")
     if not isinstance(i0, list) or len(i0) != len(v0):
-        raise KirchhoffSpecError("operatingPoints[0].outputCurrents must match outputVoltages length")
+        raise KirchhoffSpecError(
+            "operatingPoints[0].outputCurrents must match outputVoltages length"
+        )
 
-    dr_iv = {k: float(iv[k]) for k in ("minimum", "nominal", "maximum") if isinstance(iv.get(k), (int, float))}
+    dr_iv = {
+        k: float(iv[k])
+        for k in ("minimum", "nominal", "maximum")
+        if isinstance(iv.get(k), (int, float))
+    }
     outputs = [{"name": f"out{i}", "voltage": {"nominal": float(v)}} for i, v in enumerate(v0)]
     iv_default = dr_iv.get("nominal") or dr_iv.get("minimum") or dr_iv.get("maximum")
 
@@ -206,9 +213,14 @@ def hs_spec_to_kirchhoff(hs_spec: dict[str, Any]) -> dict[str, Any]:
             raise KirchhoffSpecError(f"operatingPoints[{n}] output lists missing/mismatched")
         vin = op.get("inputVoltage", iv_default)
         if not isinstance(vin, (int, float)):
-            raise KirchhoffSpecError(f"operatingPoints[{n}].inputVoltage unresolved (no scalar, no spec default)")
+            raise KirchhoffSpecError(
+                f"operatingPoints[{n}].inputVoltage unresolved (no scalar, no spec default)"
+            )
         k_ops.append(
-            {"inputVoltage": float(vin), "outputs": [{"power": float(v) * float(c)} for v, c in zip(vs, cs)]}
+            {
+                "inputVoltage": float(vin),
+                "outputs": [{"power": float(v) * float(c)} for v, c in zip(vs, cs, strict=False)],
+            }
         )
 
     dr: dict[str, Any] = {
@@ -225,9 +237,14 @@ def hs_spec_to_kirchhoff(hs_spec: dict[str, Any]) -> dict[str, Any]:
     if isinstance(input_type, str) and input_type:
         dr["inputType"] = input_type
     line_freq = hs_spec.get("lineFrequency")
-    if isinstance(line_freq, dict) and any(k in line_freq for k in ("nominal", "minimum", "maximum")):
-        dr["lineFrequency"] = {k: float(line_freq[k]) for k in ("minimum", "nominal", "maximum")
-                               if isinstance(line_freq.get(k), (int, float))}
+    if isinstance(line_freq, dict) and any(
+        k in line_freq for k in ("nominal", "minimum", "maximum")
+    ):
+        dr["lineFrequency"] = {
+            k: float(line_freq[k])
+            for k in ("minimum", "nominal", "maximum")
+            if isinstance(line_freq.get(k), (int, float))
+        }
     elif isinstance(line_freq, (int, float)):
         dr["lineFrequency"] = {"nominal": float(line_freq)}
     # della-Pollock "design around the magnetic": when HS has already designed the
@@ -257,7 +274,9 @@ def hs_spec_to_kirchhoff(hs_spec: dict[str, Any]) -> dict[str, Any]:
     # broke regulation (24V -> 16V). The gate-vs-Kirchhoff derating-policy mismatch
     # (IPC-9592 0.8 / 1.25x vs Proteus 1.5x FET / 1.3x diode) is surfaced as an open
     # decision, not papered over by over-rating that degrades the simulated design.
-    config: dict[str, Any] = dict(hs_spec["config"]) if isinstance(hs_spec.get("config"), dict) else {}
+    config: dict[str, Any] = (
+        dict(hs_spec["config"]) if isinstance(hs_spec.get("config"), dict) else {}
+    )
     # Propagate the converter's current-ripple ratio into Kirchhoff's design config
     # so it sizes the inductor to the REQUESTED ripple, not its built-in default
     # (Buck.cpp / Boost.cpp default rippleRatio=0.4; the output-inductor builders

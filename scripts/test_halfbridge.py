@@ -11,6 +11,7 @@ from heaviside.pipeline.cre_testbench import _normalize_topology
 print("half-bridge ->", _normalize_topology("half-bridge"), flush=True)
 
 from heaviside.pipeline.cre import ReferenceSpec
+
 from heaviside.pipeline.full_design import full_design
 
 # 7136u: non-isolated GaN half-bridge as sync buck, 48V->24V, 25A, 500kHz

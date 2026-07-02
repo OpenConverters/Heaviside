@@ -41,7 +41,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import os
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -53,7 +52,6 @@ from heaviside.agents.magnetic_picker import (
     pick_best_pareto,
 )
 from heaviside.bridge import (
-    BridgeError,
     MagneticDesign,
     select_fast_by_isat_margin,
 )
@@ -432,7 +430,7 @@ def _simulate_kirchhoff_backend(
     topology: str,
     spec_dict: dict[str, Any],
     components: Any,  # vestigial (ABT #34): the magnetic now comes from the k_tas seed,
-                      # not components.main_magnetic. Retired with the rest in ABT #36.
+    # not components.main_magnetic. Retired with the rest in ABT #36.
     first_op: Mapping[str, Any],
     vout_target: float | None,
 ) -> None:
@@ -502,7 +500,9 @@ def _simulate_kirchhoff_backend(
                 # geometry so MKF can export it as a SPICE subcircuit (MKF_MODEL).
                 magnetic = _pyom_vendor.magnetic_autocomplete(designs[0].magnetic, dict(seed))
                 stamp_mkf_magnetic(
-                    k_tas, magnetic, pyom=_pyom_vendor,
+                    k_tas,
+                    magnetic,
+                    pyom=_pyom_vendor,
                     component_name=comp.get("name"),
                 )
                 n_mag += 1
@@ -514,8 +514,13 @@ def _simulate_kirchhoff_backend(
         unify_hs_tas_semiconductors(tas, fill_records)
         unify_hs_tas_capacitors(tas, fill_records)
         op = _ka.simulate_regulated(k_tas, float(vout_target), topology, fidelity="DATASHEET")
-    except (KirchhoffUnavailable, KirchhoffTopologyUnsupported, KirchhoffFillError,
-            SimError, _bridge.BridgeError) as exc:
+    except (
+        KirchhoffUnavailable,
+        KirchhoffTopologyUnsupported,
+        KirchhoffFillError,
+        SimError,
+        _bridge.BridgeError,
+    ) as exc:
         raise RealizeError(f"kirchhoff simulation failed for {topology}: {exc}") from exc
 
     if not op.get("regulated"):
@@ -525,10 +530,15 @@ def _simulate_kirchhoff_backend(
             "unregulated operating point for the realism gate"
         )
     vout_m, pin, pout, eff = (
-        float(op["vout"]), float(op["pin"]), float(op["pout"]), float(op["efficiency"])
+        float(op["vout"]),
+        float(op["pin"]),
+        float(op["pout"]),
+        float(op["efficiency"]),
     )
     if not all(math.isfinite(x) for x in (vout_m, pin, pout, eff)) or pin <= 0:
-        raise RealizeError(f"kirchhoff backend: non-finite/zero operating point for {topology} (op={op})")
+        raise RealizeError(
+            f"kirchhoff backend: non-finite/zero operating point for {topology} (op={op})"
+        )
     stamp_simulation_results(
         tas,
         SimResult(
@@ -604,6 +614,7 @@ def _seed_with_isat_margin(seed: Mapping[str, Any], margin: float) -> dict[str, 
     is scaled; rms/voltage (loss/flux) are left real so the core is not over-sized for loss.
     The gate is still stamped with the REAL Ipeak (from the unscaled seed)."""
     import copy
+
     s = copy.deepcopy(dict(seed))
     for op in s.get("operatingPoints", []):
         if not isinstance(op, dict):
@@ -615,7 +626,9 @@ def _seed_with_isat_margin(seed: Mapping[str, Any], margin: float) -> dict[str, 
     return s
 
 
-def _pinned_magnetic_constraints(pinned_main: Any, bridge_mod: Any) -> tuple[float | None, list[float]]:
+def _pinned_magnetic_constraints(
+    pinned_main: Any, bridge_mod: Any
+) -> tuple[float | None, list[float]]:
     """Extract the (magnetizing inductance, turns-ratios) constraint from the
     frequency-swept main magnetic for della-Pollock Pass 2. The turns ratios are the
     REALIZED ratios computed from the coil's integer turns (N_w0 / N_wi) — name-agnostic,
@@ -628,7 +641,7 @@ def _pinned_magnetic_constraints(pinned_main: Any, bridge_mod: Any) -> tuple[flo
         lm = float(bridge_mod._harvest_authoritative_inductance(mas))
         if lm <= 0:
             lm = None
-    except Exception:  # noqa: BLE001 - Lm is best-effort; absence just means KH derives it
+    except Exception:
         lm = None
     trs: list[float] = []
     coil = ((mas.get("magnetic") or {}).get("coil") or {}).get("functionalDescription")
@@ -680,7 +693,8 @@ def _design_ktas_magnetics(
                 d = pinned_main
             else:
                 designs = bridge_mod.design_magnetic_from_mas_inputs(
-                    _seed_with_isat_margin(seed, _GATE_ISAT_MARGIN), max_results=1)
+                    _seed_with_isat_margin(seed, _GATE_ISAT_MARGIN), max_results=1
+                )
                 d = designs[0]
             # isat from the designed core at its achieved L; ipeak from the SATURATION DRIVER.
             # Fail loud: the gate's saturation check is safety-critical (it caught the ABT #12
@@ -701,7 +715,9 @@ def _design_ktas_magnetics(
             # realized magnetizing-current peak from the designed MAS; fall back to the seed winding peak.
             # A single-winding INDUCTOR has no turns ratios, so its winding current IS the driver.
             is_transformer = bool((seed.get("designRequirements") or {}).get("turnsRatios"))
-            ipk = (bridge_mod._ipeak_from_mas(d) if is_transformer else None) or _seed_worst_peak_current(seed)
+            ipk = (
+                bridge_mod._ipeak_from_mas(d) if is_transformer else None
+            ) or _seed_worst_peak_current(seed)
             if isinstance(isat, (int, float)) and isat > 0 and ipk is not None:
                 comp["isat"] = float(isat)
                 comp["ipeak_worst"] = float(ipk)
@@ -737,9 +753,15 @@ def _bump_ktas_semiconductor_requirements(k_tas: dict[str, Any], stresses: Any) 
     vds = getattr(stresses, "vds_stress", None)
     vr = getattr(stresses, "vr_stress", None)
     vw = getattr(stresses, "v_working", None)
-    fet_floor = float(vds) * _GATE_FET_DERATING_RATIO if isinstance(vds, (int, float)) and vds > 0 else None
-    dio_floor = float(vr) * _GATE_DIODE_DERATING_RATIO if isinstance(vr, (int, float)) and vr > 0 else None
-    cap_floor = float(vw) * _GATE_CAP_DERATING_RATIO if isinstance(vw, (int, float)) and vw > 0 else None
+    fet_floor = (
+        float(vds) * _GATE_FET_DERATING_RATIO if isinstance(vds, (int, float)) and vds > 0 else None
+    )
+    dio_floor = (
+        float(vr) * _GATE_DIODE_DERATING_RATIO if isinstance(vr, (int, float)) and vr > 0 else None
+    )
+    cap_floor = (
+        float(vw) * _GATE_CAP_DERATING_RATIO if isinstance(vw, (int, float)) and vw > 0 else None
+    )
     if fet_floor is None and dio_floor is None and cap_floor is None:
         return
     for st in k_tas.get("topology", {}).get("stages", []):
@@ -753,13 +775,19 @@ def _bump_ktas_semiconductor_requirements(k_tas: dict[str, Any], stresses: Any) 
             semi = data.get("semiconductor")
             if isinstance(semi, dict) and "mosfet" in semi and fet_floor is not None:
                 cur = req.get("ratedDrainSourceVoltage")
-                req["ratedDrainSourceVoltage"] = max(float(cur), fet_floor) if isinstance(cur, (int, float)) else fet_floor
+                req["ratedDrainSourceVoltage"] = (
+                    max(float(cur), fet_floor) if isinstance(cur, (int, float)) else fet_floor
+                )
             elif isinstance(semi, dict) and "diode" in semi and dio_floor is not None:
                 cur = req.get("ratedReverseVoltage")
-                req["ratedReverseVoltage"] = max(float(cur), dio_floor) if isinstance(cur, (int, float)) else dio_floor
+                req["ratedReverseVoltage"] = (
+                    max(float(cur), dio_floor) if isinstance(cur, (int, float)) else dio_floor
+                )
             elif "capacitor" in data and cap_floor is not None:
                 cur = req.get("ratedVoltage")
-                req["ratedVoltage"] = max(float(cur), cap_floor) if isinstance(cur, (int, float)) else cap_floor
+                req["ratedVoltage"] = (
+                    max(float(cur), cap_floor) if isinstance(cur, (int, float)) else cap_floor
+                )
 
 
 def _stamp_ktas_gate_stresses(
@@ -799,13 +827,19 @@ def _stamp_ktas_gate_stresses(
                 continue
             sel, req, fam, kind = rec["selection"], rec["requirement"], rec["family"], rec["kind"]
             if fam == "semiconductor" and kind == "mosfet":
-                vds = _pick(getattr(stresses, "vds_stress", None), req.get("ratedDrainSourceVoltage"))
-                ids = _pick(getattr(stresses, "id_stress", None), req.get("ratedContinuousDrainCurrent"))
+                vds = _pick(
+                    getattr(stresses, "vds_stress", None), req.get("ratedDrainSourceVoltage")
+                )
+                ids = _pick(
+                    getattr(stresses, "id_stress", None), req.get("ratedContinuousDrainCurrent")
+                )
                 if vds is not None and ids is not None:
                     _stamp_mosfet(comp, sel, stress_vds=vds, stress_id=ids)
             elif fam == "semiconductor" and kind == "diode":
                 vr = _pick(getattr(stresses, "vr_stress", None), req.get("ratedReverseVoltage"))
-                ifa = _pick(getattr(stresses, "if_avg_stress", None), req.get("ratedForwardCurrent"))
+                ifa = _pick(
+                    getattr(stresses, "if_avg_stress", None), req.get("ratedForwardCurrent")
+                )
                 if vr is not None and ifa is not None:
                     _stamp_diode(comp, sel, stress_vr=vr, stress_if_avg=ifa)
             elif fam == "capacitor":
@@ -830,7 +864,9 @@ _GATE_CAP_DERATING_RATIO = 1.5
 _GATE_ISAT_MARGIN = 1.3
 
 
-def _harvest_magnetic_design_into_spec(k_tas: dict[str, Any], spec_dict: dict[str, Any]) -> dict[str, Any]:
+def _harvest_magnetic_design_into_spec(
+    k_tas: dict[str, Any], spec_dict: dict[str, Any]
+) -> dict[str, Any]:
     """Return spec_dict with desiredTurnsRatios / desiredMagnetizingInductance / desiredInductance
     filled from k_tas's transformer magnetic seed (the one with turnsRatios — not a filter inductor),
     if absent. The analytical stress deriver needs these for isolated topologies; in the native path
@@ -847,7 +883,7 @@ def _harvest_magnetic_design_into_spec(k_tas: dict[str, Any], spec_dict: dict[st
         if main_dr is not None:
             break
     if main_dr is None:
-        return spec_dict   # non-isolated: no turns ratio to supply
+        return spec_dict  # non-isolated: no turns ratio to supply
     out = dict(spec_dict)
     if "desiredTurnsRatios" not in out:
         trs = []
@@ -870,8 +906,8 @@ def _realize_via_kirchhoff(
     spec_dict: dict[str, Any],
     pick: TopologyPick,
     *,
-    pinned_main: "MagneticDesign | None" = None,
-) -> "DesignOutcome":
+    pinned_main: MagneticDesign | None = None,
+) -> DesignOutcome:
     """ABT #36 — single-TAS cutover. Kirchhoff designs ``k_tas`` (CIAS stages +
     per-component requirements); HS fills real parts (``fill_kirchhoff_bom``) and
     designs the magnetics from k_tas's own seeds (ABT #34, topology-agnostic — so
@@ -927,9 +963,9 @@ def _realize_via_kirchhoff(
     # are a separate STRESS-MODEL mismatch — KH's design-time component stress is lower than the
     # gate's measured worst-case (diode 30V vs 41.5V) — which a derating factor cannot close.
     _gate_derate = {
-        "vDerateMosfet": 1.0 / _GATE_FET_DERATING_RATIO,        # 1/1.5
-        "vDerateDiode": 1.0 / _GATE_DIODE_DERATING_RATIO,       # 1/1.3
-        "vDerateCapacitor": 1.0 / _GATE_CAP_DERATING_RATIO,     # 1/1.5
+        "vDerateMosfet": 1.0 / _GATE_FET_DERATING_RATIO,  # 1/1.5
+        "vDerateDiode": 1.0 / _GATE_DIODE_DERATING_RATIO,  # 1/1.3
+        "vDerateCapacitor": 1.0 / _GATE_CAP_DERATING_RATIO,  # 1/1.5
     }
     _caller_cfg = spec_dict.get("config") if isinstance(spec_dict.get("config"), Mapping) else {}
     _cfg = dict(_caller_cfg)
@@ -978,18 +1014,34 @@ def _realize_via_kirchhoff(
         main_name = None
         if pinned_main is not None:
             from heaviside.topologies import get as _get_topology
+
             main_name = _bridge._main_magnetic_seed_from_ktas(_get_topology(topology), k_tas)[0]
-        if _design_ktas_magnetics(
-            k_tas, bridge_mod=_bridge,
-            pyom_vendor=_bridge._import_pyom_vendor(), stamp_fn=stamp_mkf_magnetic,
-            main_name=main_name, pinned_main=pinned_main,
-        ) == 0:
+        if (
+            _design_ktas_magnetics(
+                k_tas,
+                bridge_mod=_bridge,
+                pyom_vendor=_bridge._import_pyom_vendor(),
+                stamp_fn=stamp_mkf_magnetic,
+                main_name=main_name,
+                pinned_main=pinned_main,
+            )
+            == 0
+        ):
             raise RealizeError(f"kirchhoff-native: {topology} k_tas has no magnetic to design")
-        _stamp_ktas_gate_stresses(k_tas, fill_records,
-                                  _gate_stresses if _gate_stresses is not None else derive_stresses(topology, spec_dict))
+        _stamp_ktas_gate_stresses(
+            k_tas,
+            fill_records,
+            _gate_stresses if _gate_stresses is not None else derive_stresses(topology, spec_dict),
+        )
         op = _ka.simulate_regulated(k_tas, float(vout_target), topology, fidelity="DATASHEET")
-    except (KirchhoffUnavailable, KirchhoffTopologyUnsupported, KirchhoffFillError,
-            SimError, StressDerivationError, _bridge.BridgeError) as exc:
+    except (
+        KirchhoffUnavailable,
+        KirchhoffTopologyUnsupported,
+        KirchhoffFillError,
+        SimError,
+        StressDerivationError,
+        _bridge.BridgeError,
+    ) as exc:
         raise RealizeError(f"kirchhoff-native realize failed for {topology}: {exc}") from exc
 
     if not op.get("regulated"):
@@ -999,16 +1051,26 @@ def _realize_via_kirchhoff(
             "unregulated operating point for the realism gate"
         )
     vout_m, pin, pout, eff = (
-        float(op["vout"]), float(op["pin"]), float(op["pout"]), float(op["efficiency"])
+        float(op["vout"]),
+        float(op["pin"]),
+        float(op["pout"]),
+        float(op["efficiency"]),
     )
     if not all(math.isfinite(x) for x in (vout_m, pin, pout, eff)) or pin <= 0:
-        raise RealizeError(f"kirchhoff-native: non-finite/zero operating point for {topology} (op={op})")
+        raise RealizeError(
+            f"kirchhoff-native: non-finite/zero operating point for {topology} (op={op})"
+        )
     stamp_simulation_results(
         k_tas,
         SimResult(
-            vin=float(vin), iin=pin / vin, vout=vout_m,
+            vin=float(vin),
+            iin=pin / vin,
+            vout=vout_m,
             iout=(pout / vout_m if vout_m else 0.0),
-            pin=pin, pout=pout, total_losses=pin - pout, efficiency=eff,
+            pin=pin,
+            pout=pout,
+            total_losses=pin - pout,
+            efficiency=eff,
         ),
     )
     # Record convergence for the gate's operating_point_converged check. We only
@@ -1021,10 +1083,8 @@ def _realize_via_kirchhoff(
 
     # Analyst is best-effort here (efficiency already comes from the regulated sim);
     # a topology the analyst can't model must not sink the design — the gate still runs.
-    try:
+    with contextlib.suppress(AnalystError):
         run_analyst(topology, k_tas, spec_dict)
-    except AnalystError:
-        pass
 
     # B7 cross-check (ABT #75): triangulate the regulated sim efficiency against
     # the analyst's INDEPENDENT closed-form efficiency and record any gross
@@ -1062,7 +1122,9 @@ _CROSS_CHECK_EFFICIENCY_TOL = 0.20
 
 
 def _valid_efficiency(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0.0 < float(value) < 1.0
+    return (
+        isinstance(value, (int, float)) and not isinstance(value, bool) and 0.0 < float(value) < 1.0
+    )
 
 
 def _stamp_efficiency_cross_check(k_tas: dict[str, Any]) -> None:
@@ -1097,7 +1159,7 @@ def stage3_realize(
     pick: TopologyPick,
     spec: Mapping[str, Any],
     *,
-    pinned_main: "MagneticDesign | None" = None,
+    pinned_main: MagneticDesign | None = None,
 ) -> DesignOutcome:
     """Realize the converter via Kirchhoff (della-Pollock cutover).
 
@@ -1365,9 +1427,7 @@ def full_design(
         )
 
     # Reorder by teacher lessons: preferred first, warned last (see helper).
-    chosen = _order_topologies_by_lessons(
-        chosen, preferred=preferred_topos, warned=warned_topos
-    )
+    chosen = _order_topologies_by_lessons(chosen, preferred=preferred_topos, warned=warned_topos)
     if preferred_topos:
         logger.info(
             "Teacher: reordered topologies from training lessons — preferred: %s",

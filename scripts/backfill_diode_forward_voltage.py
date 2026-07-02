@@ -8,6 +8,7 @@ Vishay PDF. pdfplumber extracts the VFM value from the electrical table on p.1-2
 Usage:
   scripts/backfill_diode_forward_voltage.py [--dry-run] [--limit N]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,12 +35,12 @@ def extract_vf_from_pdf(pdf_bytes: bytes) -> float | None:
             text = page.extract_text() or ""
             lines = text.splitlines()
             for j, line in enumerate(lines):
-                if re.search(r'VF\s*M|V_?FM|forward\s+voltage', line, re.I):
-                    block = "\n".join(lines[j:j + 8])
+                if re.search(r"VF\s*M|V_?FM|forward\s+voltage", line, re.I):
+                    block = "\n".join(lines[j : j + 8])
                     # Pattern: "- 0.715 -" (typical/max table format)
-                    m = re.search(r'[-–]\s*([0-9]+\.[0-9]+)\s*[-–]', block)
+                    m = re.search(r"[-–]\s*([0-9]+\.[0-9]+)\s*[-–]", block)
                     if not m:
-                        m = re.search(r'\b([0-9]+\.[0-9]+)\s*V?\b', block)
+                        m = re.search(r"\b([0-9]+\.[0-9]+)\s*V?\b", block)
                     if m:
                         val = float(m.group(1))
                         if 0.1 < val < 5.0:
@@ -128,7 +129,7 @@ def main() -> int:
             vf = extract_vf_from_pdf(resp.content)
             if vf is None:
                 cp[pn] = {"status": "notfound", "reason": "vf_not_in_pdf"}
-                print(f"    VF not found in PDF")
+                print("    VF not found in PDF")
                 out.append(line)
                 continue
 

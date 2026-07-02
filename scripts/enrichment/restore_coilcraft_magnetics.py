@@ -59,15 +59,9 @@ DB_PATH = REPO / "TAS" / "data" / "magnetics.ndjson"
 QUARANTINE_PATH = REPO / "TAS" / "data" / "magnetics.quarantine_stubs.ndjson"
 PROVENANCE_PATH = REPO / "scripts" / "enrichment" / "diodes_refetch_provenance.ndjson"
 
-XGL6060_URL = (
-    "https://www.coilcraft.com/getmedia/329fe97c-7311-4726-9bf3-37718f42b168/xgl6060.pdf"
-)
-XGL5050_URL = (
-    "https://www.coilcraft.com/getmedia/348b2df6-54b3-4579-8737-e8367b6fa367/xgl5050.pdf"
-)
-SLC7649_URL = (
-    "https://www.coilcraft.com/getmedia/0d701ca2-6dd3-4654-9f29-37f6d8a82fc7/slc7649.pdf"
-)
+XGL6060_URL = "https://www.coilcraft.com/getmedia/329fe97c-7311-4726-9bf3-37718f42b168/xgl6060.pdf"
+XGL5050_URL = "https://www.coilcraft.com/getmedia/348b2df6-54b3-4579-8737-e8367b6fa367/xgl5050.pdf"
+SLC7649_URL = "https://www.coilcraft.com/getmedia/0d701ca2-6dd3-4654-9f29-37f6d8a82fc7/slc7649.pdf"
 XEL4030_URL = "https://www.coilcraft.com/pdfs/xel4030.pdf"
 
 DUMMY_CORE = {
@@ -248,7 +242,7 @@ def main() -> int:
     refs = {prov["mpn"] for _, prov in ROWS}
 
     # Validate everything BEFORE touching any file.
-    for row, prov in ROWS:
+    for row, _prov in ROWS:
         guard_component("magnetics", row)
     print(f"all {len(ROWS)} rows pass guard_component('magnetics', ...)")
 
@@ -259,9 +253,7 @@ def main() -> int:
                 if f'"{ref}"' in line:
                     raise SystemExit(f"{ref} already present in magnetics.ndjson L{n}")
 
-    quarantine_lines = [
-        ln for ln in QUARANTINE_PATH.read_text().splitlines() if ln.strip()
-    ]
+    quarantine_lines = [ln for ln in QUARANTINE_PATH.read_text().splitlines() if ln.strip()]
     remaining = []
     removed = []
     for ln in quarantine_lines:
@@ -288,10 +280,7 @@ def main() -> int:
     with PROVENANCE_PATH.open("a") as fh:
         for _, prov in ROWS:
             fh.write(json.dumps(prov, ensure_ascii=False) + "\n")
-    print(
-        f"restored {len(ROWS)} rows to {DB_PATH}; "
-        f"quarantine now has {len(kept)} rows"
-    )
+    print(f"restored {len(ROWS)} rows to {DB_PATH}; quarantine now has {len(kept)} rows")
     return 0
 
 

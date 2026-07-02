@@ -27,10 +27,11 @@ guides (TDK/Mouser electrolytic→MLCC, Z2Data/SpeCap cross-reference, Coilcraft
 current ratings, TI/Nexperia MOSFET notes); they are centralised here so they can
 be tuned in one place.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 # ── Direction semantics ──────────────────────────────────────────────────────
 # lower_better : a valid substitute should be ≤ original (ESR, Rds_on, DCR, Vf…)
@@ -41,9 +42,9 @@ HIGHER_BETTER = "higher_better"
 CLASS_MATCH = "class_match"
 
 # Verdicts a single parameter comparison can yield.
-PASS = "pass"           # meets or beats the original
-WARN = "warn"           # worse than original but within the allowed margin
-FAIL = "fail"           # outside the allowed margin
+PASS = "pass"  # meets or beats the original
+WARN = "warn"  # worse than original but within the allowed margin
+FAIL = "fail"  # outside the allowed margin
 UNVERIFIED = "unverified"  # cannot compare (a value is missing) — never silently a pass
 
 
@@ -84,12 +85,19 @@ class ParamSpec:
 # X5R→X7R is safe. Electrolytic/tantalum/film are distinct technologies — a
 # cross-technology swap is flagged via the special-case in _compare_class.
 _DIELECTRIC_RANK = {
-    "c0g": 5, "np0": 5, "cog": 5,        # class-1: most stable
-    "x8r": 4, "x8l": 4,
-    "x7r": 3, "x7s": 3, "x7t": 3,
-    "x6s": 2, "x6t": 2,
+    "c0g": 5,
+    "np0": 5,
+    "cog": 5,  # class-1: most stable
+    "x8r": 4,
+    "x8l": 4,
+    "x7r": 3,
+    "x7s": 3,
+    "x7t": 3,
+    "x6s": 2,
+    "x6t": 2,
     "x5r": 1,
-    "y5v": 0, "z5u": 0,                  # class-2/3: worst bias/temp behaviour
+    "y5v": 0,
+    "z5u": 0,  # class-2/3: worst bias/temp behaviour
 }
 
 
@@ -104,14 +112,27 @@ PARAM_SPECS: dict[str, list[ParamSpec]] = {
         # ESR must be ≤ original for low-ESR/regulator-output use; allow 1.5×
         # before failing. A candidate with no ESR data is excluded ("don't use
         # it") per the substitution policy.
-        ParamSpec("esr", "ESR", "Ω", LOWER_BETTER, 1.5,
-                  missing_substitute="exclude", missing_original="minimize"),
+        ParamSpec(
+            "esr",
+            "ESR",
+            "Ω",
+            LOWER_BETTER,
+            1.5,
+            missing_substitute="exclude",
+            missing_original="minimize",
+        ),
         # Ripple-current capability must be ≥ original; allow 10% shortfall.
-        ParamSpec("ripple_current", "Ripple I", "A", HIGHER_BETTER, 0.9,
-                  missing_substitute="exclude", missing_original="maximize"),
+        ParamSpec(
+            "ripple_current",
+            "Ripple I",
+            "A",
+            HIGHER_BETTER,
+            0.9,
+            missing_substitute="exclude",
+            missing_original="maximize",
+        ),
         # Dielectric / temperature characteristic must not downgrade.
-        ParamSpec("technology", "Dielectric", "", CLASS_MATCH, 0.0,
-                  class_rank=_DIELECTRIC_RANK),
+        ParamSpec("technology", "Dielectric", "", CLASS_MATCH, 0.0, class_rank=_DIELECTRIC_RANK),
     ],
     "mosfet": [
         ParamSpec("rds_on", "Rds(on)", "Ω", LOWER_BETTER, 1.5),
@@ -133,8 +154,9 @@ PARAM_SPECS: dict[str, list[ParamSpec]] = {
         ParamSpec("tcr", "TCR", "ppm/°C", LOWER_BETTER, 2.0),
     ],
     "magnetic": [
-        ParamSpec("saturation_current", "Isat", "A", HIGHER_BETTER, 0.9,
-                  missing_substitute="exclude"),
+        ParamSpec(
+            "saturation_current", "Isat", "A", HIGHER_BETTER, 0.9, missing_substitute="exclude"
+        ),
         ParamSpec("dcr", "DCR", "Ω", LOWER_BETTER, 1.3),
         ParamSpec("rated_current", "Irms", "A", HIGHER_BETTER, 0.9),
     ],
@@ -165,15 +187,20 @@ def _compare_numeric(spec: ParamSpec, o: float | None, s: float | None) -> tuple
             return FAIL, f"{spec.label}: substitute has no {spec.label} data — cannot verify"
         return UNVERIFIED, f"{spec.label}: substitute has no {spec.label} data"
     if o is None:
-        hint = {"minimize": " (lowest available preferred)",
-                "maximize": " (highest available preferred)"}.get(spec.missing_original, "")
+        hint = {
+            "minimize": " (lowest available preferred)",
+            "maximize": " (highest available preferred)",
+        }.get(spec.missing_original, "")
         return UNVERIFIED, f"{spec.label}: original unknown; substitute = {s:g}{spec.unit}{hint}"
 
     if spec.direction == LOWER_BETTER:
         if s <= o:
             return PASS, f"{spec.label}: {s:g} ≤ {o:g}{spec.unit}"
         if s <= o * spec.tol_factor:
-            return WARN, f"{spec.label}: {s:g} > {o:g}{spec.unit} (within {spec.tol_factor:g}× margin)"
+            return (
+                WARN,
+                f"{spec.label}: {s:g} > {o:g}{spec.unit} (within {spec.tol_factor:g}× margin)",
+            )
         return FAIL, f"{spec.label}: {s:g} exceeds {o:g}{spec.unit} by >{spec.tol_factor:g}×"
     # HIGHER_BETTER (tol_factor < 1)
     if s >= o:
@@ -207,7 +234,10 @@ def compare_param(spec: ParamSpec, orig: Any, sub: Any) -> dict[str, Any]:
     """Evaluate one parameter; returns a render-ready dict."""
     if spec.direction == CLASS_MATCH:
         verdict, note = _compare_class(spec, orig, sub)
-        o_disp, s_disp = (str(orig) if orig is not None else ""), (str(sub) if sub is not None else "")
+        o_disp, s_disp = (
+            (str(orig) if orig is not None else ""),
+            (str(sub) if sub is not None else ""),
+        )
     else:
         of, sf = _as_float(orig), _as_float(sub)
         verdict, note = _compare_numeric(spec, of, sf)
@@ -295,13 +325,17 @@ def mlcc_bias_param(
     if v_op is None or v_op <= 0:
         return None
     oc = effective_capacitance_at_bias(
-        _as_float(orig.get("capacitance")), _as_float(orig.get("voltage")),
-        _as_float(orig.get("capacitance_saturation_mlcc")), _as_float(orig.get("vth_mlcc")),
+        _as_float(orig.get("capacitance")),
+        _as_float(orig.get("voltage")),
+        _as_float(orig.get("capacitance_saturation_mlcc")),
+        _as_float(orig.get("vth_mlcc")),
         v_op,
     )
     sc = effective_capacitance_at_bias(
-        _as_float(sub.get("capacitance")), _as_float(sub.get("voltage")),
-        _as_float(sub.get("capacitance_saturation_mlcc")), _as_float(sub.get("vth_mlcc")),
+        _as_float(sub.get("capacitance")),
+        _as_float(sub.get("voltage")),
+        _as_float(sub.get("capacitance_saturation_mlcc")),
+        _as_float(sub.get("vth_mlcc")),
         v_op,
     )
     if oc is None and sc is None:

@@ -6,6 +6,7 @@ write MAS-validated records to TAS/data/varistors.ndjson.
 Usage:
     python scripts/fetch_redexpert_varistors.py [--dry-run]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,14 +18,17 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts"))
 
-from redexpert_client import RedexpertClient  # noqa: E402
-from heaviside.librarian.guards import GuardRejectionError, guard_component  # noqa: E402
-from heaviside.librarian.tas import ValidationError  # noqa: E402
+import contextlib
 
-DEST       = REPO / "TAS" / "data" / "varistors.ndjson"
+from redexpert_client import RedexpertClient
+
+from heaviside.librarian.guards import GuardRejectionError, guard_component
+from heaviside.librarian.tas import ValidationError
+
+DEST = REPO / "TAS" / "data" / "varistors.ndjson"
 QUARANTINE = REPO / "TAS" / "data" / "varistors.quarantine_redexpert.ndjson"
-FAMILY_ID  = "27"   # Surge Circuit Protection (WE-VD MOVs)
-PAGE_SIZE  = 100
+FAMILY_ID = "27"  # Surge Circuit Protection (WE-VD MOVs)
+PAGE_SIZE = 100
 
 
 def _technology(series: str) -> str:
@@ -41,10 +45,15 @@ def _convert(p: dict) -> dict | None:
     if not mpn:
         return None
 
-    tol_pct = p.get("voltageVarTol")     # e.g. 10 → ±10 %
-    v_nom   = p.get("voltageVar")         # varistor voltage at 1 mA, V
+    tol_pct = p.get("voltageVarTol")  # e.g. 10 → ±10 %
+    v_nom = p.get("voltageVar")  # varistor voltage at 1 mA, V
 
-    if v_nom is None or p.get("voltageClamp") is None or p.get("currentMax") is None or p.get("energyMax") is None:
+    if (
+        v_nom is None
+        or p.get("voltageClamp") is None
+        or p.get("currentMax") is None
+        or p.get("energyMax") is None
+    ):
         return None  # missing required fields
 
     varistor_voltage: dict = {"nominal": v_nom}
@@ -53,13 +62,13 @@ def _convert(p: dict) -> dict | None:
         varistor_voltage["maximum"] = round(v_nom * (1 + tol_pct / 100), 4)
 
     electrical: dict = {
-        "varistorVoltage":       varistor_voltage,
-        "clampingVoltage":       p["voltageClamp"],
+        "varistorVoltage": varistor_voltage,
+        "clampingVoltage": p["voltageClamp"],
         # Clamping is spec'd at the rated peak surge current for MOVs
-        "clampingCurrent":       p["currentMax"],
-        "peakSurgeCurrent":      p["currentMax"],
-        "surgeWaveform":         "8/20",   # WE-VD standard waveform
-        "energyAbsorption":      p["energyMax"],
+        "clampingCurrent": p["currentMax"],
+        "peakSurgeCurrent": p["currentMax"],
+        "surgeWaveform": "8/20",  # WE-VD standard waveform
+        "energyAbsorption": p["energyMax"],
     }
     if p.get("voltageRms") is not None:
         electrical["maxContinuousAcVoltage"] = p["voltageRms"]
@@ -87,12 +96,12 @@ def _convert(p: dict) -> dict | None:
             op["maximum"] = t_max
         thermal = {"operatingTemperature": op}
 
-    series  = p.get("series", "")
-    ds_url  = p.get("datasheet")
+    series = p.get("series", "")
+    ds_url = p.get("datasheet")
 
     part: dict = {
         "partNumber": str(mpn),
-        "series":     series,
+        "series": series,
         "technology": _technology(series),
     }
     cert = p.get("ulcCert") or p.get("vdeCert") or p.get("csaCert")
@@ -107,8 +116,8 @@ def _convert(p: dict) -> dict | None:
         ds_info["thermal"] = thermal
 
     mi: dict = {
-        "name":         "Würth Elektronik",
-        "reference":    str(mpn),
+        "name": "Würth Elektronik",
+        "reference": str(mpn),
         "datasheetInfo": ds_info,
     }
     if series:
@@ -133,10 +142,8 @@ def main(dry_run: bool = False) -> None:
             for line in f:
                 line = line.strip()
                 if line:
-                    try:
+                    with contextlib.suppress(json.JSONDecodeError):
                         existing.add(str(_mpn(json.loads(line)) or ""))
-                    except json.JSONDecodeError:
-                        pass
     print(f"Existing varistor MPNs: {len(existing)}")
 
     # Fetch all pages from REDEXPERT
@@ -144,12 +151,15 @@ def main(dry_run: bool = False) -> None:
     all_products: list[dict] = []
     offset = 0
     while True:
-        result = client.call_tool("get_products", {
-            "module":  FAMILY_ID,
-            "sortBy":  "None",
-        })
+        result = client.call_tool(
+            "get_products",
+            {
+                "module": FAMILY_ID,
+                "sortBy": "None",
+            },
+        )
         products = result.get("results", [])
-        total    = result.get("count", 0)
+        total = result.get("count", 0)
         all_products.extend(products)
         offset += len(products)
         print(f"  fetched {offset}/{total}")
@@ -159,7 +169,7 @@ def main(dry_run: bool = False) -> None:
     print(f"Total REDEXPERT varistor products: {len(all_products)}")
 
     new_records: list[str] = []
-    quarantine:  list[dict] = []
+    quarantine: list[dict] = []
 
     for p in all_products:
         mpn = str(p.get("orderCode") or "")

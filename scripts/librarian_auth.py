@@ -28,6 +28,7 @@ developer portal, or Digi-Key rejects both steps.
 Per workspace policy this throws loudly on any non-2xx response rather
 than swallowing it — a broken auth must be visible, not papered over.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,14 +42,14 @@ import httpx
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from heaviside.librarian.fetcher.auth import (  # noqa: E402
+from heaviside.librarian.fetcher.auth import (
     CONFIG_DIR,
     CREDENTIALS_PATH,
     DigiKeyCredentials,
     TokenCache,
     load_credentials,
 )
-from heaviside.librarian.fetcher.digikey import (  # noqa: E402
+from heaviside.librarian.fetcher.digikey import (
     DIGIKEY_PROD_BASE,
     DIGIKEY_SANDBOX_BASE,
 )
@@ -93,8 +94,7 @@ def exchange_code(
     )
     if resp.status_code != 200:
         raise SystemExit(
-            f"Digi-Key authorization-code exchange failed "
-            f"(HTTP {resp.status_code}): {resp.text}"
+            f"Digi-Key authorization-code exchange failed (HTTP {resp.status_code}): {resp.text}"
         )
     return resp.json()
 

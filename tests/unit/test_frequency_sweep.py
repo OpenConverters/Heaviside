@@ -12,15 +12,13 @@ asserts the master-plan traps directly:
 
 Plus: the real TAS envelope-FET pick, and the analyst worst-OP loss reader.
 """
-from __future__ import annotations
 
-import math
+from __future__ import annotations
 
 import pytest
 
 from heaviside.pipeline import analyst
 from heaviside.stages import frequency_sweep as fs
-
 
 # ---------------------------------------------------------------------------
 # analyst worst-OP magnetic loss reader (pure)
@@ -28,12 +26,20 @@ from heaviside.stages import frequency_sweep as fs
 
 
 def test_worst_op_loss_maxes_each_bucket_independently():
-    comp = {"data": {"outputs": [
-        {"coreLosses": {"coreLosses": 1.0},
-         "windingLosses": {"windingLosses": [{"totalLosses": 0.5}]}},
-        {"coreLosses": {"coreLosses": 3.0},
-         "windingLosses": {"windingLosses": [{"totalLosses": 0.2}]}},
-    ]}}
+    comp = {
+        "data": {
+            "outputs": [
+                {
+                    "coreLosses": {"coreLosses": 1.0},
+                    "windingLosses": {"windingLosses": [{"totalLosses": 0.5}]},
+                },
+                {
+                    "coreLosses": {"coreLosses": 3.0},
+                    "windingLosses": {"windingLosses": [{"totalLosses": 0.2}]},
+                },
+            ]
+        }
+    }
     # op0 reader unchanged
     assert analyst._inductor_loss_from_mas(comp) == {"L1_core": 1.0, "L1_dcr": 0.5}
     # worst-OP maxes core and winding independently (3.0 core from op1, 0.5 dcr from op0)
@@ -45,34 +51,53 @@ def test_worst_op_loss_reads_fast_path_scalar_winding():
     as a SCALAR windingLosses.windingLosses (W), with per-component detail in
     windingLossesPerWinding — unlike the slow path's list. The reader must
     handle both, else every fast-path candidate is 'unrankable (no loss)'."""
-    fast = {"data": {"outputs": [{
-        "coreLosses": {"coreLosses": 0.0049},
-        "windingLosses": {
-            "windingLosses": 0.766,  # scalar total (fast path)
-            "windingLossesPerWinding": [{"name": "Primary",
-                "ohmicLosses": {"losses": 0.766}}],
-            "dcResistancePerWinding": [0.084],  # OHMS, must NOT be read as loss
-        },
-    }]}}
+    fast = {
+        "data": {
+            "outputs": [
+                {
+                    "coreLosses": {"coreLosses": 0.0049},
+                    "windingLosses": {
+                        "windingLosses": 0.766,  # scalar total (fast path)
+                        "windingLossesPerWinding": [
+                            {"name": "Primary", "ohmicLosses": {"losses": 0.766}}
+                        ],
+                        "dcResistancePerWinding": [0.084],  # OHMS, must NOT be read as loss
+                    },
+                }
+            ]
+        }
+    }
     assert analyst.inductor_loss_worst_op(fast) == {"L1_core": 0.0049, "L1_dcr": 0.766}
 
 
 def test_worst_op_loss_per_winding_component_fallback():
     """When neither scalar nor list total is present, sum the per-winding
     ohmic+skin+proximity components."""
-    comp = {"data": {"outputs": [{
-        "coreLosses": {"coreLosses": 1.0},
-        "windingLosses": {"windingLossesPerWinding": [
-            {"ohmicLosses": {"losses": 0.5}, "skinEffectLosses": {"losses": 0.1},
-             "proximityEffectLosses": {"losses": 0.2}},
-        ]},
-    }]}}
+    comp = {
+        "data": {
+            "outputs": [
+                {
+                    "coreLosses": {"coreLosses": 1.0},
+                    "windingLosses": {
+                        "windingLossesPerWinding": [
+                            {
+                                "ohmicLosses": {"losses": 0.5},
+                                "skinEffectLosses": {"losses": 0.1},
+                                "proximityEffectLosses": {"losses": 0.2},
+                            },
+                        ]
+                    },
+                }
+            ]
+        }
+    }
     assert analyst.inductor_loss_worst_op(comp)["L1_dcr"] == pytest.approx(0.8)
 
 
 def test_worst_op_loss_none_when_no_outputs():
     assert analyst.inductor_loss_worst_op({"data": {"outputs": []}}) == {
-        "L1_core": None, "L1_dcr": None
+        "L1_core": None,
+        "L1_dcr": None,
     }
     assert analyst.inductor_loss_worst_op({}) == {"L1_core": None, "L1_dcr": None}
 
@@ -148,26 +173,48 @@ def _install_landscape(monkeypatch, *, isat_a: float, pmag_at):
     monkeypatch.setattr(bridge, "_isat_from_mas", fake_isat_from_mas)
     monkeypatch.setattr(analyst, "inductor_loss_worst_op", fake_worst_op)
     # a fixed real-ish envelope FET (no TAS dependency in the engine test)
-    monkeypatch.setattr(fs, "select_envelope_fet", lambda vds, idd: fs.EnvelopeFet(
-        mpn="FAKE-FET", manufacturer="ACME", qg_total_c=20e-9,
-        vds_rated_v=100.0, id_continuous_a=10.0, technology="Si",
-    ))
+    monkeypatch.setattr(
+        fs,
+        "select_envelope_fet",
+        lambda vds, idd: fs.EnvelopeFet(
+            mpn="FAKE-FET",
+            manufacturer="ACME",
+            qg_total_c=20e-9,
+            vds_rated_v=100.0,
+            id_continuous_a=10.0,
+            technology="Si",
+        ),
+    )
     # stress engine: give the sweep a switch class without needing a real deriver
-    from heaviside.stages import stress_extract
     from heaviside.pipeline.stress import ComponentStresses
+    from heaviside.stages import stress_extract
 
-    monkeypatch.setattr(stress_extract, "analytical", lambda topo, spec: ComponentStresses(
-        vds_stress=48.0, id_stress=1.0, vr_stress=48.0, if_avg_stress=1.0,
-        v_working=3.3, i_ripple=1.0,
-    ))
+    monkeypatch.setattr(
+        stress_extract,
+        "analytical",
+        lambda topo, spec: ComponentStresses(
+            vds_stress=48.0,
+            id_stress=1.0,
+            vr_stress=48.0,
+            if_avg_stress=1.0,
+            v_working=3.3,
+            i_ripple=1.0,
+        ),
+    )
     return IPEAK
 
 
 def _spec():
     return {
         "inputVoltage": {"minimum": 9, "nominal": 12, "maximum": 16},
-        "operatingPoints": [{"outputVoltages": [3.3], "outputCurrents": [3],
-                             "switchingFrequency": 5e5, "ambientTemperature": 25}],
+        "operatingPoints": [
+            {
+                "outputVoltages": [3.3],
+                "outputCurrents": [3],
+                "switchingFrequency": 5e5,
+                "ambientTemperature": 25,
+            }
+        ],
         "currentRippleRatio": 0.3,
     }
 
@@ -181,12 +228,12 @@ def test_sweep_finds_interior_total_loss_minimum(monkeypatch):
     # Magnetic loss falls ~1/fsw; switching loss rises ~fsw ⇒ interior optimum.
     _install_landscape(monkeypatch, isat_a=10.0, pmag_at=lambda f: _PMAG_A / f)
 
-    res = fs.sweep("buck", _spec(), f_lo_hz=50e3, f_hi_hz=1e6,
-                   n_coarse=7, golden_iters=8, top_k=3)
+    res = fs.sweep("buck", _spec(), f_lo_hz=50e3, f_hi_hz=1e6, n_coarse=7, golden_iters=8, top_k=3)
 
     # brute-force the same landscape: total(f) = _PMAG_A/f + Psw(f)
     def total(f):
         return _PMAG_A / f + fs._switching_loss_w(48.0, 1.0, 20e-9, f)
+
     fine = [50e3 * (1e6 / 50e3) ** (i / 400) for i in range(401)]
     brute = min(fine, key=total)
     # golden-section should land within a few % of the true argmin
@@ -212,7 +259,9 @@ def test_dropping_switching_term_moves_fsw_higher(monkeypatch):
 def test_sweep_raises_when_everything_saturates(monkeypatch):
     """No feasible (magnetic, fsw): isat below the 1.2x margin everywhere ⇒
     FrequencySweepError carrying per-frequency reasons (never a silent clamp)."""
-    _install_landscape(monkeypatch, isat_a=0.5, pmag_at=lambda f: 1e11 / f)  # isat 0.5 < 1.2*IPEAK(1.0)
+    _install_landscape(
+        monkeypatch, isat_a=0.5, pmag_at=lambda f: 1e11 / f
+    )  # isat 0.5 < 1.2*IPEAK(1.0)
     with pytest.raises(fs.FrequencySweepError) as ei:
         fs.sweep("buck", _spec(), f_lo_hz=50e3, f_hi_hz=1e6, n_coarse=4)
     assert ei.value.reasons  # populated
