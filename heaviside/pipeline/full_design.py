@@ -683,11 +683,19 @@ def _design_ktas_magnetics(
                     _seed_with_isat_margin(seed, _GATE_ISAT_MARGIN), max_results=1)
                 d = designs[0]
             # isat from the designed core at its achieved L; ipeak from the SATURATION DRIVER.
+            # Fail loud: the gate's saturation check is safety-critical (it caught the ABT #12
+            # oversized-inductance bug), and bridge.py's own invariant is that the Isat the gate
+            # consumes RAISES on PyOM rejection. Swallowing this to None silently left isat
+            # unstamped → the gate marks saturation UNAVAILABLE → it never FAILs.
             try:
                 L = float(bridge_mod._harvest_authoritative_inductance(d.mas))
                 isat = bridge_mod._isat_from_mas(d.magnetic, L)
-            except Exception:  # noqa: BLE001 - isat is best-effort; the gate marks it unavailable if absent
-                isat = None
+            except Exception as exc:
+                raise RealizeError(
+                    f"kirchhoff-native: could not compute the saturation current for magnetic "
+                    f"{comp.get('name')!r} from its designed MAS ({type(exc).__name__}: {exc}). "
+                    f"The realism gate's saturation check must not be silently disabled."
+                ) from exc
             # For a TRANSFORMER the flux (hence saturation) is set by the MAGNETIZING current, not the
             # winding LOAD current (which is balanced by the secondary ampere-turns) — abt #12. Use the
             # realized magnetizing-current peak from the designed MAS; fall back to the seed winding peak.
