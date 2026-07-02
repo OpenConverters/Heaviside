@@ -115,11 +115,14 @@ class TestBoostMath:
         )
 
     def test_iL_avg_uses_vin_min(self):
-        """I_L_avg = Iout · Vout / Vin; worst-case at Vin_min."""
+        """I_L_avg = Iout · Vout / (Vin · eta); worst-case at Vin_min."""
         out = enrich_tas_for_realism(_boost_tas(), topology="boost", spec=_boost_spec())
         l1 = out["topology"]["stages"][0]["circuit"]["components"][2]
-        # I_L_avg_max = 2.0 · 48 / 18 = 5.333…
-        assert l1["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(2.0 * 48.0 / 18.0, rel=1e-6)
+        # I_L_avg_max = 2.0 · 48 / (18 · 0.95) = 5.614… (input current rises by
+        # 1/eta; assuming lossless under-sizes the saturation-driver peak).
+        assert l1["ipeak_provenance"]["iL_avg_max_A"] == pytest.approx(
+            2.0 * 48.0 / (18.0 * 0.95), rel=1e-6
+        )
 
     def test_isat_is_pyom_ground_truth(self):
         out = enrich_tas_for_realism(_boost_tas(), topology="boost", spec=_boost_spec())
