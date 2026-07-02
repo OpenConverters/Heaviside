@@ -388,3 +388,20 @@ def test_dielectric_different_technology_warns() -> None:
     spec = next(s for s in PARAM_SPECS["capacitor"] if s.key == "technology")
     result = compare_param(spec, "film-polypropylene", "aluminum-electrolytic-wet")
     assert result["verdict"] == "warn"
+
+
+# ── TCR: judged on |value|, displayed signed ─────────────────────────────────
+
+
+def test_tcr_compared_by_magnitude_not_sign() -> None:
+    from heaviside.pipeline.param_check import PARAM_SPECS, compare_param
+
+    spec = next(s for s in PARAM_SPECS["resistor"] if s.key == "tcr")
+    # A -500 ppm/K carbon film must NOT beat a +100 ppm/K original just
+    # because -500 < 100 numerically.
+    worse = compare_param(spec, 100, -500)
+    assert worse["verdict"] == "fail"
+    assert worse["substitute"] == "-500ppm/°C"  # display keeps the sign
+    # Same band magnitude is a pass regardless of the stored bound's sign.
+    same = compare_param(spec, 100, -100)
+    assert same["verdict"] == "pass"

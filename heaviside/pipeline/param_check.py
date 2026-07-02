@@ -77,6 +77,10 @@ class ParamSpec:
     missing_original: str = "soft"
     # Optional categorical rank map for CLASS_MATCH (higher rank = better).
     class_rank: dict[str, int] | None = None
+    # Compare |value| instead of the signed value. TCR is signed physics
+    # (carbon film is genuinely negative) but its QUALITY is the magnitude:
+    # a −500 ppm/K substitute must not beat a +100 ppm/K original.
+    magnitude: bool = False
 
 
 # ── Dielectric / temperature-characteristic ranking (capacitors) ─────────────
@@ -150,8 +154,9 @@ PARAM_SPECS: dict[str, list[ParamSpec]] = {
     "resistor": [
         # Power rating must be ≥ original; allow 10% shortfall.
         ParamSpec("power_rating", "Power", "W", HIGHER_BETTER, 0.9),
-        # TCR (ppm/°C): lower is better for precision; allow 2×.
-        ParamSpec("tcr", "TCR", "ppm/°C", LOWER_BETTER, 2.0),
+        # TCR (ppm/°C): lower |TCR| is better for precision; allow 2×. Signed
+        # values are real (carbon film is negative) — compare magnitudes.
+        ParamSpec("tcr", "TCR", "ppm/°C", LOWER_BETTER, 2.0, magnitude=True),
     ],
     "magnetic": [
         ParamSpec(
@@ -242,7 +247,10 @@ def compare_param(spec: ParamSpec, orig: Any, sub: Any) -> dict[str, Any]:
         )
     else:
         of, sf = _as_float(orig), _as_float(sub)
-        verdict, note = _compare_numeric(spec, of, sf)
+        # magnitude specs judge |value| but display the signed datasheet value.
+        cmp_o = abs(of) if (spec.magnitude and of is not None) else of
+        cmp_s = abs(sf) if (spec.magnitude and sf is not None) else sf
+        verdict, note = _compare_numeric(spec, cmp_o, cmp_s)
         o_disp = f"{of:g}{spec.unit}" if of is not None else ""
         s_disp = f"{sf:g}{spec.unit}" if sf is not None else ""
     return {
