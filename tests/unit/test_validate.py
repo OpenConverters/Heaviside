@@ -15,16 +15,9 @@ from heaviside.validate import (
     validate_tas_file,
 )
 
-GOLDEN = Path(__file__).resolve().parents[1] / "regression" / "decomposer" / "golden"
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _load_golden(name: str) -> dict:
-    return json.loads((GOLDEN / name).read_text())
 
 
 def _codes(report: Report) -> list[str]:
@@ -51,45 +44,11 @@ def test_registry_builds_with_tas_and_peas_roots() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_tas_only_on_decomposer_golden_buck_is_clean() -> None:
-    """Fresh decomposer output (pre-bridge) for a non-isolated buck
-    must satisfy the TAS root schema with zero violations under
-    ``--tas-only``.
-
-    This is a regression guard for the Phase C stencil cleanup. Earlier
-    iterations allowed a documented carve-out for single-endpoint
-    interStage connections (gate/control singletons emitted by the
-    stencils), but Phase C eliminated those entirely:
-
-      * Step 2 dropped internal-signal singleton connections — the
-        writer auto-synthesises gate nets from controller ``drives``
-        declarations.
-      * Step 3 introduced first-class ``terminal`` components so
-        externalPort connections always have ≥2 endpoints.
-      * Step 4 dropped the ``pins`` field from magnetic components in
-        favour of pin derivation from observed connection endpoints.
-
-    The remaining ``[tas_root] is too long`` violations on bridge
-    topologies (half-bridge, full-bridge, push-pull, DAB) are tracked
-    separately — they require a TAS schema unfreeze (multi-output role
-    expansion) and are exercised by their own regression tests, not
-    this gate.
-
-    Note: strict mode would fail on the placeholder URIs; this test
-    exercises ``--tas-only`` which skips the per-component PEAS / URI
-    shape layers.
-    """
-    tas = _load_golden("buck_48to12_5A.tas.json")
-    report = validate_tas(tas, strict=False)
-
-    if report.violations:
-        pytest.fail(
-            "tas-only validation surfaced violations on a clean buck "
-            "golden — Phase C cleanup is supposed to leave non-bridge "
-            "topologies with zero schema-level issues: "
-            + "; ".join(f"[{v.code}] {v.path}: {v.message}" for v in report.violations)
-        )
-    assert report.ok
+# NOTE: test_tas_only_on_decomposer_golden_buck_is_clean was removed — it
+# validated a golden produced by the MKF-stencil decompose subsystem, which the
+# della-Pollock cutover deleted (see heaviside/decomposer/__init__.py); the
+# golden fixtures were removed in fd0f2d0 and cannot be regenerated. Live TAS
+# validation is covered by the tas_root / strict tests below.
 
 
 def test_tas_root_rejects_missing_topology() -> None:
