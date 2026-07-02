@@ -347,6 +347,23 @@ const PARSERS = {
   connectors: parseConnector,
 }
 
+// Copy text to the clipboard; falls back to execCommand for non-secure
+// contexts (plain-http LAN hosts) where navigator.clipboard is unavailable.
+export async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch (e) {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    ta.remove()
+  }
+}
+
 // A section is worth rendering only if at least one row has content.
 export function sectionVisible(sec) {
   return sec.rows.some((r) => r.str !== undefined || hasAny(r.mtm, r.unit))

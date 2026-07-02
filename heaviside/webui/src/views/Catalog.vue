@@ -400,8 +400,11 @@ onUnmounted(() => window.removeEventListener('hashchange', parseHash))
            @click="openDetail(row, $event)">
           <div class="cat-card-head">
             <span class="cat-mpn mono">{{ row.mpn }}</span>
-            <Tag :severity="row.status === 'production' ? 'success' : 'secondary'"
-                 :value="row.status || '—'" class="cat-status" />
+            <!-- "unknown" = the vendor's parametric data had no lifecycle
+                 field; show no claim rather than a word that reads like one. -->
+            <Tag v-if="row.status && row.status !== 'unknown'"
+                 :severity="row.status === 'production' ? 'success' : 'secondary'"
+                 :value="row.status" class="cat-status" />
           </div>
           <div class="cat-mfr">
             {{ row.manufacturer }}<span v-if="row.tech" class="cat-tech"> · {{ techLabels[row.tech] || row.tech }}</span>

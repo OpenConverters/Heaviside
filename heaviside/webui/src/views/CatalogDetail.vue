@@ -2,10 +2,19 @@
 import { ref, computed, onMounted } from 'vue'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
-import { parseSheet, sectionVisible, fmtMTM, hasAny } from '../datasheetParsers.js'
+import { parseSheet, sectionVisible, fmtMTM, hasAny, copyText } from '../datasheetParsers.js'
 
 const props = defineProps({ mpn: String, category: String })
 const emit = defineEmits(['close'])
+
+const copied = ref(false)
+let _copyTimer = null
+async function copyMpn() {
+  await copyText(sheet.value?.title ?? props.mpn)
+  copied.value = true
+  clearTimeout(_copyTimer)
+  _copyTimer = setTimeout(() => { copied.value = false }, 1500)
+}
 
 const loading = ref(false)
 const error = ref(null)
@@ -44,7 +53,14 @@ const sheet = computed(() =>
       <!-- ── Header ── -->
       <div class="detail-header">
         <div class="detail-mfr mono">{{ sheet.manufacturer }}</div>
-        <div class="detail-mpn">{{ sheet.title }}</div>
+        <div class="detail-mpn">
+          {{ sheet.title }}
+          <button class="copy-btn" :class="{ ok: copied }"
+                  :title="copied ? 'Copied' : 'Copy part number'"
+                  :aria-label="'Copy part number ' + sheet.title" @click="copyMpn">
+            <i class="pi" :class="copied ? 'pi-check' : 'pi-copy'" />
+          </button>
+        </div>
         <div class="detail-tags">
           <Tag v-for="t in sheet.tags" :key="t" :value="t" severity="secondary" class="detail-tag" />
           <Tag v-if="sheet.status" :value="sheet.status"
@@ -145,6 +161,15 @@ const sheet = computed(() =>
   line-height: 1.2;
   margin-bottom: .5rem;
 }
+.copy-btn {
+  background: none; border: 1px solid var(--p-surface-700); border-radius: 5px;
+  color: var(--p-surface-400); cursor: pointer;
+  padding: .18rem .4rem; margin-left: .45rem;
+  font-size: .8rem; line-height: 1; vertical-align: middle;
+  transition: color .12s, border-color .12s;
+}
+.copy-btn:hover { color: var(--ch1); border-color: var(--ch1-deep, #129e8b); }
+.copy-btn.ok { color: var(--ch1); border-color: var(--ch1-deep, #129e8b); }
 .detail-tags { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .6rem; }
 .detail-tag { font-size: .65rem !important; }
 .detail-desc {

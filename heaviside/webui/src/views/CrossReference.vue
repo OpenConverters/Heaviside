@@ -51,14 +51,20 @@ async function run() {
       ;({ job_id } = await api.submitCrossrefUrl({ url: url.value.trim(), target_manufacturer: target.value }))
     } else {
       const text = bomText.value.trim()
-      if (!text) throw new Error('Paste a BOM first — a JSON list or CSV/TSV rows.')
+      if (!text) throw new Error('Paste a BOM first — a JSON list, CSV/TSV rows, or bare part numbers.')
       let bom = null
-      try { bom = JSON.parse(text) } catch (e) { /* not JSON — treat as CSV/TSV */ }
+      try { bom = JSON.parse(text) } catch (e) { /* not JSON — CSV or bare refs */ }
       if (bom) {
         ;({ job_id } = await api.submitCrossref({ source_bom: bom, target_manufacturer: target.value }))
       } else {
-        // Pasted CSV/TSV rows go through the same parser as an uploaded file.
-        const f = new File([text], 'pasted_bom.csv', { type: 'text/csv' })
+        // Bare part numbers (one per line, no delimiters, no header line) get
+        // a synthesized MPN header; anything else is passed through as pasted
+        // CSV/TSV. Both go through the same parser as an uploaded file.
+        const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+        const bareRefs = lines.every((l) => !/[,;\t ]/.test(l)) &&
+          !/^(mpn|part|ref|value|manufacturer|category|type|qty)/i.test(lines[0])
+        const csv = bareRefs ? 'MPN\n' + lines.join('\n') : text
+        const f = new File([csv], 'pasted_bom.csv', { type: 'text/csv' })
         ;({ job_id } = await api.submitCrossrefBom(f, target.value))
       }
     }
@@ -84,10 +90,10 @@ async function run() {
     </div>
 
     <div v-if="mode === 'bom'" class="field" style="margin-top:.4rem">
-      <label class="fld-label">Source BOM (JSON list or CSV/TSV rows)</label>
+      <label class="fld-label">Source BOM (part numbers, CSV/TSV rows, or JSON list)</label>
       <Textarea v-model="bomText" rows="8" style="width:100%"
-                placeholder='[{"ref_des":"L1","component_type":"magnetic","value":"4.7uH"}] — or CSV rows with a header line' />
-      <p class="muted" style="font-size:.8rem">Paste a JSON component list, or CSV/TSV rows with a header line. Recognised columns: MPN / Part Number, Manufacturer, Category/Type, Ref, Value, Voltage.</p>
+                placeholder="CRCW060310K0FKED — bare part numbers (one per line), CSV rows with a header, or a JSON component list" />
+      <p class="muted" style="font-size:.8rem">Paste bare part numbers (one per line), CSV/TSV rows with a header line (recognised columns: MPN / Part Number, Manufacturer, Category/Type, Ref, Value, Voltage), or a JSON component list.</p>
     </div>
     <div v-else-if="mode === 'csv'" class="field" style="margin-top:.4rem">
       <label class="fld-label">BOM file (CSV, TSV, or .xlsx)</label>

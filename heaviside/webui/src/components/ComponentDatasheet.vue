@@ -1,7 +1,7 @@
 <script setup>
 import { ref, watch, computed, onUnmounted } from 'vue'
 import Tag from 'primevue/tag'
-import { parseSheet, sectionVisible, fmtMTM, hasAny } from '../datasheetParsers.js'
+import { parseSheet, sectionVisible, fmtMTM, hasAny, copyText } from '../datasheetParsers.js'
 
 const props = defineProps({
   visible: Boolean,
@@ -29,6 +29,15 @@ watch(() => [props.visible, props.category, props.mpn], async ([vis]) => {
 const sheet = computed(() =>
   data.value ? parseSheet(data.value.category, data.value.data) : null)
 
+const copied = ref(false)
+let _copyTimer = null
+async function copyMpn() {
+  await copyText(sheet.value?.title ?? props.mpn)
+  copied.value = true
+  clearTimeout(_copyTimer)
+  _copyTimer = setTimeout(() => { copied.value = false }, 1500)
+}
+
 // Close on Escape while the drawer is open.
 function onKey(e) { if (e.key === 'Escape') close() }
 watch(() => props.visible, (vis) => {
@@ -54,7 +63,14 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             <!-- ── Header ── -->
             <div class="ds-header">
               <div class="ds-mfr mono">{{ sheet.manufacturer }}</div>
-              <div class="ds-mpn">{{ sheet.title }}</div>
+              <div class="ds-mpn">
+                {{ sheet.title }}
+                <button class="copy-btn" :class="{ ok: copied }"
+                        :title="copied ? 'Copied' : 'Copy part number'"
+                        :aria-label="'Copy part number ' + sheet.title" @click="copyMpn">
+                  <i class="pi" :class="copied ? 'pi-check' : 'pi-copy'" />
+                </button>
+              </div>
               <div class="ds-tags">
                 <Tag v-for="t in sheet.tags" :key="t" :value="t" severity="secondary" class="ds-tag" />
                 <Tag v-if="sheet.status" :value="sheet.status"
@@ -158,6 +174,15 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
 .ds-header { margin-bottom: 1.4rem; }
 .ds-mfr { font-size: .72rem; color: var(--p-surface-400); letter-spacing: .06em; text-transform: uppercase; margin-bottom: .2rem; }
 .ds-mpn { font-size: 1.35rem; font-weight: 700; letter-spacing: .02em; color: var(--p-surface-50); line-height: 1.2; margin-bottom: .5rem; }
+.copy-btn {
+  background: none; border: 1px solid var(--p-surface-700); border-radius: 5px;
+  color: var(--p-surface-400); cursor: pointer;
+  padding: .18rem .4rem; margin-left: .45rem;
+  font-size: .78rem; line-height: 1; vertical-align: middle;
+  transition: color .12s, border-color .12s;
+}
+.copy-btn:hover { color: var(--ch1); border-color: var(--ch1-deep, #1a4a44); }
+.copy-btn.ok { color: var(--ch1); border-color: var(--ch1-deep, #1a4a44); }
 .ds-tags { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .6rem; }
 .ds-tag { font-size: .65rem !important; }
 .ds-desc { margin: 0 0 .6rem; font-size: .76rem; line-height: 1.5; color: var(--p-surface-300); }
