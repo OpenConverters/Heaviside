@@ -2822,6 +2822,74 @@ def _param_verdict(orig: float | None, sub: float | None, *, higher_is_ok: bool)
     return "lower" if higher_is_ok else "differs"
 
 
+# Which flat-record field is a category's "value" (for the report's value row).
+_VALUE_FIELD_BY_CAT = {
+    "capacitor": "capacitance",
+    "resistor": "resistance_Ohm",
+    "magnetic": "inductance",
+    "inductor": "inductance",
+    "chipBead": "inductance",
+}
+
+
+def _fields_from_catalogue(mpn: str, cat: str) -> dict[str, str] | None:
+    """value/voltage/package display strings for an MPN from the internal DB,
+    or ``None`` when the part is not catalogued. A field the catalogue lacks
+    comes back as "" (honest unknown)."""
+    from heaviside.pipeline.guardrails import lookup_part_fields
+
+    rec = lookup_part_fields(mpn, cat)
+    if not rec:
+        return None
+    out = {"value": "", "voltage": "", "package": ""}
+    value_field = _VALUE_FIELD_BY_CAT.get(cat)
+    raw = rec.get(value_field) if value_field else None
+    if isinstance(raw, (int, float)):
+        out["value"] = _humanize_value(str(raw), cat)
+    volts = rec.get("voltage")
+    if isinstance(volts, (int, float)):
+        out["voltage"] = f"{volts:g}V"
+    pkg = rec.get("package")
+    if isinstance(pkg, str):
+        out["package"] = pkg.strip()
+    return out
+
+
+def _ground_row_fields_in_catalogue(state: CrossRefState) -> None:
+    """Replace LLM-echoed original_*/substitute_* value/voltage/package fields
+    with authoritative data before they are rendered or compared.
+
+    The cross-referencer echoes these fields back and, for rows it was handed
+    with only a part number, it INVENTS them (a 5 F / 2.7 V supercapacitor once
+    shipped as "100nF / 630V" with two different fabricated packages). Sources,
+    in order of authority: the user's BOM row (their stated requirement) for the
+    original side; the internal catalogue for both sides; otherwise "" — an
+    honest unknown, never an LLM guess. Runs after the review/correction loops
+    so it grounds the FINAL substitute picks.
+    """
+    bom_by_ref = {r.get("ref_des"): r for r in state.source_bom}
+    for row in state.crossref_result:
+        cat = row.get("component_type", "")
+        ref = row.get("ref_des")
+        bom = bom_by_ref.get(ref) or {}
+        orig_pn = str(row.get("original_pn") or row.get("original_mpn") or "").strip()
+        db_orig = _fields_from_catalogue(orig_pn, cat) if orig_pn else None
+        for field in ("value", "voltage", "package"):
+            bom_val = str(bom.get(field) or "").strip()
+            if bom_val:
+                row[f"original_{field}"] = bom_val
+            elif db_orig is not None:
+                row[f"original_{field}"] = db_orig[field]
+            elif orig_pn:
+                row[f"original_{field}"] = ""  # neither BOM nor catalogue knows
+        sub_pn = str(row.get("substitute_pn") or "").strip()
+        if sub_pn and sub_pn != "no_substitute":
+            db_sub = _fields_from_catalogue(sub_pn, cat)
+            if db_sub is not None:
+                for field in ("value", "voltage", "package"):
+                    row[f"substitute_{field}"] = db_sub[field]
+
+
 def build_match_detail(row: dict[str, Any]) -> dict[str, Any]:
     """Deterministic per-parameter rationale for ONE cross-reference row.
 
@@ -3294,6 +3362,11 @@ def run_crossref_pipeline(
     _say("Learning from this run (persisting accepted substitutions)", 95)
     _stage8_learn(state)
 
+    # Ground the report's value/voltage/package fields in the BOM + internal DB
+    # (the LLM's echoes are unreliable and, for bare-MPN rows, invented). Runs
+    # after the review/correction loops so the FINAL picks are grounded, before
+    # param check + match_detail so comparisons and the report use real data.
+    _ground_row_fields_in_catalogue(state)
     # Electrical-parameter check (ESR, ripple, Rds_on, Qrr, Isat, …): resolve
     # original + substitute values from the internal DB, flag/demote substitutes
     # that fall outside the allowed margin. Runs before match_detail so its

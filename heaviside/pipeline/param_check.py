@@ -220,6 +220,8 @@ def _compare_class(spec: ParamSpec, o: Any, s: Any) -> tuple[str, str]:
         # Neither is a recognised class-2 ceramic code — compare raw technology.
         if on and sn and on != sn:
             return WARN, f"{spec.label}: {o} → {s} (different technology)"
+        if on and sn:
+            return PASS, f"{spec.label}: same technology ({o})"
         return UNVERIFIED, f"{spec.label}: not a recognised dielectric code"
     if s_rank is None:
         return UNVERIFIED, f"{spec.label}: substitute dielectric '{s}' unrecognised"

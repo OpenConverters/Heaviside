@@ -79,6 +79,19 @@ _TAS_FILE_TO_KIND = {
 }
 
 
+def lookup_part_fields(
+    part_number: str,
+    component_kind: str,
+    *,
+    tas_data_dir: Path | None = None,
+) -> dict | None:
+    """Public catalogue lookup: flat record (capacitance, voltage, resistance,
+    inductance, package, manufacturer, …) for an MPN, or ``None`` when the part
+    is not catalogued. Used to ground report fields in real data instead of
+    LLM-echoed values."""
+    return _lookup_tas_part(part_number, component_kind, tas_data_dir=tas_data_dir)
+
+
 def lookup_mpn_category(part_number: str, *, tas_data_dir: Path | None = None) -> str | None:
     """Authoritative CR category for an MPN, from the internal catalogue.
 
@@ -117,10 +130,13 @@ def _flat_record_from_env(env: dict, mi: dict) -> dict:
     cap_val = cap_obj.get("nominal") if isinstance(cap_obj, dict) else cap_obj
     res_obj = elec.get("resistance")
     res_val = res_obj.get("nominal") if isinstance(res_obj, dict) else res_obj
+    ind_obj = elec.get("inductance")
+    ind_val = ind_obj.get("nominal") if isinstance(ind_obj, dict) else ind_obj
     return {
         "capacitance": cap_val,
         "voltage": elec.get("ratedVoltage"),
         "resistance_Ohm": res_val,
+        "inductance": ind_val,
         "package": part_info.get("caseCode") or part_info.get("case"),
         "manufacturer": mi.get("name"),
         "family": mi.get("family") or part_info.get("series"),
