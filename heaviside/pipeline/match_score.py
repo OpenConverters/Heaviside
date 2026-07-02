@@ -125,11 +125,24 @@ def _mpn_env_index(path: Path) -> dict[str, dict]:
 
     index: dict[str, dict] = {}
     for _lineno, env in iter_envelopes(path):
-        for top_key in ("capacitor", "semiconductor", "resistor", "magnetics", "magnetic"):
+        for top_key in (
+            "capacitor",
+            "semiconductor",
+            "resistor",
+            "magnetics",
+            "magnetic",
+            "connector",
+            "varistor",
+            "analog",
+        ):
             sub = env.get(top_key)
             if not isinstance(sub, dict):
                 continue
-            for inner_key in (None, "mosfet", "diode", "igbt"):
+            # `analog` nests the record under a per-row FUNCTION key.
+            inner_keys: tuple = (
+                tuple(sub.keys()) if top_key == "analog" else (None, "mosfet", "diode", "igbt")
+            )
+            for inner_key in inner_keys:
                 record = sub if inner_key is None else sub.get(inner_key)
                 if not isinstance(record, dict):
                     continue

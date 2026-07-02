@@ -196,6 +196,8 @@ def _engineering_notes(comps: list[dict[str, Any]], target: str) -> str:
             "magnetic": "Inductor/Magnetic",
             "mosfet": "MOSFET",
             "diode": "Diode",
+            "connector": "Connector",
+            "analog": "Analog IC",
         }.get(cat, cat.title())
         parts.append(
             f'<h3>{_e(ref)} ({cat_label}) — <span class="mpn">{_e(orig)}</span>'

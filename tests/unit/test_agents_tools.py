@@ -38,6 +38,7 @@ EXPECTED_TOOL_NAMES = {
     "crossref_resistor",
     "crossref_magnetic",
     "crossref_connector",
+    "crossref_analog",
 }
 
 

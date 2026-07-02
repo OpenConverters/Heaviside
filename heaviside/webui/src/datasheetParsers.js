@@ -338,6 +338,93 @@ function parseConnector(env) {
   }
 }
 
+function parseAnalog(env) {
+  // AAS envelopes nest the record under the FUNCTION key
+  // ({ analog: { operationalAmplifier: {...} } }) — find it dynamically.
+  const block = env?.analog ?? {}
+  const subtype = Object.keys(block).find((k) => block[k]?.manufacturerInfo)
+  if (!subtype) return null
+  const rec = block[subtype]
+  const mi = rec.manufacturerInfo ?? {}
+  const di = mi.datasheetInfo ?? {}
+  const p  = di.part ?? {}
+  const el = di.electrical ?? {}
+  const su = el.supply ?? {}
+  const dy = el.dynamics ?? {}
+  const opt = (v) => (v != null ? String(v) : undefined)
+  const yn  = (v) => (typeof v === 'boolean' ? (v ? 'Yes' : 'No') : undefined)
+  // Headline picks the subtype's defining specs; absent ones render '—'.
+  const headline = subtype === 'adc' || subtype === 'dac'
+    ? [
+        { sym: 'Res',  label: 'Resolution',  val: el.resolution != null ? `${el.resolution} bit` : '—' },
+        { sym: 'f_S',  label: subtype === 'adc' ? 'Sample Rate' : 'Update Rate', val: fmtU(el.sampleRate ?? el.updateRate, 'S/s') },
+        { sym: 'Ch',   label: 'Channels',    val: el.numberOfChannels != null ? String(el.numberOfChannels) : '—' },
+      ]
+    : subtype === 'comparator'
+    ? [
+        { sym: 't_pd', label: 'Propagation Delay', val: fmtU(el.propagationDelay, 's') },
+        { sym: 'V_OS', label: 'Input Offset',      val: fmtU(el.inputOffsetVoltage, 'V') },
+        { sym: 'Ch',   label: 'Channels',          val: el.numberOfChannels != null ? String(el.numberOfChannels) : '—' },
+      ]
+    : [
+        { sym: 'GBW',  label: 'Gain-Bandwidth',    val: fmtU(el.gainBandwidthProduct, 'Hz') },
+        { sym: 'V_OS', label: 'Input Offset',      val: fmtU(el.inputOffsetVoltage, 'V') },
+        { sym: 'Ch',   label: 'Channels',          val: el.numberOfChannels != null ? String(el.numberOfChannels ?? el.numberOfSwitches) : '—' },
+      ]
+  return {
+    title: mi.reference ?? p.partNumber ?? '—',
+    manufacturer: mi.name ?? '—',
+    status: mi.status,
+    datasheetUrl: mi.datasheetUrl,
+    description: p.description ?? mi.description,
+    tags: [words(subtype), p.package, el.inputStage, words(el.architecture), words(el.outputStage)].filter(Boolean),
+    headline,
+    sections: [
+      { title: 'Amplifier / Comparator', rows: [
+        { param: 'Gain-Bandwidth Product', sym: 'GBW',  mtm: [null, el.gainBandwidthProduct, null], unit: 'Hz' },
+        { param: 'Slew Rate',              sym: 'SR',   mtm: [null, el.slewRate, null], unit: 'V/s' },
+        { param: 'Input Offset Voltage',   sym: 'V_OS', mtm: [null, el.inputOffsetVoltage, null], unit: 'V' },
+        { param: 'Offset Drift',           sym: 'dV_OS/dT', mtm: [null, el.inputOffsetVoltageDrift, null], unit: 'V/°C' },
+        { param: 'Input Bias Current',     sym: 'I_B',  mtm: [null, el.inputBiasCurrent, null], unit: 'A' },
+        { param: 'CMRR',                   sym: 'CMRR', mtm: [null, null, null], str: el.commonModeRejectionRatio != null ? `${el.commonModeRejectionRatio} dB` : undefined },
+        { param: 'Voltage Noise Density',  sym: 'e_n',  mtm: [null, el.voltageNoiseDensity, null], unit: 'V/√Hz', note: el.voltageNoiseDensityFrequency != null ? `@ ${fmtU(el.voltageNoiseDensityFrequency, 'Hz')}` : null },
+        { param: 'Propagation Delay',      sym: 't_pd', mtm: [null, el.propagationDelay, null], unit: 's' },
+        { param: 'Rail-to-Rail Input',     sym: '', mtm: [null, null, null], str: yn(el.railToRailInput) },
+        { param: 'Rail-to-Rail Output',    sym: '', mtm: [null, null, null], str: yn(el.railToRailOutput) },
+        { param: 'Output Stage',           sym: '', mtm: [null, null, null], str: opt(words(el.outputStage)) },
+        { param: 'Input Stage',            sym: '', mtm: [null, null, null], str: opt(el.inputStage) },
+        { param: 'Gain Range',             sym: 'G', mtm: [null, null, null], str: el.minimumGain != null && el.maximumGain != null ? `${el.minimumGain} … ${el.maximumGain}` : undefined },
+      ]},
+      { title: 'Data Converter', rows: [
+        { param: 'Resolution',   sym: '',    mtm: [null, null, null], str: el.resolution != null ? `${el.resolution} bit` : undefined },
+        { param: 'Architecture', sym: '',    mtm: [null, null, null], str: opt(words(el.architecture)) },
+        { param: 'Sample Rate',  sym: 'f_S', mtm: [null, el.sampleRate, null], unit: 'S/s' },
+        { param: 'Update Rate',  sym: 'f_U', mtm: [null, el.updateRate, null], unit: 'S/s' },
+        { param: 'Settling Time', sym: 't_s', mtm: [null, el.settlingTime, null], unit: 's' },
+        { param: 'SNR',          sym: '',    mtm: [null, null, null], str: dy.signalToNoiseRatio != null ? `${dy.signalToNoiseRatio} dB` : undefined },
+        { param: 'SFDR',         sym: '',    mtm: [null, null, null], str: dy.spuriousFreeDynamicRange != null ? `${dy.spuriousFreeDynamicRange} dB` : undefined },
+      ]},
+      { title: 'Switch / Multiplexer', rows: [
+        { param: 'Configuration',      sym: '',     mtm: [null, null, null], str: opt(el.switchConfiguration ?? el.multiplexerConfiguration) },
+        { param: 'Switches',           sym: '',     mtm: [null, null, null], str: opt(el.numberOfSwitches) },
+        { param: 'On-Resistance',      sym: 'R_ON', mtm: [null, el.onResistance, null], unit: 'Ω' },
+        { param: 'Bandwidth',          sym: 'BW',   mtm: [null, el.bandwidth, null], unit: 'Hz' },
+        { param: 'Off Leakage Current', sym: '',    mtm: [null, el.offLeakageCurrent, null], unit: 'A' },
+      ]},
+      { title: 'Supply', rows: [
+        { param: 'Supply Voltage', sym: 'V_S', mtm: [su.minimumSupplyVoltage ?? null, null, su.maximumSupplyVoltage ?? null], unit: 'V' },
+        { param: 'Quiescent Current per Channel', sym: 'I_Q', mtm: [null, su.quiescentCurrentPerChannel, null], unit: 'A' },
+        { param: 'Channels', sym: '', mtm: [null, null, null], str: opt(el.numberOfChannels) },
+        { param: 'Common-Mode Range', sym: 'V_CM', mtm: [el.commonModeVoltageRange?.minimum ?? null, null, el.commonModeVoltageRange?.maximum ?? null], unit: 'V' },
+      ]},
+      { title: 'Package', rows: [
+        { param: 'Package', sym: '', mtm: [null, null, null], str: opt(p.package) },
+        { param: 'Qualification', sym: '', mtm: [null, null, null], str: opt(p.qualification) },
+      ]},
+    ],
+  }
+}
+
 const PARSERS = {
   mosfets: parseMosfet,
   diodes: parseDiode,
@@ -345,6 +432,7 @@ const PARSERS = {
   resistors: parseRes,
   magnetics: parseMag,
   connectors: parseConnector,
+  analog: parseAnalog,
 }
 
 // Copy text to the clipboard; falls back to execCommand for non-secure

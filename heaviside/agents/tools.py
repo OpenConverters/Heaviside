@@ -402,6 +402,7 @@ def _crossref_search_impl(
         "resistor": "resistors.ndjson",
         "magnetic": "magnetics.ndjson",
         "connector": "connectors.ndjson",
+        "analog": "analog_ics.ndjson",
     }
     if category not in category_files:
         raise ValueError(
@@ -695,6 +696,96 @@ def _crossref_connector_impl(
     )
 
 
+def _crossref_analog_impl(
+    target_manufacturer: str,
+    subtype: str | None = None,
+    channels: int | None = None,
+    min_supply_v: float | None = None,
+    max_supply_v: float | None = None,
+    max_results: int = 50,
+) -> str:
+    """Query the internal analog-IC DB from a target manufacturer.
+
+    Args:
+        target_manufacturer: Manufacturer to search (substring match,
+            case/punctuation-insensitive).
+        subtype: Optional FUNCTION filter — one of "operationalAmplifier",
+            "comparator", "instrumentationAmplifier", "differenceAmplifier",
+            "programmableGainAmplifier", "adc", "dac", "analogSwitch",
+            "multiplexer", "multiplier". ALWAYS pass it when the original's
+            function is known — an op-amp is never a comparator substitute.
+        channels: Optional exact channel count (single=1, dual=2, quad=4).
+        min_supply_v: Candidates whose MAXIMUM supply voltage is below this
+            are dropped (the substitute must reach the original's rail).
+        max_supply_v: Candidates whose MINIMUM supply voltage is above this
+            are dropped (the substitute must still run at the low rail).
+        max_results: Cap on returned candidates (truncation is flagged in
+            the response, never silent).
+
+    Returns:
+        JSON string with ``total_matches``, ``candidates`` (mpn, subtype,
+        channels, supply range, gbw, slew_rate, input_offset_voltage,
+        package, …) and a ``truncated`` flag.
+    """
+    import json as _json
+    import os
+    from pathlib import Path
+
+    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.pipeline.crossref_pipeline import (
+        _analog_attrs,
+        _extract_manufacturer,
+        _normalize_manufacturer,
+        _summarize_candidate,
+    )
+
+    tas_dir = Path(
+        os.environ.get(
+            "HEAVISIDE_TAS_DATA_DIR",
+            str(Path(__file__).resolve().parents[2] / "TAS" / "data"),
+        )
+    )
+    path = tas_dir / "analog_ics.ndjson"
+
+    target = _normalize_manufacturer(target_manufacturer)
+    matches: list[dict] = []
+    for _lineno, env in iter_envelopes(path):
+        mfr = _extract_manufacturer(env, "analog")
+        if not mfr or target not in _normalize_manufacturer(mfr):
+            continue
+        attrs = _analog_attrs(env)
+        if subtype is not None and attrs.get("subtype") != subtype:
+            continue
+        if channels is not None and attrs.get("channels") not in (None, channels):
+            continue
+        if (
+            min_supply_v is not None
+            and attrs.get("supply_max") is not None
+            and float(attrs["supply_max"]) < min_supply_v
+        ):
+            continue
+        if (
+            max_supply_v is not None
+            and attrs.get("supply_min") is not None
+            and float(attrs["supply_min"]) > max_supply_v
+        ):
+            continue
+        matches.append(env)
+
+    n = max(1, min(int(max_results), 200))
+    summaries = [_summarize_candidate(env, "analog") for env in matches[:n]]
+    return _json.dumps(
+        {
+            "category": "analog",
+            "target_manufacturer": target_manufacturer,
+            "total_matches": len(matches),
+            "returned": len(summaries),
+            "truncated": len(matches) > n,
+            "candidates": summaries,
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Strands decoration (the agent-facing surface)
 # ---------------------------------------------------------------------------
@@ -713,6 +804,7 @@ crossref_capacitor = tool(_crossref_capacitor_impl, name="crossref_capacitor")
 crossref_resistor = tool(_crossref_resistor_impl, name="crossref_resistor")
 crossref_magnetic = tool(_crossref_magnetic_impl, name="crossref_magnetic")
 crossref_connector = tool(_crossref_connector_impl, name="crossref_connector")
+crossref_analog = tool(_crossref_analog_impl, name="crossref_analog")
 
 
 # ---------------------------------------------------------------------------
@@ -737,6 +829,7 @@ TOOL_REGISTRY: dict[str, Any] = {
     "crossref_resistor": crossref_resistor,
     "crossref_magnetic": crossref_magnetic,
     "crossref_connector": crossref_connector,
+    "crossref_analog": crossref_analog,
 }
 
 
@@ -757,6 +850,7 @@ RAW_FUNCTIONS: dict[str, Any] = {
     "crossref_resistor": _crossref_resistor_impl,
     "crossref_magnetic": _crossref_magnetic_impl,
     "crossref_connector": _crossref_connector_impl,
+    "crossref_analog": _crossref_analog_impl,
 }
 
 

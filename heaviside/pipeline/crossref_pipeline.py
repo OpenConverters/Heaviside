@@ -93,6 +93,7 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         "chipBead": "magnetics.ndjson",  # subtype-filtered at scan time
         "varistor": "varistors.ndjson",
         "connector": "connectors.ndjson",
+        "analog": "analog_ics.ndjson",
     }
 
     target_mfr_lower = _normalize_manufacturer(state.target_manufacturer)
@@ -156,6 +157,11 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         src_env = source_env_by_key.get((cat, mpn)) if mpn else None
         if src_env is not None:
             dims = _extract_dimensions(src_env, cat)
+            # Attribute-matched categories (connectors: family/positions/
+            # pitch/gender; analog: function/channels/supply) rank against
+            # the ORIGINAL's catalogue record, not a parsed value string —
+            # keep the source envelope on the row for the ranker.
+            comp["_source_env"] = src_env
         if dims is None:
             eia = _eia_dims_from_case(comp.get("package"))
             if eia:
@@ -379,37 +385,49 @@ def _chip_bead_impedance_at_100mhz(env: dict[str, Any]) -> float | None:
         return None
 
 
-def _extract_manufacturer(env: dict[str, Any], category: str) -> str | None:
-    """Extract manufacturer name from a TAS envelope."""
-    paths = {
-        "mosfet": ("semiconductor", "mosfet", "manufacturerInfo", "name"),
-        "diode": ("semiconductor", "diode", "manufacturerInfo", "name"),
-        "capacitor": ("capacitor", "manufacturerInfo", "name"),
-        "resistor": ("resistor", "manufacturerInfo", "name"),
-        "magnetic": ("magnetic", "manufacturerInfo", "name"),
-        "chipBead": ("magnetic", "manufacturerInfo", "name"),
-        "varistor": ("varistor", "manufacturerInfo", "name"),
-        "connector": ("connector", "manufacturerInfo", "name"),
-    }
-    keys = paths.get(category, ())
-    cur: Any = env
-    for k in keys:
-        if not isinstance(cur, dict):
-            return None
-        cur = cur.get(k)
-    return cur if isinstance(cur, str) else None
+def _analog_subtype_block(analog_block: Any) -> tuple[str | None, dict[str, Any] | None]:
+    """(subtype, record) from an AAS analog block ``{"<subtype>": {...}}``.
+
+    The analog envelope nests one level deeper than the other categories and
+    the inner key is the FUNCTION (operationalAmplifier / comparator / adc /
+    …), which varies per row — so the fixed-path descent the other categories
+    use can't reach it."""
+    if isinstance(analog_block, dict):
+        for key, record in analog_block.items():
+            if isinstance(record, dict) and "manufacturerInfo" in record:
+                return key, record
+    return None, None
 
 
-def _envelope_reference(env: dict[str, Any], category: str) -> str | None:
-    """Extract the part reference (MPN) from a TAS envelope."""
+def _category_record(env: dict[str, Any], category: str) -> dict[str, Any] | None:
+    """The record dict holding ``manufacturerInfo`` for a TAS envelope,
+    descending the category's base path (and the analog subtype level)."""
     cur: Any = env
     for k in _BASE_PATHS.get(category, ()):
         if not isinstance(cur, dict):
             return None
         cur = cur.get(k)
-    if not isinstance(cur, dict):
+    if category == "analog":
+        _, cur = _analog_subtype_block(cur)
+    return cur if isinstance(cur, dict) else None
+
+
+def _extract_manufacturer(env: dict[str, Any], category: str) -> str | None:
+    """Extract manufacturer name from a TAS envelope."""
+    record = _category_record(env, category)
+    if record is None:
         return None
-    mi = cur.get("manufacturerInfo")
+    mi = record.get("manufacturerInfo")
+    name = mi.get("name") if isinstance(mi, dict) else None
+    return name if isinstance(name, str) else None
+
+
+def _envelope_reference(env: dict[str, Any], category: str) -> str | None:
+    """Extract the part reference (MPN) from a TAS envelope."""
+    record = _category_record(env, category)
+    if record is None:
+        return None
+    mi = record.get("manufacturerInfo")
     if isinstance(mi, dict):
         ref = mi.get("reference")
         return ref if isinstance(ref, str) else None
@@ -458,29 +476,22 @@ def _extract_value(env: dict[str, Any], category: str) -> float | None:
 def _extract_package(env: dict[str, Any], category: str) -> str:
     """Extract package/case string from a TAS envelope."""
     try:
-        base_paths = {
-            "capacitor": ("capacitor",),
-            "resistor": ("resistor",),
-            "magnetic": ("magnetic",),
-            "chipBead": ("magnetic",),
-            "varistor": ("varistor",),
-            "connector": ("connector",),
-            "mosfet": ("semiconductor", "mosfet"),
-            "diode": ("semiconductor", "diode"),
-        }
-        cur: Any = env
-        for k in base_paths.get(category, ()):
-            cur = cur[k]
-        part = cur["manufacturerInfo"]["datasheetInfo"]["part"]
+        record = _category_record(env, category)
+        if record is None:
+            return ""
+        part = record["manufacturerInfo"]["datasheetInfo"]["part"]
         # Magnetics carry the size under `caseCode` (Würth WE-PD "1260" etc.),
-        # chip passives under `case` (EIA "0402"…). Accept either so the
-        # package signal isn't silently empty for one family.
-        return part.get("case") or part.get("caseCode") or ""
+        # chip passives under `case` (EIA "0402"…), analog ICs under `package`
+        # (SOIC/TSSOP…). Accept any so the package signal isn't silently empty
+        # for one family.
+        return part.get("case") or part.get("caseCode") or part.get("package") or ""
     except (KeyError, TypeError):
         return ""
 
 
 # Category → path to the manufacturerInfo block inside a TAS envelope.
+# `analog` nests ONE MORE level (the subtype key) below its base path —
+# always descend via _category_record, never by this path alone.
 _BASE_PATHS: dict[str, tuple[str, ...]] = {
     "capacitor": ("capacitor",),
     "resistor": ("resistor",),
@@ -490,6 +501,7 @@ _BASE_PATHS: dict[str, tuple[str, ...]] = {
     "connector": ("connector",),
     "mosfet": ("semiconductor", "mosfet"),
     "diode": ("semiconductor", "diode"),
+    "analog": ("analog",),
 }
 
 
@@ -557,10 +569,8 @@ def _extract_dimensions(
     """
     length = width = height = None
     try:
-        cur: Any = env
-        for k in _BASE_PATHS.get(category, ()):
-            cur = cur[k]
-        mech = cur["manufacturerInfo"]["datasheetInfo"].get("mechanical") or {}
+        record = _category_record(env, category)
+        mech = (record or {})["manufacturerInfo"]["datasheetInfo"].get("mechanical") or {}
     except (KeyError, TypeError):
         mech = {}
     if isinstance(mech, dict):
@@ -854,6 +864,389 @@ def _effective_saturation_current(cand_elec: dict[str, Any]) -> float | None:
     return isat
 
 
+def _ident_norm(v: Any) -> str:
+    """Normalize an identity attribute for comparison: case/space/dash/underscore
+    insensitive. Strips formatting only — never meaning."""
+    return str(v).strip().lower().replace("-", "").replace(" ", "").replace("_", "")
+
+
+def _attr_mismatch_str(a: dict[str, Any], b: dict[str, Any], key: str) -> bool:
+    """True when BOTH sides carry the attribute and they differ (drop the
+    candidate). A missing side is NOT a mismatch here — it is surfaced later
+    as an unverified parameter by the param-check stage."""
+    av, bv = a.get(key), b.get(key)
+    if av is None or bv is None:
+        return False
+    return _ident_norm(av) != _ident_norm(bv)
+
+
+def _attr_mismatch_num(a: dict[str, Any], b: dict[str, Any], key: str, rel_tol: float) -> bool:
+    av, bv = a.get(key), b.get(key)
+    if av is None or bv is None:
+        return False
+    try:
+        af, bf = float(av), float(bv)
+    except (TypeError, ValueError):
+        return False
+    if af == bf:
+        return False
+    denom = max(abs(af), abs(bf))
+    return denom == 0 or abs(af - bf) / denom > rel_tol
+
+
+def _connector_attrs(env: dict[str, Any]) -> dict[str, Any]:
+    """Substitution-relevant attributes of a connector envelope (absent → key
+    omitted, never a fabricated default). Sparse structured fields (pitch,
+    gender, mounting) are backfilled from the vendor's OWN catalogue
+    description text — grounded in the record, not invented."""
+    try:
+        mi = env["connector"]["manufacturerInfo"]
+        ds = mi["datasheetInfo"]
+    except (KeyError, TypeError):
+        return {}
+    mech = ds.get("mechanical") or {}
+    elec = ds.get("electrical") or {}
+    part = ds.get("part") or {}
+    fd = ds.get("familyDetails") or {}
+    temp = (ds.get("environmental") or {}).get("operatingTemperature") or {}
+    out = {
+        "family": fd.get("family"),
+        "interface_standard": fd.get("interfaceStandard"),
+        "series": part.get("series"),
+        "positions": mech.get("positions"),
+        "pitch": mech.get("pitch"),  # SI metres
+        "polarity": part.get("matingPolarity"),
+        "mounting": mech.get("mountingStyle"),
+        "current": elec.get("ratedCurrentPerContact"),
+        "voltage": elec.get("ratedVoltage"),
+        "temp_min": temp.get("minimum"),
+        "temp_max": temp.get("maximum"),
+        "cycles": mech.get("matingCycles"),
+    }
+    out = {k: v for k, v in out.items() if v is not None}
+    missing = {"pitch", "polarity", "mounting"} - set(out)
+    if missing:
+        desc = " ".join(
+            str(x) for x in (mi.get("description"), part.get("description")) if x
+        )
+        if desc:
+            signals = _connector_signals_from_text(desc)
+            for key in missing:
+                if key in signals:
+                    out[key] = signals[key]
+    return out
+
+
+# Free-text fallbacks for originals that are not in the internal catalogue —
+# a BOM description like "Header, 2.54mm pitch, 10POS, vertical, receptacle"
+# still yields hard gates. Conservative: only unambiguous signals are used.
+_CONN_POSITIONS_RE = re.compile(
+    r"(\d+)\s*(?:pos(?:ition)?s?|way|ckt|circuits?|contacts?|pins?|p)\b", re.I
+)
+_CONN_PITCH_LABELLED_RE = re.compile(
+    r"(?:pitch[^0-9]{0,6}(\d+(?:\.\d+)?)\s*mm)|(?:(\d+(?:\.\d+)?)\s*mm\s*pitch)", re.I
+)
+_CONN_MM_RE = re.compile(r"(\d+(?:\.\d+)?)\s*mm\b", re.I)
+_CONN_FAMILY_WORDS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"terminal\s*block|screw\s*terminal", re.I), "terminalBlock"),
+    (re.compile(r"card\s*edge", re.I), "cardEdge"),
+    (re.compile(r"ffc|fpc|flat\s*flex", re.I), "fpcFfc"),
+    (re.compile(r"usb|rj45|rj-45|modular\s*jack|d-?sub|db\d{1,2}|pcie|hdmi|sata|sfp", re.I), "dataInterface"),
+    (re.compile(r"\bsma\b|\bbnc\b|\bmcx\b|\bmmcx\b|fakra|coax", re.I), "rf"),
+    (re.compile(r"wire[\s-]*to[\s-]*board|crimp", re.I), "wireToBoard"),
+    (re.compile(r"board[\s-]*to[\s-]*board|mezzanine", re.I), "boardToBoard"),
+    (re.compile(r"\bm8\b|\bm12\b|circular", re.I), "circular"),
+    (re.compile(r"header|socket\s*strip|pin\s*strip", re.I), "pinHeaderSocket"),
+]
+_CONN_STANDARD_WORDS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"usb[\s-]*c|type[\s-]*c", re.I), "USB-C"),
+    (re.compile(r"\busb\b", re.I), "USB"),
+    (re.compile(r"rj-?45|modular\s*jack", re.I), "RJ45"),
+    (re.compile(r"d-?sub|db\d{1,2}", re.I), "D-Sub"),
+    (re.compile(r"pcie|pci\s*express", re.I), "PCIe"),
+    (re.compile(r"fakra", re.I), "FAKRA"),
+    (re.compile(r"sfp\+", re.I), "SFP+"),
+]
+
+
+def _connector_signals_from_text(text: str) -> dict[str, Any]:
+    """Connector attributes recoverable from free text (a BOM row's columns or
+    a vendor's catalogue description). Only unambiguous signals are extracted;
+    anything else stays unknown."""
+    out: dict[str, Any] = {}
+    m = _CONN_POSITIONS_RE.search(text)
+    if m:
+        out["positions"] = int(m.group(1))
+    m = _CONN_PITCH_LABELLED_RE.search(text)
+    if m:
+        out["pitch"] = float(m.group(1) or m.group(2)) * 1e-3
+    else:
+        mm = _CONN_MM_RE.findall(text)
+        # A single mm figure in a connector row is (almost always) the pitch;
+        # several mm figures are dimensions — too ambiguous, leave unknown.
+        if len(mm) == 1 and 0.2 <= float(mm[0]) <= 12.0:
+            out["pitch"] = float(mm[0]) * 1e-3
+    low = text.lower()
+    if re.search(r"\breceptacle\b|\bfemale\b|\bsocket\b|\bjack\b", low):
+        out["polarity"] = "female"
+    elif re.search(r"\bplug\b|\bmale\b|\bheader\b", low):
+        out["polarity"] = "male"
+    for pat, fam in _CONN_FAMILY_WORDS:
+        if pat.search(text):
+            out["family"] = fam
+            break
+    for pat, std in _CONN_STANDARD_WORDS:
+        if pat.search(text):
+            out["interface_standard"] = std
+            break
+    if re.search(r"\bsmt\b|\bsmd\b|surface\s*mount", low):
+        out["mounting"] = "smt"
+    elif re.search(r"\btht\b|through[\s-]*hole", low):
+        out["mounting"] = "tht"
+    return out
+
+
+def _connector_attrs_from_text(comp: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort connector attributes from the BOM row's free text — the
+    fallback when the original part is not in the internal catalogue."""
+    text = " ".join(
+        str(v)
+        for k, v in comp.items()
+        if v and not k.startswith("_") and isinstance(v, (str, int, float))
+    )
+    return _connector_signals_from_text(text) if text.strip() else {}
+
+
+def _rank_connector_candidates(
+    comp: dict[str, Any],
+    all_candidates: list[dict[str, Any]],
+    max_results: int,
+) -> list[dict[str, Any]]:
+    """Connector-specific ranking: identity attributes are HARD GATES.
+
+    A connector substitute must match the original's family, contact count,
+    gender, pitch, interface standard and mounting style exactly — there is no
+    "nearby" connector the way there is a nearby E-series resistor. Ratings
+    (current/voltage/temperature/mating cycles) then rank the survivors.
+    Knows the original from its catalogue envelope (preferred) or from
+    unambiguous BOM text. When NOTHING is known about the original, returns []
+    — offering 50 arbitrary connectors to the cross-referencer would invite a
+    plausible-looking wrong pick (fail loud, not fabricate).
+    """
+    src_env = comp.get("_source_env")
+    attrs = _connector_attrs(src_env) if isinstance(src_env, dict) else {}
+    if not attrs:
+        attrs = _connector_attrs_from_text(comp)
+    if not attrs:
+        return []
+
+    # Commodity pin headers straddle the pinHeaderSocket/boardToBoard boundary
+    # across vendor taxonomies — gate on the GROUP, not the raw label.
+    _header_group = {"pinheadersocket": "headerlike", "boardtoboard": "headerlike"}
+
+    def _family_group(v: Any) -> str:
+        n = _ident_norm(v)
+        return _header_group.get(n, n)
+
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for cand in all_candidates:
+        c = _connector_attrs(cand)
+        if not c:
+            continue
+        # Identity hard gates — mismatch on any known-both attribute drops it.
+        if (
+            attrs.get("family") is not None
+            and c.get("family") is not None
+            and _family_group(attrs["family"]) != _family_group(c["family"])
+        ):
+            continue
+        if _attr_mismatch_num(attrs, c, "positions", 0.0):
+            continue
+        if _attr_mismatch_str(attrs, c, "polarity"):
+            continue
+        if _attr_mismatch_num(attrs, c, "pitch", 0.02):
+            continue
+        if _attr_mismatch_str(attrs, c, "interface_standard"):
+            continue
+        if _attr_mismatch_str(attrs, c, "mounting"):
+            continue
+        score = 0.0
+        # Ratings: substitute must meet or beat the original.
+        oc, cc = attrs.get("current"), c.get("current")
+        if oc is not None and cc is not None and float(cc) < float(oc):
+            score += 5.0
+        ov, cv = attrs.get("voltage"), c.get("voltage")
+        if ov is not None and cv is not None and float(cv) < float(ov):
+            score += 3.0
+        if (
+            attrs.get("temp_min") is not None
+            and c.get("temp_min") is not None
+            and float(c["temp_min"]) > float(attrs["temp_min"])
+        ):
+            score += 1.0
+        if (
+            attrs.get("temp_max") is not None
+            and c.get("temp_max") is not None
+            and float(c["temp_max"]) < float(attrs["temp_max"])
+        ):
+            score += 1.0
+        ocy, ccy = attrs.get("cycles"), c.get("cycles")
+        if ocy is not None and ccy is not None and float(ccy) < 0.5 * float(ocy):
+            score += 1.0
+        # Prefer candidates whose identity attributes are VERIFIABLE: an
+        # unknown pitch/positions can't be gated above and would surface as
+        # an unverified (→ partial) later.
+        for key, pen in (("positions", 1.0), ("pitch", 0.75), ("polarity", 0.5), ("family", 0.5)):
+            if attrs.get(key) is not None and c.get(key) is None:
+                score += pen
+        # Same mating system (series) is the ideal substitution.
+        if (
+            attrs.get("series")
+            and c.get("series")
+            and _ident_norm(attrs["series"]) == _ident_norm(c["series"])
+        ):
+            score -= 1.0
+        scored.append((score, cand))
+    scored.sort(key=lambda x: x[0])
+    return [c for _, c in scored[:max_results]]
+
+
+def _analog_attrs(env: dict[str, Any]) -> dict[str, Any]:
+    """Substitution-relevant attributes of an AAS analog envelope."""
+    subtype, record = _analog_subtype_block((env or {}).get("analog"))
+    if record is None:
+        return {}
+    ds = (record.get("manufacturerInfo") or {}).get("datasheetInfo") or {}
+    elec = ds.get("electrical") or {}
+    supply = elec.get("supply") or {}
+    out = {
+        "subtype": subtype,
+        "channels": elec.get("numberOfChannels"),
+        "supply_min": supply.get("minimumSupplyVoltage"),
+        "supply_max": supply.get("maximumSupplyVoltage"),
+        "gbw": elec.get("gainBandwidthProduct"),
+        "slew": elec.get("slewRate"),
+        "vos": elec.get("inputOffsetVoltage"),
+        "package": (ds.get("part") or {}).get("package"),
+        "output_stage": elec.get("outputStage"),
+        "resolution": elec.get("resolution"),
+        "sample_rate": elec.get("sampleRate"),
+        "tpd": elec.get("propagationDelay"),
+    }
+    return {k: v for k, v in out.items() if v is not None}
+
+
+_ANALOG_TEXT_SUBTYPE: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"instrumentation\s*amp", re.I), "instrumentationAmplifier"),
+    (re.compile(r"difference\s*amp", re.I), "differenceAmplifier"),
+    (re.compile(r"programmable\s*gain", re.I), "programmableGainAmplifier"),
+    (re.compile(r"op[\s-]*amp|operational\s*amp", re.I), "operationalAmplifier"),
+    (re.compile(r"comparator", re.I), "comparator"),
+    (re.compile(r"\badc\b|analog[\s-]*to[\s-]*digital", re.I), "adc"),
+    (re.compile(r"\bdac\b|digital[\s-]*to[\s-]*analog", re.I), "dac"),
+    (re.compile(r"multiplexer|\bmux\b", re.I), "multiplexer"),
+    (re.compile(r"analog\s*switch", re.I), "analogSwitch"),
+]
+
+
+def _analog_attrs_from_text(comp: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort analog-IC attributes (function, channel count) from the BOM
+    row's free text."""
+    text = " ".join(
+        str(v)
+        for k, v in comp.items()
+        if v and not k.startswith("_") and isinstance(v, (str, int, float))
+    )
+    out: dict[str, Any] = {}
+    for pat, subtype in _ANALOG_TEXT_SUBTYPE:
+        if pat.search(text):
+            out["subtype"] = subtype
+            break
+    low = text.lower()
+    if "quad" in low:
+        out["channels"] = 4
+    elif "dual" in low:
+        out["channels"] = 2
+    elif re.search(r"\bsingle\b", low):
+        out["channels"] = 1
+    return out
+
+
+def _rank_analog_candidates(
+    comp: dict[str, Any],
+    all_candidates: list[dict[str, Any]],
+    max_results: int,
+) -> list[dict[str, Any]]:
+    """Analog-IC ranking: function and channel count are HARD GATES (a
+    comparator never substitutes an op-amp; a quad never substitutes a dual);
+    the supply window must cover the original's; dynamic specs (GBW, slew,
+    Vos, sample rate) rank the survivors by log-distance so a 10× slower part
+    ranks behind a 1.2× one. Returns [] when nothing is known about the
+    original — no honest ranking exists."""
+    import math
+
+    src_env = comp.get("_source_env")
+    attrs = _analog_attrs(src_env) if isinstance(src_env, dict) else {}
+    if not attrs:
+        attrs = _analog_attrs_from_text(comp)
+    if not attrs:
+        return []
+
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for cand in all_candidates:
+        c = _analog_attrs(cand)
+        if not c:
+            continue
+        if _attr_mismatch_str(attrs, c, "subtype"):
+            continue
+        if _attr_mismatch_num(attrs, c, "channels", 0.0):
+            continue
+        if _attr_mismatch_str(attrs, c, "output_stage"):
+            continue
+        score = 0.0
+        # Supply window must cover the original's operating window.
+        if (
+            attrs.get("supply_min") is not None
+            and c.get("supply_min") is not None
+            and float(c["supply_min"]) > float(attrs["supply_min"]) + 0.3
+        ):
+            score += 3.0
+        if (
+            attrs.get("supply_max") is not None
+            and c.get("supply_max") is not None
+            and float(c["supply_max"]) < float(attrs["supply_max"]) * 0.9
+        ):
+            score += 3.0
+        # Dynamic specs: log-distance keeps decades comparable.
+        for key in ("gbw", "slew", "sample_rate", "tpd"):
+            o, cv = attrs.get(key), c.get(key)
+            if o and cv and float(o) > 0 and float(cv) > 0:
+                score += abs(math.log10(float(cv) / float(o)))
+            elif o and not cv:
+                score += 1.0  # unverifiable dynamic spec
+        # Precision: only a WORSE offset costs (a better one is free).
+        o, cv = attrs.get("vos"), c.get("vos")
+        if o and cv and float(o) > 0 and float(cv) > float(o):
+            score += min(math.log10(float(cv) / float(o)) + 0.5, 2.5)
+        # Data converters: resolution is a floor.
+        if attrs.get("resolution") and c.get("resolution"):
+            if int(c["resolution"]) < int(attrs["resolution"]):
+                score += 5.0
+            else:
+                score += 0.2 * (int(c["resolution"]) - int(attrs["resolution"]))
+        if (
+            attrs.get("package")
+            and c.get("package")
+            and _ident_norm(attrs["package"]) != _ident_norm(c["package"])
+        ):
+            score += 0.3
+        if attrs.get("channels") is not None and c.get("channels") is None:
+            score += 1.0
+        scored.append((score, cand))
+    scored.sort(key=lambda x: x[0])
+    return [c for _, c in scored[:max_results]]
+
+
 def _rank_candidates(
     comp: dict[str, Any],
     category: str,
@@ -867,6 +1260,13 @@ def _rank_candidates(
         parse_inductance,
         parse_resistance,
     )
+
+    # Connectors and analog ICs are matched on identity attributes, not a
+    # parsed value string — they have their own rankers with hard gates.
+    if category == "connector":
+        return _rank_connector_candidates(comp, all_candidates, max_results)
+    if category == "analog":
+        return _rank_analog_candidates(comp, all_candidates, max_results)
 
     value_str = str(comp.get("value", ""))
     package = str(comp.get("package", "")).lower()
@@ -887,10 +1287,6 @@ def _rank_candidates(
         from heaviside.pipeline.value_parse import parse_voltage
 
         target_val = parse_voltage(value_str)
-    elif category == "connector" and value_str:
-        from heaviside.pipeline.value_parse import parse_current
-
-        target_val = parse_current(value_str)
 
     if target_val is None:
         return all_candidates[:max_results]
@@ -1056,19 +1452,6 @@ def _rank_candidates(
                     rc = cand_elec.get("ratedCurrents")
                     rated_i = rc[0] if isinstance(rc, list) and rc else None
                     if rated_i and stress.i_rms and float(rated_i) < stress.i_rms:
-                        stress_penalty += 3.0
-                elif category == "connector":
-                    cand_elec = (
-                        cand.get("connector", {})
-                        .get("manufacturerInfo", {})
-                        .get("datasheetInfo", {})
-                        .get("electrical", {})
-                    )
-                    i_per_contact = cand_elec.get("ratedCurrentPerContact")
-                    if i_per_contact and stress.i_peak and float(i_per_contact) < stress.i_peak:
-                        stress_penalty += 5.0
-                    v_rated = cand_elec.get("ratedVoltage")
-                    if v_rated and stress.v_peak and float(v_rated) < stress.v_peak:
                         stress_penalty += 3.0
             except (KeyError, TypeError, ValueError):
                 pass
@@ -1345,7 +1728,17 @@ def _build_bom_for_llm(state: CrossRefState) -> list[dict[str, Any]]:
             entry["_tas_candidates"] = _candidate_summaries_for_llm(
                 candidates, cat, source_dims, limit=10
             )
+        # Connector/analog rows: the BOM carries no value/voltage that could
+        # describe the part, so hand the LLM the ORIGINAL's catalogue summary
+        # (family, positions, pitch, gender / function, channels, GBW, …) to
+        # compare candidates against — real data, not an LLM recollection.
+        src_env = comp.get("_source_env")
+        if cat in ("connector", "analog") and isinstance(src_env, dict):
+            orig_specs = _summarize_candidate(src_env, cat)
+            if orig_specs:
+                entry["_original_specs"] = orig_specs
         entry.pop("_source_dims_m", None)  # internal-only: don't leak to the LLM
+        entry.pop("_source_env", None)  # raw catalogue envelope: internal-only
         # Inject simulation stress data into the LLM prompt
         stress = state.stress_by_ref.get(ref)
         if stress:
@@ -1690,22 +2083,69 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             pass
     elif category == "connector":
         try:
-            conn = env["connector"]
-            mi = conn["manufacturerInfo"]
-            ds = mi["datasheetInfo"]
-            elec = ds["electrical"]
-            mech = ds.get("mechanical", {})
-            part = ds.get("part", {})
-            fd = ds.get("familyDetails", {})
+            mi = env["connector"]["manufacturerInfo"]
+            elec = mi["datasheetInfo"]["electrical"]
+            # Same attribute extractor as the ranker (incl. the description-
+            # text backfill for sparse pitch/gender/mounting) so the ranking
+            # gates and the param-check verdicts never disagree.
+            attrs = _connector_attrs(env)
+            cr = elec.get("contactResistance")
+            cr_val = (cr.get("maximum") or cr.get("nominal")) if isinstance(cr, dict) else cr
             summary = {
                 "mpn": mi.get("reference", "?"),
-                "family": fd.get("family"),
-                "positions": mech.get("positions"),
-                "pitch_mm": round(mech["pitch"] * 1e3, 2) if mech.get("pitch") else None,
-                "rated_current_A": elec.get("ratedCurrentPerContact"),
-                "rated_voltage_V": elec.get("ratedVoltage"),
-                "mounting": mech.get("mountingStyle"),
-                "polarity": part.get("matingPolarity"),
+                "family": attrs.get("family"),
+                "series": attrs.get("series"),
+                "interface_standard": attrs.get("interface_standard"),
+                "positions": attrs.get("positions"),
+                "pitch_mm": round(attrs["pitch"] * 1e3, 3) if attrs.get("pitch") else None,
+                "rated_current_A": attrs.get("current"),
+                "rated_voltage_V": attrs.get("voltage"),
+                "mounting": attrs.get("mounting"),
+                "polarity": attrs.get("polarity"),
+                "temp_min_C": attrs.get("temp_min"),
+                "temp_max_C": attrs.get("temp_max"),
+                "mating_cycles": attrs.get("cycles"),
+                "contact_resistance": cr_val,
+            }
+        except (KeyError, TypeError):
+            pass
+    elif category == "analog":
+        try:
+            subtype, record = _analog_subtype_block(env.get("analog"))
+            if record is None:
+                raise KeyError("analog")
+            mi = record["manufacturerInfo"]
+            ds = mi.get("datasheetInfo") or {}
+            elec = ds.get("electrical") or {}
+            supply = elec.get("supply") or {}
+
+            def _yn(v: Any) -> str | None:
+                # bools become "yes"/"no" strings so the class comparator can
+                # rank them (False would normalise to "" and vanish).
+                if isinstance(v, bool):
+                    return "yes" if v else "no"
+                return None
+
+            summary = {
+                "mpn": mi.get("reference", "?"),
+                "subtype": subtype,
+                "channels": elec.get("numberOfChannels"),
+                "supply_min_V": supply.get("minimumSupplyVoltage"),
+                "supply_max_V": supply.get("maximumSupplyVoltage"),
+                "gbw": elec.get("gainBandwidthProduct"),
+                "slew_rate": elec.get("slewRate"),
+                "input_offset_voltage": elec.get("inputOffsetVoltage"),
+                "offset_drift": elec.get("inputOffsetVoltageDrift"),
+                "input_bias_current": elec.get("inputBiasCurrent"),
+                "cmrr_db": elec.get("commonModeRejectionRatio"),
+                "quiescent_current": supply.get("quiescentCurrentPerChannel"),
+                "rail_to_rail_input": _yn(elec.get("railToRailInput")),
+                "rail_to_rail_output": _yn(elec.get("railToRailOutput")),
+                "propagation_delay": elec.get("propagationDelay"),
+                "output_stage": elec.get("outputStage"),
+                "resolution": elec.get("resolution"),
+                "sample_rate": elec.get("sampleRate"),
+                "package": (ds.get("part") or {}).get("package", ""),
             }
         except (KeyError, TypeError):
             pass
@@ -1832,7 +2272,13 @@ def _stage4b_retry_hallucinations(
             entry["_tas_candidates"] = _candidate_summaries_for_llm(
                 candidates, cat, source_dims, limit=10
             )
+        src_env = comp.get("_source_env")
+        if cat in ("connector", "analog") and isinstance(src_env, dict):
+            orig_specs = _summarize_candidate(src_env, cat)
+            if orig_specs:
+                entry["_original_specs"] = orig_specs
         entry.pop("_source_dims_m", None)  # internal-only: don't leak to the LLM
+        entry.pop("_source_env", None)  # raw catalogue envelope: internal-only
         retry_bom.append(entry)
 
     if not retry_bom:
@@ -2308,6 +2754,19 @@ _CATEGORY_ALIASES = {
     "inductor": "magnetic",
     "ferrite_bead": "magnetic",
     "transformer": "magnetic",
+    "opamp": "analog",
+    "op_amp": "analog",
+    "op-amp": "analog",
+    "operational amplifier": "analog",
+    "comparator": "analog",
+    "adc": "analog",
+    "dac": "analog",
+    "analog_ic": "analog",
+    "conn": "connector",
+    "header": "connector",
+    "receptacle": "connector",
+    "terminal_block": "connector",
+    "terminal block": "connector",
 }
 
 # Categories the pipeline recognises as-is. A component_type that is neither one
@@ -2326,6 +2785,7 @@ _CR_CANONICAL_CATEGORIES = frozenset(
         "connector",
         "chipBead",
         "varistor",
+        "analog",
     }
 )
 
@@ -2431,6 +2891,22 @@ def _infer_component_type(row: dict[str, Any]) -> str:
         )
     ):
         return "connector"
+    if any(
+        w in text
+        for w in (
+            "OPAMP",
+            "OP AMP",
+            "OP-AMP",
+            "OPERATIONAL AMPLIFIER",
+            "COMPARATOR",
+            "INSTRUMENTATION AMP",
+            "DIFFERENCE AMP",
+            "PROGRAMMABLE GAIN",
+            "ANALOG SWITCH",
+            "MULTIPLEXER",
+        )
+    ) or re.search(r"\b(ADC|DAC|MUX)\b", text):
+        return "analog"
     if any(
         w in text
         for w in (
@@ -3023,6 +3499,8 @@ def _stage_param_check(state: CrossRefState) -> None:
     from heaviside.pipeline.param_check import (
         FAIL,
         PARAM_SPECS,
+        UNVERIFIED,
+        connector_mating_check,
         evaluate_params,
         mlcc_bias_param,
     )
@@ -3034,6 +3512,8 @@ def _stage_param_check(state: CrossRefState) -> None:
         "resistor": "resistors.ndjson",
         "magnetic": "magnetics.ndjson",
         "chipBead": "magnetics.ndjson",
+        "connector": "connectors.ndjson",
+        "analog": "analog_ics.ndjson",
     }
     rows = state.crossref_result
 
@@ -3098,23 +3578,47 @@ def _stage_param_check(state: CrossRefState) -> None:
             if bias is not None:
                 results.append(bias)
 
+        # Connectors: mating-system compatibility — a connector is half of a
+        # mated PAIR; a cross-vendor series swap is only a drop-in when the
+        # interface is standardized (USB/RJ45/D-Sub…), the part has no discrete
+        # mating half (terminal block / card edge), or it's a commodity pin
+        # header at matching pitch. Skipped for parts that stay in place
+        # (no_substitute / keep_original).
+        if cat == "connector" and str(row.get("substitute_pn") or "") not in (
+            "",
+            "no_substitute",
+        ):
+            mate = connector_mating_check(orig_params, sub_params)
+            if mate is not None:
+                results.append(mate)
+
         if not results:
             continue
         row["_param_results"] = results
 
         fails = [r for r in results if r["verdict"] == FAIL]
+        # Identity parameters (connector positions/gender/family/pitch, analog
+        # function/channels) that could NOT be verified also block a clean
+        # 'recommended' — a senior engineer never ships an unverified mate.
+        unverified_critical = [
+            r for r in results if r["verdict"] == UNVERIFIED and r.get("critical")
+        ]
         # Only demote an actively-recommended substitute; 'exact' (identical
         # part) and 'partial'/'no_substitute' don't move. This keeps the
         # parameter check a tightening, never a loosening, of the verdict.
-        if fails and row.get("status") == "recommended":
+        if (fails or unverified_critical) and row.get("status") == "recommended":
             row["status"] = "partial"
-        if fails:
-            note = "; ".join(r["note"] for r in fails)
+        if fails or unverified_critical:
+            note = "; ".join(r["note"] for r in fails + unverified_critical)
             existing = row.get("notes") or ""
             row["notes"] = (existing + " | " if existing else "") + f"parameter check: {note}"
             fires = row.setdefault("guardrail_fires", [])
             for r in fails:
                 tag = f"PARAM:{r['name']}"
+                if tag not in fires:
+                    fires.append(tag)
+            for r in unverified_critical:
+                tag = f"PARAM:{r['name']}:unverified"
                 if tag not in fires:
                     fires.append(tag)
 
@@ -3194,6 +3698,7 @@ def _ondemand_candidates(
         "chipBead": "magnetics.ndjson",
         "varistor": "varistors.ndjson",
         "connector": "connectors.ndjson",
+        "analog": "analog_ics.ndjson",
     }
     if category not in files:
         return []

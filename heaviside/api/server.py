@@ -1386,6 +1386,7 @@ _CATALOG_UNITS: dict[str, list[str]] = {
     "resistors": ["Ω", "%", "W"],
     "magnetics": ["H", "A", "Ω"],
     "connectors": ["V", "A", "pos"],
+    "analog": ["Hz", "V", "V"],
 }
 
 _CATALOG_FILES: dict[str, str] = {
@@ -1395,6 +1396,7 @@ _CATALOG_FILES: dict[str, str] = {
     "resistors": "resistors.ndjson",
     "magnetics": "magnetics.ndjson",
     "connectors": "connectors.ndjson",
+    "analog": "analog_ics.ndjson",
 }
 
 _CATALOG_LABELS: dict[str, list[str]] = {
@@ -1404,6 +1406,7 @@ _CATALOG_LABELS: dict[str, list[str]] = {
     "resistors": ["R", "Tol", "P"],
     "magnetics": ["L", "Isat", "DCR"],
     "connectors": ["V", "I/contact", "Pos"],
+    "analog": ["GBW", "Vos", "Vs max"],
 }
 
 
@@ -1567,6 +1570,37 @@ def _catalog_projectors() -> dict[str, Any]:
             "_p3n": p3n,
         }
 
+    def _analog(env: dict[str, Any]) -> dict[str, Any] | None:
+        from heaviside.pipeline.crossref_pipeline import _analog_subtype_block
+
+        subtype, record = _analog_subtype_block(env.get("analog"))
+        if record is None:
+            return None
+        mi = record.get("manufacturerInfo") or {}
+        ref, name = mi.get("reference"), mi.get("name")
+        if not isinstance(ref, str) or not isinstance(name, str):
+            return None
+        elec = (mi.get("datasheetInfo") or {}).get("electrical") or {}
+        supply = elec.get("supply") or {}
+        p1n = elec.get("gainBandwidthProduct")
+        p2n = elec.get("inputOffsetVoltage")
+        p3n = supply.get("maximumSupplyVoltage")
+        p1n = p1n if isinstance(p1n, (int, float)) else None
+        p2n = p2n if isinstance(p2n, (int, float)) else None
+        p3n = p3n if isinstance(p3n, (int, float)) else None
+        return {
+            "mpn": ref,
+            "manufacturer": name,
+            "tech": subtype or "",
+            "p1": _fmt_eng(p1n, "Hz"),
+            "p2": _fmt_eng(p2n, "V"),
+            "p3": _fmt_eng(p3n, "V"),
+            "status": mi.get("status", ""),
+            "_p1n": p1n,
+            "_p2n": p2n,
+            "_p3n": p3n,
+        }
+
     return {
         "mosfets": ("mosfets.ndjson", _mosfet),
         "diodes": ("diodes.ndjson", _diode),
@@ -1574,6 +1608,7 @@ def _catalog_projectors() -> dict[str, Any]:
         "resistors": ("resistors.ndjson", _res),
         "magnetics": ("magnetics.ndjson", _mag),
         "connectors": ("connectors.ndjson", _connector),
+        "analog": ("analog_ics.ndjson", _analog),
     }
 
 
@@ -1911,6 +1946,7 @@ def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
         "resistors": "resistors.ndjson",
         "magnetics": "magnetics.ndjson",
         "connectors": "connectors.ndjson",
+        "analog": "analog_ics.ndjson",
     }
     if category not in _NDJSON:
         raise HTTPException(status_code=404, detail=f"unknown category '{category}'")
@@ -1918,7 +1954,7 @@ def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
     mpn_lo = mpn.strip().lower()
     for _lineno, env in iter_envelopes(path):
         # Locate the manufacturerInfo dict regardless of the envelope key.
-        for key in ("semiconductor", "capacitor", "resistor", "magnetic", "connector"):
+        for key in ("semiconductor", "capacitor", "resistor", "magnetic", "connector", "analog"):
             sub = env.get(key, {})
             if not sub:
                 continue

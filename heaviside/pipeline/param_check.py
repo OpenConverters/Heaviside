@@ -37,9 +37,14 @@ from typing import Any
 # lower_better : a valid substitute should be ≤ original (ESR, Rds_on, DCR, Vf…)
 # higher_better: a valid substitute should be ≥ original (ripple, Isat, Irms…)
 # class_match  : categorical; substitute class must be equal-or-better (dielectric)
+# exact_match  : identity parameter; substitute must EQUAL the original
+#                (connector pitch/positions/gender, analog function/channels…).
+#                Different is a FAIL, never a WARN — there is no "close enough"
+#                for a 9-position housing replacing a 10-position one.
 LOWER_BETTER = "lower_better"
 HIGHER_BETTER = "higher_better"
 CLASS_MATCH = "class_match"
+EXACT_MATCH = "exact_match"
 
 # Verdicts a single parameter comparison can yield.
 PASS = "pass"  # meets or beats the original
@@ -81,6 +86,16 @@ class ParamSpec:
     # (carbon film is genuinely negative) but its QUALITY is the magnitude:
     # a −500 ppm/K substitute must not beat a +100 ppm/K original.
     magnitude: bool = False
+    # Additive WARN margin (same unit as the value) used INSTEAD of the
+    # multiplicative tol_factor when set. Needed for parameters where a
+    # ratio is meaningless: temperatures cross zero (−40 °C × 1.5 is
+    # nonsense) and dB figures are already logarithmic.
+    abs_tol: float | None = None
+    # An UNVERIFIED verdict on this parameter demotes a `recommended`
+    # substitute to `partial` — for identity parameters (connector
+    # positions/gender/family, analog function) that a senior engineer
+    # would never leave unchecked. FAIL always demotes regardless.
+    unverified_demotes: bool = False
 
 
 # ── Dielectric / temperature-characteristic ranking (capacitors) ─────────────
@@ -171,6 +186,127 @@ PARAM_SPECS: dict[str, list[ParamSpec]] = {
         ParamSpec("dcr", "DCR", "Ω", LOWER_BETTER, 1.3),
         ParamSpec("rated_current", "Irms", "A", HIGHER_BETTER, 0.9),
     ],
+    # Connectors: substitution is dominated by IDENTITY parameters, not
+    # ratings — a connector either mates/fits or it does not. Family, contact
+    # count, gender and pitch are exact-match hard gates (industry crossing
+    # guides: pitch must match exactly, a 0.04 mm error accumulates to a full
+    # misalignment over a row; both halves must share gender/positions).
+    # Ratings (current per contact, voltage, temperature, durability cycles)
+    # follow the usual ≥/≤ rules. Mounting style (SMT vs THT) is exact-match
+    # but sparse in the catalogue, so it stays soft-unverified rather than
+    # demoting every row. The mating-system check (same series / standardized
+    # interface) is a separate helper: connector_mating_check().
+    "connector": [
+        # pinHeaderSocket and boardToBoard share a group: commodity pin
+        # headers straddle that boundary across vendor taxonomies (the mating
+        # check still separates true headers from mezzanine systems).
+        ParamSpec(
+            "family",
+            "Family",
+            "",
+            EXACT_MATCH,
+            0.0,
+            missing_substitute="exclude",
+            unverified_demotes=True,
+            class_rank={"pinheadersocket": 1, "boardtoboard": 1},
+        ),
+        ParamSpec(
+            "positions",
+            "Positions",
+            "",
+            EXACT_MATCH,
+            0.0,
+            missing_substitute="exclude",
+            unverified_demotes=True,
+        ),
+        ParamSpec("polarity", "Gender", "", EXACT_MATCH, 0.0, unverified_demotes=True),
+        # 2% relative window absorbs unit rounding (2.54 vs 2.5399 mm) while
+        # still splitting real pitch families (2.00 vs 2.54 mm = 27%).
+        ParamSpec("pitch_mm", "Pitch", "mm", EXACT_MATCH, 0.02, unverified_demotes=True),
+        ParamSpec("interface_standard", "Interface std", "", EXACT_MATCH, 0.0),
+        ParamSpec("mounting", "Mounting", "", EXACT_MATCH, 0.0),
+        ParamSpec(
+            "rated_current_A",
+            "I/contact",
+            "A",
+            HIGHER_BETTER,
+            0.9,
+            missing_substitute="exclude",
+        ),
+        ParamSpec("rated_voltage_V", "Rated V", "V", HIGHER_BETTER, 0.9),
+        # Temperature range must COVER the original's; additive margin because
+        # ratios are meaningless across 0 °C (−40 × factor is nonsense).
+        ParamSpec("temp_min_C", "T min", "°C", LOWER_BETTER, 0.0, abs_tol=15.0),
+        ParamSpec("temp_max_C", "T max", "°C", HIGHER_BETTER, 0.0, abs_tol=15.0),
+        # Durability: half the mating cycles is a different durability class.
+        ParamSpec("mating_cycles", "Mating cycles", "", HIGHER_BETTER, 0.5),
+        ParamSpec("contact_resistance", "Contact R", "Ω", LOWER_BETTER, 2.0),
+    ],
+    # Analog ICs (op-amps, comparators, ADC/DAC, switches/muxes). One list
+    # serves every subtype: evaluate_params() skips parameters absent on both
+    # sides, so ADC rows never show GBW and op-amp rows never show sample
+    # rate. Function (subtype) and channel count are identity gates — a
+    # comparator is not an op-amp, a quad is not a dual. Package is
+    # exact-match because pin-compatibility is the point of a drop-in
+    # (SOIC-8 → TSSOP-8 is a footprint change → FAIL → demoted to partial).
+    "analog": [
+        ParamSpec(
+            "subtype",
+            "Function",
+            "",
+            EXACT_MATCH,
+            0.0,
+            missing_substitute="exclude",
+            unverified_demotes=True,
+        ),
+        ParamSpec(
+            "channels",
+            "Channels",
+            "",
+            EXACT_MATCH,
+            0.0,
+            missing_substitute="exclude",
+            unverified_demotes=True,
+        ),
+        ParamSpec("package", "Package", "", EXACT_MATCH, 0.0),
+        # Supply window must cover the original's. Additive 0.3 V WARN band on
+        # the low side (1.8 V-min part replaced by a 2.0 V-min part may still
+        # work on a 3.3 V rail — flag, don't kill); ≥90 % on the high side.
+        ParamSpec("supply_min_V", "Vsupply min", "V", LOWER_BETTER, 0.0, abs_tol=0.3),
+        ParamSpec("supply_max_V", "Vsupply max", "V", HIGHER_BETTER, 0.9),
+        ParamSpec("gbw", "GBW", "Hz", HIGHER_BETTER, 0.7),
+        ParamSpec("slew_rate", "Slew rate", "V/s", HIGHER_BETTER, 0.7),
+        ParamSpec("input_offset_voltage", "Vos", "V", LOWER_BETTER, 2.0, magnitude=True),
+        ParamSpec("offset_drift", "Vos drift", "V/°C", LOWER_BETTER, 2.0, magnitude=True),
+        # Bias current spans decades (pA CMOS → µA bipolar); a 10× increase is
+        # the point where high-impedance sources start to notice.
+        ParamSpec("input_bias_current", "Ib", "A", LOWER_BETTER, 10.0, magnitude=True),
+        ParamSpec("cmrr_db", "CMRR", "dB", HIGHER_BETTER, 0.0, abs_tol=6.0),
+        ParamSpec("quiescent_current", "Iq/ch", "A", LOWER_BETTER, 3.0),
+        ParamSpec(
+            "rail_to_rail_input",
+            "Rail-to-rail in",
+            "",
+            CLASS_MATCH,
+            0.0,
+            class_rank={"yes": 1, "no": 0},
+        ),
+        ParamSpec(
+            "rail_to_rail_output",
+            "Rail-to-rail out",
+            "",
+            CLASS_MATCH,
+            0.0,
+            class_rank={"yes": 1, "no": 0},
+        ),
+        # Comparators: response time and output topology (push-pull vs
+        # open-drain are NOT interchangeable — one needs a pull-up).
+        ParamSpec("propagation_delay", "tpd", "s", LOWER_BETTER, 2.0),
+        ParamSpec("output_stage", "Output stage", "", EXACT_MATCH, 0.0),
+        # Data converters: resolution is a hard floor, throughput ≥90 %.
+        ParamSpec("resolution", "Resolution", "bit", HIGHER_BETTER, 1.0),
+        ParamSpec("sample_rate", "Sample rate", "S/s", HIGHER_BETTER, 0.9),
+    ],
 }
 
 
@@ -201,40 +337,92 @@ def _compare_numeric(spec: ParamSpec, o: float | None, s: float | None) -> tuple
     if spec.direction == LOWER_BETTER:
         if s <= o:
             return PASS, f"{spec.label}: {s:g} ≤ {o:g}{spec.unit}"
-        if s <= o * spec.tol_factor:
-            return (
-                WARN,
-                f"{spec.label}: {s:g} > {o:g}{spec.unit} (within {spec.tol_factor:g}× margin)",
+        # Additive margin when abs_tol is set (temperatures, dB); else
+        # the usual multiplicative tol_factor.
+        warn_ceiling = (o + spec.abs_tol) if spec.abs_tol is not None else (o * spec.tol_factor)
+        if s <= warn_ceiling:
+            margin = (
+                f"within +{spec.abs_tol:g}{spec.unit} margin"
+                if spec.abs_tol is not None
+                else f"within {spec.tol_factor:g}× margin"
             )
-        return FAIL, f"{spec.label}: {s:g} exceeds {o:g}{spec.unit} by >{spec.tol_factor:g}×"
-    # HIGHER_BETTER (tol_factor < 1)
+            return WARN, f"{spec.label}: {s:g} > {o:g}{spec.unit} ({margin})"
+        return FAIL, f"{spec.label}: {s:g} exceeds {o:g}{spec.unit} beyond the allowed margin"
+    # HIGHER_BETTER (tol_factor < 1, or abs_tol as an additive shortfall band)
     if s >= o:
         return PASS, f"{spec.label}: {s:g} ≥ {o:g}{spec.unit}"
-    if s >= o * spec.tol_factor:
-        return WARN, f"{spec.label}: {s:g} < {o:g}{spec.unit} (within {spec.tol_factor:g}× margin)"
-    return FAIL, f"{spec.label}: {s:g} below {o:g}{spec.unit} by >{(1 - spec.tol_factor) * 100:g}%"
+    warn_floor = (o - spec.abs_tol) if spec.abs_tol is not None else (o * spec.tol_factor)
+    if s >= warn_floor:
+        margin = (
+            f"within −{spec.abs_tol:g}{spec.unit} margin"
+            if spec.abs_tol is not None
+            else f"within {spec.tol_factor:g}× margin"
+        )
+        return WARN, f"{spec.label}: {s:g} < {o:g}{spec.unit} ({margin})"
+    return FAIL, f"{spec.label}: {s:g} below {o:g}{spec.unit} beyond the allowed margin"
+
+
+def _compare_exact(spec: ParamSpec, o: Any, s: Any) -> tuple[str, str]:
+    """Identity comparison: the substitute must EQUAL the original.
+
+    Numbers compare within a relative window of ``tol_factor`` (0.0 = strict;
+    pitch uses 0.02 to absorb metric/imperial rounding). Strings compare
+    case/space/dash-insensitively ("Board-to-Board" == "boardToBoard" is NOT
+    assumed — normalization only strips formatting, never meaning). A mismatch
+    is always FAIL: identity parameters have no 'close enough'.
+    """
+    if o is None and s is None:
+        return UNVERIFIED, f"{spec.label}: not specified on either part"
+    if s is None:
+        if spec.missing_substitute == "exclude":
+            return FAIL, f"{spec.label}: substitute has no {spec.label} data — cannot verify"
+        return UNVERIFIED, f"{spec.label}: substitute has no {spec.label} data"
+    if o is None:
+        return UNVERIFIED, f"{spec.label}: original unknown; substitute = {s}{spec.unit}"
+    # Equivalence groups (via class_rank): values mapping to the same group id
+    # compare equal — used for connector families where vendor taxonomies
+    # drift (a 2.54 mm header is 'pinHeaderSocket' at one vendor and
+    # 'boardToBoard' at another).
+    if spec.class_rank:
+        og = spec.class_rank.get(_norm_class(o), _norm_class(o))
+        sg = spec.class_rank.get(_norm_class(s), _norm_class(s))
+        if og == sg:
+            return PASS, f"{spec.label}: {o} ≈ {s} (same class group)"
+        return FAIL, f"{spec.label}: '{s}' ≠ original '{o}'"
+    of, sf = _as_float(o), _as_float(s)
+    if of is not None and sf is not None:
+        if of == sf:
+            return PASS, f"{spec.label}: {sf:g}{spec.unit} (exact)"
+        denom = max(abs(of), abs(sf))
+        if denom > 0 and abs(of - sf) / denom <= spec.tol_factor:
+            return PASS, f"{spec.label}: {sf:g} ≈ {of:g}{spec.unit}"
+        return FAIL, f"{spec.label}: {sf:g}{spec.unit} ≠ original {of:g}{spec.unit}"
+    if _norm_class(o) == _norm_class(s) and _norm_class(o):
+        return PASS, f"{spec.label}: {s} (match)"
+    return FAIL, f"{spec.label}: '{s}' ≠ original '{o}'"
 
 
 def _compare_class(spec: ParamSpec, o: Any, s: Any) -> tuple[str, str]:
-    """Categorical comparison (dielectric / temperature characteristic)."""
+    """Categorical equal-or-better comparison (dielectric class, rail-to-rail
+    capability, …) driven by the spec's class_rank map."""
     on, sn = _norm_class(o), _norm_class(s)
     rank = spec.class_rank or {}
     o_rank = next((v for k, v in rank.items() if k in on), None)
     s_rank = next((v for k, v in rank.items() if k in sn), None)
     if o_rank is None and s_rank is None:
-        # Neither is a recognised class-2 ceramic code — compare raw technology.
+        # Neither value is a recognised class code — compare raw strings.
         if on and sn and on != sn:
-            return WARN, f"{spec.label}: {o} → {s} (different technology)"
+            return WARN, f"{spec.label}: {o} → {s} (different class)"
         if on and sn:
-            return PASS, f"{spec.label}: same technology ({o})"
-        return UNVERIFIED, f"{spec.label}: not a recognised dielectric code"
+            return PASS, f"{spec.label}: same class ({o})"
+        return UNVERIFIED, f"{spec.label}: not a recognised class code"
     if s_rank is None:
-        return UNVERIFIED, f"{spec.label}: substitute dielectric '{s}' unrecognised"
+        return UNVERIFIED, f"{spec.label}: substitute class '{s}' unrecognised"
     if o_rank is None:
-        return UNVERIFIED, f"{spec.label}: original dielectric '{o}' unrecognised"
+        return UNVERIFIED, f"{spec.label}: original class '{o}' unrecognised"
     if s_rank >= o_rank:
-        return PASS, f"{spec.label}: {o} → {s} (equal-or-better stability)"
-    return FAIL, f"{spec.label}: {o} → {s} is a dielectric downgrade"
+        return PASS, f"{spec.label}: {o} → {s} (equal-or-better)"
+    return FAIL, f"{spec.label}: {o} → {s} is a class downgrade"
 
 
 def compare_param(spec: ParamSpec, orig: Any, sub: Any) -> dict[str, Any]:
@@ -245,6 +433,11 @@ def compare_param(spec: ParamSpec, orig: Any, sub: Any) -> dict[str, Any]:
             (str(orig) if orig is not None else ""),
             (str(sub) if sub is not None else ""),
         )
+    elif spec.direction == EXACT_MATCH:
+        verdict, note = _compare_exact(spec, orig, sub)
+        of, sf = _as_float(orig), _as_float(sub)
+        o_disp = f"{of:g}{spec.unit}" if of is not None else (str(orig) if orig is not None else "")
+        s_disp = f"{sf:g}{spec.unit}" if sf is not None else (str(sub) if sub is not None else "")
     else:
         of, sf = _as_float(orig), _as_float(sub)
         # magnitude specs judge |value| but display the signed datasheet value.
@@ -260,6 +453,8 @@ def compare_param(spec: ParamSpec, orig: Any, sub: Any) -> dict[str, Any]:
         "substitute": s_disp,
         "verdict": verdict,
         "note": note,
+        # An UNVERIFIED here must block a clean 'recommended' (identity params).
+        "critical": spec.unverified_demotes,
     }
 
 
@@ -352,6 +547,112 @@ def mlcc_bias_param(
         return None
     spec = ParamSpec("c_bias", f"C @ {v_op:g}V", "F", HIGHER_BETTER, 0.9)
     return compare_param(spec, oc, sc)
+
+
+# Connector families whose parts terminate a wire or a PCB edge directly —
+# there is no discrete counterpart connector to strand, so a cross-vendor swap
+# doesn't break a mated pair.
+_NO_MATE_FAMILIES = {"terminalblock", "cardedge"}
+
+
+def connector_mating_check(
+    orig_params: dict[str, Any] | None,
+    sub_params: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Mating-system compatibility verdict for a connector substitution.
+
+    The one thing a parametric table can't capture: a connector is half of a
+    mated PAIR. Substituting one half with another vendor's series breaks the
+    pair unless the interface is standardized (USB, RJ45, D-Sub, …) or the
+    part is a commodity pin header at the same pitch. Military/interface
+    standards exist precisely so cross-vendor halves intermate; proprietary
+    series (Micro-Fit, PicoBlade, MTA, WR-WTB…) do NOT intermate across
+    vendors even at identical pitch. Returns a render-ready param dict
+    (same shape as compare_param) or None when there is no substitute side.
+    """
+
+    def _n(v: Any) -> str:
+        return _norm_class(v)
+
+    if not sub_params:
+        return None
+    row = {
+        "name": "mating_interface",
+        "label": "Mating system",
+        "original": str(orig_params.get("series") or "") if orig_params else "",
+        "substitute": str(sub_params.get("series") or ""),
+        "critical": True,
+    }
+    if not orig_params:
+        row["verdict"] = UNVERIFIED
+        row["note"] = (
+            "Mating system: original connector is not in the internal DB — "
+            "intermateability cannot be verified. Identify the original's mating "
+            "counterpart before substituting."
+        )
+        return row
+
+    o_series, s_series = _n(orig_params.get("series")), _n(sub_params.get("series"))
+    o_std = _n(orig_params.get("interface_standard"))
+    s_std = _n(sub_params.get("interface_standard"))
+    fam = _n(sub_params.get("family")) or _n(orig_params.get("family"))
+
+    if fam in _NO_MATE_FAMILIES:
+        row["verdict"] = PASS
+        row["note"] = (
+            "Mating system: terminal-block / card-edge style — no discrete mating "
+            "half; verify wire gauge range / board thickness instead."
+        )
+        return row
+    if o_series and s_series and o_series == s_series:
+        row["verdict"] = PASS
+        row["note"] = f"Mating system: same series ({sub_params.get('series')})"
+        return row
+    if o_std and s_std and o_std == s_std:
+        row["verdict"] = PASS
+        row["note"] = (
+            f"Mating system: standardized interface ({sub_params.get('interface_standard')}) "
+            "— intermateable across vendors by standard."
+        )
+        return row
+    fam_o, fam_s = _n(orig_params.get("family")), _n(sub_params.get("family"))
+    header_fams = {"pinheadersocket", "boardtoboard"}
+    if "pinheadersocket" in (fam_o, fam_s) and {fam_o, fam_s} <= header_fams:
+        op, sp = orig_params.get("pitch_mm"), sub_params.get("pitch_mm")
+        if (
+            isinstance(op, (int, float))
+            and isinstance(sp, (int, float))
+            and max(op, sp) > 0
+            and abs(op - sp) / max(op, sp) <= 0.02
+        ):
+            if fam_o == fam_s:
+                row["verdict"] = PASS
+                row["note"] = (
+                    "Mating system: commodity pin header/socket at matching pitch — "
+                    "verify mated stack height, pin length and keying."
+                )
+            else:
+                # One vendor files its headers under boardToBoard — likely a
+                # commodity header, but it could be a mezzanine SYSTEM, which
+                # does not intermate with plain headers.
+                row["verdict"] = WARN
+                row["note"] = (
+                    "Mating system: likely a commodity pin header at matching pitch, "
+                    "but the substitute is classed board-to-board — confirm it is a "
+                    "plain header/socket strip (not a mezzanine system) and verify "
+                    "mated stack height and keying."
+                )
+            return row
+    row["verdict"] = FAIL
+    row["note"] = (
+        f"Mating system: different mating systems "
+        f"({orig_params.get('series') or 'unknown series'} → "
+        f"{sub_params.get('series') or 'unknown series'}) — the counterpart "
+        "housing/terminals must be replaced as a matched set from the substitute's "
+        "series; verify intermateability, latch geometry and contact plating "
+        "compatibility (never mate tin to gold)."
+    )
+    return row
 
 
 def worst_verdict(results: list[dict[str, Any]]) -> str:

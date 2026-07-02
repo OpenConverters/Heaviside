@@ -66,12 +66,15 @@ _TAS_KIND_TO_FILES = {
     "chipBead": ["magnetics.ndjson"],
     "mosfet": ["mosfets.ndjson"],
     "diode": ["diodes.ndjson"],
+    "connector": ["connectors.ndjson"],
+    "analog": ["analog_ics.ndjson"],
 }
 
 # Catalogue file → CR canonical category, for the reverse question: "which
 # category is this MPN?". Ordered by corpus size ascending so the cheapest
 # indexes are consulted first.
 _TAS_FILE_TO_KIND = {
+    "analog_ics.ndjson": "analog",
     "mosfets.ndjson": "mosfet",
     "diodes.ndjson": "diode",
     "magnetics.ndjson": "magnetic",
@@ -139,7 +142,7 @@ def _flat_record_from_env(env: dict, mi: dict) -> dict:
         "voltage": elec.get("ratedVoltage"),
         "resistance_Ohm": res_val,
         "inductance": ind_val,
-        "package": part_info.get("caseCode") or part_info.get("case"),
+        "package": part_info.get("caseCode") or part_info.get("case") or part_info.get("package"),
         "manufacturer": mi.get("name"),
         "family": mi.get("family") or part_info.get("series"),
         "status": mi.get("status"),
@@ -172,11 +175,18 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
             "magnetics",
             "magnetic",
             "connector",
+            "analog",
         ):
             sub = env.get(top_key)
             if not isinstance(sub, dict):
                 continue
-            for inner_key in (None, "mosfet", "diode", "igbt"):
+            # `analog` nests the record under a per-row FUNCTION key
+            # (operationalAmplifier / comparator / adc / …) — descend every
+            # child; the fixed inner keys cover the semiconductor split.
+            inner_keys: tuple = (
+                tuple(sub.keys()) if top_key == "analog" else (None, "mosfet", "diode", "igbt")
+            )
+            for inner_key in inner_keys:
                 record = sub if inner_key is None else sub.get(inner_key)
                 if not isinstance(record, dict):
                     continue
@@ -671,6 +681,7 @@ _ROW_TYPE_TO_FILE_KIND = {
     "mosfet": "mosfet",
     "diode": "diode",
     "connector": "connector",
+    "analog": "analog",
 }
 
 

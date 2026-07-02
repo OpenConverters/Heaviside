@@ -162,10 +162,70 @@ already accounted for 80V stress.
 - Always report `substitute_dcr` and `substitute_rated_current`.
 
 ### Connectors
-- Same family (terminalBlock, pinHeaderSocket, etc.)
-- Min rated current per contact ≥ original
-- Min rated voltage ≥ original
-- Pitch must match original footprint (the `pitch_mm` field)
+
+Connectors are IDENTITY-matched, not value-matched: a connector either mates
+and fits or it does not. When `_original_specs` is provided it is the
+original's real catalogue record — compare against it, never against your
+recollection of the part number.
+
+HARD GATES — mismatch on any of these means the candidate is NOT a substitute:
+- **Family** must match exactly (wireToBoard, boardToBoard, pinHeaderSocket,
+  terminalBlock, dataInterface, rf, fpcFfc, circular, power, cardEdge).
+- **Positions** (contact count) must match exactly. A 9-position housing is
+  never a substitute for a 10-position one.
+- **Gender / mating polarity** (`polarity`) must match exactly.
+- **Pitch** (`pitch_mm`) must match exactly — a 0.04 mm pitch error
+  accumulates across the row into a full contact misalignment.
+- **Interface standard** (`interface_standard`: USB, USB-C, RJ45, D-Sub,
+  PCIe, …) must match exactly when present. USB is not USB-C.
+- **Mounting style** (smt/tht) must match when known — an SMT part cannot
+  populate a through-hole footprint.
+- If any of these is unknown on either side, you cannot claim `recommended`
+  — use `partial` and say exactly what could not be verified.
+
+MATING-SYSTEM RULE (the #1 connector-crossing mistake): a connector is half
+of a mated PAIR. Proprietary series (Micro-Fit, PicoBlade, MTA, WR-WTB, …)
+do NOT intermate across vendors even at identical pitch/positions. A
+cross-vendor swap is a clean drop-in ONLY when:
+- the interface is standardized (matching `interface_standard`), or
+- the part has no discrete mating half (terminalBlock, cardEdge), or
+- it is a commodity pin header/socket at the same pitch.
+Otherwise the mating counterpart (housing + crimp terminals) must be replaced
+together with this part: status `partial`, and the notes MUST say so.
+
+RATINGS (survivors ranked by):
+- Rated current per contact ≥ original; rated voltage ≥ original.
+- Operating temperature range must cover the original's.
+- Mating cycles (durability class) ≥ original where known.
+- Contact plating is usually NOT in the data — when recommending a
+  cross-series swap, remind that both halves must share plating (never mate
+  tin to gold).
+
+### Analog ICs (op-amps, comparators, ADC/DAC, switches/muxes)
+
+When `_original_specs` is provided it is the original's real catalogue record.
+
+HARD GATES:
+- **Function** (`subtype`) must match exactly: an op-amp is never a
+  comparator substitute and vice versa; an ADC is not a DAC.
+- **Channel count** must match exactly (single/dual/quad).
+- **Supply window** must cover the original's: substitute min supply ≤
+  original min, substitute max supply ≥ original max.
+- **Comparator output stage** (push-pull vs open-drain) must match — one
+  needs a pull-up, the other must not fight a bus.
+- **ADC/DAC resolution** ≥ original.
+
+RANKING RULES:
+- GBW ≥ original × 0.7 (prefer ≥ 1×); slew rate ≥ original × 0.7. A much
+  faster substitute (>10× GBW) can oscillate in a circuit compensated for
+  the slower part — note it.
+- Input offset voltage ≤ original × 2; offset drift and bias current in the
+  same decade as the original for precision parts.
+- Rail-to-rail input/output: never downgrade (original RRIO → substitute
+  must be RRIO).
+- Package should match for a drop-in (SOIC-8 → SOIC-8); a package change is
+  `partial` with a "footprint change" note.
+- Quiescent current matters for battery/low-power originals (≤ 3× original).
 
 ## Dependency Flags
 
@@ -298,8 +358,9 @@ Per-type extra fields to populate from `_tas_candidates`:
 | magnetic | — | `substitute_rated_current` (A) |
 | chipBead | — | `substitute_dcr` (Ω), `substitute_rated_current` (A) |
 
-Omit extra fields for types not listed (diode, connector, varistor, controller).
-Set to `null` when the data is not available in TAS.
+Omit extra fields for types not listed (diode, connector, analog, varistor,
+controller) — the pipeline verifies connector/analog parameters from the
+catalogue itself. Set to `null` when the data is not available in TAS.
 
 ## Status Definitions
 

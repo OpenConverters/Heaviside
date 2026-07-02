@@ -34,6 +34,9 @@ const UNIT_CONFIG = {
   connectors: [{ label: 'V',         unit: 'V',   scale: 1 },
                { label: 'I/contact', unit: 'A',   scale: 1 },
                { label: 'Pos',       unit: 'pos', scale: 1 }],
+  analog:     [{ label: 'GBW',    unit: 'MHz', scale: 1e6  },
+               { label: 'Vos',    unit: 'µV',  scale: 1e-6 },
+               { label: 'Vs max', unit: 'V',   scale: 1    }],
 }
 
 // Friendly labels for tech filter chips per category
@@ -67,9 +70,15 @@ const TECH_LABELS = {
     circular: 'Circular', terminalBlock: 'Terminal Block', fpcFfc: 'FPC/FFC',
     cardEdge: 'Card Edge', power: 'Power', rf: 'RF',
   },
+  analog: {
+    operationalAmplifier: 'Op-Amp', comparator: 'Comparator',
+    instrumentationAmplifier: 'Instrumentation Amp', differenceAmplifier: 'Difference Amp',
+    programmableGainAmplifier: 'PGA', adc: 'ADC', dac: 'DAC',
+    analogSwitch: 'Analog Switch', multiplexer: 'Multiplexer', multiplier: 'Multiplier',
+  },
 }
 
-const categories = ['mosfets', 'diodes', 'capacitors', 'resistors', 'magnetics', 'connectors']
+const categories = ['mosfets', 'diodes', 'capacitors', 'resistors', 'magnetics', 'connectors', 'analog']
 const category = ref('mosfets')
 
 // ── Filter state ──────────────────────────────────────────────────────────────
