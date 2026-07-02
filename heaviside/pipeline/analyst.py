@@ -745,9 +745,8 @@ def _flyback_op_budget(
     *,
     op_index: int = 0,
 ) -> dict[str, float | None]:
-    ratios = spec.get("desiredTurnsRatios") or [1.0]
-    n = float(ratios[0])
-    d_max = float(spec.get("maximumDutyCycle", 0.5))
+    n = _turns_ratio(spec)
+    d_max = _max_duty(spec)
     _, iout = _spec_vout_iout(spec, op_index)
     ipri = (iout / n) * 1.5
     isec_avg = iout / (1.0 - d_max)
@@ -1033,8 +1032,27 @@ def run_four_switch_buck_boost_analyst(
 
 
 def _turns_ratio(spec: Mapping[str, Any]) -> float:
-    ratios = spec.get("desiredTurnsRatios") or [1.0]
+    """Primary:secondary turns ratio from the spec.
+
+    Required for every isolated topology — a wrong n scales every reflected
+    current, so there is no safe default (stress.py raises for the same field).
+    """
+    ratios = spec.get("desiredTurnsRatios")
+    if not ratios:
+        raise AnalystError("spec.desiredTurnsRatios is required for this topology (no default)")
     return float(ratios[0])
+
+
+def _max_duty(spec: Mapping[str, Any]) -> float:
+    """Maximum duty cycle — sets the operating point of the isolated budgets.
+
+    No silent 0.5 default: a wrong duty mis-sizes the primary/secondary
+    currents fed to the gate (stress.py raises for the same field).
+    """
+    d = spec.get("maximumDutyCycle")
+    if not isinstance(d, (int, float)) or not (0.0 < float(d) < 1.0):
+        raise AnalystError(f"spec.maximumDutyCycle must be in (0, 1), got {d!r} (no default)")
+    return float(d)
 
 
 def _single_switch_forward_op_budget(

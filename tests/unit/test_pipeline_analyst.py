@@ -9,7 +9,9 @@ import pytest
 from heaviside.pipeline.analyst import (
     AnalystError,
     _cuk_op_budget,
+    _flyback_op_budget,
     _sepic_op_budget,
+    _turns_ratio,
     _zeta_op_budget,
     compute_buck_loss_budget,
     run_analyst,
@@ -346,6 +348,40 @@ def test_output_diode_conduction_is_iout_times_vf(budget_fn) -> None:
     assert budget["D1_conduction"] == pytest.approx(iout * vf, rel=1e-9)
     # And explicitly NOT the (1-D)*Iout*Vf undercount.
     assert budget["D1_conduction"] != pytest.approx(0.5 * iout * vf, rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Isolated budgets: required physics must raise, not silently default
+# ---------------------------------------------------------------------------
+
+
+def test_turns_ratio_raises_when_missing() -> None:
+    with pytest.raises(AnalystError, match="desiredTurnsRatios"):
+        _turns_ratio({"inputVoltage": {"nominal": 400.0}})
+
+
+def test_flyback_budget_raises_on_missing_turns_ratio() -> None:
+    spec = {
+        "inputVoltage": {"nominal": 48.0},
+        "maximumDutyCycle": 0.5,
+        "operatingPoints": [
+            {"outputVoltages": [12.0], "outputCurrents": [2.0], "switchingFrequency": 1e5}
+        ],
+    }  # no desiredTurnsRatios
+    with pytest.raises(AnalystError, match="desiredTurnsRatios"):
+        _flyback_op_budget({"topology": {"stages": []}}, spec)
+
+
+def test_flyback_budget_raises_on_missing_duty() -> None:
+    spec = {
+        "inputVoltage": {"nominal": 48.0},
+        "desiredTurnsRatios": [5.0],
+        "operatingPoints": [
+            {"outputVoltages": [12.0], "outputCurrents": [2.0], "switchingFrequency": 1e5}
+        ],
+    }  # no maximumDutyCycle
+    with pytest.raises(AnalystError, match="maximumDutyCycle"):
+        _flyback_op_budget({"topology": {"stages": []}}, spec)
 
 
 def test_stamp_jt_no_op_without_loss_budget() -> None:
