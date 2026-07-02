@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from heaviside.pipeline import crossref_pipeline as cp
 from heaviside.pipeline.crossref import CrossRefState
 
@@ -100,3 +102,19 @@ def test_otto_no_reguard_when_nothing_applied(monkeypatch) -> None:
 
     cp._stage6_otto(state)
     assert called["v"] is False
+
+
+def test_stage4_guardrails_fails_loud_not_swallowed(monkeypatch) -> None:
+    """A crash inside the guardrail stage must abort (fail-closed), not ship an
+    unguarded crossref with only a diagnostics string. Also guards against the
+    fire_log UnboundLocalError on the error path."""
+    from heaviside.pipeline import crossref_pipeline as cpx
+    from heaviside.pipeline import guardrails as gr
+
+    def _boom(*a, **k):
+        raise RuntimeError("guardrail internals exploded")
+
+    monkeypatch.setattr(gr, "apply_guardrails", _boom)
+    state = _state_with_one_no_substitute()
+    with pytest.raises(cpx.CrossRefPipelineError, match="guardrail stage failed"):
+        cpx._stage4_guardrails(state)

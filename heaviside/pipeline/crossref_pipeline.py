@@ -1708,24 +1708,39 @@ def _candidate_summaries_for_llm(
 
 
 def _stage4_guardrails(state: CrossRefState) -> CrossRefState:
-    """Apply engineering guardrails to the crossref result."""
+    """Apply engineering guardrails to the crossref result.
+
+    Fail loud: a crash inside the guardrail stage must NOT ship an unguarded
+    crossref with only a diagnostics string — that silently disables the
+    anti-hallucination (G5) and physics gates. The only tolerated skip is the
+    guardrails module being genuinely absent.
+    """
     try:
         from heaviside.pipeline.guardrails import apply_guardrails
+    except ImportError:
+        state.diagnostics.append("guardrails module not available — skipping")
+        return state
 
+    try:
         corrected, fire_log = apply_guardrails(
             {"crossref": state.crossref_result},
             state.source_bom,
             state.target_manufacturer,
             stress_by_ref=state.stress_by_ref or None,
         )
-        state.crossref_result = corrected.get("crossref", state.crossref_result)
-        state.guardrail_log.extend(fire_log)
-        logger.info("CR stage 4: %d guardrail fires", len(fire_log))
-    except ImportError:
-        state.diagnostics.append("guardrails module not available — skipping")
     except Exception as exc:
-        state.diagnostics.append(f"guardrails failed: {exc}")
-    # Retry hallucinated MPNs caught by G5/G5b
+        raise CrossRefPipelineError(
+            f"CR stage 4: the guardrail stage failed ({type(exc).__name__}: {exc}). A "
+            f"crossref shipped without its anti-hallucination/physics guardrails is not a "
+            f"valid result — aborting (no silent fallback)."
+        ) from exc
+
+    state.crossref_result = corrected.get("crossref", state.crossref_result)
+    state.guardrail_log.extend(fire_log)
+    logger.info("CR stage 4: %d guardrail fires", len(fire_log))
+
+    # Retry hallucinated MPNs caught by G5/G5b. fire_log is always bound here
+    # (apply_guardrails returned), so no UnboundLocalError on the error path.
     g5_fires = [f for f in fire_log if f.get("guardrail_id", "").startswith("5")]
     if g5_fires:
         state = _stage4b_retry_hallucinations(state, g5_fires)
