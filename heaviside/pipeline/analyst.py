@@ -1619,8 +1619,15 @@ def run_llc_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
 
 
 def run_cllc_analyst(tas: dict[str, Any], spec: Mapping[str, Any]) -> None:
-    """CLLC loss budget + Tj (same structure as LLC)."""
-    _run_generic_analyst(tas, spec, _llc_op_budget)
+    """CLLC loss budget + Tj.
+
+    CLLC is a dual full bridge (HV Q1-Q4 + LV synchronous-rectifier bridge
+    Q5-Q8), NOT the half-bridge + diode rectifier of LLC. It shares the
+    dual-full-bridge budget with CLLLC; using ``_llc_op_budget`` here looked
+    for D1/D2 diodes a sync-rectified converter does not have and omitted the
+    entire LV bridge's conduction loss, leaving a fabricated η ~0.999.
+    """
+    _run_generic_analyst(tas, spec, _clllc_op_budget)
 
 
 def _clllc_op_budget(
@@ -1673,10 +1680,12 @@ def _clllc_op_budget(
             )
         )
     # Resonant tank + transformer + bus caps (any that are present).
+    # Stencil component names are underscored (L_r1, C_r1, ...); CLLC absorbs
+    # L_r1/L_r2 into T1's leakage model so those return None and are skipped.
     budget.update(_inductor_loss_keyed(_find_named(tas, "T1"), "T1"))
-    for lr in ("Lr", "Lr1", "Lr2"):
+    for lr in ("L_r1", "L_r2"):
         budget.update(_inductor_loss_keyed(_find_named(tas, lr), lr))
-    for cr in ("Cr", "Cr1", "Cr2"):
+    for cr in ("C_r1", "C_r2"):
         budget.update(_cap_esr_loss(_find_named(tas, cr), cr))
     for c in ("C_bus_HV", "C_bus_LV", "C_out", "Cout"):
         budget.update(_cap_esr_loss(_find_named(tas, c), c))

@@ -11,6 +11,7 @@ from heaviside.pipeline.analyst import (
     compute_buck_loss_budget,
     run_analyst,
     run_buck_analyst,
+    run_cllc_analyst,
     stamp_junction_temperatures,
 )
 
@@ -222,6 +223,77 @@ def test_multi_op_stamps_per_op_budgets_and_worst_case_root() -> None:
 
     # Root loss_budget = worst-case (max) per bucket = op1's number
     assert tas["loss_budget"]["Q1_conduction"] == pytest.approx(op1_q1)
+
+
+# ---------------------------------------------------------------------------
+# CLLC dispatch — dual full bridge, not the half-bridge + diode LLC model
+# ---------------------------------------------------------------------------
+
+_CLLC_SPEC = {
+    "inputVoltage": {"nominal": 400.0, "minimum": 380.0, "maximum": 420.0},
+    "desiredTurnsRatios": [8.0],
+    "operatingPoints": [
+        {
+            "outputVoltages": [48.0],
+            "outputCurrents": [20.0],
+            "switchingFrequency": 500_000.0,
+            "ambientTemperature": 25.0,
+        }
+    ],
+}
+
+
+def _cllc_tas_dual_full_bridge() -> dict[str, Any]:
+    """A CLLC TAS: HV primary bridge Q1-Q4 + LV sync-rect bridge Q5-Q8, T1."""
+    fets = [
+        {"name": q, "rds_on": 0.01, "qg_total": 20e-9}
+        for q in ("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8")
+    ]
+    t1 = {
+        "name": "T1",
+        "data": {
+            "outputs": [
+                {
+                    "coreLosses": {"coreLosses": 0.5},
+                    "windingLosses": {"windingLosses": [{"totalLosses": 0.4}]},
+                }
+            ],
+        },
+    }
+    return {
+        "topology": {
+            "stages": [
+                {"name": "resonant", "circuit": {"components": [*fets, t1]}},
+            ],
+        },
+    }
+
+
+def test_cllc_counts_lv_sync_rect_bridge_losses() -> None:
+    """Regression: CLLC is a dual full bridge. The old dispatch used the
+    half-bridge LLC budget (Q1/Q2 + diodes D1/D2), silently omitting the LV
+    synchronous-rectifier bridge Q5-Q8 — the dominant conduction loss — which
+    left a fabricated ~99.9% efficiency. All four LV FETs must be counted."""
+    tas = _cllc_tas_dual_full_bridge()
+    run_cllc_analyst(tas, _CLLC_SPEC)
+    budget = tas["loss_budget"]
+
+    # LV sync-rect bridge carries full Iout: conduction = 0.5 * Iout^2 * Rds_on.
+    iout, rds_on = 20.0, 0.01
+    expected_lv = 0.5 * iout**2 * rds_on
+    for q in ("Q5", "Q6", "Q7", "Q8"):
+        assert budget.get(f"{q}_conduction") == pytest.approx(expected_lv, rel=1e-6), (
+            f"{q} (LV sync-rect FET) conduction loss must be counted"
+        )
+
+    # HV primary bridge (Q1-Q4) present too; ZVS => switching ~0.
+    for q in ("Q1", "Q2", "Q3", "Q4"):
+        assert f"{q}_conduction" in budget
+        assert budget[f"{q}_switching"] == 0.0
+
+    # The half-bridge LLC model's diode buckets must NOT appear.
+    assert "D1_conduction" not in budget
+    assert "D2_conduction" not in budget
 
 
 def test_stamp_jt_no_op_without_loss_budget() -> None:
