@@ -81,6 +81,17 @@ class Job:
     created_wall: float | None = None  # epoch seconds — survives restart for ordering
     cancel_requested: bool = False
     stages: list[Stage] = field(default_factory=list)
+    # Report-PDF readiness, tracked separately from the job status so the UI can
+    # show "preparing…/ready" on the download button without blocking results:
+    #   none      — job has no renderable report
+    #   rendering — the tracked "Generate report PDF" stage is running
+    #   ready     — the PDF is cached and downloadable
+    #   error     — rendering failed (the download endpoint will report why)
+    report_pdf: str = "none"
+
+
+#: Name of the tracked post-completion stage that renders the report PDF.
+REPORT_PDF_STAGE = "Generate report PDF"
 
 
 class JobCancelled(Exception):
@@ -247,6 +258,44 @@ class JobRegistry:
             target.started = now
             target.ended = None
 
+    def report_stage_begin(self, job_id: str) -> None:
+        """Start the tracked 'Generate report PDF' stage (append it if needed)
+        and mark the job's report_pdf as rendering. Called by the on_job_done
+        hook so the PDF render shows in the job timeline."""
+        now = time.monotonic()
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job.report_pdf = "rendering"
+            st = next((s for s in job.stages if s.name == REPORT_PDF_STAGE), None)
+            if st is None:
+                st = Stage(name=REPORT_PDF_STAGE)
+                job.stages.append(st)
+            st.status = "running"
+            st.started = now
+            st.ended = None
+        self._persist_job(job_id)
+
+    def report_stage_end(self, job_id: str, *, ok: bool) -> None:
+        """Finish the report-PDF stage; set report_pdf to ready (cached) or error."""
+        now = time.monotonic()
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job.report_pdf = "ready" if ok else "error"
+            st = next((s for s in job.stages if s.name == REPORT_PDF_STAGE), None)
+            if st is not None:
+                st.status = "done" if ok else "error"
+                st.ended = now
+        self._persist_job(job_id)
+
+    def set_report_pdf(self, job_id: str, value: str) -> None:
+        """Set report_pdf directly (e.g. 'none' when a job has no report)."""
+        self._set(job_id, report_pdf=value)
+        self._persist_job(job_id)
+
     def _finalize_stages(self, job_id: str, *, errored: bool) -> None:
         """At job end: the running stage becomes error (if the job failed) or
         done; pending stages that never ran stay pending."""
@@ -284,6 +333,7 @@ class JobRegistry:
                 "error": job.error,
                 "progress": job.progress,
                 "created_wall": job.created_wall,
+                "report_pdf": job.report_pdf,
                 "stages": [
                     {"name": s.name, "status": s.status, "duration_s": s.duration_s()}
                     for s in job.stages
@@ -331,6 +381,7 @@ class JobRegistry:
                 progress=d.get("progress", ""),
                 created_wall=d.get("created_wall"),
                 stages=stages,
+                report_pdf=d.get("report_pdf", "none"),
             )
             self._jobs[job.id] = job
         if self._jobs:

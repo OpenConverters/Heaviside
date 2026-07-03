@@ -58,6 +58,16 @@ _TAS_LOOKUP_CACHE: dict[tuple[str, str, str], dict | None] = {}
 # each previously scanning the whole 50 MB magnetics.ndjson) take ~20 min.
 _TAS_INDEX_CACHE: dict[str, dict[str, dict]] = {}
 
+# Register both caches with the shared memory guard so a large crossref can't
+# grow them past the RSS budget and OOM a shared host (index_budget).
+try:
+    from heaviside.pipeline.index_budget import register_cache as _register_cache
+
+    _register_cache(_TAS_INDEX_CACHE)
+    _register_cache(_TAS_LOOKUP_CACHE)
+except Exception:  # pragma: no cover - guard is best-effort
+    pass
+
 _TAS_KIND_TO_FILES = {
     "capacitor": ["capacitors.ndjson"],
     "resistor": ["resistors.ndjson"],
@@ -165,6 +175,12 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
     cached = _TAS_INDEX_CACHE.get(str(path))
     if cached is not None:
         return cached
+
+    # Bound memory before building another full-file index (see index_budget):
+    # keeps a large crossref from exhausting RAM on a shared host.
+    from heaviside.pipeline.index_budget import evict_if_over_budget
+
+    evict_if_over_budget()
 
     from heaviside.catalogue._reader import iter_envelopes
 

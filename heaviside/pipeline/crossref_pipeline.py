@@ -363,6 +363,99 @@ def _stage1_5_librarian(state: CrossRefState) -> CrossRefState:
     return state
 
 
+_FETCH_ORIGINALS_CAP = 40  # DK rate-limit + runtime guard: max originals fetched per run
+
+
+def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
+    """Fetch each BOM component's ORIGINAL from Digi-Key when it is not in the
+    internal DB, convert + schema-validate + persist it, so the cross-reference
+    can VERIFY the part instead of returning no_substitute just because our
+    catalogue lacks it (user: "the librarian should fetch everything").
+
+    Best-effort: no Digi-Key credentials, an unconvertible category, or a part
+    Digi-Key doesn't have simply leaves the original unresolved (the identity
+    no_substitute rule then applies, as before). Never persists an original that
+    fails schema validation."""
+    from heaviside.pipeline.guardrails import lookup_part_fields
+
+    # Unique (category, mpn) originals that are NOT already in the internal DB.
+    wanted: dict[tuple[str, str], str] = {}  # (cat, mpn_lower) -> original mpn
+    for comp in state.source_bom:
+        cat = comp.get("component_type", comp.get("category", ""))
+        mpn = str(comp.get("original_mpn") or comp.get("part") or "").strip()
+        if not cat or not mpn or mpn.lower() in ("nc", "dnp", "n/a", "no_substitute"):
+            continue
+        key = (cat, mpn.lower())
+        if key in wanted:
+            continue
+        try:
+            if lookup_part_fields(mpn, cat) is not None:
+                continue  # already resolvable — nothing to fetch
+        except Exception:
+            pass
+        wanted[key] = mpn
+
+    if not wanted:
+        return state
+
+    try:
+        from heaviside.librarian.fetcher import DigiKeyClient, load_credentials
+        from heaviside.librarian.fetcher.original import fetch_original_envelope
+        from heaviside.librarian.tas import DuplicateComponentError, add_component
+    except ImportError as exc:
+        logger.info("CR stage 1.6: original-fetch unavailable (%s) — skipping", exc)
+        return state
+
+    try:
+        creds = load_credentials()
+        dk = DigiKeyClient(creds.digikey)
+    except Exception as exc:
+        logger.info("CR stage 1.6: Digi-Key not configured (%s) — skipping original fetch", exc)
+        state.diagnostics.append(f"original fetch skipped (Digi-Key not configured): {exc}")
+        return state
+
+    fetched = 0
+    touched_files = False
+    for (cat, _mpn_l), mpn in list(wanted.items())[:_FETCH_ORIGINALS_CAP]:
+        try:
+            env, db_cat_or_reason = fetch_original_envelope(dk, mpn, cat)
+        except Exception as exc:
+            logger.debug("CR stage 1.6: fetch %s (%s) errored: %s", mpn, cat, exc)
+            continue
+        if env is None:
+            logger.info("CR stage 1.6: could not source original %s (%s): %s", mpn, cat, db_cat_or_reason)
+            continue
+        try:
+            add_component(db_cat_or_reason, env)
+            fetched += 1
+            touched_files = True
+            logger.info("CR stage 1.6: fetched + persisted original %s (%s)", mpn, cat)
+        except DuplicateComponentError:
+            touched_files = True  # already there now — still refresh caches
+        except Exception as exc:
+            logger.warning("CR stage 1.6: persist of original %s failed: %s", mpn, exc)
+
+    if touched_files:
+        # The newly-appended originals must be visible to the param-check /
+        # guardrail lookups this run: drop the stale per-file indexes so they
+        # rebuild from the updated NDJSON.
+        try:
+            from heaviside.pipeline import guardrails as _g
+            from heaviside.pipeline import match_score as _ms
+
+            _g._TAS_INDEX_CACHE.clear()
+            _g._TAS_LOOKUP_CACHE.clear()
+            _ms._MPN_ENV_INDEX_CACHE.clear()
+        except Exception:
+            pass
+
+    if wanted:
+        logger.info(
+            "CR stage 1.6: sourced %d/%d unknown originals from Digi-Key", fetched, len(wanted)
+        )
+    return state
+
+
 def _is_chip_bead_env(env: dict[str, Any]) -> bool:
     """Return True when a magnetics.ndjson envelope is a chip bead (not an inductor)."""
     try:
@@ -4122,6 +4215,8 @@ def run_crossref_pipeline(
     state = _stage1_prefetch(state)
     _say("Librarian: sourcing any missing components from datasheets/distributors", 15)
     state = _stage1_5_librarian(state)
+    _say("Librarian: fetching unknown originals from Digi-Key", 22)
+    state = _stage1_6_fetch_originals(state)
     _say("Pre-classifying each component by category", 28)
     state = _stage2_preclassify(state)
     _say(f"Cross-referencing to {target_manufacturer} (LLM picks equivalents)", 38)

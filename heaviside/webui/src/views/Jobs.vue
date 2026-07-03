@@ -138,8 +138,15 @@ onUnmounted(() => clearInterval(timer))
       <Column header="">
         <template #body="{ data }">
           <Button v-if="data.status === 'done'" label="View" icon="pi pi-eye" text size="small" @click.stop="view(data)" />
-          <a v-if="data.status === 'done'" :href="api.reportPdfUrl(data.job_id)"
-             target="_blank" @click.stop class="pdf-link mono">PDF</a>
+          <!-- Report PDF is pre-rendered as a tracked post-job stage. Show
+               'preparing' while it renders, a live link once ready. Old jobs
+               (report_pdf absent/none) still get a link — the endpoint renders
+               on demand as a fallback. -->
+          <span v-if="data.status === 'done' && data.report_pdf === 'rendering'"
+                class="pdf-link mono muted" title="Report PDF is rendering…">PDF…</span>
+          <a v-else-if="data.status === 'done'" :href="api.reportPdfUrl(data.job_id)"
+             target="_blank" @click.stop class="pdf-link mono"
+             :title="data.report_pdf === 'error' ? 'PDF render failed — click to retry' : 'Download report PDF'">PDF</a>
           <Button :label="isActive(data.status) ? 'Cancel' : 'Delete'" text size="small"
                   :severity="isActive(data.status) ? 'warn' : 'danger'" @click.stop="act(data)" />
         </template>

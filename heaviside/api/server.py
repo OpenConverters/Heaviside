@@ -804,17 +804,35 @@ def _ensure_pdf_cached(job_id: str) -> Path | None:  # noqa: F821
 
 
 def _prerender_report_pdf(job_id: str) -> None:
-    """on_job_done hook: render + cache the report PDF in a background thread so
-    the FIRST download is instant (WeasyPrint on a large report takes minutes).
-    Best-effort — never affects the job itself."""
+    """on_job_done hook: render + cache the report PDF as a TRACKED post-job
+    stage ('Generate report PDF') in a background thread, so the job's results
+    show immediately while the PDF renders, and the UI can display
+    preparing→ready on the download button (job.report_pdf). WeasyPrint on a
+    large report takes minutes; keeping it off the worker thread means the next
+    job isn't blocked. Best-effort — a render failure marks report_pdf=error but
+    never touches the job's own result."""
     import threading
 
+    from heaviside.api.jobs import registry
+
     def _work() -> None:
+        # Does this job even have a renderable report?
+        job = registry.get(job_id)
+        result = job.result if (job and isinstance(job.result, dict)) else {}
+        if not (result.get("html") or "components" in result):
+            registry.set_report_pdf(job_id, "none")
+            return
+        registry.report_stage_begin(job_id)
         try:
-            if _ensure_pdf_cached(job_id) is not None:
+            ok = _ensure_pdf_cached(job_id) is not None
+            registry.report_stage_end(job_id, ok=ok)
+            if ok:
                 logger.info("pre-rendered report PDF cache for job %s", job_id)
+            else:
+                logger.info("job %s has no report to render", job_id)
         except Exception as exc:
             logger.warning("pre-render PDF for job %s failed: %s", job_id, exc)
+            registry.report_stage_end(job_id, ok=False)
 
     threading.Thread(target=_work, daemon=True).start()
 
@@ -1232,6 +1250,7 @@ def _job_summary(job: Any) -> dict[str, Any]:
         "progress": job.progress,
         "summary": summary,
         "stages": _serialize_stages(job),
+        "report_pdf": getattr(job, "report_pdf", "none"),
     }
 
 
@@ -1257,6 +1276,7 @@ def get_job(job_id: str) -> dict[str, Any]:
         "result": job.result if job.status == "done" else None,
         "error": job.error,
         "stages": _serialize_stages(job),
+        "report_pdf": getattr(job, "report_pdf", "none"),
     }
 
 

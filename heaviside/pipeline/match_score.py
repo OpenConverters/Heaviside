@@ -107,6 +107,35 @@ _TAS_DATA_DEFAULT = _REPO_ROOT / "TAS" / "data"
 # by the healthcheck mid-scoring. Indexing makes lookups O(1) after one pass.
 _MPN_ENV_INDEX_CACHE: dict[str, dict[str, dict]] = {}
 
+# Component category → the NDJSON file(s) that can hold it, so a lookup for a
+# known category doesn't build indexes for every OTHER category's file (the
+# unbounded-memory trap: one connector lookup used to index caps+resistors+
+# magnetics+… until it hit connectors.ndjson).
+_CATEGORY_TO_FILES: dict[str, tuple[str, ...]] = {
+    "capacitor": ("capacitors.ndjson",),
+    "resistor": ("resistors.ndjson",),
+    "varistor": ("varistors.ndjson",),
+    "magnetic": ("magnetics.ndjson",),
+    "chipBead": ("magnetics.ndjson",),
+    "inductor": ("magnetics.ndjson",),
+    "mosfet": ("mosfets.ndjson",),
+    "diode": ("diodes.ndjson",),
+    "igbt": ("igbts.ndjson",),
+    "connector": ("connectors.ndjson",),
+    "analog": ("analog_ics.ndjson",),
+    "timeBase": ("timebases.ndjson",),
+    "semiconductor": ("mosfets.ndjson", "diodes.ndjson", "igbts.ndjson"),
+}
+
+
+def _register_index_cache() -> None:
+    from heaviside.pipeline.index_budget import register_cache
+
+    register_cache(_MPN_ENV_INDEX_CACHE)
+
+
+_register_index_cache()
+
 
 def _mpn_env_index(path: Path) -> dict[str, dict]:
     """Build (once, cached) an mpn_lower -> raw-envelope index for an NDJSON file.
@@ -120,6 +149,14 @@ def _mpn_env_index(path: Path) -> dict[str, dict]:
     cached = _MPN_ENV_INDEX_CACHE.get(str(path))
     if cached is not None:
         return cached
+
+    # Bound memory: if the process is already over the index-RSS budget, evict
+    # all cached indexes before building another (they rebuild on demand). This
+    # keeps a large crossref from exhausting RAM/swap on a shared host and
+    # starving co-resident services (OpenMagnetics).
+    from heaviside.pipeline.index_budget import evict_if_over_budget
+
+    evict_if_over_budget()
 
     from heaviside.catalogue._reader import iter_envelopes
 
@@ -159,12 +196,16 @@ def _mpn_env_index(path: Path) -> dict[str, dict]:
     return index
 
 
-def _lookup_mpn(mpn: str, tas_data_dir: Path | None = None) -> dict[str, Any] | None:
-    """Find the raw TAS envelope for *mpn* across all category NDJSON files.
+def _lookup_mpn(
+    mpn: str, tas_data_dir: Path | None = None, *, category: str | None = None
+) -> dict[str, Any] | None:
+    """Find the raw TAS envelope for *mpn*, or ``None``.
 
-    Returns the first matching envelope dict, or ``None``. Uses a per-file MPN
-    index (built once, cached) so bulk scoring doesn't re-scan multi-megabyte
-    files per part.
+    When ``category`` is given, only that category's NDJSON file(s) are indexed
+    — a lookup for a connector never builds the capacitor/resistor/magnetic
+    indexes it doesn't need (bounded memory). When it's unknown, falls back to
+    scanning every file (glob order) as before. Uses a per-file MPN index
+    (built once, cached) so bulk scoring doesn't re-scan multi-megabyte files.
     """
     if not mpn:
         return None
@@ -172,7 +213,13 @@ def _lookup_mpn(mpn: str, tas_data_dir: Path | None = None) -> dict[str, Any] | 
     if not root.is_dir():
         return None
     mpn_l = mpn.strip().lower()
-    for ndjson_file in root.glob("*.ndjson"):
+
+    scoped = _CATEGORY_TO_FILES.get(category or "")
+    if scoped:
+        files = [root / name for name in scoped if (root / name).is_file()]
+    else:
+        files = sorted(root.glob("*.ndjson"))
+    for ndjson_file in files:
         hit = _mpn_env_index(ndjson_file).get(mpn_l)
         if hit is not None:
             return hit
@@ -402,7 +449,8 @@ def annotate_match_scores(
                 "value_pct_delta": None,
             }
             continue
-        env = _lookup_mpn(pn, tas_data_dir=tas_data_dir)
+        ctype = (c.get("component_type") or src.get("component_type") or "").strip() or None
+        env = _lookup_mpn(pn, tas_data_dir=tas_data_dir, category=ctype)
         stress = (stress_by_ref or {}).get(ref)
         c["match_score"] = compute_match_score(c, src, env, stress=stress)
 
