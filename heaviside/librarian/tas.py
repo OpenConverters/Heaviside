@@ -217,7 +217,9 @@ SCHEMA_MAP: dict[str, tuple[Path, Any]] = {
     "connectors": (_REPO_ROOT / "CONAS" / "schemas" / "connector.json", _unwrap_top("connector")),
     # timebases rows are {"timeBase": {<full TBAS document>}} — the unwrapped
     # value is validated against the TBAS umbrella (oneOf oscillator/timer/latch).
-    "timebases": (_REPO_ROOT / "TBAS" / "schemas" / "tbas.json", _unwrap_top("timeBase")),
+    # The umbrella file in the TBAS repo is named tdas.json (the repo was renamed
+    # TDAS->TBAS on GitHub; the internal schema filename/title still read TDAS).
+    "timebases": (_REPO_ROOT / "TBAS" / "schemas" / "tdas.json", _unwrap_top("timeBase")),
 }
 
 
