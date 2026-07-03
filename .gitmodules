@@ -42,5 +42,5 @@
 	url = git@github.com:Power-Supply-Manufacturers-Association/AAS.git
 [submodule "TDAS"]
 	path = TDAS
-	url = https://github.com/Power-Supply-Manufacturers-Association/TDAS.git
+	url = git@github.com:Power-Supply-Manufacturers-Association/TDAS.git
 	branch = main
