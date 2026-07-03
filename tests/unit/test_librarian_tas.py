@@ -392,6 +392,45 @@ class TestAddComponent:
         assert ", " not in line
         assert ": " not in line
 
+    def test_delta_journal_records_when_enabled(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        # With HEAVISIDE_TAS_DELTA_DIR set, a validated add is ALSO journalled,
+        # and the journal row is byte-identical to the main-DB row.
+        delta_dir = tmp_path / "tas_delta"
+        monkeypatch.setenv("HEAVISIDE_TAS_DELTA_DIR", str(delta_dir))
+        tas.add_component("mosfets", _VALID_RECORDS["mosfets"])
+        journal = delta_dir / "mosfets.ndjson"
+        assert journal.exists(), "delta journal was not written"
+        main_rows = (sa.TAS_DATA_DIR / "mosfets.ndjson").read_text().splitlines()
+        assert journal.read_text().splitlines() == main_rows
+
+    def test_delta_journal_noop_when_disabled(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        # Unset -> no journal at all (default off; local dev + CI unaffected).
+        monkeypatch.delenv("HEAVISIDE_TAS_DELTA_DIR", raising=False)
+        from heaviside.librarian import delta as _delta
+
+        assert _delta.delta_dir() is None
+        tas.add_component("mosfets", _VALID_RECORDS["mosfets"])
+        assert not (tmp_path / "tas_delta").exists()
+
+    def test_delta_journal_not_written_when_add_rejected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        # A part that fails validation/dedup never reaches the journal (the guard
+        # + dup-check run before the delta-first write).
+        delta_dir = tmp_path / "tas_delta"
+        monkeypatch.setenv("HEAVISIDE_TAS_DELTA_DIR", str(delta_dir))
+        tas.add_component("mosfets", _VALID_RECORDS["mosfets"])
+        with pytest.raises(tas.DuplicateComponentError):
+            tas.add_component("mosfets", _VALID_RECORDS["mosfets"])
+        # Exactly one journal row — the rejected duplicate left no trace.
+        assert (delta_dir / "mosfets.ndjson").read_text().splitlines() == (
+            (sa.TAS_DATA_DIR / "mosfets.ndjson").read_text().splitlines()
+        )
+
     def test_duplicate_rejected(self):
         tas.add_component("mosfets", _VALID_RECORDS["mosfets"])
         with pytest.raises(tas.DuplicateComponentError, match="TEST-MOSFET-001"):

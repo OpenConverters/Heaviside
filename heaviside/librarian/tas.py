@@ -71,6 +71,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
+from heaviside.librarian import delta as _delta
 from heaviside.librarian import safe_access as _sa
 from heaviside.librarian.guards import guard_component
 from heaviside.librarian.safe_access import (
@@ -645,4 +646,10 @@ def add_component(category: str, component: dict[str, Any]) -> None:
 
     line = json.dumps(component, separators=(",", ":")) + "\n"
     with safe_append(category) as fh:
+        # Delta-FIRST, under the category lock: journal the runtime addition so a
+        # deployed host's new parts can be reconciled into the canonical TAS repo
+        # on the next deploy. No-op unless HEAVISIDE_TAS_DELTA_DIR is set. If it
+        # raises, we abort before the main write — never a main row without a
+        # journal entry (see heaviside.librarian.delta).
+        _delta.record_addition(category, line)
         fh.write(line)
