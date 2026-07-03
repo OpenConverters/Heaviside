@@ -357,6 +357,36 @@ def _clear_validator_cache() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _recursive_envelope_mpn(obj: Any, _depth: int = 4) -> str | None:
+    """Generic MPN finder: descend a PEAS envelope (any category — connector,
+    timeBase/oscillator, varistor, analog, …) to the first ``manufacturerInfo``
+    and read ``reference``, else ``datasheetInfo.part.partNumber``.
+
+    Category-agnostic so new envelope types don't need to be enumerated in two
+    places. Bounded depth (envelopes nest at most wrapper -> [sub] ->
+    manufacturerInfo) to stay cheap and avoid pathological recursion."""
+    if not isinstance(obj, dict) or _depth < 0:
+        return None
+    mi = obj.get("manufacturerInfo")
+    if isinstance(mi, dict):
+        ref = mi.get("reference")
+        if ref:
+            return str(ref)
+        ds = mi.get("datasheetInfo")
+        if isinstance(ds, dict):
+            part = ds.get("part")
+            if isinstance(part, dict):
+                pn = part.get("partNumber")
+                if pn:
+                    return str(pn)
+    for value in obj.values():
+        if isinstance(value, dict):
+            got = _recursive_envelope_mpn(value, _depth - 1)
+            if got:
+                return got
+    return None
+
+
 def _extract_mpn(component: dict[str, Any]) -> str:
     """Best-effort MPN extraction for error messages.
 
@@ -406,6 +436,11 @@ def _extract_mpn(component: dict[str, Any]) -> str:
         pn = inputs.get("partNumber")
         if pn:
             return str(pn)
+    # Category-agnostic fallback: connector / timeBase / varistor / analog and
+    # any future envelope not enumerated above.
+    generic = _recursive_envelope_mpn(component)
+    if generic:
+        return generic
     return "UNKNOWN"
 
 
@@ -503,7 +538,9 @@ def _envelope_mpn(record: dict[str, Any]) -> str | None:
         pn = inputs.get("partNumber")
         if pn:
             return str(pn)
-    return None
+    # Category-agnostic fallback: connector / timeBase / varistor / analog and
+    # any future envelope not enumerated above.
+    return _recursive_envelope_mpn(record)
 
 
 def component_exists(category: str, part_number: str) -> bool:

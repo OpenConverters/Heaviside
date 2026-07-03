@@ -56,18 +56,232 @@ def _canonical_mfr(product: dict[str, Any]) -> str:
     return (product.get("Manufacturer") or {}).get("Value") or ""
 
 
+# Plural DB/category name -> singular crossref category (inverse of _CATEGORY_TO_DB).
+CR_CATEGORY_BY_DB: dict[str, str] = {v: k for k, v in {
+    "capacitor": "capacitors",
+    "resistor": "resistors",
+    "diode": "diodes",
+    "mosfet": "mosfets",
+    "igbt": "igbts",
+    "magnetic": "magnetics",
+    "connector": "connectors",
+    "timeBase": "timebases",
+}.items()}
+
+
+# Digi-Key Category/Family text -> crossref category. Ordered most-specific first;
+# matched as substrings against the lowercased Digi-Key "Category" + "Family".
+# Manufacturer-agnostic: classification is by the part's *type*, from the
+# distributor's own taxonomy, never by who makes it. Used to categorise a bare
+# pasted MPN (e.g. "1707654") that isn't in the internal catalogue and carries no
+# description keyword, so the librarian can still source + verify it.
+_DK_CATEGORY_RULES: list[tuple[str, str]] = [
+    ("terminal block", "connector"),
+    ("connector", "connector"),
+    ("interconnect", "connector"),
+    ("crystal", "timeBase"),
+    ("oscillator", "timeBase"),
+    ("resonator", "timeBase"),
+    ("capacitor", "capacitor"),
+    ("resistor", "resistor"),
+    ("ferrite bead", "magnetic"),
+    ("inductor", "magnetic"),
+    ("choke", "magnetic"),
+    ("transformer", "magnetic"),
+    ("igbt", "igbt"),
+    ("diode", "diode"),
+    ("rectifier", "diode"),
+    ("schottky", "diode"),
+    ("tvs", "diode"),
+    ("zener", "diode"),
+    ("mosfet", "mosfet"),
+    ("transistor", "mosfet"),
+    ("fet", "mosfet"),
+]
+
+
+def classify_dk_product(product: dict[str, Any]) -> str | None:
+    """Infer the crossref category from a Digi-Key product's Category/Family
+    taxonomy. Returns None when it isn't a category the librarian can source."""
+    text = (
+        ((product.get("Category") or {}).get("Value") or "")
+        + " "
+        + ((product.get("Family") or {}).get("Value") or "")
+    ).lower()
+    for keyword, category in _DK_CATEGORY_RULES:
+        if keyword in text:
+            return category
+    return None
+
+
+# Digi-Key connector "Family" / description keyword -> CONAS family. Ordered
+# most-specific first; matched as substrings against the lowercased DK family +
+# description. Manufacturer-agnostic: we branch on the connector's *physics /
+# type*, never on who makes it (a Phoenix Contact terminal block and a Würth one
+# both map to "terminalBlock"). Fallback is "wireToBoard" (the commonest
+# discrete-wire type) — never a drop.
+_DK_FAMILY_RULES: list[tuple[str, str]] = [
+    ("terminal block", "terminalBlock"),
+    ("card edge", "cardEdge"),
+    ("edge connector", "cardEdge"),
+    ("ffc", "fpcFfc"),
+    ("fpc", "fpcFfc"),
+    ("flat flex", "fpcFfc"),
+    ("mezzanine", "boardToBoard"),
+    ("board to board", "boardToBoard"),
+    ("board-to-board", "boardToBoard"),
+    ("backplane", "boardToBoard"),
+    ("coaxial", "rf"),
+    ("(rf)", "rf"),
+    ("u.fl", "rf"),
+    ("circular", "circular"),
+    ("usb", "dataInterface"),
+    ("hdmi", "dataInterface"),
+    ("dvi", "dataInterface"),
+    ("displayport", "dataInterface"),
+    ("modular connector", "dataInterface"),
+    ("d-sub", "dataInterface"),
+    ("d-subminiature", "dataInterface"),
+    ("ethernet", "dataInterface"),
+    ("rj45", "dataInterface"),
+    ("barrel", "power"),
+    ("banana", "power"),
+    ("bus bar", "power"),
+    ("busbar", "power"),
+    ("solar", "power"),
+    ("header", "pinHeaderSocket"),
+    ("socket", "pinHeaderSocket"),
+    ("receptacle", "pinHeaderSocket"),
+    ("male pin", "pinHeaderSocket"),
+    ("housing", "wireToBoard"),
+    ("crimp", "wireToBoard"),
+    ("wire to board", "wireToBoard"),
+    ("wire-to-board", "wireToBoard"),
+]
+
+
+def _dk_family_to_conas(*texts: str) -> str:
+    blob = " ".join(t for t in texts if t).lower()
+    for keyword, family in _DK_FAMILY_RULES:
+        if keyword in blob:
+            return family
+    return "wireToBoard"
+
+
 def _convert_connector(product: dict[str, Any]) -> dict[str, Any] | None:
+    """Generic (manufacturer-agnostic) Digi-Key -> CONAS connector converter.
+
+    Unlike the Würth catalogue fetcher (which drives family/polarity off known WE
+    series codes), this works for ANY manufacturer: family comes from the Digi-Key
+    Family string + description, and every electrical/mechanical field is emitted
+    ONLY when Digi-Key actually provides it — nothing is invented, and the part is
+    never dropped merely because a rating is absent. The result is schema-valid
+    (validated by the caller) with the four required objects always present.
+    """
     mod = _load_script_module("fetch_we_connectors")
-    mpn = product.get("ManufacturerPartNumber", "")
+    params = mod._params_dict(product.get("Parameters") or [])
+    mpn = product.get("ManufacturerPartNumber", "") or ""
+    mfr = _canonical_mfr(product)
     desc = product.get("Description") or {}
     desc_text = desc.get("DetailedDescription") or desc.get("ProductDescription") or ""
     dk_fam = (product.get("Family") or {}).get("Value") or ""
-    cfg = mod._series_config(mpn, desc_text, dk_fam) or {
-        "series": "",
-        "family": "wireToBoard",
-        "polarity": None,
+    url = product.get("DatasheetUrl") or product.get("PrimaryDatasheet") or ""
+    if not mpn or not mfr:
+        return None
+
+    family = _dk_family_to_conas(dk_fam, desc_text)
+
+    # matingPolarity (enum: male/female/hermaphroditic/genderless). From the DK
+    # Gender param, or inferred from the connector Type/Description text (e.g.
+    # "Header, Male Pins"); genderless when DK states nothing.
+    polarity = (
+        mod._gender_to_polarity(params.get("Gender"))
+        or mod._gender_to_polarity(params.get("Gender / Termination Style"))
+        or mod._gender_to_polarity(params.get("Type"))
+        or mod._gender_to_polarity(desc_text)
+        or "genderless"
+    )
+
+    # Electrical — include each rating only if DK lists it (no fabrication). DK
+    # names current/voltage differently per family and per rating standard
+    # (IEC/UL/DC); cover the common aliases.
+    electrical: dict[str, Any] = {}
+    i_rated = (
+        mod._float_value(params.get("Current Rating (Amps)", ""))
+        or mod._float_value(params.get("Current - DC (Max)", ""))
+        or mod._float_value(params.get("Current - UL", ""))
+        or mod._float_value(params.get("Current - IEC", ""))
+        or mod._float_value(params.get("Current", ""))
+        or mod._float_value(params.get("Current Rating", ""))
+        or mod._float_value(params.get("Current - Contact", ""))
+        or mod._float_value(params.get("Current - Max", ""))
+    )
+    if i_rated is not None:
+        electrical["ratedCurrentPerContact"] = i_rated
+    v_rated = (
+        mod._float_value(params.get("Voltage Rating", ""))
+        or mod._float_value(params.get("Voltage - Rated", ""))
+        or mod._float_value(params.get("Voltage - UL", ""))
+        or mod._float_value(params.get("Voltage - IEC", ""))
+        or mod._float_value(params.get("Voltage", ""))
+        or mod._float_value(params.get("Voltage - DC", ""))
+    )
+    if v_rated is not None:
+        electrical["ratedVoltage"] = v_rated
+
+    # Mechanical — positions + pitch only when present.
+    mechanical: dict[str, Any] = {}
+    pitch_mm = (
+        mod._float_value(params.get("Pitch - Mating"), unit_hint="m")
+        or mod._float_value(params.get("Pitch"), unit_hint="m")
+        or mod._float_value(params.get("Pitch - Termination to Termination"), unit_hint="m")
+    )
+    if pitch_mm is not None:
+        mechanical["pitch"] = pitch_mm
+    positions = mod._int_value(
+        params.get("Number of Positions")
+        or params.get("Number of Contacts")
+        or params.get("Number of Rows x Number of Contacts")
+        or ""
+    )
+    if positions is not None:
+        mechanical["positions"] = positions
+
+    # Environmental temperature, only if DK states a range.
+    env: dict[str, Any] = {}
+    temp_str = params.get("Operating Temperature") or ""
+    if temp_str:
+        import re
+
+        m_temp = re.search(r"([-\d.]+)\s*°?C\s*~\s*([-\d.]+)\s*°?C", temp_str)
+        if m_temp:
+            env["operatingTemperature"] = {
+                "minimum": float(m_temp.group(1)),
+                "maximum": float(m_temp.group(2)),
+            }
+
+    part: dict[str, Any] = {"partNumber": mpn, "matingPolarity": polarity}
+    if desc_text:
+        part["description"] = desc_text[:200]
+
+    datasheet_info: dict[str, Any] = {
+        "part": part,
+        "electrical": electrical,
+        "mechanical": mechanical,
+        "familyDetails": {"family": family},
     }
-    return mod._convert(product, cfg)
+    if env:
+        datasheet_info["environmental"] = env
+
+    manufacturer_info: dict[str, Any] = {
+        "name": mfr,
+        "reference": mpn,
+        "datasheetInfo": datasheet_info,
+    }
+    if url:
+        manufacturer_info["datasheetUrl"] = url
+
+    return {"connector": {"manufacturerInfo": manufacturer_info}}
 
 
 def _convert_timebase(product: dict[str, Any]) -> dict[str, Any] | None:
@@ -103,39 +317,59 @@ def _mpn_matches(product: dict[str, Any], mpn: str) -> bool:
     return got == mpn.strip().lower()
 
 
+def fetch_dk_product(dk_client: Any, mpn: str) -> dict[str, Any] | None:
+    """Exact-MPN Digi-Key lookup: prefer get_product, fall back to a keyword
+    search matching ManufacturerPartNumber exactly. Returns the product dict (the
+    shape the converters + classifier expect) or None."""
+    try:
+        detail = dk_client.get_product(mpn)
+        if isinstance(detail, dict) and _mpn_matches(detail, mpn):
+            return detail
+    except Exception as exc:
+        logger.debug("get_product(%s) failed, will keyword-search: %s", mpn, exc)
+    try:
+        res = dk_client.search(mpn, limit=10)
+    except Exception as exc:
+        logger.debug("Digi-Key search(%s) failed: %s", mpn, exc)
+        return None
+    for p in res.get("Products", []) if isinstance(res, dict) else []:
+        if _mpn_matches(p, mpn):
+            return p
+    return None
+
+
 def fetch_original_envelope(
-    dk_client: Any, mpn: str, category: str
+    dk_client: Any, mpn: str, category: str, *, product: dict[str, Any] | None = None
 ) -> tuple[dict[str, Any] | None, str]:
     """Fetch + convert + validate an original part from Digi-Key by exact MPN.
+
+    ``category`` may be empty/None — the category is then inferred from the
+    Digi-Key product's taxonomy (so a bare pasted MPN that isn't in the internal
+    catalogue and carries no description keyword can still be sourced). Pass an
+    already-fetched ``product`` to avoid a second Digi-Key round-trip.
 
     Returns ``(envelope, db_category)`` on success, or ``(None, reason)``. The
     envelope is guaranteed schema-valid (validated here); the caller persists it.
     """
+    # When the category is known up front and we can't convert it, short-circuit
+    # before spending a Digi-Key call.
+    if category and _converter_for(category) is None:
+        return None, f"no Digi-Key converter for category {category!r}"
+
+    if product is None:
+        product = fetch_dk_product(dk_client, mpn)
+    if product is None:
+        return None, "not found on Digi-Key"
+
+    if not category:
+        category = classify_dk_product(product) or ""
+        if not category:
+            fam = (product.get("Family") or {}).get("Value") or "?"
+            return None, f"could not classify Digi-Key product (family {fam!r})"
+
     converter = _converter_for(category)
     if converter is None:
         return None, f"no Digi-Key converter for category {category!r}"
-
-    # Exact-MPN lookup: prefer get_product; fall back to a keyword search and
-    # match the ManufacturerPartNumber exactly (search results are the shape the
-    # converters expect).
-    product: dict[str, Any] | None = None
-    try:
-        detail = dk_client.get_product(mpn)
-        if isinstance(detail, dict) and _mpn_matches(detail, mpn):
-            product = detail
-    except Exception as exc:
-        logger.debug("get_product(%s) failed, will keyword-search: %s", mpn, exc)
-    if product is None:
-        try:
-            res = dk_client.search(mpn, limit=10)
-        except Exception as exc:
-            return None, f"Digi-Key search failed: {exc}"
-        for p in res.get("Products", []) if isinstance(res, dict) else []:
-            if _mpn_matches(p, mpn):
-                product = p
-                break
-    if product is None:
-        return None, "not found on Digi-Key"
 
     try:
         result = converter(product)

@@ -375,15 +375,48 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
     Best-effort: no Digi-Key credentials, an unconvertible category, or a part
     Digi-Key doesn't have simply leaves the original unresolved (the identity
     no_substitute rule then applies, as before). Never persists an original that
-    fails schema validation."""
+    fails schema validation.
+
+    A row that carries NO category (a bare pasted MPN not in the internal
+    catalogue and with no description keyword — the very case that reads as
+    "connector 1707654 not found") is classified here FROM Digi-Key's own product
+    taxonomy: the librarian looks the MPN up, sets the row's ``component_type``,
+    and then sources the original. Otherwise such rows would be skipped and the
+    LLM would guess the category too late for the original to ever be fetched."""
     from heaviside.pipeline.guardrails import lookup_part_fields
 
-    # Unique (category, mpn) originals that are NOT already in the internal DB.
+    try:
+        from heaviside.librarian.fetcher import DigiKeyClient, load_credentials
+        from heaviside.librarian.fetcher.original import (
+            CR_CATEGORY_BY_DB,
+            classify_dk_product,
+            fetch_dk_product,
+            fetch_original_envelope,
+        )
+        from heaviside.librarian.tas import DuplicateComponentError, add_component
+    except ImportError as exc:
+        logger.info("CR stage 1.6: original-fetch unavailable (%s) — skipping", exc)
+        return state
+
+    def _row_mpn(comp: dict[str, Any]) -> str:
+        return str(comp.get("original_mpn") or comp.get("part") or "").strip()
+
+    _SKIP = ("nc", "dnp", "n/a", "no_substitute")
+
+    # Anything to do? Either an uncategorised real MPN (needs classifying) or a
+    # categorised MPN missing from the internal DB (needs sourcing).
+    has_uncategorised = any(
+        not comp.get("component_type", comp.get("category", ""))
+        and _row_mpn(comp)
+        and _row_mpn(comp).lower() not in _SKIP
+        for comp in state.source_bom
+    )
+    # Build the categorised "wanted" set up front (cheap DB lookups only).
     wanted: dict[tuple[str, str], str] = {}  # (cat, mpn_lower) -> original mpn
     for comp in state.source_bom:
         cat = comp.get("component_type", comp.get("category", ""))
-        mpn = str(comp.get("original_mpn") or comp.get("part") or "").strip()
-        if not cat or not mpn or mpn.lower() in ("nc", "dnp", "n/a", "no_substitute"):
+        mpn = _row_mpn(comp)
+        if not cat or not mpn or mpn.lower() in _SKIP:
             continue
         key = (cat, mpn.lower())
         if key in wanted:
@@ -395,15 +428,7 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
             pass
         wanted[key] = mpn
 
-    if not wanted:
-        return state
-
-    try:
-        from heaviside.librarian.fetcher import DigiKeyClient, load_credentials
-        from heaviside.librarian.fetcher.original import fetch_original_envelope
-        from heaviside.librarian.tas import DuplicateComponentError, add_component
-    except ImportError as exc:
-        logger.info("CR stage 1.6: original-fetch unavailable (%s) — skipping", exc)
+    if not wanted and not has_uncategorised:
         return state
 
     try:
@@ -414,11 +439,57 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
         state.diagnostics.append(f"original fetch skipped (Digi-Key not configured): {exc}")
         return state
 
+    # Products fetched here, keyed by mpn_lower, so the classify pass and the
+    # source pass don't hit Digi-Key twice for the same part.
+    product_cache: dict[str, dict[str, Any] | None] = {}
+
+    def _get_product(mpn: str) -> dict[str, Any] | None:
+        key = mpn.lower()
+        if key not in product_cache:
+            product_cache[key] = fetch_dk_product(dk, mpn)
+        return product_cache[key]
+
     fetched = 0
     touched_files = False
-    for (cat, _mpn_l), mpn in list(wanted.items())[:_FETCH_ORIGINALS_CAP]:
+    calls_left = _FETCH_ORIGINALS_CAP
+
+    # Pass A: classify uncategorised bare-MPN rows from Digi-Key's taxonomy and
+    # set their component_type + enqueue them for sourcing.
+    if has_uncategorised:
+        seen_uncat: set[str] = set()
+        for comp in state.source_bom:
+            if comp.get("component_type", comp.get("category", "")):
+                continue
+            mpn = _row_mpn(comp)
+            if not mpn or mpn.lower() in _SKIP or mpn.lower() in seen_uncat:
+                continue
+            seen_uncat.add(mpn.lower())
+            if calls_left <= 0:
+                logger.info("CR stage 1.6: classify cap reached; %s left uncategorised", mpn)
+                continue
+            calls_left -= 1
+            product = _get_product(mpn)
+            cat = classify_dk_product(product) if product else None
+            if not cat:
+                logger.info("CR stage 1.6: could not classify bare MPN %s from Digi-Key", mpn)
+                continue
+            # Stamp the category on every row that shares this MPN.
+            for c in state.source_bom:
+                if _row_mpn(c).lower() == mpn.lower() and not c.get("component_type"):
+                    c["component_type"] = cat
+            # Not already in the internal DB (uncategorised → definitionally not
+            # resolvable), so queue for sourcing.
+            wanted[(cat, mpn.lower())] = mpn
+
+    # Pass B: source + persist each wanted original (reusing cached products).
+    for (cat, _mpn_l), mpn in list(wanted.items()):
+        if calls_left <= 0:
+            logger.info("CR stage 1.6: fetch cap reached at %d originals", fetched)
+            break
+        calls_left -= 1
+        product = _get_product(mpn)
         try:
-            env, db_cat_or_reason = fetch_original_envelope(dk, mpn, cat)
+            env, db_cat_or_reason = fetch_original_envelope(dk, mpn, cat, product=product)
         except Exception as exc:
             logger.debug("CR stage 1.6: fetch %s (%s) errored: %s", mpn, cat, exc)
             continue
