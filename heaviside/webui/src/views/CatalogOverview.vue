@@ -15,8 +15,9 @@ const CAT_META = {
   connectors: { label: 'Connectors', accent: '#6ee7a8', glyph: '▦' },
   analog:     { label: 'Analog ICs', accent: '#ffd166', glyph: '▷' },
   timebases:  { label: 'Crystals & Oscillators', accent: '#7cc7ff', glyph: '◇' },
+  varistors:  { label: 'Varistors', accent: '#ff9d5c', glyph: '⏦' },
 }
-const ORDER = ['mosfets', 'diodes', 'capacitors', 'resistors', 'magnetics', 'connectors', 'analog', 'timebases']
+const ORDER = ['mosfets', 'diodes', 'capacitors', 'resistors', 'magnetics', 'connectors', 'analog', 'timebases', 'varistors']
 
 // Friendly tech names (matches the browse view); falls back to a humanizer.
 const TECH_LABELS = {
@@ -40,6 +41,7 @@ const TECH_LABELS = {
   quartzCrystal: 'Quartz Crystal', ceramicResonator: 'Ceramic Resonator',
   crystalOscillator: 'XO', tcxo: 'TCXO', vcxo: 'VCXO', ocxo: 'OCXO', mems: 'MEMS',
   siliconRC: 'Silicon RC', programmable: 'Programmable',
+  multiLayer: 'Multilayer', metalOxide: 'Metal-Oxide', disc: 'Disc',
 }
 function techName(t) {
   return TECH_LABELS[t] || t

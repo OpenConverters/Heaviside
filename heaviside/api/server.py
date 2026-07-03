@@ -1448,6 +1448,7 @@ _CATALOG_UNITS: dict[str, list[str]] = {
     "connectors": ["V", "A", "pos"],
     "analog": ["Hz", "V", "V"],
     "timebases": ["Hz", "ppm", "F"],
+    "varistors": ["V", "V", "A"],
 }
 
 _CATALOG_FILES: dict[str, str] = {
@@ -1459,6 +1460,7 @@ _CATALOG_FILES: dict[str, str] = {
     "connectors": "connectors.ndjson",
     "analog": "analog_ics.ndjson",
     "timebases": "timebases.ndjson",
+    "varistors": "varistors.ndjson",
 }
 
 _CATALOG_LABELS: dict[str, list[str]] = {
@@ -1470,6 +1472,7 @@ _CATALOG_LABELS: dict[str, list[str]] = {
     "connectors": ["V", "I/contact", "Pos"],
     "analog": ["GBW", "Vos", "Vs max"],
     "timebases": ["f", "Tol", "CL"],
+    "varistors": ["Vv", "Vclamp", "Isurge"],
 }
 
 
@@ -1697,6 +1700,39 @@ def _catalog_projectors() -> dict[str, Any]:
             "_p3n": p3n,
         }
 
+    def _varistor(env: dict[str, Any]) -> dict[str, Any] | None:
+        try:
+            mi = env["varistor"]["manufacturerInfo"]
+        except (KeyError, TypeError):
+            return None
+        ref, name = mi.get("reference"), mi.get("name")
+        if not isinstance(ref, str) or not isinstance(name, str):
+            return None
+        di = mi.get("datasheetInfo") or {}
+        el = di.get("electrical") or {}
+        part = di.get("part") or {}
+
+        def _scalar(v: Any) -> float | None:
+            if isinstance(v, Mapping):
+                v = v.get("nominal", v.get("maximum", v.get("minimum")))
+            return v if isinstance(v, (int, float)) else None
+
+        p1n = _scalar(el.get("varistorVoltage"))
+        p2n = _scalar(el.get("clampingVoltage"))
+        p3n = _scalar(el.get("peakSurgeCurrent"))
+        return {
+            "mpn": ref,
+            "manufacturer": name,
+            "tech": part.get("technology") or "",
+            "p1": _fmt_eng(p1n, "V"),
+            "p2": _fmt_eng(p2n, "V"),
+            "p3": _fmt_eng(p3n, "A"),
+            "status": mi.get("status", ""),
+            "_p1n": p1n,
+            "_p2n": p2n,
+            "_p3n": p3n,
+        }
+
     return {
         "mosfets": ("mosfets.ndjson", _mosfet),
         "diodes": ("diodes.ndjson", _diode),
@@ -1706,6 +1742,7 @@ def _catalog_projectors() -> dict[str, Any]:
         "connectors": ("connectors.ndjson", _connector),
         "analog": ("analog_ics.ndjson", _analog),
         "timebases": ("timebases.ndjson", _timebase),
+        "varistors": ("varistors.ndjson", _varistor),
     }
 
 
@@ -2049,6 +2086,7 @@ def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
         "connectors": "connectors.ndjson",
         "analog": "analog_ics.ndjson",
         "timebases": "timebases.ndjson",
+        "varistors": "varistors.ndjson",
     }
     if category not in _NDJSON:
         raise HTTPException(status_code=404, detail=f"unknown category '{category}'")
@@ -2064,6 +2102,7 @@ def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
             "connector",
             "analog",
             "timeBase",
+            "varistor",
         ):
             sub = env.get(key, {})
             if not sub:

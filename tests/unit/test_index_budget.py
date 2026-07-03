@@ -3,6 +3,7 @@ process crosses the RSS budget, so a large crossref can't OOM a shared host."""
 
 from __future__ import annotations
 
+import pytest
 import heaviside.pipeline.index_budget as ib
 
 
@@ -37,8 +38,33 @@ def test_evicts_over_budget(monkeypatch):
     g._TAS_INDEX_CACHE["q"] = {"b": 2}
     monkeypatch.setattr(ib, "_rss_mb", lambda: 9999.0)
     monkeypatch.setenv("HEAVISIDE_MAX_INDEX_RSS_MB", "2500")
+    monkeypatch.setenv("HEAVISIDE_INDEX_EVICT_COOLDOWN_S", "0")  # no cooldown for the test
     assert ib.evict_if_over_budget() is True
     assert not ms._MPN_ENV_INDEX_CACHE and not g._TAS_INDEX_CACHE
+
+
+def test_budget_scales_with_ram(monkeypatch):
+    # No explicit override -> budget scales with total RAM (45%, floor 2500).
+    monkeypatch.delenv("HEAVISIDE_MAX_INDEX_RSS_MB", raising=False)
+    monkeypatch.setattr(ib, "_total_ram_mb", lambda: 64000.0)
+    assert ib._budget_mb() == pytest.approx(0.45 * 64000.0)
+    monkeypatch.setattr(ib, "_total_ram_mb", lambda: 2000.0)  # tiny box -> floor
+    assert ib._budget_mb() == 2500.0
+
+
+def test_cooldown_prevents_thrash(monkeypatch):
+    import heaviside.pipeline.match_score as ms
+
+    monkeypatch.setattr(ib, "_rss_mb", lambda: 9999.0)
+    monkeypatch.setenv("HEAVISIDE_MAX_INDEX_RSS_MB", "2500")
+    monkeypatch.setenv("HEAVISIDE_INDEX_EVICT_COOLDOWN_S", "999")
+    ib._LAST_EVICT_AT[0] = 0.0
+    ms._MPN_ENV_INDEX_CACHE["p"] = {"a": 1}
+    assert ib.evict_if_over_budget() is True  # first eviction fires
+    ms._MPN_ENV_INDEX_CACHE["p"] = {"a": 1}
+    assert ib.evict_if_over_budget() is False  # within cooldown -> no re-evict (no thrash)
+    assert ms._MPN_ENV_INDEX_CACHE  # left intact
+    ms._MPN_ENV_INDEX_CACHE.clear()
 
 
 def test_no_evict_under_budget(monkeypatch):

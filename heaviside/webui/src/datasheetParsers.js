@@ -488,6 +488,48 @@ function parseTimeBase(env) {
   }
 }
 
+function parseVaristor(env) {
+  const mi = env?.varistor?.manufacturerInfo ?? {}
+  const di = mi.datasheetInfo ?? {}
+  const p  = di.part ?? {}
+  const el = di.electrical ?? {}
+  const me = di.mechanical ?? {}
+  const th = di.thermal ?? {}
+  const opt = (v) => (v != null ? String(v) : undefined)
+  return {
+    title: mi.reference ?? p.partNumber ?? '—',
+    manufacturer: mi.name ?? '—',
+    status: mi.status,
+    datasheetUrl: mi.datasheetUrl,
+    description: p.description ?? mi.description,
+    tags: [words(p.technology), p.case ?? me.case, el.surgeWaveform].filter(Boolean),
+    headline: [
+      { sym: 'V_V',   label: 'Varistor Voltage', val: fmtU(scalar(el.varistorVoltage), 'V') },
+      { sym: 'V_cl',  label: 'Clamping Voltage',  val: fmtU(el.clampingVoltage, 'V') },
+      { sym: 'I_pk',  label: 'Peak Surge Current', val: fmtU(el.peakSurgeCurrent, 'A') },
+    ],
+    sections: [
+      { title: 'Electrical Characteristics', rows: [
+        { param: 'Varistor Voltage',        sym: 'V_V',   mtm: minTypMax(el.varistorVoltage), unit: 'V' },
+        { param: 'Clamping Voltage',        sym: 'V_cl',  mtm: [null, el.clampingVoltage, null], unit: 'V' },
+        { param: 'Max Continuous DC Voltage', sym: 'V_DC', mtm: [null, el.maxContinuousDcVoltage, null], unit: 'V' },
+        { param: 'Max Continuous AC Voltage', sym: 'V_AC', mtm: [null, el.maxContinuousAcVoltage, null], unit: 'V' },
+        { param: 'Peak Surge Current',      sym: 'I_pk',  mtm: [null, el.peakSurgeCurrent, null], unit: 'A', note: el.surgeWaveform ? `${el.surgeWaveform} µs waveform` : null },
+        { param: 'Energy Absorption',       sym: 'W',     mtm: [null, el.energyAbsorption, null], unit: 'J' },
+        { param: 'Capacitance',             sym: 'C',     mtm: [null, el.capacitance, null], unit: 'F' },
+        { param: 'Technology',              sym: '',      mtm: [null, null, null], str: opt(words(p.technology)) },
+      ]},
+      { title: 'Environmental & Package', rows: [
+        { param: 'Operating Temperature', sym: 'T_op', mtm: [th.operatingTemperature?.minimum ?? null, null, th.operatingTemperature?.maximum ?? null], unit: '°C' },
+        { param: 'Case', sym: '', mtm: [null, null, null], str: opt(p.case ?? me.case) },
+        { param: 'Length', sym: 'L', mtm: minTypMax(me.length), unit: 'm' },
+        { param: 'Width',  sym: 'W', mtm: minTypMax(me.width), unit: 'm' },
+        { param: 'Height', sym: 'H', mtm: minTypMax(me.height), unit: 'm' },
+      ]},
+    ],
+  }
+}
+
 const PARSERS = {
   mosfets: parseMosfet,
   diodes: parseDiode,
@@ -497,6 +539,7 @@ const PARSERS = {
   connectors: parseConnector,
   analog: parseAnalog,
   timebases: parseTimeBase,
+  varistors: parseVaristor,
 }
 
 // Copy text to the clipboard; falls back to execCommand for non-secure

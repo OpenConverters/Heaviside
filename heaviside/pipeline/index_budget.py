@@ -56,31 +56,77 @@ def _rss_mb() -> float:
             return 0.0
 
 
-def _budget_mb() -> float:
+def _total_ram_mb() -> float:
     try:
-        return max(256.0, float(os.environ.get("HEAVISIDE_MAX_INDEX_RSS_MB", "2500")))
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / 1024.0
+    except Exception:
+        pass
+    return 0.0
+
+
+def _budget_mb() -> float:
+    """RSS budget for the index caches, in MB.
+
+    An explicit ``HEAVISIDE_MAX_INDEX_RSS_MB`` wins. Otherwise the budget SCALES
+    with the machine: 45 % of total RAM (floor 2.5 GB). A fixed low cap was the
+    bug — on a 64 GB dev box a 2.5 GB cap made every multi-category crossref
+    thrash (evict → rebuild → evict), so nothing progressed; on the 7.7 GB prod
+    host 45 % ≈ 3.5 GB still leaves room for the co-resident OpenMagnetics."""
+    env = os.environ.get("HEAVISIDE_MAX_INDEX_RSS_MB")
+    if env:
+        try:
+            return max(256.0, float(env))
+        except (TypeError, ValueError):
+            pass
+    total = _total_ram_mb()
+    if total > 0:
+        return max(2500.0, 0.45 * total)
+    return 2500.0
+
+
+def _cooldown_s() -> float:
+    try:
+        return max(0.0, float(os.environ.get("HEAVISIDE_INDEX_EVICT_COOLDOWN_S", "30")))
     except (TypeError, ValueError):
-        return 2500.0
+        return 30.0
+
+
+# monotonic timestamp of the last eviction — a cooldown between evictions stops
+# a tight evict→rebuild→evict thrash loop when a single run's working set sits
+# near the budget: after an eviction we let the caches rebuild and be USED for a
+# while before the guard is allowed to fire again.
+_LAST_EVICT_AT: list[float] = [0.0]
 
 
 def evict_if_over_budget() -> bool:
-    """If process RSS is over the budget, clear every registered index cache and
-    run GC. Returns True if it evicted. Call at the top of an index build so a
-    large new index can't push the box into swap."""
-    rss = _rss_mb()
-    budget = _budget_mb()
-    if rss <= budget:
+    """If process RSS is over the budget (and past the eviction cooldown), clear
+    every registered index cache and run GC. Returns True if it evicted."""
+    if _rss_mb() <= _budget_mb():
         return False
+    import time
+
+    now = time.monotonic()
+    if now - _LAST_EVICT_AT[0] < _cooldown_s():
+        # Recently evicted — let the working set rebuild and do its work rather
+        # than thrash. Memory may briefly exceed the budget; it's reclaimed at
+        # the next eviction. (Bounded: a run touches a fixed set of categories.)
+        return False
+    _LAST_EVICT_AT[0] = now
+    rss = _rss_mb()
     freed_entries = sum(len(c) for c in _REGISTERED_CACHES)
     for cache in _REGISTERED_CACHES:
         cache.clear()
     gc.collect()
     logger.warning(
         "index memory guard: RSS %.0f MB > budget %.0f MB — evicted %d cached "
-        "index entries (they will rebuild on demand)",
+        "index entries (rebuild on demand; next eviction ≥ %.0fs away)",
         rss,
-        budget,
+        _budget_mb(),
         freed_entries,
+        _cooldown_s(),
     )
     return True
 
