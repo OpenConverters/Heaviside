@@ -11,7 +11,8 @@
 #       are picked up next time, never lost.)
 #   B. Merge   — replay the harvested journal into canonical via add_component
 #      (re-validated + Blade Runner + dedup by MPN; idempotent).
-#   C. Commit  — commit (and, unless SKIP_PUSH=1, push) the canonical TAS repo.
+#   C. Commit  — commit the canonical TAS repo; push is best-effort (a blocked
+#      Git-LFS push warns and falls through to the copy — the commit is durable).
 #   D. Replace — rsync canonical TAS/data -> prod, then restart the service.
 #   E. Clear   — and ONLY now, delete the rotated delta on prod.
 #
@@ -76,15 +77,17 @@ if git -C "$CANONICAL" diff --quiet -- data 2>/dev/null && git -C "$CANONICAL" d
 else
   run "git -C '$CANONICAL' add data"
   run "git -C '$CANONICAL' commit -m 'data: reconcile runtime-added parts from prod ($STAMP)'"
-  if [ -z "$SKIP_PUSH" ]; then
-    echo "pushing canonical (git + lfs)…"
-    if ! run "git -C '$CANONICAL' push"; then
-      echo "ERROR: git push failed (LFS auth / network?). Prod NOT touched." >&2
-      echo "Re-run with SKIP_PUSH=1 to proceed commit-only once you accept that." >&2
-      exit 1
-    fi
+  # Push is best-effort: the commit already gives durable, recoverable local
+  # history, so a blocked push must NOT stop the deploy. The Git-LFS
+  # "Enterprise Managed User" block is expected here — on that (or any push
+  # failure) we warn and fall through to the copy, exactly as if done by hand.
+  if [ -n "$SKIP_PUSH" ]; then
+    echo "SKIP_PUSH set — committed locally, not pushing."
+  elif run "git -C '$CANONICAL' push"; then
+    echo "pushed canonical."
   else
-    echo "SKIP_PUSH set — committed locally, not pushed."
+    echo "WARNING: git push failed — likely the Git-LFS Enterprise-Managed-User block." >&2
+    echo "         Canonical is committed locally (durable/recoverable); continuing to the copy." >&2
   fi
 fi
 
