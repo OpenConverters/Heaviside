@@ -887,6 +887,7 @@ def job_report_pdf(job_id: str):
 # reflects it). The RE-fronted paths (from-pdf / from-url) reverse-engineer the
 # reference first, so they declare the RE prefix stages on top of the CR core.
 _CROSSREF_CORE_STAGES = [
+    "Resolve part numbers",
     "Prefetch TAS candidates",
     "Librarian: source missing parts",
     "Pre-classify components",
@@ -925,7 +926,10 @@ _CROSSREF_KEYWORDS: list[tuple[str, str]] = [
     ("performance claims", "Extract datasheet claims"),
     ("Testbench", "Testbench simulation"),
     ("RE→CR bridge", "RE→CR stress bridge"),
-    # CR core (all paths)
+    # CR core (all paths). "Resolving" is the part-resolver (stage 0) — its own
+    # stage so the bar advances immediately instead of sitting at 0 through that
+    # first (often slow) LLM call on messy pasted cells like "Phoenix C : 1707654".
+    ("Resolving", "Resolve part numbers"),
     ("Prefetching", "Prefetch TAS candidates"),
     ("Librarian", "Librarian: source missing parts"),
     ("Pre-classifying", "Pre-classify components"),

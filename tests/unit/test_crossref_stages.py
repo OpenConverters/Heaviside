@@ -16,6 +16,7 @@ from heaviside.api.server import (
 # (message, expected-stage) for the CR core — keep in sync with the _say(...)
 # calls in run_crossref_pipeline.
 _CORE = [
+    ("Resolving messy BOM part numbers", "Resolve part numbers"),
     ("Prefetching TAS candidates for 12 components", "Prefetch TAS candidates"),
     ("Librarian: sourcing any missing components from datasheets/distributors",
      "Librarian: source missing parts"),
