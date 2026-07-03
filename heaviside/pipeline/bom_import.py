@@ -314,6 +314,29 @@ def parse_bom_bytes(
     best-effort: if it's unavailable, deterministic aliasing alone is used."""
     if not raw:
         raise BomImportError("uploaded file is empty.")
+    try:
+        return _parse_bom_deterministic(raw, filename, allow_llm=allow_llm)
+    except BomImportError as exc:
+        # Deterministic parse failed (odd layout, title rows, merged header, no
+        # part-number column, …). Last resort: let an LLM SALVAGE the real rows
+        # from the raw text — strictly transcribing, never inventing parts. Only
+        # used when a key is configured; a salvage that yields nothing re-raises
+        # the original, clearer error.
+        if not (allow_llm and _llm_available()):
+            raise
+        salvaged = _salvage_bom_with_llm(raw, filename, original_error=str(exc))
+        if salvaged:
+            logger.info("BOM salvaged via LLM after parse error: %d rows", len(salvaged))
+            return salvaged
+        raise
+
+
+def _parse_bom_deterministic(
+    raw: bytes, filename: str, *, allow_llm: bool = True
+) -> list[dict[str, Any]]:
+    """The deterministic parse path (CSV/XLSX + LLM column-mapper). Raises
+    :class:`BomImportError` on any failure; :func:`parse_bom_bytes` wraps it with
+    the LLM salvage fallback."""
     name = (filename or "").lower()
     if name.endswith(".xls"):
         raise BomImportError("legacy .xls is not supported — re-save as .xlsx or export to CSV.")
@@ -335,6 +358,91 @@ def parse_bom_bytes(
     # raises _NoPartNumberColumn if NEITHER finds a part-number column.
     overrides = _llm_header_overrides(headers, rows) if allow_llm else {}
     return _rows_to_components(headers, rows, header_overrides=overrides)
+
+
+def _raw_to_text(raw: bytes, filename: str) -> str:
+    """Decode uploaded bytes to plain text for the salvage LLM. For .xlsx, dump
+    the active sheet as tab-separated rows; otherwise decode as text."""
+    name = (filename or "").lower()
+    if name.endswith((".xlsx", ".xlsm")):
+        try:
+            from openpyxl import load_workbook
+
+            wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+            try:
+                ws = wb.active
+                lines = [
+                    "\t".join("" if c is None else str(c) for c in r)
+                    for r in ws.iter_rows(values_only=True)
+                ]
+            finally:
+                wb.close()
+            return "\n".join(lines)
+        except Exception:
+            return ""
+    for enc in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+# Cap the text sent to the salvage LLM so a huge file doesn't blow the context.
+_SALVAGE_MAX_CHARS = 60_000
+
+
+def _salvage_bom_with_llm(
+    raw: bytes, filename: str, *, original_error: str
+) -> list[dict[str, Any]]:
+    """Recover a BOM the deterministic parser couldn't read, by asking the
+    ``bom-salvage`` agent to TRANSCRIBE the real rows from the raw text. Never
+    fabricates: the agent is instructed to emit only rows present in the file,
+    and any row it returns without a usable part number / value is dropped here.
+    Returns [] on any failure (caller re-raises the original parse error)."""
+    text = _raw_to_text(raw, filename)
+    if not text.strip():
+        return []
+    truncated = text[:_SALVAGE_MAX_CHARS]
+    import json as _json
+
+    from heaviside.agents.llm_call import LLMCallError, call_agent_json
+
+    user_msg = (
+        f"The deterministic parser failed with: {original_error}\n\n"
+        f"Raw file text (filename {filename!r}):\n{truncated}"
+        + ("\n\n[TRUNCATED]" if len(text) > _SALVAGE_MAX_CHARS else "")
+    )
+    try:
+        data = call_agent_json("bom-salvage", user_msg, max_tokens=16384)
+    except LLMCallError as exc:
+        logger.info("BOM salvage LLM unavailable: %s", exc)
+        return []
+    rows = data.get("rows") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
+    # Map the salvaged rows through the same canonicaliser as the normal path
+    # (so field aliases / component-type inference apply), keeping only rows
+    # that carry at least a part number OR a value — an empty row is noise, not
+    # a fabricated part.
+    clean: list[dict[str, Any]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        mpn = str(r.get("mpn") or r.get("part") or "").strip()
+        value = str(r.get("value") or "").strip()
+        if not mpn and not value:
+            continue
+        clean.append(
+            {
+                "ref_des": str(r.get("ref_des") or "").strip(),
+                "original_mpn": mpn,
+                "manufacturer": str(r.get("manufacturer") or "").strip(),
+                "value": value,
+                "quantity": str(r.get("quantity") or "").strip(),
+            }
+        )
+    return clean
 
 
 # Convenience alias used by the API layer.

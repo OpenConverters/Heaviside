@@ -456,6 +456,96 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
     return state
 
 
+_RESOLVE_PARTS_CAP = 200  # bound LLM cost on huge BOMs
+_RESOLVE_BATCH = 40
+
+
+def _needs_part_resolution(row: dict[str, Any]) -> bool:
+    """A row whose manufacturer/MPN is mashed together, prefixed with a
+    separator, or carries the manufacturer inside the MPN — the messy pasted
+    shapes an LLM should clean (e.g. 'Phoenix C  1707654', 'VISHAY /IHLP…')."""
+    mpn = str(row.get("original_mpn") or row.get("part") or "").strip()
+    if not mpn:
+        return False
+    if re.search(r"\s", mpn):  # whitespace inside an MPN → mfr+code mashed
+        return True
+    if mpn[0] in "/\\|,;:" or mpn[-1] in "/\\|,;:":  # leading/trailing separator
+        return True
+    mfr = str(row.get("manufacturer") or "").strip()
+    if mfr and len(mfr) >= 3 and mfr.split()[0].lower() in mpn.lower():
+        return True
+    return False
+
+
+def _stage0_resolve_parts(state: CrossRefState) -> CrossRefState:
+    """LLM-clean messy BOM rows into {manufacturer, mpn} BEFORE lookup.
+
+    Engineers paste rows like 'Phoenix C  1707654' or 'VISHAY /IHLP1616ABER1R5M11'
+    where the manufacturer and part are mashed together or prefixed with junk.
+    Those never resolve against the catalogue as-is. This stage sends only the
+    messy rows to the ``part-resolver`` agent, which SEPARATES + CLEANS them
+    (never invents an MPN — the cleaned MPN is still verified downstream by the
+    catalogue / Digi-Key fetch). Best-effort: no LLM key or an agent error
+    leaves the rows untouched."""
+    messy = [r for r in state.source_bom if _needs_part_resolution(r)]
+    if not messy:
+        return state
+    messy = messy[:_RESOLVE_PARTS_CAP]
+
+    try:
+        from heaviside.agents.llm_call import LLMCallError, call_agent_json
+    except ImportError:
+        return state
+
+    def _raw(r: dict[str, Any]) -> str:
+        return " ".join(
+            str(v)
+            for k, v in r.items()
+            if v and not k.startswith("_") and isinstance(v, (str, int, float))
+        )[:300]
+
+    resolved_count = 0
+    by_ref = {r.get("ref_des"): r for r in state.source_bom}
+    for i in range(0, len(messy), _RESOLVE_BATCH):
+        batch = messy[i : i + _RESOLVE_BATCH]
+        payload = {
+            "rows": [
+                {
+                    "ref_des": r.get("ref_des"),
+                    "raw": _raw(r),
+                    "manufacturer": r.get("manufacturer", ""),
+                    "mpn": r.get("original_mpn", r.get("part", "")),
+                }
+                for r in batch
+            ]
+        }
+        try:
+            data = call_agent_json("part-resolver", json.dumps(payload), max_tokens=4096)
+        except LLMCallError as exc:
+            logger.info("CR stage 0: part-resolver unavailable (%s) — leaving rows as-is", exc)
+            return state
+        for item in data.get("resolved", []) if isinstance(data, dict) else []:
+            ref = item.get("ref_des")
+            row = by_ref.get(ref)
+            if row is None:
+                continue
+            new_mpn = str(item.get("mpn") or "").strip()
+            new_mfr = str(item.get("manufacturer") or "").strip()
+            # Only apply a non-empty, actually-cleaner MPN (no whitespace).
+            if new_mpn and not re.search(r"\s", new_mpn):
+                old = str(row.get("original_mpn") or "")
+                if new_mpn != old:
+                    row["original_mpn"] = new_mpn
+                    resolved_count += 1
+            if new_mfr:
+                row["manufacturer"] = new_mfr
+
+    if resolved_count:
+        logger.info("CR stage 0: resolved %d messy BOM part(s) via LLM", resolved_count)
+        state.diagnostics.append(f"part-resolver cleaned {resolved_count} messy BOM row(s)")
+    return state
+
+
 def _is_chip_bead_env(env: dict[str, Any]) -> bool:
     """Return True when a magnetics.ndjson envelope is a chip bead (not an inductor)."""
     try:
@@ -4211,6 +4301,8 @@ def run_crossref_pipeline(
         stress_by_ref=stress_by_ref or {},
     )
 
+    _say("Resolving messy BOM part numbers", 3)
+    state = _stage0_resolve_parts(state)
     _say(f"Prefetching TAS candidates for {n} components", 5)
     state = _stage1_prefetch(state)
     _say("Librarian: sourcing any missing components from datasheets/distributors", 15)
