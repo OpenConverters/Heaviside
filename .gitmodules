@@ -40,7 +40,7 @@
 [submodule "AAS"]
 	path = AAS
 	url = git@github.com:Power-Supply-Manufacturers-Association/AAS.git
-[submodule "TBAS"]
-	path = TBAS
-	url = git@github.com:Power-Supply-Manufacturers-Association/TBAS.git
+[submodule "TDAS"]
+	path = TDAS
+	url = https://github.com/Power-Supply-Manufacturers-Association/TDAS.git
 	branch = main
