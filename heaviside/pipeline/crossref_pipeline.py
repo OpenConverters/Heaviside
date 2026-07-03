@@ -3669,12 +3669,37 @@ def _stage8_learn(state: CrossRefState) -> None:
 _MAX_REVIEW_LOOPS = 3
 
 
+def _objection_refs(objections: list[Any], known_refs: set[str]) -> set[str]:
+    """Which known ref_des a reviewer's objections cite.
+
+    Matches against the ACTUAL ref_des present in the result — not a bare
+    ``[A-Z]+\\d+`` regex — so it catches synthetic refs like ``CMP#25`` (assigned
+    to pasted rows with no designator), lowercase/odd designators, and an explicit
+    ``ref_des`` field on a structured (dict) objection. The regex is kept only as
+    an extra pass, intersected with ``known_refs`` so it never invents a ref."""
+    cited: set[str] = set()
+    for obj in objections:
+        # 1. explicit ref_des field(s) on a structured objection ("C1" or "C1, C3")
+        if isinstance(obj, dict):
+            for key in ("ref_des", "ref", "component", "designator"):
+                val = obj.get(key)
+                if isinstance(val, str):
+                    cited.update(p.strip() for p in val.split(",") if p.strip())
+        text = json.dumps(obj) if isinstance(obj, dict) else str(obj)
+        # 2. any KNOWN ref_des appearing verbatim in the objection text. Guard the
+        #    trailing edge so "C1" doesn't match inside "C10" (but "CMP#25" is fine).
+        for ref in known_refs:
+            if ref and re.search(r"(?<!\w)" + re.escape(ref) + r"(?!\d)", text):
+                cited.add(ref)
+        # 3. conventional-form fallback, intersected with known below
+        cited.update(re.findall(r"\b([A-Z]+\d+)\b", text))
+    return cited & known_refs
+
+
 def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefState:
     """Re-run the crossref LLM for components cited in reviewer objections."""
-    cited_refs: set[str] = set()
-    for obj in objections:
-        text = json.dumps(obj) if isinstance(obj, dict) else str(obj)
-        cited_refs.update(re.findall(r"\b([A-Z]+\d+)\b", text))
+    known_refs = {r.get("ref_des", "") for r in state.crossref_result if r.get("ref_des")}
+    cited_refs = _objection_refs(objections, known_refs)
 
     if not cited_refs:
         state.diagnostics.append("correction loop: no ref_des found in objections")
@@ -4405,6 +4430,20 @@ def run_crossref_pipeline(
         # review_verdicts[-1] which is always Nicola (appended last).
         objections = _latest_ray_verdict(state.review_verdicts).get("objections", [])
         if not objections:
+            break
+
+        # If the objections don't cite any component we can act on, re-running the
+        # LLM + review won't change anything — break instead of spinning through
+        # the remaining iterations (each is a full re-review round).
+        known_refs = {r.get("ref_des", "") for r in state.crossref_result if r.get("ref_des")}
+        if not _objection_refs(objections, known_refs):
+            logger.info(
+                "CR correction loop %d: %d objection(s) cite no actionable ref_des — "
+                "stopping the loop (not re-reviewing)",
+                loop_i,
+                len(objections),
+            )
+            state.diagnostics.append("correction loop: no ref_des found in objections")
             break
 
         logger.info("CR correction loop %d: addressing %d objections", loop_i, len(objections))
