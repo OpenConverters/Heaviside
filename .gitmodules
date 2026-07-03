@@ -29,7 +29,7 @@
 [submodule "CIAS"]
 	path = CIAS
 	url = git@github.com:Power-Supply-Manufacturers-Association/CIAS.git
-	branch = feat/peas-family-consolidation
+	branch = main
 [submodule "CONAS"]
 	path = CONAS
 	url = git@github.com:Power-Supply-Manufacturers-Association/CONAS.git
