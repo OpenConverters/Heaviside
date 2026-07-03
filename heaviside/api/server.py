@@ -624,7 +624,6 @@ _CLOSED_LOOP_STAGES = [
     "Magnetic pick",
     "Cross-OP reconcile",
     "Realize: real BOM + SPICE",
-    "Tune SPICE from real parts",
     "Realism gate + gatekeeper",
     "Review: Ray (engineering)",
     "Review: Nicola (quality)",
@@ -639,8 +638,11 @@ _STAGE_KEYWORDS: list[tuple[str, str]] = [
     ("Sweep", "Frequency sweep"),  # "Sweeping…" and "Sweep done…"
     ("Picking the magnetic", "Magnetic pick"),
     ("Reconciling", "Cross-OP reconcile"),
-    ("Realizing converter", "Realize: real BOM + SPICE"),
-    ("Re-simulating", "Tune SPICE from real parts"),
+    # della-Pollock cutover: realize + real-part sim are ONE Kirchhoff pass, so the
+    # message is "Realizing via Kirchhoff …" (not the old "Realizing converter") and
+    # there is no separate "Re-simulating"/tune stage anymore. Match "Realizing" and
+    # keep "Realism gate" AFTER it so the shared "Real…" prefix resolves correctly.
+    ("Realizing", "Realize: real BOM + SPICE"),
     ("Realism gate", "Realism gate + gatekeeper"),
     ("Ray", "Review: Ray (engineering)"),
     ("Nicola", "Review: Nicola (quality)"),
