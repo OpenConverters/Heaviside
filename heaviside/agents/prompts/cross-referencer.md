@@ -391,6 +391,21 @@ Omit extra fields for types not listed (diode, connector, analog, varistor,
 controller) — the pipeline verifies connector/analog parameters from the
 catalogue itself. Set to `null` when the data is not available in TAS.
 
+## MANDATORY: no original data → no_substitute (identity-matched types)
+
+For **connectors, analog ICs, and crystals/oscillators**, the match is defined
+by the ORIGINAL's identity — a connector's family/positions/pitch/gender, an
+analog IC's function/channels, a crystal's frequency/technology/load-C. These
+come from the `_original_specs` block.
+
+**If `_original_specs` is absent or empty for one of these types, the original
+is not in the catalogue and its identity is unknown — return `no_substitute`.**
+Do NOT propose a substitute matched only on rated current/voltage: a 26-way
+board-to-board connector is not a substitute for an unknown accessory (e.g. a
+dust cover), and a 16 MHz crystal is not a substitute for an unknown timing
+part. No data on the original → do not cross-reference it. (The pipeline also
+enforces this deterministically, but decide correctly here.)
+
 ## Status Definitions
 
 Use EXACTLY one of these four — no other value is valid:

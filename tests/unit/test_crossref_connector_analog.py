@@ -451,3 +451,60 @@ def test_timebase_params_verdicts() -> None:
 def test_timebase_unknown_original_returns_nothing() -> None:
     comp = {"ref_des": "Y1", "component_type": "timeBase", "original_mpn": "XYZ"}
     assert _rank_timebase_candidates(comp, [_tb_env("W-GOOD")], 10) == []
+
+
+# ── identity-matched: unverifiable original → no_substitute ──────────────────
+
+
+def test_unverifiable_original_forced_no_substitute(tmp_path, monkeypatch) -> None:
+    """The reported bug: a connector whose original (a dust cover) is NOT in the
+    internal DB got a forced substitute. The param-check stage must flip any
+    identity-matched row (connector/analog/timeBase) to no_substitute when the
+    original isn't resolvable — no data on the original → don't cross-reference."""
+    from heaviside.pipeline import crossref_pipeline as cp
+    from heaviside.pipeline.crossref import CrossRefState
+
+    # Empty TAS dir so no original resolves.
+    monkeypatch.setenv("HEAVISIDE_TAS_DATA_DIR", str(tmp_path))
+    (tmp_path / "connectors.ndjson").write_text("")
+
+    st = CrossRefState(
+        source_bom=[{"ref_des": "J1", "component_type": "connector", "original_mpn": "L17D4K63026"}],
+        target_manufacturer="Würth Elektronik",
+    )
+    st.crossref_result = [
+        {
+            "ref_des": "J1",
+            "component_type": "connector",
+            "original_pn": "L17D4K63026",
+            "substitute_pn": "61002621121",
+            "status": "partial",
+            "notes": "deterministic in-kind rescue: meets voltage/value criteria",
+        }
+    ]
+    cp._stage_param_check(st)
+    row = st.crossref_result[0]
+    assert row["status"] == "no_substitute"
+    assert row["substitute_pn"] in (None, "", "no_substitute")
+    assert "NO_ORIGINAL_DATA" in row.get("guardrail_fires", [])
+    assert "not in the internal DB" in row["notes"]
+
+
+def test_rescue_never_touches_identity_matched() -> None:
+    """The deterministic in-kind rescue must skip connector/analog/timeBase —
+    its value/chemistry logic can't verify an identity match and was forcing
+    substitutes onto unknown originals."""
+    from heaviside.pipeline import crossref_pipeline as cp
+    from heaviside.pipeline.crossref import CrossRefState
+
+    st = CrossRefState(
+        source_bom=[{"ref_des": "J1", "component_type": "connector", "original_mpn": "X"}],
+        target_manufacturer="Würth Elektronik",
+    )
+    st.crossref_result = [
+        {"ref_des": "J1", "component_type": "connector", "original_pn": "X",
+         "substitute_pn": "no_substitute", "status": "no_substitute"}
+    ]
+    st.candidates_by_ref = {"J1": [_conn_env("W1")]}
+    cp._stage6_5_deterministic_rescue(st)
+    assert st.crossref_result[0]["status"] == "no_substitute"

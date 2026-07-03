@@ -39,6 +39,53 @@ class LLMCallError(RuntimeError):
     """Raised when an LLM call fails (no API key, bad response, etc.)."""
 
 
+class LLMRateLimitError(LLMCallError):
+    """Raised when the LLM API keeps rate-limiting after all retries."""
+
+
+# HTTP statuses worth retrying with backoff: 429 rate limit + transient 5xx.
+# 4xx other than 429 (400 bad request, 401 auth) are NOT retried — they won't
+# fix themselves. Env-overridable so prod can tune without a redeploy.
+_RETRYABLE_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+
+def _rl_max_retries() -> int:
+    try:
+        return max(0, int(os.environ.get("HEAVISIDE_LLM_MAX_RETRIES", "5")))
+    except ValueError:
+        return 5
+
+
+def _rl_base_delay() -> float:
+    try:
+        return max(0.1, float(os.environ.get("HEAVISIDE_LLM_RETRY_BASE_S", "2")))
+    except ValueError:
+        return 2.0
+
+
+def _rl_max_delay() -> float:
+    try:
+        return max(1.0, float(os.environ.get("HEAVISIDE_LLM_RETRY_MAX_S", "60")))
+    except ValueError:
+        return 60.0
+
+
+def _retry_delay(attempt: int, retry_after: str | None) -> float:
+    """Backoff seconds for a retry. Honours the server's ``Retry-After`` header
+    (seconds) when present; otherwise exponential backoff with jitter, capped."""
+    if retry_after:
+        try:
+            return min(float(retry_after) + 0.5, _rl_max_delay())
+        except (TypeError, ValueError):
+            pass
+    import hashlib
+
+    # Deterministic per-attempt jitter (no Math.random dependency): 0–0.5·base.
+    jitter_seed = int(hashlib.sha256(str(attempt).encode()).hexdigest(), 16) % 1000 / 1000.0
+    delay = _rl_base_delay() * (2**attempt) * (1.0 + 0.5 * jitter_seed)
+    return min(delay, _rl_max_delay())
+
+
 def load_prompt(name: str) -> str:
     """Read an agent prompt file, stripping YAML frontmatter."""
     path = _PROMPTS_DIR / f"{name}.md"
@@ -108,21 +155,67 @@ def call_llm(
     if json_mode:
         body["response_format"] = {"type": "json_object"}
 
-    try:
-        response = httpx.post(
-            f"{base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=body,
-            timeout=600.0,
-        )
-    except httpx.HTTPError as exc:
-        raise LLMCallError(f"HTTP error: {exc}") from exc
+    # Retry loop: rate limits (429) and transient 5xx are retried with backoff
+    # that honours the server's Retry-After header; connection blips are retried
+    # too. A non-retryable status (400/401/…) or exhausted retries raises.
+    import time as _time
 
-    if response.status_code != 200:
+    max_retries = _rl_max_retries()
+    response = None
+    last_exc: Exception | None = None
+    for attempt in range(1 + max_retries):
+        try:
+            response = httpx.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+                timeout=600.0,
+            )
+        except httpx.HTTPError as exc:
+            # Transient transport error (connection reset, read timeout) — retry.
+            last_exc = exc
+            if attempt >= max_retries:
+                raise LLMCallError(f"HTTP error after {attempt + 1} attempts: {exc}") from exc
+            delay = _retry_delay(attempt, None)
+            logger.warning(
+                "LLM transport error (attempt %d/%d): %s — retrying in %.1fs",
+                attempt + 1,
+                1 + max_retries,
+                exc,
+                delay,
+            )
+            _time.sleep(delay)
+            continue
+
+        if response.status_code == 200:
+            break
+
+        if response.status_code in _RETRYABLE_STATUSES:
+            if attempt >= max_retries:
+                kind = "rate limit" if response.status_code == 429 else "server error"
+                raise LLMRateLimitError(
+                    f"LLM API {kind} ({response.status_code}) persisted after "
+                    f"{attempt + 1} attempts: {response.text[:200]}"
+                )
+            delay = _retry_delay(attempt, response.headers.get("Retry-After"))
+            logger.warning(
+                "LLM API %s (attempt %d/%d) — backing off %.1fs",
+                "rate-limited (429)" if response.status_code == 429 else f"{response.status_code}",
+                attempt + 1,
+                1 + max_retries,
+                delay,
+            )
+            _time.sleep(delay)
+            continue
+
+        # Non-retryable (400 bad request, 401 auth, …) — fail immediately.
         raise LLMCallError(f"LLM API returned {response.status_code}: {response.text[:300]}")
+
+    if response is None or response.status_code != 200:
+        raise LLMCallError(f"LLM call failed after retries: {last_exc}")
 
     data = response.json()
 
@@ -468,6 +561,7 @@ def extract_json_block(text: str) -> dict[str, Any]:
 
 __all__ = [
     "LLMCallError",
+    "LLMRateLimitError",
     "call_agent",
     "call_agent_json",
     "call_llm",

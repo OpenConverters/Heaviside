@@ -171,11 +171,16 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
 
     # Surface missing source dimensions once, aggregated — one diagnostic per
     # row floods the report on large BOMs. Footprint-fit is simply not enforced
-    # for rows whose physical size couldn't be resolved.
+    # for rows whose physical size couldn't be resolved. Identity-matched
+    # categories (connector/analog/crystal) are matched on function/pins/pitch,
+    # NOT a board-space footprint, so a missing dimension isn't a gap for them —
+    # exclude them from the diagnostic (they were flooding it with crystals).
     no_dims = [
         c.get("original_mpn") or c.get("ref_des", "?")
         for c in state.source_bom
-        if c.get("component_type") and c.get("_source_dims_m") is None
+        if c.get("component_type")
+        and c.get("component_type") not in _IDENTITY_MATCHED_CATEGORIES
+        and c.get("_source_dims_m") is None
     ]
     if no_dims:
         shown = ", ".join(str(m) for m in no_dims[:8])
@@ -509,6 +514,16 @@ _BASE_PATHS: dict[str, tuple[str, ...]] = {
     "analog": ("analog",),
     "timeBase": ("timeBase",),
 }
+
+# Categories whose substitution is defined by the ORIGINAL's identity, not a
+# parsed value — a connector either mates/fits or it doesn't; an analog IC's
+# function/channels must match; a crystal's frequency/technology/load-C IS the
+# part. For these, a substitute can only be justified when the original is
+# resolvable (in the internal DB) so its identity is known. When it isn't, the
+# pipeline must return no_substitute rather than force a value/chemistry match
+# (they don't get the value-based deterministic rescue, and the param-check
+# stage demotes an unverifiable original to no_substitute).
+_IDENTITY_MATCHED_CATEGORIES: frozenset[str] = frozenset({"connector", "analog", "timeBase"})
 
 
 # Standard EIA/IPC chip footprint dimensions: imperial case code → (L, W) in
@@ -3787,6 +3802,36 @@ def _stage_param_check(state: CrossRefState) -> None:
         s_mpn = str(row.get("substitute_pn") or "").strip().lower()
         orig_params = params_by_key.get((cat, o_mpn))
         sub_params = params_by_key.get((cat, s_mpn))
+
+        # IDENTITY-MATCHED categories (connector / analog / crystal): the match
+        # is defined by the ORIGINAL's identity (connector family+positions+
+        # pitch+gender; analog function+channels; crystal frequency+technology+
+        # load-C). If the original is NOT in the internal DB, that identity is
+        # unknown and unverifiable — so a substitute cannot be justified, no
+        # matter what an earlier stage (LLM guess or deterministic rescue)
+        # proposed. Per policy: no data on the original + can't verify it →
+        # DON'T cross-reference it. Force no_substitute with a clear reason.
+        has_sub = s_mpn not in ("", "no_substitute")
+        if cat in _IDENTITY_MATCHED_CATEGORIES and has_sub and orig_params is None:
+            _label = {"connector": "connector", "analog": "analog IC", "timeBase": "crystal/oscillator"}
+            row["status"] = "no_substitute"
+            row["substitute_pn"] = None
+            for f in ("substitute_value", "substitute_voltage", "substitute_package"):
+                row[f] = ""
+            row.pop("_param_results", None)
+            prior = (row.get("notes") or "").strip()
+            reason = (
+                f"original {row.get('original_pn') or o_mpn!r} is not in the internal DB, so its "
+                f"{_label.get(cat, cat)} identity cannot be verified — a substitute cannot be "
+                "justified. Not cross-referenced (need the original's real specs from a datasheet/"
+                "distributor first)."
+            )
+            row["notes"] = (prior + " | " if prior else "") + reason
+            fires = row.setdefault("guardrail_fires", [])
+            if "NO_ORIGINAL_DATA" not in fires:
+                fires.append("NO_ORIGINAL_DATA")
+            continue
+
         results = evaluate_params(cat, orig_params, sub_params)
 
         # MLCC DC-bias: compare effective capacitance at the component's
@@ -3965,6 +4010,13 @@ def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
             continue
         ref = row.get("ref_des")
         cat = row.get("component_type", "")
+        # Identity-matched categories (connector / analog / crystal) are NEVER
+        # rescued: the rescue's value/voltage/chemistry logic is meaningless for
+        # a connector (it can't tell a 26-way board-to-board from a matable
+        # counterpart) and would force a substitute onto an original we can't
+        # verify. For these, the LLM's + strict-ranker's no_substitute stands.
+        if cat in _IDENTITY_MATCHED_CATEGORIES:
+            continue
         comp = by_ref.get(ref, row)
         cands = state.candidates_by_ref.get(ref, [])
         if not cands:

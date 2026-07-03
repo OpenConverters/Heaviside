@@ -323,10 +323,20 @@ def build_kimi_model(
 
         model_cls = _NoThinkKimiModel
 
+    # The underlying openai client retries 429/5xx with exponential backoff and
+    # honours Retry-After on its own; bump its retry budget (default 2) so Otto
+    # and the reviewers survive a rate-limit burst like the call_llm path does.
+    import os as _os
+
+    try:
+        _max_retries = max(0, int(_os.environ.get("HEAVISIDE_LLM_MAX_RETRIES", "5")))
+    except ValueError:
+        _max_retries = 5
     kwargs: dict[str, Any] = {
         "client_args": {
             "api_key": credentials.api_key,
             "base_url": credentials.base_url,
+            "max_retries": _max_retries,
         },
         "model_id": model_id,
     }

@@ -26,6 +26,9 @@ dependencies = [
   "scipy>=1.13",
   # Agent runtime (model-agnostic)
   "strands-agents>=1.34",
+  # OpenAI-compatible client Strands uses to build the Kimi-backed model
+  # (Otto / Ray / Nicola). Without it those agents raise at construction.
+  "openai>=1.40",
   # Schema-derived TypedDicts only; one BaseModel for the user DesignSpec
   "pydantic>=2.8",
   # TAS-conformance gate (Phase B): JSON Schema validation against TAS+PEAS+MAS
