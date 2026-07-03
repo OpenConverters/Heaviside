@@ -134,6 +134,19 @@ def test_fetch_original_auto_classifies_bare_mpn():
     assert env is not None and info == "connectors"
 
 
+def test_fetched_original_carries_provenance():
+    # Every librarian-sourced original records a Digi-Key provenance trail on its
+    # datasheetInfo (category-agnostic — connector here, nested crystal below).
+    env, _ = fetch_original_envelope(_FakeDK(_phoenix_terminal_block()), "1707654", "connector")
+    prov = env["connector"]["manufacturerInfo"]["datasheetInfo"]["provenance"]
+    assert isinstance(prov, list) and prov[0]["source"] == "distributor"
+    assert prov[0]["sourceName"] == "DigiKey"
+
+    env2, _ = fetch_original_envelope(_FakeDK(_crystal()), "ABLS-16.000MHZ-B4-T", "timeBase")
+    prov2 = env2["timeBase"]["oscillator"]["manufacturerInfo"]["datasheetInfo"]["provenance"]
+    assert prov2[0]["source"] == "distributor"
+
+
 def test_classify_dk_product_taxonomy():
     from heaviside.librarian.fetcher.original import classify_dk_product
 

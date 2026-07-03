@@ -16,12 +16,49 @@ to prevent). Categories without a converter simply return None.
 
 from __future__ import annotations
 
+import datetime
 import importlib.util
 import logging
 from pathlib import Path
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+
+def _inject_provenance(
+    envelope: dict[str, Any], *, source_url: str | None = None
+) -> dict[str, Any]:
+    """Stamp a ``datasheetInfo.provenance`` trail onto a freshly-fetched envelope
+    so every librarian-sourced original records where it came from (Digi-Key).
+
+    Category-agnostic: descends the envelope (connector / timeBase.oscillator /
+    semiconductor.diode / capacitor / …) to the ``manufacturerInfo`` and sets the
+    provenance on its ``datasheetInfo``.  Idempotent — never overwrites an
+    existing trail.  ``source`` is ``"distributor"`` / ``"DigiKey"`` because that
+    is where the librarian retrieved the part."""
+    entry = {
+        "source": "distributor",
+        "sourceName": "DigiKey",
+        "sourceUrl": source_url,
+        "retrievedDate": datetime.date.today().isoformat(),
+    }
+
+    def _walk(obj: Any) -> bool:
+        if not isinstance(obj, dict):
+            return False
+        mi = obj.get("manufacturerInfo")
+        if isinstance(mi, dict):
+            di = mi.get("datasheetInfo")
+            if isinstance(di, dict):
+                di.setdefault("provenance", [entry])
+                return True
+        for value in obj.values():
+            if isinstance(value, dict) and _walk(value):
+                return True
+        return False
+
+    _walk(envelope)
+    return envelope
 
 _REPO = Path(__file__).resolve().parents[3]
 
@@ -380,6 +417,11 @@ def fetch_original_envelope(
         result = result[0]
     if not isinstance(result, dict):
         return None, "conversion produced no envelope"
+
+    # Every librarian-sourced original records its Digi-Key provenance. sourceUrl
+    # stays null: the data was retrieved via the Digi-Key API, not a page URL (the
+    # manufacturer datasheet URL, when known, is on manufacturerInfo.datasheetUrl).
+    _inject_provenance(result)
 
     db_cat = _CATEGORY_TO_DB.get(category, category)
     # Schema-validate before we trust it — a half-parsed original is worse than
