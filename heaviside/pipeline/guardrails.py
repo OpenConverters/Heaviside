@@ -78,14 +78,14 @@ _TAS_KIND_TO_FILES = {
     "diode": ["diodes.ndjson"],
     "connector": ["connectors.ndjson"],
     "analog": ["analog_ics.ndjson"],
-    "timeBase": ["timebases.ndjson"],
+    "timeBase": ["timing_devices.ndjson"],
 }
 
 # Catalogue file → CR canonical category, for the reverse question: "which
 # category is this MPN?". Ordered by corpus size ascending so the cheapest
 # indexes are consulted first.
 _TAS_FILE_TO_KIND = {
-    "timebases.ndjson": "timeBase",
+    "timing_devices.ndjson": "timeBase",
     "analog_ics.ndjson": "analog",
     "mosfets.ndjson": "mosfet",
     "diodes.ndjson": "diode",

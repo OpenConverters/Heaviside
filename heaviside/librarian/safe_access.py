@@ -103,7 +103,7 @@ CATEGORIES: frozenset[str] = frozenset(
         "connectors",
         "igbts",
         "analog_ics",
-        "timebases",
+        "timing_devices",
         "controllers",
         "converters",
         "quarantine",

@@ -1447,7 +1447,7 @@ _CATALOG_UNITS: dict[str, list[str]] = {
     "magnetics": ["H", "A", "Ω"],
     "connectors": ["V", "A", "pos"],
     "analog": ["Hz", "V", "V"],
-    "timebases": ["Hz", "ppm", "F"],
+    "timing_devices": ["Hz", "ppm", "F"],
     "varistors": ["V", "V", "A"],
 }
 
@@ -1459,7 +1459,7 @@ _CATALOG_FILES: dict[str, str] = {
     "magnetics": "magnetics.ndjson",
     "connectors": "connectors.ndjson",
     "analog": "analog_ics.ndjson",
-    "timebases": "timebases.ndjson",
+    "timing_devices": "timing_devices.ndjson",
     "varistors": "varistors.ndjson",
 }
 
@@ -1471,7 +1471,7 @@ _CATALOG_LABELS: dict[str, list[str]] = {
     "magnetics": ["L", "Isat", "DCR"],
     "connectors": ["V", "I/contact", "Pos"],
     "analog": ["GBW", "Vos", "Vs max"],
-    "timebases": ["f", "Tol", "CL"],
+    "timing_devices": ["f", "Tol", "CL"],
     "varistors": ["Vv", "Vclamp", "Isurge"],
 }
 
@@ -1741,7 +1741,7 @@ def _catalog_projectors() -> dict[str, Any]:
         "magnetics": ("magnetics.ndjson", _mag),
         "connectors": ("connectors.ndjson", _connector),
         "analog": ("analog_ics.ndjson", _analog),
-        "timebases": ("timebases.ndjson", _timebase),
+        "timing_devices": ("timing_devices.ndjson", _timebase),
         "varistors": ("varistors.ndjson", _varistor),
     }
 
@@ -2085,7 +2085,7 @@ def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
         "magnetics": "magnetics.ndjson",
         "connectors": "connectors.ndjson",
         "analog": "analog_ics.ndjson",
-        "timebases": "timebases.ndjson",
+        "timing_devices": "timing_devices.ndjson",
         "varistors": "varistors.ndjson",
     }
     if category not in _NDJSON:

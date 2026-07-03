@@ -834,7 +834,7 @@ def _crossref_timebase_impl(
             str(Path(__file__).resolve().parents[2] / "TAS" / "data"),
         )
     )
-    path = tas_dir / "timebases.ndjson"
+    path = tas_dir / "timing_devices.ndjson"
 
     target = _normalize_manufacturer(target_manufacturer)
     matches: list[dict] = []

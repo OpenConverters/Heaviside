@@ -123,7 +123,7 @@ _CATEGORY_TO_FILES: dict[str, tuple[str, ...]] = {
     "igbt": ("igbts.ndjson",),
     "connector": ("connectors.ndjson",),
     "analog": ("analog_ics.ndjson",),
-    "timeBase": ("timebases.ndjson",),
+    "timeBase": ("timing_devices.ndjson",),
     "semiconductor": ("mosfets.ndjson", "diodes.ndjson", "igbts.ndjson"),
 }
 

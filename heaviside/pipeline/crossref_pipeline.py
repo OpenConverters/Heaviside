@@ -94,7 +94,7 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         "varistor": "varistors.ndjson",
         "connector": "connectors.ndjson",
         "analog": "analog_ics.ndjson",
-        "timeBase": "timebases.ndjson",
+        "timeBase": "timing_devices.ndjson",
     }
 
     target_mfr_lower = _normalize_manufacturer(state.target_manufacturer)
@@ -4004,7 +4004,7 @@ def _stage_param_check(state: CrossRefState) -> None:
         "chipBead": "magnetics.ndjson",
         "connector": "connectors.ndjson",
         "analog": "analog_ics.ndjson",
-        "timeBase": "timebases.ndjson",
+        "timeBase": "timing_devices.ndjson",
     }
     rows = state.crossref_result
 
@@ -4220,7 +4220,7 @@ def _ondemand_candidates(
         "varistor": "varistors.ndjson",
         "connector": "connectors.ndjson",
         "analog": "analog_ics.ndjson",
-        "timeBase": "timebases.ndjson",
+        "timeBase": "timing_devices.ndjson",
     }
     if category not in files:
         return []

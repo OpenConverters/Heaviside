@@ -14,10 +14,10 @@ const CAT_META = {
   magnetics:  { label: 'Magnetics',  accent: '#b07cff', glyph: '◠' },
   connectors: { label: 'Connectors', accent: '#6ee7a8', glyph: '▦' },
   analog:     { label: 'Analog ICs', accent: '#ffd166', glyph: '▷' },
-  timebases:  { label: 'Crystals & Oscillators', accent: '#7cc7ff', glyph: '◇' },
+  timing_devices:  { label: 'Crystals & Oscillators', accent: '#7cc7ff', glyph: '◇' },
   varistors:  { label: 'Varistors', accent: '#ff9d5c', glyph: '⏦' },
 }
-const ORDER = ['mosfets', 'diodes', 'capacitors', 'resistors', 'magnetics', 'connectors', 'analog', 'timebases', 'varistors']
+const ORDER = ['mosfets', 'diodes', 'capacitors', 'resistors', 'magnetics', 'connectors', 'analog', 'timing_devices', 'varistors']
 
 // Friendly tech names (matches the browse view); falls back to a humanizer.
 const TECH_LABELS = {

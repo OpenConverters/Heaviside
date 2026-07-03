@@ -37,7 +37,7 @@ const UNIT_CONFIG = {
   analog:     [{ label: 'GBW',    unit: 'MHz', scale: 1e6  },
                { label: 'Vos',    unit: 'µV',  scale: 1e-6 },
                { label: 'Vs max', unit: 'V',   scale: 1    }],
-  timebases:  [{ label: 'f',   unit: 'MHz', scale: 1e6   },
+  timing_devices:  [{ label: 'f',   unit: 'MHz', scale: 1e6   },
                { label: 'Tol', unit: 'ppm', scale: 1e-6  },
                { label: 'CL',  unit: 'pF',  scale: 1e-12 }],
   varistors:  [{ label: 'Vv',     unit: 'V', scale: 1 },
@@ -82,7 +82,7 @@ const TECH_LABELS = {
     programmableGainAmplifier: 'PGA', adc: 'ADC', dac: 'DAC',
     analogSwitch: 'Analog Switch', multiplexer: 'Multiplexer', multiplier: 'Multiplier',
   },
-  timebases: {
+  timing_devices: {
     quartzCrystal: 'Quartz Crystal', ceramicResonator: 'Ceramic Resonator',
     crystalOscillator: 'Crystal Oscillator (XO)', tcxo: 'TCXO', vcxo: 'VCXO', ocxo: 'OCXO',
     mems: 'MEMS', siliconRC: 'Silicon RC', programmable: 'Programmable',
@@ -93,7 +93,7 @@ const TECH_LABELS = {
   },
 }
 
-const categories = ['mosfets', 'diodes', 'capacitors', 'resistors', 'magnetics', 'connectors', 'analog', 'timebases', 'varistors']
+const categories = ['mosfets', 'diodes', 'capacitors', 'resistors', 'magnetics', 'connectors', 'analog', 'timing_devices', 'varistors']
 const category = ref('mosfets')
 
 // ── Filter state ──────────────────────────────────────────────────────────────

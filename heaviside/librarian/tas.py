@@ -215,9 +215,9 @@ SCHEMA_MAP: dict[str, tuple[Path, Any]] = {
     "varistors": (_REPO_ROOT / "RAS" / "schemas" / "varistor.json", _unwrap_top("varistor")),
     "magnetics": (_REPO_ROOT / "MAS" / "schemas" / "magnetic.json", _unwrap_top("magnetic")),
     "connectors": (_REPO_ROOT / "CONAS" / "schemas" / "connector.json", _unwrap_top("connector")),
-    # timebases rows are {"timeBase": {<full TDAS document>}} — the unwrapped
+    # timing_devices rows are {"timeBase": {<full TDAS document>}} — the unwrapped
     # value is validated against the TDAS umbrella (oneOf oscillator/timer/latch).
-    "timebases": (_REPO_ROOT / "TDAS" / "schemas" / "tdas.json", _unwrap_top("timeBase")),
+    "timing_devices": (_REPO_ROOT / "TDAS" / "schemas" / "tdas.json", _unwrap_top("timeBase")),
 }
 
 

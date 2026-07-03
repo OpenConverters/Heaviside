@@ -538,7 +538,7 @@ const PARSERS = {
   magnetics: parseMag,
   connectors: parseConnector,
   analog: parseAnalog,
-  timebases: parseTimeBase,
+  timing_devices: parseTimeBase,
   varistors: parseVaristor,
 }
 

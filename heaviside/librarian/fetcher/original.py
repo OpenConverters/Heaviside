@@ -35,7 +35,7 @@ _CATEGORY_TO_DB: dict[str, str] = {
     "igbt": "igbts",
     "magnetic": "magnetics",
     "connector": "connectors",
-    "timeBase": "timebases",
+    "timeBase": "timing_devices",
 }
 
 
@@ -65,7 +65,7 @@ CR_CATEGORY_BY_DB: dict[str, str] = {v: k for k, v in {
     "igbt": "igbts",
     "magnetic": "magnetics",
     "connector": "connectors",
-    "timeBase": "timebases",
+    "timeBase": "timing_devices",
 }.items()}
 
 

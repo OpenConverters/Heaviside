@@ -56,7 +56,7 @@ def _connector(mpn="691216510002"):
 
 def test_fetch_crystal_original_valid():
     env, info = fetch_original_envelope(_FakeDK(_crystal()), "ABLS-16.000MHZ-B4-T", "timeBase")
-    assert env is not None and info == "timebases"
+    assert env is not None and info == "timing_devices"
     elec = env["timeBase"]["oscillator"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
     assert elec["frequency"] == 16_000_000.0
     assert elec["technology"] == "quartzCrystal"
