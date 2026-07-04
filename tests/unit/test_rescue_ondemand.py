@@ -36,9 +36,12 @@ def test_ondemand_unknown_category_returns_empty():
 
 def test_rescue_recovers_L3_when_prefetch_left_no_candidates():
     # The exact real-run condition: L3 no_substitute, candidates_by_ref EMPTY.
+    # P7: a magnetic rescue now requires a current requirement (a value-only
+    # rescue would let a signal inductor stand in for a power part), so the BOM
+    # row carries rated_current — and the rescued part must meet it.
     st = CrossRefState(
         source_bom=[{"ref_des": "L3", "component_type": "magnetic",
-                     "value": "300nH", "value_si": 3e-7}],
+                     "value": "300nH", "rated_current": 1.0}],
         target_manufacturer="Würth Elektronik",
     )
     st.crossref_result = [{"ref_des": "L3", "component_type": "magnetic",
@@ -47,6 +50,20 @@ def test_rescue_recovers_L3_when_prefetch_left_no_candidates():
     row = out.crossref_result[0]
     assert row["status"] in ("recommended", "partial"), row
     assert row.get("substitute_pn"), "L3 should have been rescued to a real Würth MPN"
+
+
+def test_rescue_refuses_power_inductor_on_value_only():
+    # P7 safety (the um3491 L3 finding): with NO current requirement, a magnetic
+    # rescue must NOT value-match a power inductor to whatever shares its
+    # inductance — a 210mA signal coil is not a substitute for a 21A power part.
+    st = CrossRefState(
+        source_bom=[{"ref_des": "L3", "component_type": "magnetic", "value": "300nH"}],
+        target_manufacturer="Würth Elektronik",
+    )
+    st.crossref_result = [{"ref_des": "L3", "component_type": "magnetic",
+                           "status": "no_substitute", "value": "300nH"}]
+    out = _stage6_5_deterministic_rescue(st)
+    assert out.crossref_result[0]["status"] == "no_substitute"
 
 
 def test_rescue_still_skips_when_truly_no_tas_part():

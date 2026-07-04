@@ -168,15 +168,17 @@ class TestPrimaryValueGateStage:
 
 
 # ── The rescue gate: it must never PROPOSE the wrong-value part ───────────────
+# For magnetics the rescue now also requires a current requirement (P7): a
+# value-only magnetic rescue is unsafe, so these comps carry rated_current.
 class TestRescueGateTraps:
     def test_wrong_value_candidate_alone_is_refused(self):
         # Only a 330 nH candidate available for a 1.5 µH original → no rescue.
-        comp = {"value": "1.5µH", "component_type": "magnetic"}
+        comp = {"value": "1.5µH", "component_type": "magnetic", "rated_current": 3.0}
         patch = _best_inkind_candidate(comp, "magnetic", [_env(PART_330NH, 330e-9)])
         assert patch is None
 
     def test_good_candidate_is_rescued(self):
-        comp = {"value": "1.5µH", "component_type": "magnetic"}
+        comp = {"value": "1.5µH", "component_type": "magnetic", "rated_current": 3.0}
         patch = _best_inkind_candidate(comp, "magnetic", [_env(PART_1P5UH, 1.5e-6)])
         assert patch is not None
         assert patch["substitute_pn"] == PART_1P5UH
@@ -185,7 +187,7 @@ class TestRescueGateTraps:
     def test_wrong_value_skipped_in_mixed_list(self):
         # A 330 nH candidate ranked ahead of a 1.5 µH one must be SKIPPED, and
         # the 1.5 µH one chosen — the gate can't be fooled by list position.
-        comp = {"value": "1.5µH", "component_type": "magnetic"}
+        comp = {"value": "1.5µH", "component_type": "magnetic", "rated_current": 3.0}
         cands = [_env(PART_330NH, 330e-9), _env(PART_1P5UH, 1.5e-6)]
         patch = _best_inkind_candidate(comp, "magnetic", cands)
         assert patch is not None
@@ -202,10 +204,25 @@ class TestRescueGateTraps:
         # Regression: the rescue used to read comp['value_si']/['original_value'],
         # keys the normalized BOM row never carries — the value check silently
         # no-oped. It must now read comp['value'].
-        comp = {"value": "1.5µH", "component_type": "magnetic"}
+        comp = {"value": "1.5µH", "component_type": "magnetic", "rated_current": 3.0}
         good = _best_inkind_candidate(comp, "magnetic", [_env(PART_1P5UH, 1.5e-6)])
         bad = _best_inkind_candidate(comp, "magnetic", [_env(PART_330NH, 330e-9)])
         assert good is not None and bad is None
+
+    def test_p7_magnetic_rescue_refused_without_current(self):
+        # P7: a magnetic rescue with NO current requirement is unsafe (the
+        # 210mA-RF-inductor-for-a-21A-power-part finding) — refuse, don't
+        # value-match blindly.
+        comp = {"value": "1.5µH", "component_type": "magnetic"}  # no current
+        patch = _best_inkind_candidate(comp, "magnetic", [_env(PART_1P5UH, 1.5e-6)])
+        assert patch is None
+
+    def test_p7_undersized_magnetic_rescue_skipped(self):
+        # P7: candidate 74438356015 (Isat 4.8A) can't carry a 10A requirement →
+        # skipped, not rescued.
+        comp = {"value": "1.5µH", "component_type": "magnetic", "rated_current": 10.0}
+        patch = _best_inkind_candidate(comp, "magnetic", [_env(PART_1P5UH, 1.5e-6)])
+        assert patch is None
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -4533,6 +4533,27 @@ def _best_inkind_candidate(
     orig_v = _to_volts(comp.get("rated_voltage") or comp.get("original_voltage"))
     orig_fam = _capacitor_technology_family(comp.get("technology")) if cat == "capacitor" else None
 
+    # P7 — a value-only MAGNETIC rescue is dangerous: a 470 nH / 210 mA RF signal
+    # inductor is NOT an in-kind substitute for a 470 nH / 21 A power inductor
+    # (the ~100× current-deficit FAE finding). The rescue must verify the
+    # candidate carries the required current. Resolve the requirement from the
+    # BOM row; if it can't be established, REFUSE to rescue magnetics — leaving
+    # the LLM's no_substitute — rather than blindly value-match a power part.
+    orig_i_need: float | None = None
+    if cat == "magnetic":
+        for _ck in ("rated_current", "current", "i_rms", "irms", "saturation_current", "isat"):
+            _cv = comp.get(_ck)
+            if isinstance(_cv, (int, float)):
+                orig_i_need = float(_cv)
+                break
+            if isinstance(_cv, str):
+                _pc = _parse_value_si(_cv, "")  # generic SI (handles "5A", "3.25")
+                if _pc:
+                    orig_i_need = _pc
+                    break
+        if orig_i_need is None:
+            return None
+
     for env in candidates:
         cand_vsi = _extract_value(env, cat)
         s = _summarize_candidate(env, cat)
@@ -4540,6 +4561,13 @@ def _best_inkind_candidate(
         # voltage floor: if both known, candidate must meet the original rating
         if orig_v is not None and cand_v is not None and cand_v < orig_v:
             continue
+        # P7 current floor for magnetics: the candidate's saturation / rated
+        # current must meet the requirement (skip a signal inductor offered for a
+        # power part).
+        if cat == "magnetic" and orig_i_need is not None:
+            _cand_i = s.get("saturation_current") or s.get("rated_current")
+            if not isinstance(_cand_i, (int, float)) or _cand_i < orig_i_need:
+                continue
         # chemistry family must match for caps (stops ceramic<->tantalum<->alu drift)
         if (
             cat == "capacitor"
