@@ -444,7 +444,9 @@ def _enrich_original_params(
         mfr = str(bom_row.get("manufacturer") or "").strip()
         if mfr and orig_pn:
             try:
-                from heaviside.librarian.datasheet import resolve_datasheet_pdf_url
+                from heaviside.librarian.datasheet.magnetics_url import (
+                    resolve_datasheet_pdf_url,
+                )
 
                 url = resolve_datasheet_pdf_url(mfr, orig_pn) or ""
             except Exception:
