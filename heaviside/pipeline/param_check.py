@@ -152,6 +152,14 @@ PARAM_SPECS: dict[str, list[ParamSpec]] = {
         ),
         # Dielectric / temperature characteristic must not downgrade.
         ParamSpec("technology", "Dielectric", "", CLASS_MATCH, 0.0, class_rank=_DIELECTRIC_RANK),
+        # Specific EIA dielectric code (X7R/X5R/C0G…): a finer check than the
+        # class-1/class-2 bucket above — X7R→X5R is a real downgrade the coarse
+        # bucket cannot see. Only bites when both records carry dielectricCode.
+        ParamSpec("dielectric_code", "Dielectric code", "", CLASS_MATCH, 0.0, class_rank=_DIELECTRIC_RANK),
+        # Max operating temperature: the substitute must reach at least as high
+        # as the original (X5R 85 °C must NOT replace X7R 125 °C). Additive 5 °C
+        # WARN band absorbs datasheet rounding; a real class drop (125→85) fails.
+        ParamSpec("temp_max_C", "T max", "°C", HIGHER_BETTER, 0.0, abs_tol=5.0),
         # Tolerance (percent): tighter-or-equal preferred; WARN up to 2× looser,
         # FAIL beyond. Only bites when the catalogue records tolerance on both
         # sides (many MLCC records don't → unverified, honestly).

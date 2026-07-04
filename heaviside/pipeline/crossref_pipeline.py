@@ -2420,13 +2420,25 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             elec = mi["datasheetInfo"]["electrical"]
             cap = elec.get("capacitance")
             cap_val = cap.get("nominal") if isinstance(cap, dict) else cap
-            part = mi.get("datasheetInfo", {}).get("part", {})
+            di = mi.get("datasheetInfo", {})
+            part = di.get("part", {})
             _ctol = elec.get("tolerance")
+            # Max operating temperature (already in the DB under thermal) — the
+            # physics behind X7R-vs-X5R: an X5R part tops out at +85 °C, an X7R
+            # at +125 °C, so a same-value swap can move the temperature ceiling
+            # the WRONG way. Compared directly (see param_check) instead of
+            # relying on the coarse "ceramic-class-2" technology bucket.
+            _therm = di.get("thermal", {}).get("temperature", {})
+            _tmax = _therm.get("maximum") if isinstance(_therm, dict) else None
             summary = {
                 "mpn": mi.get("reference") or part.get("partNumber", "?"),
                 "capacitance": cap_val,
                 "voltage": elec.get("ratedVoltage"),
                 "technology": part.get("technology"),
+                # Specific EIA dielectric code (X7R/X5R/C0G/…) when the catalogue
+                # records it — a finer gate than the class-2/class-1 bucket.
+                "dielectric_code": part.get("dielectricCode"),
+                "temp_max_C": _tmax,
                 "tolerance_pct": (_ctol * 100.0 if isinstance(_ctol, (int, float)) else None),
                 "esr": elec.get("esr"),
                 "ripple_current": elec.get("rippleCurrent"),

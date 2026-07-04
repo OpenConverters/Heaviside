@@ -96,6 +96,29 @@ class TestPrimaryValueGateStage:
         assert tol is not None and tol["verdict"] == "fail"
         assert "5" in tol["substitute"] and "1" in tol["original"]
 
+    def test_x5r_for_x7r_caught_via_max_temp(self):
+        # FAE-judge finding: Würth 885012105016 is X5R (max +85°C); the Murata
+        # original GRM155R71C104KA88 is X7R (+125°C). The coarse "ceramic-class-2"
+        # bucket matched, but the max-operating-temperature gate must catch the
+        # +125→+85 downgrade and demote recommended → partial.
+        row = {
+            "ref_des": "C1",
+            "component_type": "capacitor",
+            "original_pn": "GRM155R71C104KA88",
+            "original_value": "0.1uF",
+            "substitute_pn": "885012105016",
+            "substitute_value": "0.1uF",
+            "status": "recommended",
+            "notes": "",
+        }
+        _stage_param_check(_state([row]))
+        assert row["status"] == "partial"
+        assert "PARAM:temp_max_C" in row.get("guardrail_fires", [])
+        tmax = next(
+            (p for p in row.get("_param_results", []) if p["name"] == "temp_max_C"), None
+        )
+        assert tmax is not None and tmax["verdict"] == "fail"
+
     def test_matching_1p5uH_substitute_is_kept(self):
         # A genuine 1.5 µH match must NOT be rejected by the value gate.
         row = {
