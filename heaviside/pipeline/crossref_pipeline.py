@@ -4428,14 +4428,18 @@ def run_crossref_pipeline(
                 progress(msg, pct)
 
     n = len(source_bom)
+    # Emit the first stage BEFORE _normalize_bom so the "Resolve part numbers"
+    # stage is shown active during it. _normalize_bom categorises each row —
+    # for a bare/unknown MPN that scans the internal DB — which can take a while;
+    # doing it before any progress message left the bar stuck at 0/N with no
+    # active stage (the "running design stays at position 0" bug).
+    _say("Resolving messy BOM part numbers", 3)
     state = CrossRefState(
         source_bom=_normalize_bom(source_bom),
         target_manufacturer=target_manufacturer,
         circuit_context=circuit_context,
         stress_by_ref=stress_by_ref or {},
     )
-
-    _say("Resolving messy BOM part numbers", 3)
     state = _stage0_resolve_parts(state)
     _say(f"Prefetching TAS candidates for {n} components", 5)
     state = _stage1_prefetch(state)
