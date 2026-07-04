@@ -364,6 +364,7 @@ def _stage1_5_librarian(state: CrossRefState) -> CrossRefState:
 
 
 _FETCH_ORIGINALS_CAP = 40  # DK rate-limit + runtime guard: max originals fetched per run
+_ENRICH_ORIGINALS_CAP = 24  # max out-of-DB originals datasheet-enriched at param-check time
 
 
 def _merge_original_datasheet_specs(env: dict[str, Any], cat: str) -> None:
@@ -419,6 +420,43 @@ def _merge_original_datasheet_specs(env: dict[str, Any], cat: str) -> None:
                 row["ratedCurrents"] = [float(specs["rated_current"])]
             if specs.get("dcr") and not row.get("dcResistance"):
                 row["dcResistance"] = {"maximum": float(specs["dcr"])}
+
+
+def _enrich_original_params(
+    orig_pn: str, cat: str, bom_row: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Fetch an out-of-DB original's REAL specs from its datasheet (max temp,
+    dielectric, saturation/rated current, DCR) so the cross-ref gates compare
+    physics instead of blanket-'unverified' — the fix for out-of-DB originals
+    when Digi-Key enrichment didn't run. Returns a summary-keyed spec dict (same
+    keys as _summarize_candidate) or None.
+
+    Datasheet URL: a BOM-provided URL first, else a vendor URL resolver
+    (constructs + verifies per-vendor patterns). Best-effort: any failure → None,
+    and P1's unverified-original caveat remains the honest fallback. No
+    fabrication — only datasheet-parsed values."""
+    try:
+        from heaviside.librarian.datasheet.enrich import enrich_from_datasheet
+    except Exception:
+        return None
+    url = str(bom_row.get("datasheet") or bom_row.get("datasheet_url") or "").strip()
+    if not (url and url.lower().endswith(".pdf")):
+        mfr = str(bom_row.get("manufacturer") or "").strip()
+        if mfr and orig_pn:
+            try:
+                from heaviside.librarian.datasheet import resolve_datasheet_pdf_url
+
+                url = resolve_datasheet_pdf_url(mfr, orig_pn) or ""
+            except Exception:
+                url = ""
+    if not (url and url.lower().endswith(".pdf")):
+        return None
+    try:
+        specs = enrich_from_datasheet(orig_pn, cat, url)
+    except Exception as exc:
+        logger.debug("CR param-check: original enrich of %s failed: %s", orig_pn, exc)
+        return None
+    return specs or None
 
 
 def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
@@ -4219,6 +4257,10 @@ def _stage_param_check(state: CrossRefState) -> None:
     # Map ref_des → source BOM row, so a rating the BOM states (e.g. an inductor's
     # rated current) can back-stop the current check for an out-of-DB original.
     _bom_by_ref = {r.get("ref_des"): r for r in state.source_bom}
+    # Datasheet enrichment of out-of-DB originals: cache per (cat, mpn) and cap
+    # the number of live datasheet fetches per run so a large BOM can't stall.
+    _enrich_cache: dict[tuple[str, str], dict[str, Any] | None] = {}
+    _enrich_budget = [_ENRICH_ORIGINALS_CAP]
 
     # Collect the (category, mpn) pairs to resolve — original and substitute,
     # for spec'd categories only.
@@ -4268,6 +4310,28 @@ def _stage_param_check(state: CrossRefState) -> None:
         s_mpn = str(row.get("substitute_pn") or "").strip().lower()
         orig_params = params_by_key.get((cat, o_mpn))
         sub_params = params_by_key.get((cat, s_mpn))
+
+        # Out-of-DB original: try its datasheet so the gates see real physics
+        # (bounded + cached, best-effort). Only when a genuine substitute exists
+        # and Digi-Key enrichment didn't already resolve it into the DB.
+        if (
+            orig_params is None
+            and o_mpn
+            and s_mpn not in ("", "no_substitute")
+            and cat not in _IDENTITY_MATCHED_CATEGORIES
+            and _enrich_budget[0] > 0
+        ):
+            _ck = (cat, o_mpn)
+            if _ck in _enrich_cache:
+                orig_params = _enrich_cache[_ck]
+            else:
+                _enrich_budget[0] -= 1
+                orig_params = _enrich_original_params(
+                    str(row.get("original_pn") or o_mpn),
+                    cat,
+                    _bom_by_ref.get(row.get("ref_des")) or {},
+                )
+                _enrich_cache[_ck] = orig_params
 
         # IDENTITY-MATCHED categories (connector / analog / crystal): the match
         # is defined by the ORIGINAL's identity (connector family+positions+
