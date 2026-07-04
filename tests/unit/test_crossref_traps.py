@@ -119,6 +119,37 @@ class TestPrimaryValueGateStage:
         )
         assert tmax is not None and tmax["verdict"] == "fail"
 
+    def test_unverified_original_capped_to_partial(self):
+        # P1: original not in the Würth DB (Vishay IHLP) → the match rests on
+        # value/voltage/package only, so a 'recommended' must be capped to
+        # 'partial' with an unverified-original caveat (never a HIGH exact match).
+        row = {
+            "ref_des": "L1", "component_type": "magnetic",
+            # A part genuinely absent from the internal DB (the real FAE case was
+            # Coilcraft XGL6060, never in the DB), so its ratings are unknown.
+            "original_pn": "XGL6060-NOTINDB-1R5", "original_value": "1.5µH",
+            "substitute_pn": PART_1P5UH, "substitute_value": "1.5µH",
+            "status": "recommended", "notes": "",
+        }
+        _stage_param_check(_state([row]))
+        assert row["status"] == "partial"
+        assert "ORIGINAL_UNVERIFIED" in row.get("guardrail_fires", [])
+        assert "unverified" in row["notes"].lower()
+
+    def test_severe_isat_shortfall_rejected(self):
+        # P3: original 74437377015 (Isat 25.5A) vs substitute 7440320015
+        # (Isat 2.1A) — far below 70% → the substitute would saturate; must be
+        # no_substitute, not a coverage-inflating 'partial'. Both in the DB.
+        row = {
+            "ref_des": "L1", "component_type": "magnetic",
+            "original_pn": "74437377015", "original_value": "1.5µH",
+            "substitute_pn": "7440320015", "substitute_value": "1.5µH",
+            "status": "recommended", "notes": "",
+        }
+        _stage_param_check(_state([row]))
+        assert row["status"] == "no_substitute"
+        assert any(f.startswith("CURRENT:") for f in row.get("guardrail_fires", []))
+
     def test_matching_1p5uH_substitute_is_kept(self):
         # A genuine 1.5 µH match must NOT be rejected by the value gate.
         row = {

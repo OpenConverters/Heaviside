@@ -4253,6 +4253,21 @@ def _stage_param_check(state: CrossRefState) -> None:
 
         results = evaluate_params(cat, orig_params, sub_params)
 
+        # P6 — ESR is meaningless for a small decoupling ceramic, and the ESR
+        # spec FAILs any cap lacking ESR data ("exclude"). That fired a spurious
+        # FAIL on e.g. a 10 nF X7R (FAE finding: "meaningless noise that buries
+        # the real caveats"). Drop the ESR result for small ceramics so it never
+        # demotes a good decoupling part; ESR still gates bulk/electrolytic caps.
+        if cat == "capacitor":
+            _sp = sub_params or {}
+            _cval = _sp.get("capacitance")
+            if (
+                "ceramic" in str(_sp.get("technology") or "").lower()
+                and isinstance(_cval, (int, float))
+                and _cval < 1e-6
+            ):
+                results = [r for r in results if r["name"] != "esr"]
+
         # PRIMARY VALUE GATE (R / L / C / Z): the defining electrical spec of a
         # passive is NOT in evaluate_params — historically it was only described
         # in prose and could never reject a row, which is how a 330 nH part was
@@ -4291,6 +4306,64 @@ def _stage_param_check(state: CrossRefState) -> None:
                 if "PRIMARY_VALUE:warn" not in fires:
                     fires.append("PRIMARY_VALUE:warn")
 
+        # P3 — SEVERE current shortfall on a power inductor is a crime, not a
+        # 'partial'. A substitute whose saturation or RMS current is far below
+        # the original's saturates / overheats at the operating current (the FAE
+        # findings: ~5 A parts offered on a 6 A rail, an unshielded 1.8 A-Isat
+        # part for a >2.5 A channel — shipped as coverage-inflating 'partial').
+        # When the original's ratings ARE known (from the DB or datasheet
+        # enrichment), reject a substitute that falls well short. When they are
+        # unknown, P1 below caps it at 'partial' instead.
+        if cat == "magnetic" and has_sub and orig_params and sub_params:
+            _severe = None
+            for _k, _lbl in (("saturation_current", "Isat"), ("rated_current", "Irms")):
+                _o, _s = orig_params.get(_k), sub_params.get(_k)
+                if (
+                    isinstance(_o, (int, float)) and _o > 0
+                    and isinstance(_s, (int, float)) and _s < 0.7 * _o
+                ):
+                    _severe = (_lbl, _s, _o, _k)
+                    break
+            if _severe is not None:
+                _lbl, _s, _o, _k = _severe
+                _force_no_substitute(
+                    row,
+                    f"{_lbl} {_s:g} A is far below the original's {_o:g} A (< 70%) — the "
+                    "substitute would saturate / overheat at the operating current and is "
+                    "not a viable in-kind substitute.",
+                    fire=f"CURRENT:{_k}",
+                )
+                continue
+
+        # P1 — UNVERIFIED ORIGINAL: when the original part could not be
+        # identified in the internal DB (and datasheet enrichment didn't fill
+        # its specs), the match rests on value/voltage/package ONLY — dielectric,
+        # temperature grade and current ratings are UNKNOWN. Such a row must not
+        # be sold as a clean 'recommended'/'exact'. This is the central FAE
+        # finding: the tool was most confident exactly where it had the LEAST
+        # data — the SAME 125 °C→85 °C (or worse-Isat) downgrade it flags as FAIL
+        # when the original is known shipped as a "HIGH exact match" only because
+        # the original wasn't in the DB. Cap at 'partial' with an explicit
+        # unverified-original caveat so verdicts follow physics, not DB gaps.
+        if (
+            has_sub
+            and orig_params is None
+            and cat not in _IDENTITY_MATCHED_CATEGORIES
+            and row.get("status") in ("recommended", "exact")
+        ):
+            row["status"] = "partial"
+            prior = (row.get("notes") or "").strip()
+            row["notes"] = (
+                (prior + " | " if prior else "")
+                + f"original {row.get('original_pn') or o_mpn!r} not identified in the "
+                "internal DB — matched on value/voltage/package only; dielectric, "
+                "temperature grade and current ratings are UNVERIFIED. Confirm against "
+                "the original's datasheet before use."
+            )
+            fires = row.setdefault("guardrail_fires", [])
+            if "ORIGINAL_UNVERIFIED" not in fires:
+                fires.append("ORIGINAL_UNVERIFIED")
+
         # MLCC DC-bias: compare effective capacitance at the component's
         # operating voltage (from sim stress, when available). Only meaningful
         # for capacitors with a known bias and class-2 model anchors.
@@ -4301,6 +4374,28 @@ def _stage_param_check(state: CrossRefState) -> None:
             bias = mlcc_bias_param(orig_params or {}, sub_params or {}, v_op)
             if bias is not None:
                 results.append(bias)
+            else:
+                # P5 — DC-bias derating (effective-capacitance loss under DC
+                # voltage) is the dominant class-2 MLCC behaviour but needs the
+                # operating voltage + the part's bias curve, which we don't have.
+                # Flag it honestly (unverified, non-demoting) for larger class-2
+                # parts rather than let the nominal value imply it holds under
+                # bias — never fabricate a derated value.
+                _st = str((sub_params or {}).get("technology") or "").lower()
+                _cv = (sub_params or {}).get("capacitance")
+                if "class-2" in _st and isinstance(_cv, (int, float)) and _cv >= 1e-6:
+                    results.append({
+                        "name": "dc_bias",
+                        "label": "DC-bias",
+                        "original": "",
+                        "substitute": "",
+                        "verdict": UNVERIFIED,
+                        "note": (
+                            "DC-bias derating not verified — effective capacitance "
+                            "under DC bias depends on the operating voltage and the "
+                            "part's bias curve, which are not available."
+                        ),
+                    })
 
         # Connectors: mating-system compatibility — a connector is half of a
         # mated PAIR; a cross-vendor series swap is only a drop-in when the
