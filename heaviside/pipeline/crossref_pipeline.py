@@ -4113,6 +4113,29 @@ _PRIMARY_SUMMARY_KEY = {
 }
 
 
+# Sentence-level claims that assert the substitute was verified against — or
+# beats — the ORIGINAL, which is a fabrication when the original was never
+# identified. Matched case-insensitively; a sentence containing any of these is
+# dropped from the notes of an ORIGINAL_UNVERIFIED row.
+_UNVERIFIABLE_CLAIM_PAT = re.compile(
+    r"verified datasheet|exceeds (the )?original|exceeds on all|better than (the )?original"
+    r"|much better|excellent electrical|electrical upgrade|superior (to|on)|beats the original"
+    r"|meets or exceeds|all parameters (exceed|met)|drop-?in upgrade",
+    re.IGNORECASE,
+)
+
+
+def _strip_unverifiable_claims(notes: str) -> str:
+    """Drop sentences that claim verification of / superiority over an original
+    that was never identified. Keeps every other sentence (footprint caveats,
+    package notes, …) intact."""
+    if not notes:
+        return ""
+    sentences = re.split(r"(?<=[.!?])\s+|\s*\|\s*", notes)
+    kept = [s.strip() for s in sentences if s.strip() and not _UNVERIFIABLE_CLAIM_PAT.search(s)]
+    return " ".join(kept)
+
+
 def _force_no_substitute(row: dict[str, Any], reason: str, *, fire: str = "NO_ORIGINAL_DATA") -> None:
     """Reject a proposed substitute in place: clear it, set no_substitute, append
     a reason to the notes, and record a guardrail fire. Shared by the
@@ -4441,7 +4464,14 @@ def _stage_param_check(state: CrossRefState) -> None:
             fires = row.setdefault("guardrail_fires", [])
             if "ORIGINAL_UNVERIFIED" not in fires:
                 fires.append("ORIGINAL_UNVERIFIED")
-                prior = (row.get("notes") or "").strip()
+                # No hallucinations: the LLM prose often asserts "Verified
+                # datasheet specs — exceeds original on all parameters" with
+                # FABRICATED original numbers, contradicting the honest (grey/?)
+                # table. When the original was never identified, such a claim is
+                # unverifiable — strip the offending sentences and replace them
+                # with the caveat. (Deterministic caveats live in match_detail /
+                # guardrail_fires, not here, so nothing real is lost.)
+                prior = _strip_unverifiable_claims(row.get("notes") or "")
                 row["notes"] = (
                     (prior + " | " if prior else "")
                     + f"original {row.get('original_pn') or o_mpn!r} not identified in the "
