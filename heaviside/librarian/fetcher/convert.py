@@ -1769,7 +1769,11 @@ def _build_magnetic_envelope(
     )
     tol_frac = abs(tol) / 100 if tol else 0.2
 
-    electrical: dict[str, Any] = {
+    # MAS magnetics `datasheetInfo.electrical` is an ARRAY of per-winding entries
+    # (each with a subtype), NOT a bare object — a single inductor is a one-element
+    # list. ratedCurrent is the array field `ratedCurrents`.
+    electrical_item: dict[str, Any] = {
+        "subtype": "inductor",
         "inductance": {
             "nominal": inductance,
             "minimum": inductance * (1 - tol_frac),
@@ -1777,12 +1781,13 @@ def _build_magnetic_envelope(
         },
         "dcResistance": {"maximum": dcr},
     }
-    if rated_current is not None:
-        electrical["ratedCurrent"] = rated_current
     if isat is not None:
-        electrical["saturationCurrentPeak"] = isat
+        electrical_item["saturationCurrentPeak"] = isat
     if srf is not None:
-        electrical["selfResonantFrequency"] = srf
+        electrical_item["selfResonantFrequency"] = srf
+    if rated_current is not None:
+        electrical_item["ratedCurrents"] = [rated_current]
+    electrical: list[dict[str, Any]] = [electrical_item]
 
     # Detect shielding and material from params
     shielded = params.get("Shielding", "").lower() in ("shielded", "yes")
