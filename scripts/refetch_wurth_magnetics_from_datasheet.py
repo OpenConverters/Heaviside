@@ -30,14 +30,17 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from heaviside.catalogue.selector import _tas_data_dir  # noqa: E402
-from heaviside.librarian.datasheet.cache import PdfCache  # noqa: E402
-from heaviside.librarian.datasheet.magnetics_we import (  # noqa: E402
-    extract_we_magnetic_pdf,
+from heaviside.catalogue.selector import _tas_data_dir
+from heaviside.librarian.datasheet.cache import PdfCache
+from heaviside.librarian.datasheet.magnetics_we import extract_we_magnetic_pdf
+from heaviside.librarian.datasheet.magnetics_we_url import (
+    resolve_we_datasheet_pdf,
+    we_datasheet_candidate_urls,
 )
 
 _REL = 0.02  # 2% tolerance before a value is considered "drifted"
@@ -96,12 +99,26 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=20)
     ap.add_argument("--all", action="store_true", help="process the whole catalogue")
     ap.add_argument("--mpn", default=None, help="a single MPN")
+    ap.add_argument(
+        "--delay",
+        type=float,
+        default=0.1,
+        help="politeness delay (s) after each *network* fetch (0 to disable)",
+    )
+    ap.add_argument(
+        "--progress-every",
+        type=int,
+        default=200,
+        help="print a running tally every N examined parts",
+    )
     args = ap.parse_args()
 
     path = _tas_data_dir() / "magnetics.ndjson"
     cache = PdfCache()
     tmp_fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-    seen = fetched = drifted = 0
+    seen = fetched = drifted = corrected = 0
+    unfetchable: list[str] = []
+    parse_failed: list[str] = []
     limit = None if (args.all or args.mpn) else args.limit
 
     with os.fdopen(tmp_fd, "w") as out, path.open() as fh:
@@ -113,7 +130,10 @@ def main() -> int:
             mi = env.get("magnetic", {}).get("manufacturerInfo", {})
             ref = mi.get("reference")
             url = str(mi.get("datasheetUrl") or "")
-            take = _is_wurth(env) and url.lower().endswith(".pdf")
+            # Every Würth magnetic is a candidate — the datasheet URL is resolved
+            # (not merely trusted) so REDEXPERT-page / katalog / empty-URL parts
+            # are corrected too, not just the ones that happen to store a .pdf.
+            take = _is_wurth(env)
             if args.mpn:
                 take = take and ref == args.mpn
             if not take or (limit is not None and seen >= limit):
@@ -124,31 +144,79 @@ def main() -> int:
             if row is None:
                 out.write(line)
                 continue
+
+            candidates = we_datasheet_candidate_urls(ref, url)
+            pre_cached = {u for u in candidates if cache.is_cached(u)}
             try:
-                pdf = cache.fetch(url)
+                resolved = resolve_we_datasheet_pdf(cache, ref, url)
+            except Exception as e:  # transport-level (DNS/timeout) — report, keep
+                unfetchable.append(f"{ref} (fetch error: {e})")
+                out.write(line)
+                continue
+            if resolved is None:
+                # No candidate URL served a real PDF for this exact article. Never
+                # transform the MPN to dodge the 404 (that would fetch a different
+                # part's datasheet) — skip and report.
+                unfetchable.append(f"{ref} (no PDF at any of: {', '.join(candidates)})")
+                out.write(line)
+                continue
+            resolved_url, pdf = resolved
+            if args.delay and resolved_url not in pre_cached:
+                time.sleep(args.delay)
+            try:
                 ds = extract_we_magnetic_pdf(pdf)
                 fetched += 1
             except Exception as e:
-                print(f"  {ref}: fetch/parse failed ({e})")
+                parse_failed.append(f"{ref} ({e})")
+                print(f"  {ref}: parse failed ({e})")
                 out.write(line)
                 continue
+
             corr = _corrections(row, ds)
             if corr:
                 drifted += 1
                 print(f"  {ref}: DRIFT {json.dumps(corr)}")
                 if args.apply:
                     row.update(corr)
+                    corrected += 1
                     out.write(json.dumps(env, ensure_ascii=False) + "\n")
+                    if args.progress_every and seen % args.progress_every == 0:
+                        print(
+                            f"  … {seen} examined | {fetched} parsed | "
+                            f"{drifted} drifted | {len(unfetchable)} unfetchable",
+                            flush=True,
+                        )
                     continue
             out.write(line)
+            if args.progress_every and seen % args.progress_every == 0:
+                print(
+                    f"  … {seen} examined | {fetched} parsed | "
+                    f"{drifted} drifted | {len(unfetchable)} unfetchable",
+                    flush=True,
+                )
 
-    if args.apply and drifted:
+    if args.apply and corrected:
         os.replace(tmp, path)
-        print(f"APPLIED — {drifted} record(s) corrected in {path}")
+        print(f"APPLIED — {corrected} record(s) corrected in {path}")
     else:
         os.unlink(tmp)
-    print(f"\nWürth magnetics examined: {seen} | datasheets parsed: {fetched} | "
-          f"drifted: {drifted}" + ("" if args.apply else "  (dry run — pass --apply)"))
+
+    print(
+        f"\nWürth magnetics examined: {seen} | datasheets parsed: {fetched} | "
+        f"drifted: {drifted} | corrected: {corrected} | "
+        f"un-fetchable: {len(unfetchable)} | parse-failed: {len(parse_failed)}"
+        + ("" if args.apply else "  (dry run — pass --apply)")
+    )
+    if unfetchable:
+        print(f"\nUn-fetchable ({len(unfetchable)}) — no datasheet PDF for the exact "
+              "article (skipped, NOT guessed):")
+        for u in unfetchable:
+            print(f"  - {u}")
+    if parse_failed:
+        print(f"\nParse-failed ({len(parse_failed)}) — PDF fetched but no electrical "
+              "fields extracted:")
+        for u in parse_failed:
+            print(f"  - {u}")
     return 0
 
 
