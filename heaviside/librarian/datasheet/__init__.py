@@ -22,6 +22,11 @@ from heaviside.librarian.datasheet.base import (
     MissingDependencyError,
 )
 from heaviside.librarian.datasheet.cache import DEFAULT_CACHE_DIR, PdfCache
+from heaviside.librarian.datasheet.enrich import (
+    enrich_from_datasheet,
+    enrich_from_text,
+    normalize_category,
+)
 from heaviside.librarian.datasheet.extract import (
     ELECTRICAL_SECTION_HEADERS,
     SECTION_TERMINATORS,
@@ -38,6 +43,11 @@ from heaviside.librarian.datasheet.patterns import (
     REQUIRED_BY_CATEGORY,
 )
 from heaviside.librarian.datasheet.reader import DatasheetReader
+from heaviside.librarian.datasheet.text_specs import (
+    parse_aec_qualification,
+    parse_dielectric_code,
+    parse_operating_temp_max_C,
+)
 
 __all__ = [
     "CATEGORY_PATTERNS",
@@ -53,10 +63,16 @@ __all__ = [
     "IncompleteDatasheetError",
     "MissingDependencyError",
     "PdfCache",
+    "enrich_from_datasheet",
+    "enrich_from_text",
     "extract_params",
     "extract_required_params",
     "extract_tables",
     "filter_electrical_tables",
     "match_param_name",
+    "normalize_category",
+    "parse_aec_qualification",
+    "parse_dielectric_code",
+    "parse_operating_temp_max_C",
     "pick_value_from_row",
 ]
