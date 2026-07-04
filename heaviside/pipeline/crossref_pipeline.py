@@ -41,6 +41,7 @@ from heaviside.agents.llm_call import (
     extract_json_block,
     normalize_reviewer_verdict,
 )
+from heaviside.pipeline.case_dimensions import resolve_dimensions
 from heaviside.pipeline.crossref import (
     CrossRefOutcome,
     CrossRefState,
@@ -164,9 +165,7 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
             # keep the source envelope on the row for the ranker.
             comp["_source_env"] = src_env
         if dims is None:
-            eia = _eia_dims_from_case(comp.get("package"))
-            if eia:
-                dims = (eia[0], eia[1], None)
+            dims = resolve_dimensions(comp.get("package"), cat)
         comp["_source_dims_m"] = dims
 
     # Surface missing source dimensions once, aggregated — one diagnostic per
@@ -862,10 +861,11 @@ def _extract_dimensions(
                 height = _dim_value(nested.get("height"))
     if length is not None and width is not None:
         return (length, width, height)
-    eia = _eia_dims_from_case(_extract_package(env, category))
-    if eia:
-        return (eia[0], eia[1], None)
-    return None
+    # No mechanical drawing — resolve the case code to a footprint. The
+    # category-aware resolver handles chip EIA (imperial+metric), molded
+    # tantalum, "DxL" cans, SOT/SOD/TO/DPAK/SOIC packages, and molded power
+    # inductors (WE-MAPI "4020" = 4.0×4.0×2.0 mm), not just the 13 chip sizes.
+    return resolve_dimensions(_extract_package(env, category), category)
 
 
 # Footprint-fit penalty weights. A substitute must fit the board space the
@@ -4533,11 +4533,12 @@ def _stage_footprint_caveat(state: CrossRefState) -> CrossRefState:
             continue
         op = row.get("original_package")
         sp = row.get("substitute_package")
-        src = _eia_dims_from_case(op)
-        sub = _eia_dims_from_case(sp)
+        cat = row.get("component_type", "")
+        src = resolve_dimensions(op, cat)
+        sub = resolve_dimensions(sp, cat)
         if not src or not sub:
             continue
-        tier = _footprint_tier((src[0], src[1], None), (sub[0], sub[1], None))
+        tier = _footprint_tier(src, sub)
         if tier == "one_size_larger":
             if row.get("status") in ("exact", "recommended"):
                 row["status"] = "partial"
