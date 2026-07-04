@@ -48,6 +48,33 @@ applies to every category — passives, magnetics, and semiconductors alike.
 - `fits_original: "unknown"` means dimensions couldn't be verified — note it
   and prefer a candidate with a confirmed fit when available.
 
+## MANDATORY: VALUE MATCHING (how to compare every parameter)
+
+Every parameter falls into one of four modes. Apply the right one — this is the
+difference between a real equivalent and a part that merely appears in the list.
+
+1. **EXACT** — must equal the original: dielectric class (X7R≠Y5V), connector
+   pitch/positions/gender, crystal frequency, rectifier class. Different = reject.
+2. **HIGHER-BETTER** — must be ≥ original: voltage rating, Isat, Irms/rated
+   current, power rating, Vrrm, forward current, SRF, bead impedance. A small
+   shortfall (a few %) is a *partial*, not an outright reject, if the part is
+   clearly better elsewhere — but past ~20% short it fails.
+3. **LOWER-BETTER** — must be ≤ original: DCR, ESR (except LDO-output caps,
+   where ESR is a stability *window* — too low oscillates), Rds(on), Qg, Qrr,
+   trr, TCR, leakage. Same near-miss tolerance as above.
+4. **RANGE / closest-value** — the PRIMARY value of a passive (R, L, C) and the
+   defining number of the part: **pick the candidate whose value is CLOSEST to
+   the original.** A 47 Ω is not a 39 Ω; a 1.5 µH is not a 330 nH. Inductance
+   within ±10 % is a clean match, 0.8–1.25× is an acceptable *partial*, outside
+   that band is `no_substitute` — never present a 4× value miss as "partial".
+
+**Do not over-dimension.** Meeting a rating by a huge margin is NOT a better
+match — a part with 4× the needed Isat is bulkier, costlier and usually has
+worse parasitics. Among candidates that all meet the constraints, prefer the
+one that meets them by the *smallest* comfortable margin (right-sized), not the
+biggest number. Closeness on the primary value always outranks head-room on a
+rating.
+
 ## Input
 
 The pipeline provides:
@@ -140,7 +167,9 @@ already accounted for 80V stress.
   the only available candidate even if 2+ sizes up, with status "partial".
 
 ### Inductors / Transformers
-- Min inductance = original × 0.9
+- **Inductance (RANGE / closest-value):** accept 0.8–1.25× the original,
+  prefer within ±10 %, and among those pick the value CLOSEST to the original.
+  Outside 0.8–1.25× is `no_substitute` (a 330 nH part is not a 1.5 µH substitute).
 - Min Isat = Ipk × 1.2
 - **Rated current (Irated)**: Min Irated = original Irated (thermal RMS
   current rating). The `rated_current` field in `_tas_candidates` is in

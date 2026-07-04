@@ -28,7 +28,11 @@ valuable output — it's manufacturer-independent.)
 **Step 2 — Counter-propose.** Query TAS yourself for the target maker. Try:
 - Adjacent voltage grades (50V if Vop allows, not just 100V)
 - Adjacent packages (one size up if footprint tolerance exists)
-- Alternative capacitance/inductance values (±20% is often acceptable)
+- Alternative values WITHIN the in-kind window and as close to the original as
+  possible — capacitance may run higher for bypass/bulk; inductance must stay
+  within 0.8–1.25× (prefer ±10%). A value outside that band is a different part,
+  not a wider search — do not counter-propose it. Your overturn still has to
+  pass the pipeline's parameter gates, so a wrong-value "win" will be rejected.
 - Other product families from the SAME target manufacturer that the
   original narrow query skipped.
 

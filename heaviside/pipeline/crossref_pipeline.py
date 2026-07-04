@@ -1722,6 +1722,17 @@ def _rank_candidates(
         target_val = parse_voltage(value_str)
 
     if target_val is None:
+        # For a value-matched passive, ranking without a parseable value is not
+        # value-based — the returned order is arbitrary. Log it so a downstream
+        # consumer (rescue, review) knows not to trust position as a value proxy;
+        # the primary-value gate in _stage_param_check is the real backstop.
+        if category in ("capacitor", "resistor", "magnetic", "chipBead", "varistor") and value_str:
+            logger.warning(
+                "CR ranking: could not parse %s value %r — returning unranked "
+                "candidates (order is not value-based)",
+                category,
+                value_str,
+            )
         return all_candidates[:max_results]
 
     # 0Ω resistors: find candidates with 0Ω (jumpers)
@@ -3998,6 +4009,63 @@ def _annotate_match_detail(state: CrossRefState) -> None:
         row["match_detail"] = build_match_detail(row)
 
 
+# Which _summarize_candidate key holds a category's primary electrical value
+# (SI base units). Used to read the substitute's authoritative value straight
+# from its catalogue envelope for the primary-value gate.
+_PRIMARY_SUMMARY_KEY = {
+    "capacitor": "capacitance",
+    "resistor": "resistance",
+    "magnetic": "inductance",
+    "chipBead": "impedance_100mhz",
+}
+
+
+def _force_no_substitute(row: dict[str, Any], reason: str, *, fire: str = "NO_ORIGINAL_DATA") -> None:
+    """Reject a proposed substitute in place: clear it, set no_substitute, append
+    a reason to the notes, and record a guardrail fire. Shared by the
+    original-has-no-data gates and the primary-value gate so a rejected row is
+    always cleared consistently (no stale substitute_* fields left rendering)."""
+    row["status"] = "no_substitute"
+    row["substitute_pn"] = None
+    for f in ("substitute_value", "substitute_voltage", "substitute_package"):
+        row[f] = ""
+    row.pop("_param_results", None)
+    prior = (row.get("notes") or "").strip()
+    row["notes"] = (prior + " | " if prior else "") + reason
+    fires = row.setdefault("guardrail_fires", [])
+    if fire not in fires:
+        fires.append(fire)
+
+
+def _primary_value_si(
+    row: dict[str, Any],
+    cat: str,
+    orig_params: dict[str, Any] | None,
+    sub_params: dict[str, Any] | None,
+) -> tuple[float | None, float | None]:
+    """Resolve (original, substitute) primary values in SI base units for the
+    primary-value gate. Original prefers the BOM-grounded ``original_value``
+    (the user's stated requirement), falling back to the catalogue record;
+    substitute prefers the catalogue envelope value (authoritative SI), falling
+    back to the grounded ``substitute_value`` string. Returns None for a side
+    that cannot be resolved — never a guessed value."""
+    key = _PRIMARY_SUMMARY_KEY.get(cat)
+
+    def _from_params(p: dict[str, Any] | None) -> float | None:
+        if not p or not key:
+            return None
+        v = p.get(key)
+        return float(v) if isinstance(v, (int, float)) else None
+
+    orig_si = _parse_value_si(row.get("original_value", ""), cat)
+    if orig_si is None:
+        orig_si = _from_params(orig_params)
+    sub_si = _from_params(sub_params)
+    if sub_si is None:
+        sub_si = _parse_value_si(row.get("substitute_value", ""), cat)
+    return orig_si, sub_si
+
+
 def _stage_param_check(state: CrossRefState) -> None:
     """Resolve original + substitute *electrical* parameters from the internal DB
     and attach a per-parameter verdict (ESR, ripple, dielectric, Rds(on), Qg,
@@ -4151,6 +4219,44 @@ def _stage_param_check(state: CrossRefState) -> None:
 
         results = evaluate_params(cat, orig_params, sub_params)
 
+        # PRIMARY VALUE GATE (R / L / C / Z): the defining electrical spec of a
+        # passive is NOT in evaluate_params — historically it was only described
+        # in prose and could never reject a row, which is how a 330 nH part was
+        # accepted as a "partial" substitute for a 1.5 µH original. Compare it
+        # here with the proximity/utility engine and gate on it:
+        #   FAIL (value out of the accept window) → the substitute is a
+        #       DIFFERENT value, not this part → no_substitute.
+        #   WARN (in-window but off nominal)      → a defensible deviation →
+        #       cap a 'recommended' at 'partial' and say so.
+        # Only value-matched passives have a primary-value spec; mosfet/diode/
+        # connector/analog/timeBase return None and are unaffected.
+        if has_sub:
+            from heaviside.pipeline.scoring import FAIL as _S_FAIL
+            from heaviside.pipeline.scoring import WARN as _S_WARN
+            from heaviside.pipeline.scoring import score_primary_value
+
+            orig_si, sub_si = _primary_value_si(row, cat, orig_params, sub_params)
+            pv = score_primary_value(cat, orig_si, sub_si)
+            if pv is not None and pv.verdict == _S_FAIL:
+                _force_no_substitute(
+                    row,
+                    f"primary value out of range: substitute {pv.note} — a different "
+                    "value is not an in-kind substitute for this part.",
+                    fire="PRIMARY_VALUE",
+                )
+                continue
+            if pv is not None and pv.verdict == _S_WARN:
+                if row.get("status") == "recommended":
+                    row["status"] = "partial"
+                prior = (row.get("notes") or "").strip()
+                row["notes"] = (
+                    (prior + " | " if prior else "")
+                    + f"primary value deviates: {pv.note} (verify it suits the circuit)."
+                )
+                fires = row.setdefault("guardrail_fires", [])
+                if "PRIMARY_VALUE:warn" not in fires:
+                    fires.append("PRIMARY_VALUE:warn")
+
         # MLCC DC-bias: compare effective capacitance at the component's
         # operating voltage (from sim stress, when available). Only meaningful
         # for capacitors with a known bias and class-2 model anchors.
@@ -4215,11 +4321,27 @@ def _best_inkind_candidate(
     family + voltage >= original + value in range). Candidates are pre-ranked,
     so the first that passes is the best. Returns a substitute row patch, or
     None when no candidate qualifies (a genuine no_substitute)."""
-    from heaviside.pipeline.value_parse import parse_si_value
+    from heaviside.pipeline.scoring import (
+        FAIL as _S_FAIL,
+        PASS as _S_PASS,
+        PRIMARY_VALUE_SPECS,
+        score_primary_value,
+    )
 
-    orig_vsi = comp.get("value_si")
-    if orig_vsi in (None, "") and comp.get("original_value"):
-        orig_vsi = parse_si_value(str(comp.get("original_value")))
+    # The normalized BOM row stores the value under "value" (humanized); older
+    # code read "value_si"/"original_value", which do not exist on these rows —
+    # that silent None is exactly what let a 330 nH part rescue a 1.5 µH original
+    # with the value check no-oped. Read the real key, parse with the
+    # category-specific parser.
+    orig_vsi = _parse_value_si(
+        comp.get("value") or comp.get("original_value") or comp.get("value_si"), cat
+    )
+    # No-fallbacks: a value-matched category with no parseable original value
+    # cannot have its defining spec verified, so we must NOT rescue a part
+    # against nothing. Refuse (a genuine no_substitute), don't guess.
+    if cat in PRIMARY_VALUE_SPECS and orig_vsi is None:
+        return None
+
     orig_v = _to_volts(comp.get("rated_voltage") or comp.get("original_voltage"))
     orig_fam = _capacitor_technology_family(comp.get("technology")) if cat == "capacitor" else None
 
@@ -4237,17 +4359,15 @@ def _best_inkind_candidate(
             and _capacitor_technology_family(s.get("technology")) != orig_fam
         ):
             continue
-        # value window
-        if orig_vsi and cand_vsi:
-            if cat == "capacitor":
-                lo, hi, tight = 0.9 * orig_vsi, 3.0 * orig_vsi, 0.1
-            elif cat == "magnetic":
-                lo, hi, tight = 0.9 * orig_vsi, 1.5 * orig_vsi, 0.1
-            else:  # resistor
-                lo, hi, tight = 0.95 * orig_vsi, 1.05 * orig_vsi, 0.025
-            if not (lo <= cand_vsi <= hi):
+        # Primary value window via the shared proximity engine (same rule the
+        # param-check gate applies, so rescue can never propose a value the gate
+        # would then reject). FAIL → skip this candidate; PASS (tight) →
+        # recommended; WARN (in-window, off nominal) → partial.
+        pv = score_primary_value(cat, orig_vsi, cand_vsi)
+        if pv is not None:
+            if pv.verdict == _S_FAIL:
                 continue
-            within_tight = abs(cand_vsi - orig_vsi) <= tight * orig_vsi
+            within_tight = pv.verdict == _S_PASS
         else:
             within_tight = False
         status = (
@@ -4363,9 +4483,15 @@ def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
             continue
         row.update(patch)
         prior = (row.get("notes") or "").strip()
+        # Name only what the rescue actually verified: the primary value is
+        # checked for every value-matched category; voltage floor and chemistry
+        # family additionally for capacitors. (The old note claimed
+        # "voltage/value/chemistry" unconditionally even when those checks had
+        # no-oped — the honesty regression this rework removes.)
+        basis = "value" + ("/voltage/chemistry" if cat == "capacitor" else "")
         row["notes"] = (
-            f"{prior} | deterministic in-kind rescue: {patch['substitute_pn']} meets "
-            "voltage/value/chemistry criteria (LLM stages dropped it)."
+            f"{prior} | deterministic in-kind rescue ({patch.get('status', 'partial')}): "
+            f"{patch['substitute_pn']} verified on {basis} (LLM stages dropped it)."
         ).strip(" |")
         rescued += 1
     if rescued:
