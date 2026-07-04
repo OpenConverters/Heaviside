@@ -1,0 +1,8 @@
+ref_des,type,part,value,package,voltage,manufacturer,description
+L1,inductor,MPL-AL6050-1R5,1.5uH,6.0x6.0x5.0mm,,MPS,
+C1A,capacitor,,22uF,0805,16,,
+C1B,capacitor,,0.1uF,0402,25,,
+C2,capacitor,,22uF,0805,6.3,,
+C2A,capacitor,,22uF,0805,6.3,,
+C3,capacitor,,0.1uF,0402,25,,
+C4,capacitor,,470pF,0402,25,,

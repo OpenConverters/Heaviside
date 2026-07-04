@@ -1,0 +1,53 @@
+{
+  "_comment": "FAE-eval fixtures. Each fixture is a GUI-uploadable BOM CSV. 'invariants' are deterministic, datasheet-independent checks the crossref OUTPUT must satisfy for named rows — used by the zero-token golden checker (test_fae_golden_invariants.py) and handed to the FAE judge as ground the customer would also know. 'target' is the manufacturer to cross to.",
+  "target": "Würth Elektronik",
+  "fixtures": [
+    {
+      "file": "trap_inductor_1p5uH.csv",
+      "title": "Value/class traps (the 330nH-for-1.5uH screenshot + friends)",
+      "invariants": {
+        "L1": {
+          "category": "magnetic",
+          "original_value_si": 1.5e-6,
+          "primary_value_accept_lo": 0.8,
+          "primary_value_accept_hi": 1.25,
+          "note": "Any substitute must be within 0.8-1.25x of 1.5uH; a 330nH pick is a hard no_substitute, never partial."
+        },
+        "R1": {
+          "category": "resistor",
+          "original_value_si": 47000.0,
+          "primary_value_accept_lo": 0.95,
+          "primary_value_accept_hi": 1.05,
+          "note": "47k substitute must be ~47k; a 10k/100k pick is no_substitute."
+        },
+        "C1": {
+          "category": "capacitor",
+          "original_value_si": 1e-7,
+          "dielectric_class_min": "X7R",
+          "note": "0.1uF X7R must not be replaced by a Y5V/Z5U class-2-worst part."
+        },
+        "C2": {
+          "category": "capacitor",
+          "original_value_si": 2.2e-4,
+          "primary_value_accept_lo": 0.8,
+          "note": "220uF bulk; substitute must not lose more than ~20% nominal capacitance."
+        }
+      }
+    },
+    {
+      "file": "design_EVL1653F.csv",
+      "title": "ST EVL1653F reference design (real BOM)",
+      "invariants": {}
+    },
+    {
+      "file": "design_lt80603evkit.csv",
+      "title": "ADI LT80603 eval kit (real BOM)",
+      "invariants": {}
+    },
+    {
+      "file": "design_um3491.csv",
+      "title": "ST STEVAL-0606 6V/6A step-down (real BOM)",
+      "invariants": {}
+    }
+  ]
+}

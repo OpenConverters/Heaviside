@@ -1,0 +1,5 @@
+ref_des,type,part,value,package,voltage,manufacturer,description
+L1,inductor,IHLP1616ABER1R5M11,1.5uH,4040,,Vishay,Inductor Power Shielded 1.5uH 20% 3.25A 0.075Ohm DCR
+R1,resistor,CRCW040247K0FKED,47k,0402,,Vishay,Resistor Chip 47k 1% 0.063W 0402
+C1,capacitor,GRM155R71C104KA88,0.1uF,0402,16,Murata,Capacitor Ceramic 0.1uF 16V X7R 0402
+C2,capacitor,GRM31CR60J227ME39,220uF,1206,6.3,Murata,Capacitor Ceramic 220uF 6.3V X5R 1206
