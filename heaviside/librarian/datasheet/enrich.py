@@ -36,6 +36,10 @@ from typing import Any
 from heaviside.librarian.datasheet.base import DatasheetParseError
 from heaviside.librarian.datasheet.cache import PdfCache
 from heaviside.librarian.datasheet.extract import Table, extract_params, extract_tables
+from heaviside.librarian.datasheet.magnetics_multi import (
+    detect_magnetic_vendor,
+    parse_magnetic_text,
+)
 from heaviside.librarian.datasheet.magnetics_we import parse_we_magnetic_text
 from heaviside.librarian.datasheet.text_specs import (
     parse_aec_qualification,
@@ -141,28 +145,48 @@ def normalize_category(category: str) -> str:
     return norm
 
 
-def _map_magnetic(we: dict[str, float]) -> dict[str, Any]:
-    """Map WE-magnetics text-parser output onto summary keys.
+def _map_magnetic(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Map a magnetic text-parser result onto the summary keys.
 
-    Saturation current uses the most conservative available drop-% (10 %
-    before 20 % before 30 %), matching the saturation-gate policy: the
-    smaller |ΔL/L| threshold yields the lower, safer Isat.
+    Accepts the output of EITHER the Würth parser
+    (:func:`parse_we_magnetic_text`) or the multi-vendor parser
+    (:func:`parse_magnetic_text`) — both expose the same SI keys.
+
+    * Saturation current uses the most conservative available drop-% (10 %
+      before 20 % before 30 %) — the smaller |ΔL/L| threshold yields the lower,
+      safer Isat. The multi-vendor parser pre-selects it as ``saturation_current``;
+      the WE parser exposes ``isat_*pct`` from which we derive it here.
+    * Rated current is the STANDARD figure (WE ``I R,40K`` / Coilcraft 40 °C-rise
+      Irms / Vishay heat-rating / MPS ``I R``), NEVER the best-case performance
+      ``irp_40k`` — quoting IRP as the rating was a repeated FAE finding.
     """
     out: dict[str, Any] = {}
-    if "inductance" in we:
-        out["inductance"] = we["inductance"]
-    for pct in ("isat_10pct", "isat_20pct", "isat_30pct"):
-        if pct in we:
-            out["saturation_current"] = we[pct]
-            out["saturation_current_drop_pct"] = int(pct.split("_")[1].rstrip("pct"))
-            break
-    if "irp_40k" in we:
-        out["rated_current"] = we["irp_40k"]
+    if "inductance" in parsed:
+        out["inductance"] = parsed["inductance"]
+
+    if "saturation_current" in parsed:
+        out["saturation_current"] = parsed["saturation_current"]
+        if "saturation_current_drop_pct" in parsed:
+            out["saturation_current_drop_pct"] = parsed["saturation_current_drop_pct"]
+    else:
+        for pct in ("isat_10pct", "isat_20pct", "isat_30pct"):
+            if pct in parsed:
+                out["saturation_current"] = parsed[pct]
+                out["saturation_current_drop_pct"] = int(pct.split("_")[1].rstrip("pct"))
+                break
+
+    if "rated_current" in parsed:
+        out["rated_current"] = parsed["rated_current"]
+    elif "irp_40k" in parsed:
+        # Only the best-case performance figure exists — use it (the sole rating
+        # the datasheet gives) rather than dropping the field.
+        out["rated_current"] = parsed["irp_40k"]
+
     # DCR: prefer the typical (what the in-DB summary reports) then max.
-    if "rdc_typ" in we:
-        out["dcr"] = we["rdc_typ"]
-    elif "rdc_max" in we:
-        out["dcr"] = we["rdc_max"]
+    if "rdc_typ" in parsed:
+        out["dcr"] = parsed["rdc_typ"]
+    elif "rdc_max" in parsed:
+        out["dcr"] = parsed["rdc_max"]
     return out
 
 
@@ -186,9 +210,16 @@ def enrich_from_text(
     out: dict[str, Any] = {"mpn": mpn}
 
     if norm == "magnetic":
-        # WE magnetics render their electrical block as vector text, not a
-        # table pdfplumber can grid — parse the text form.
-        out.update(_map_magnetic(parse_we_magnetic_text(text)))
+        # Magnetics render their electrical block as vector text, not a table
+        # pdfplumber can grid. Dispatch to the vendor-appropriate parser: Würth
+        # (and any undetected sheet) → the WE parser; Coilcraft / Vishay IHLP /
+        # MPS / TDK / Bourns → the multi-vendor parser (routed by vendor).
+        vendor = detect_magnetic_vendor(text, mpn=mpn)
+        if vendor in (None, "wurth"):
+            parsed = parse_we_magnetic_text(text)
+        else:
+            parsed = parse_magnetic_text(text, vendor=vendor, mpn=mpn)
+        out.update(_map_magnetic(parsed))
     else:
         table_cat = _TABLE_CATEGORY[norm]
         key_map = _TABLE_KEY_MAP[norm]
