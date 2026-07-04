@@ -48,8 +48,12 @@ def _env(mpn: str, value_si: float, category: str = "magnetic"):
     raise AssertionError(f"fixture MPN {mpn} not found in internal DB")
 
 
-def _state(rows: list[dict]):
-    return SimpleNamespace(crossref_result=rows, stress_by_ref={})
+def _state(rows: list[dict], source_bom: list[dict] | None = None):
+    return SimpleNamespace(
+        crossref_result=rows,
+        stress_by_ref={},
+        source_bom=source_bom if source_bom is not None else rows,
+    )
 
 
 # ── The 330 nH regression, at the full stage level ───────────────────────────
@@ -147,6 +151,22 @@ class TestPrimaryValueGateStage:
             "status": "recommended", "notes": "",
         }
         _stage_param_check(_state([row]))
+        assert row["status"] == "no_substitute"
+        assert any(f.startswith("CURRENT:") for f in row.get("guardrail_fires", []))
+
+    def test_bom_rated_current_rejects_undersized_out_of_db_original(self):
+        # P3 back-stop: the original isn't in the DB, but the BOM states 18 A —
+        # a 2.1 A substitute must be rejected on the BOM current, not shipped as
+        # a "partial" (the Coilcraft-power-inductor findings).
+        row = {
+            "ref_des": "L1", "component_type": "magnetic",
+            "original_pn": "XGL4030-NOTINDB", "original_value": "1.5µH",
+            "substitute_pn": "7440320015", "substitute_value": "1.5µH",
+            "status": "recommended", "notes": "",
+        }
+        bom = [{"ref_des": "L1", "component_type": "magnetic",
+                "value": "1.5µH", "rated_current": 18.0}]
+        _stage_param_check(_state([row], source_bom=bom))
         assert row["status"] == "no_substitute"
         assert any(f.startswith("CURRENT:") for f in row.get("guardrail_fires", []))
 

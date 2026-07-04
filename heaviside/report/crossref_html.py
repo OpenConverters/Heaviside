@@ -98,24 +98,34 @@ def _status_label(status: str, target: str) -> tuple[str, str]:
 
 
 def _confidence(comp: dict[str, Any]) -> tuple[str, str]:
-    """(label, css_class)"""
+    """(label, css_class) — confidence is driven by the DETERMINISTIC verdicts,
+    never by the LLM's free-text prose. The FAE finding: an ``ORIGINAL_UNVERIFIED``
+    row (matched on value/voltage/package only, its dielectric/temp/current
+    unknown) still showed a bold "HIGH" badge because the LLM note said "exact
+    match" — a badge contradicting its own guardrail."""
     status = comp.get("status", "")
+    fires = comp.get("guardrail_fires") or []
     notes = (comp.get("notes") or "").lower()
     if status == "no_substitute":
         return "-", "conf-muted"
     if status == "exact":
         return "HIGH", "conf-high"
+    # An unidentified original can never be HIGH — its specs weren't verified.
+    if "ORIGINAL_UNVERIFIED" in fires:
+        return "UNVERIFIED", "conf-caveat"
     md = comp.get("match_detail") or {}
     params = md.get("params", [])
-    # CAVEAT: package upsize, downsize, or explicit verify note
+    # Any unverified / failing / deviating parameter blocks a HIGH badge.
+    not_good = {"unverified", "fail", "differs", "lower", "warn"}
+    if any(str(p.get("verdict", "")).lower() in not_good for p in params):
+        return "MED", ""
+    # CAVEAT: package upsize/downsize or an explicit verify note.
     pkg_keywords = ("upsize", "downsize", "size class", "footprint", "verify", "caveat")
     if any(k in notes for k in pkg_keywords):
         return "CAVEAT", "conf-caveat"
-    # HIGH if all params are exact/exceeds
-    good = {"exact", "exceeds", "same"}
-    if params and all(p.get("verdict", "") in good for p in params):
-        return "HIGH", "conf-high"
-    if "exact" in notes and "match" in notes:
+    # HIGH only when EVERY deterministic parameter is good (no LLM-prose override).
+    good = {"exact", "exceeds", "same", "pass"}
+    if params and all(str(p.get("verdict", "")).lower() in good for p in params):
         return "HIGH", "conf-high"
     return "MED", ""
 

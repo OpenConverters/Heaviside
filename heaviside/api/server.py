@@ -472,6 +472,18 @@ def _crossref_outcome_dict(outcome: Any) -> dict[str, Any]:
     needing = [c for c in components if c["status"] in _NEEDS]
     subbed = [c for c in needing if c["status"] in _SUBBED]
     coverage_pct = round(100 * len(subbed) / len(needing)) if needing else None
+    # VERIFIED coverage = clean, fully-verified drop-ins only (exact/recommended
+    # with the original identified). The headline coverage counts 'partial' and
+    # unverified-original rows the same as clean matches, which the FAE judges
+    # flagged as inflating "92% to Würth" when the two power inductors were
+    # actually un-substitutable. Report both so the number can't mislead.
+    verified = [
+        c
+        for c in subbed
+        if c["status"] in ("exact", "recommended")
+        and "ORIGINAL_UNVERIFIED" not in (c.get("guardrail_fires") or [])
+    ]
+    coverage_verified_pct = round(100 * len(verified) / len(needing)) if needing else None
     return {
         "target_manufacturer": outcome.target_manufacturer,
         "passed": outcome.passed,
@@ -479,6 +491,8 @@ def _crossref_outcome_dict(outcome: Any) -> dict[str, Any]:
         "coverage_substituted": len(subbed),
         "coverage_total": len(needing),
         "coverage_pct": coverage_pct,
+        "coverage_verified": len(verified),
+        "coverage_verified_pct": coverage_verified_pct,
         "diagnostics": list(outcome.diagnostics),
     }
 

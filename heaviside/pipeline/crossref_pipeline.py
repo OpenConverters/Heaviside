@@ -4193,6 +4193,9 @@ def _stage_param_check(state: CrossRefState) -> None:
         "timeBase": "timing_devices.ndjson",
     }
     rows = state.crossref_result
+    # Map ref_des → source BOM row, so a rating the BOM states (e.g. an inductor's
+    # rated current) can back-stop the current check for an out-of-DB original.
+    _bom_by_ref = {r.get("ref_des"): r for r in state.source_bom}
 
     # Collect the (category, mpn) pairs to resolve — original and substitute,
     # for spec'd categories only.
@@ -4370,17 +4373,36 @@ def _stage_param_check(state: CrossRefState) -> None:
         # the original's saturates / overheats at the operating current (the FAE
         # findings: ~5 A parts offered on a 6 A rail, an unshielded 1.8 A-Isat
         # part for a >2.5 A channel — shipped as coverage-inflating 'partial').
-        # When the original's ratings ARE known (from the DB or datasheet
-        # enrichment), reject a substitute that falls well short. When they are
-        # unknown, P1 below caps it at 'partial' instead.
-        if cat == "magnetic" and has_sub and orig_params and sub_params:
+        # The original's required current comes from the DB / datasheet-enriched
+        # record OR — for an out-of-DB original — the BOM row's stated rated
+        # current (e.g. an 18 A inductor entry). When it can be established,
+        # reject a substitute that falls well short; when it can't, P1 caps at
+        # 'partial' instead.
+        if cat == "magnetic" and has_sub and sub_params:
+            _bom = _bom_by_ref.get(row.get("ref_des")) or {}
+
+            def _orig_current(db_key: str, *bom_keys: str) -> float | None:
+                _v = (orig_params or {}).get(db_key)
+                if isinstance(_v, (int, float)) and _v > 0:
+                    return float(_v)
+                for _bk in bom_keys:
+                    _bv = _bom.get(_bk)
+                    if isinstance(_bv, (int, float)) and _bv > 0:
+                        return float(_bv)
+                    if isinstance(_bv, str):
+                        _pv = _parse_value_si(_bv, "")
+                        if _pv:
+                            return _pv
+                return None
+
             _severe = None
-            for _k, _lbl in (("saturation_current", "Isat"), ("rated_current", "Irms")):
-                _o, _s = orig_params.get(_k), sub_params.get(_k)
-                if (
-                    isinstance(_o, (int, float)) and _o > 0
-                    and isinstance(_s, (int, float)) and _s < 0.7 * _o
-                ):
+            for _k, _lbl, *_bk in (
+                ("saturation_current", "Isat", "saturation_current", "isat"),
+                ("rated_current", "Irms", "rated_current", "current", "i_rms"),
+            ):
+                _o = _orig_current(_k, *_bk)
+                _s = sub_params.get(_k)
+                if _o and isinstance(_s, (int, float)) and _s < 0.7 * _o:
                     _severe = (_lbl, _s, _o, _k)
                     break
             if _severe is not None:
