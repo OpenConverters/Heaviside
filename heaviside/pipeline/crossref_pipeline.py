@@ -439,8 +439,14 @@ def _enrich_original_params(
         from heaviside.librarian.datasheet.enrich import enrich_from_datasheet
     except Exception:
         return None
+    # A BOM-provided URL is untrusted, so require a .pdf extension; a resolver
+    # URL is already content-verified (the resolver fetches and checks the bytes
+    # are a real PDF), so use it regardless of extension — many vendor datasheets
+    # are served from an extension-less document endpoint.
     url = str(bom_row.get("datasheet") or bom_row.get("datasheet_url") or "").strip()
-    if not (url and url.lower().endswith(".pdf")):
+    if url and not url.lower().endswith(".pdf"):
+        url = ""
+    if not url:
         mfr = str(bom_row.get("manufacturer") or "").strip()
         if mfr and orig_pn:
             try:
@@ -451,7 +457,7 @@ def _enrich_original_params(
                 url = resolve_datasheet_pdf_url(mfr, orig_pn) or ""
             except Exception:
                 url = ""
-    if not (url and url.lower().endswith(".pdf")):
+    if not url:
         return None
     try:
         specs = enrich_from_datasheet(orig_pn, cat, url)
