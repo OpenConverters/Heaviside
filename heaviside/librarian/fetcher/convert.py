@@ -1802,6 +1802,7 @@ def _build_magnetic_envelope(
                 "datasheetUrl": datasheet_url,
                 "datasheetInfo": {
                     "part": {
+                        "partNumber": mpn,
                         "description": description,
                         "shielded": shielded,
                         **({"material": material} if material else {}),
