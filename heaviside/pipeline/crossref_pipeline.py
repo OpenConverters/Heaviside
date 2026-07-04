@@ -366,6 +366,61 @@ def _stage1_5_librarian(state: CrossRefState) -> CrossRefState:
 _FETCH_ORIGINALS_CAP = 40  # DK rate-limit + runtime guard: max originals fetched per run
 
 
+def _merge_original_datasheet_specs(env: dict[str, Any], cat: str) -> None:
+    """Fill an out-of-DB original's datasheet-only specs — the ones Digi-Key
+    parametrics miss but that GOVERN a substitution — from its datasheet, so the
+    cross-ref gates compare real physics instead of blanket-"unverified". This is
+    the wiring that turns the "use ALL the datasheet info of each subtype" goal
+    into effect: max operating temperature + dielectric code (capacitors) and
+    saturation / rated current + DCR (magnetics).
+
+    Best-effort and additive-only: only fills a field that is ABSENT and only
+    into a structure that already exists (never fabricates, never overwrites a
+    Digi-Key value, never invents a new schema block). Any fetch/parse failure is
+    swallowed — the original stays usable, just less complete. Limited to the two
+    FAE-critical categories whose envelope shape is unambiguous."""
+    if cat not in ("capacitor", "magnetic"):
+        return
+    try:
+        from heaviside.librarian.datasheet.enrich import enrich_from_datasheet
+
+        mi = (env.get(cat) or {}).get("manufacturerInfo", {})
+        url = mi.get("datasheetUrl")
+        mpn = mi.get("reference")
+        if not url or not str(url).lower().endswith(".pdf"):
+            return
+        specs = enrich_from_datasheet(str(mpn or ""), cat, str(url))
+    except Exception as exc:  # network / parse / dependency — non-fatal
+        logger.debug("CR stage 1.6: datasheet enrich of %s failed: %s", cat, exc)
+        return
+
+    di = (env.get(cat) or {}).get("manufacturerInfo", {}).get("datasheetInfo", {})
+    if not isinstance(di, dict):
+        return
+    # Max operating temperature — only into an existing thermal.temperature block.
+    tmax = specs.get("temp_max_C")
+    thermal = di.get("thermal")
+    if isinstance(tmax, (int, float)) and isinstance(thermal, dict):
+        temp = thermal.get("temperature")
+        if isinstance(temp, dict) and temp.get("maximum") is None:
+            temp["maximum"] = float(tmax)
+    if cat == "capacitor":
+        part = di.get("part")
+        dc = specs.get("dielectric_code")
+        if isinstance(part, dict) and dc and not part.get("dielectricCode"):
+            part["dielectricCode"] = dc
+    elif cat == "magnetic":
+        elec = di.get("electrical")
+        row = elec[0] if isinstance(elec, list) and elec else (elec if isinstance(elec, dict) else None)
+        if isinstance(row, dict):
+            if specs.get("saturation_current") and not row.get("saturationCurrentPeak"):
+                row["saturationCurrentPeak"] = float(specs["saturation_current"])
+            if specs.get("rated_current") and not row.get("ratedCurrents"):
+                row["ratedCurrents"] = [float(specs["rated_current"])]
+            if specs.get("dcr") and not row.get("dcResistance"):
+                row["dcResistance"] = {"maximum": float(specs["dcr"])}
+
+
 def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
     """Fetch each BOM component's ORIGINAL from Digi-Key when it is not in the
     internal DB, convert + schema-validate + persist it, so the cross-reference
@@ -496,6 +551,10 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
         if env is None:
             logger.info("CR stage 1.6: could not source original %s (%s): %s", mpn, cat, db_cat_or_reason)
             continue
+        # Enrich the fetched original with datasheet-only specs (max temp,
+        # dielectric, saturation current) before persisting, so the cross-ref
+        # gates compare its REAL physics — the fix for "verdicts flip on DB gaps".
+        _merge_original_datasheet_specs(env, cat)
         try:
             add_component(db_cat_or_reason, env)
             fetched += 1
