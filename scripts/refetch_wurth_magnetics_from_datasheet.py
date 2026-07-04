@@ -75,11 +75,16 @@ def _corrections(row: dict, ds: dict) -> dict:
     isat = ds.get("isat_10pct") or ds.get("isat_20pct") or ds.get("isat_30pct")
     if isat is not None and _differs(row.get("saturationCurrentPeak"), isat):
         out["saturationCurrentPeak"] = isat
-    if ds.get("irp_40k") is not None:
+    # Use the STANDARD rated current (IR,40K), not the best-case IRP,40K, when the
+    # datasheet distinguishes them (parse_we_magnetic_text.rated_current does).
+    rated = ds.get("rated_current")
+    if rated is None:
+        rated = ds.get("ir_40k") or ds.get("irp_40k")
+    if rated is not None:
         cur = row.get("ratedCurrents")
         cur0 = cur[0] if isinstance(cur, list) and cur else None
-        if _differs(cur0, ds["irp_40k"]):
-            out["ratedCurrents"] = [ds["irp_40k"]]
+        if _differs(cur0, rated):
+            out["ratedCurrents"] = [rated]
     dcr_typ, dcr_max = ds.get("rdc_typ"), ds.get("rdc_max")
     if dcr_typ is not None or dcr_max is not None:
         existing = row.get("dcResistance") if isinstance(row.get("dcResistance"), dict) else {}

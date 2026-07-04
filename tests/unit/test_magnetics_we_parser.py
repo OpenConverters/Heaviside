@@ -50,6 +50,29 @@ def test_unit_conversion_nh_and_ohm():
     assert r["rdc_max"] == 0.0085
 
 
+def test_prefers_standard_IR_over_performance_IRP():
+    # WE-XHMI lists BOTH IR,40K (standard) and IRP,40K (best-case, lab-grade
+    # copper). rated_current must be the standard IR, not the optimistic IRP —
+    # a repeated FAE finding (the tool quoted 19.35A where the real rating is
+    # 13.2A).
+    xhmi = (
+        "Inductance L 1.5 µH ±20%\n"
+        "Rated Current IR,40K ΔT = 40K 13.2 A max.\n"
+        "Performance Rated Current IRP,40K ΔT = 40K 19.35 A max.\n"
+        "Saturation Current @ 10% |ΔL/L| < 10 % 10 A typ.\n"
+    )
+    r = parse_we_magnetic_text(xhmi)
+    assert r["ir_40k"] == 13.2
+    assert r["irp_40k"] == 19.35
+    assert r["rated_current"] == 13.2  # standard, not performance
+
+
+def test_mapi_only_irp_used_as_rated():
+    # WE-MAPI lists only the performance figure, which IS its rating.
+    r = parse_we_magnetic_text("Performance Rated Current IRP,40K ΔT=40K 8.6 A max.\n")
+    assert r["rated_current"] == 8.6
+
+
 def test_missing_fields_absent_not_guessed():
     r = parse_we_magnetic_text("Inductance L 4.7 µH ±20%\n")
     assert r["inductance"] == 4.7e-6

@@ -68,12 +68,23 @@ def parse_we_magnetic_text(text: str) -> dict[str, float]:
                     tol = re.search(r"±\s*([\d.]+)\s*%", line)
                     if tol:
                         out["tolerance"] = float(tol.group(1)) / 100.0
-        elif "rated current" in low or "irp" in low.replace(" ", ""):
+        elif "rated current" in low or "irp" in low.replace(" ", "") or (
+            low.replace(" ", "").startswith("ir,")
+        ):
             m = _CUR.search(line)
             if m:
                 v = _num(_A, m.group(1), m.group(2))
                 if v is not None:
-                    out["irp_40k"] = v
+                    # Distinguish the STANDARD rated current (IR,40K) from the
+                    # best-case PERFORMANCE rated current (IRP,40K), measured on a
+                    # lab-grade 40 mm / 1000 µm copper plane. WE-XHMI lists both
+                    # (IR,40K 13.2 A vs IRP,40K 19.35 A); quoting IRP as the rating
+                    # overstates the usable current — a repeated FAE finding.
+                    _compact = low.replace(" ", "")
+                    if "performance" in low or "irp," in _compact or "irp4" in _compact:
+                        out["irp_40k"] = v
+                    else:  # "Rated Current IR,40K" (or a lone "Rated Current")
+                        out["ir_40k"] = v
         elif "saturation current" in low:
             m = _CUR.search(line)
             if not m:
@@ -98,6 +109,12 @@ def parse_we_magnetic_text(text: str) -> dict[str, float]:
             elif "typ" in low or "nom" in low:
                 out["rdc_typ"] = v
     out.pop("_seen", None)
+    # The rated current to USE is the standard IR,40K when present; only fall
+    # back to the performance IRP,40K when a part lists only that (WE-MAPI does).
+    if "ir_40k" in out:
+        out["rated_current"] = out["ir_40k"]
+    elif "irp_40k" in out:
+        out["rated_current"] = out["irp_40k"]
     return out
 
 
