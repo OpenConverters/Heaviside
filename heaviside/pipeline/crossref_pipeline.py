@@ -4409,12 +4409,23 @@ def _best_inkind_candidate(
             if (within_tight and (orig_v is None or cand_v is not None))
             else "partial"
         )
+        # Report ONLY the criteria that actually ran, so the rescue note can't
+        # claim "verified on chemistry" for an original whose chemistry was
+        # never known (the ceramic→electrolytic C9 finding). value is always
+        # checked (we refused above if it couldn't be); voltage/chemistry only
+        # when the original side was known.
+        verified = ["value"]
+        if orig_v is not None and cand_v is not None:
+            verified.append("voltage")
+        if cat == "capacitor" and orig_fam is not None:
+            verified.append("chemistry")
         return {
             "substitute_pn": s.get("mpn"),
             "substitute_value": s.get("value", ""),
             "substitute_voltage": str(cand_v) if cand_v is not None else "",
             "substitute_package": s.get("package", ""),
             "status": status,
+            "verified_basis": verified,
         }
     return None
 
@@ -4515,16 +4526,15 @@ def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
         patch = _best_inkind_candidate(comp, cat, cands)
         if patch is None:
             continue
+        # verified_basis lists ONLY the criteria that actually ran (value always;
+        # voltage/chemistry only when the original side was known) — never claim
+        # a check that no-oped on a missing original spec.
+        basis = "/".join(patch.pop("verified_basis", ["value"]))
+        status = patch.get("status", "partial")
         row.update(patch)
         prior = (row.get("notes") or "").strip()
-        # Name only what the rescue actually verified: the primary value is
-        # checked for every value-matched category; voltage floor and chemistry
-        # family additionally for capacitors. (The old note claimed
-        # "voltage/value/chemistry" unconditionally even when those checks had
-        # no-oped — the honesty regression this rework removes.)
-        basis = "value" + ("/voltage/chemistry" if cat == "capacitor" else "")
         row["notes"] = (
-            f"{prior} | deterministic in-kind rescue ({patch.get('status', 'partial')}): "
+            f"{prior} | deterministic in-kind rescue ({status}): "
             f"{patch['substitute_pn']} verified on {basis} (LLM stages dropped it)."
         ).strip(" |")
         rescued += 1

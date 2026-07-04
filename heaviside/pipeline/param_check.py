@@ -117,6 +117,14 @@ _DIELECTRIC_RANK = {
     "x5r": 1,
     "y5v": 0,
     "z5u": 0,  # class-2/3: worst bias/temp behaviour
+    # Coarse CAS chemistry buckets (many records store only these, not the EIA
+    # code). Recognising them stops the "not a recognised class code" noise and
+    # catches class-1→class-2 downgrades; the finer X7R-vs-X5R distinction is
+    # handled by the specific dielectric_code + max-temp checks. Keys are the
+    # _norm_class form (dashes stripped).
+    "ceramicclass1": 5,
+    "ceramicclass2": 2,
+    "ceramicclass3": 0,
 }
 
 
