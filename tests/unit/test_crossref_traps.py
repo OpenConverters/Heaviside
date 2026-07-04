@@ -72,6 +72,30 @@ class TestPrimaryValueGateStage:
         assert "PRIMARY_VALUE" in row.get("guardrail_fires", [])
         assert "out of range" in row["notes"].lower()
 
+    def test_looser_tolerance_resistor_demoted(self):
+        # FAE-judge finding: Würth 560112110013 is ±5%, the Vishay original is
+        # ±1%. The tolerance gate must demote 'recommended' → 'partial' and state
+        # it honestly (the LLM prose had called it "0.05% tighter" — a misread of
+        # the 0.05 fraction, which is 5%). Both parts are real and in the DB.
+        row = {
+            "ref_des": "R1",
+            "component_type": "resistor",
+            "original_pn": "CRCW040247K0FKED",
+            "original_value": "47k",
+            "substitute_pn": "560112110013",
+            "substitute_value": "47k",
+            "status": "recommended",
+            "notes": "",
+        }
+        _stage_param_check(_state([row]))
+        assert row["status"] == "partial"
+        assert "PARAM:tolerance_pct" in row.get("guardrail_fires", [])
+        tol = next(
+            (p for p in row.get("_param_results", []) if p["name"] == "tolerance_pct"), None
+        )
+        assert tol is not None and tol["verdict"] == "fail"
+        assert "5" in tol["substitute"] and "1" in tol["original"]
+
     def test_matching_1p5uH_substitute_is_kept(self):
         # A genuine 1.5 µH match must NOT be rejected by the value gate.
         row = {

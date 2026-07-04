@@ -152,6 +152,10 @@ PARAM_SPECS: dict[str, list[ParamSpec]] = {
         ),
         # Dielectric / temperature characteristic must not downgrade.
         ParamSpec("technology", "Dielectric", "", CLASS_MATCH, 0.0, class_rank=_DIELECTRIC_RANK),
+        # Tolerance (percent): tighter-or-equal preferred; WARN up to 2× looser,
+        # FAIL beyond. Only bites when the catalogue records tolerance on both
+        # sides (many MLCC records don't → unverified, honestly).
+        ParamSpec("tolerance_pct", "Tolerance", "%", LOWER_BETTER, 2.0),
     ],
     "mosfet": [
         ParamSpec("rds_on", "Rds(on)", "Ω", LOWER_BETTER, 1.5),
@@ -169,6 +173,11 @@ PARAM_SPECS: dict[str, list[ParamSpec]] = {
     "resistor": [
         # Power rating must be ≥ original; allow 10% shortfall.
         ParamSpec("power_rating", "Power", "W", HIGHER_BETTER, 0.9),
+        # Tolerance (percent): tighter-or-equal is required; a looser part is a
+        # real downgrade (a 1% feedback/sense resistor is chosen deliberately).
+        # WARN up to 2× looser, FAIL beyond — catches a 5%-for-1% swap the LLM
+        # prose called "tighter".
+        ParamSpec("tolerance_pct", "Tolerance", "%", LOWER_BETTER, 2.0),
         # TCR (ppm/°C): lower |TCR| is better for precision; allow 2×. Signed
         # values are real (carbon film is negative) — compare magnitudes.
         ParamSpec("tcr", "TCR", "ppm/°C", LOWER_BETTER, 2.0, magnitude=True),

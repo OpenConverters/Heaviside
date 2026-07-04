@@ -2421,11 +2421,13 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             cap = elec.get("capacitance")
             cap_val = cap.get("nominal") if isinstance(cap, dict) else cap
             part = mi.get("datasheetInfo", {}).get("part", {})
+            _ctol = elec.get("tolerance")
             summary = {
                 "mpn": mi.get("reference") or part.get("partNumber", "?"),
                 "capacitance": cap_val,
                 "voltage": elec.get("ratedVoltage"),
                 "technology": part.get("technology"),
+                "tolerance_pct": (_ctol * 100.0 if isinstance(_ctol, (int, float)) else None),
                 "esr": elec.get("esr"),
                 "ripple_current": elec.get("rippleCurrent"),
                 # MLCC DC-bias model anchors (nullable for non-MLCC) — used to
@@ -2443,10 +2445,16 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             elec = mi["datasheetInfo"]["electrical"]
             res = elec.get("resistance")
             res_val = res.get("nominal") if isinstance(res, dict) else res
+            _tol = elec.get("tolerance")
             summary = {
                 "mpn": mi.get("reference", "?"),
                 "resistance": res_val,
-                "tolerance": elec.get("tolerance"),
+                "tolerance": _tol,
+                # Tolerance is stored as a fraction (0.01 = 1%). Expose a percent
+                # form for the param check so the substitute's tolerance is gated
+                # (a 5% part must not silently replace a 1% one — the LLM once
+                # misread 0.05 as "0.05% tighter" when it is 5%, 5× looser).
+                "tolerance_pct": (_tol * 100.0 if isinstance(_tol, (int, float)) else None),
                 "power_rating": elec.get("powerRating"),
                 "tcr": elec.get("temperatureCoefficient"),
                 "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
