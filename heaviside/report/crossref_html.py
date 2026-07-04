@@ -312,6 +312,17 @@ def render_crossref_html(
     no_sub = status_cnt.get("no_substitute", 0)
     coverage = already + newly_repl
     cov_pct = f"{100 * coverage / total:.0f}%" if total else "N/A"
+    # VERIFIED drop-ins: exact/recommended where the original was identified (no
+    # ORIGINAL_UNVERIFIED). Surfaced in the human-readable summary so a reader
+    # can't take the headline coverage as "the whole BOM is proven-swappable"
+    # when every row is actually an unverified-original match (the FAE finding).
+    verified = sum(
+        1
+        for c in comps
+        if c.get("status") in ("exact", "recommended")
+        and "ORIGINAL_UNVERIFIED" not in (c.get("guardrail_fires") or [])
+    )
+    ver_pct = f"{100 * verified / total:.0f}%" if total else "N/A"
 
     parts: list[str] = []
     parts.append("<!DOCTYPE html><html><head><meta charset='utf-8'>")
@@ -338,6 +349,7 @@ def render_crossref_html(
         (f"Exact / already {target} (no change required)", str(already)),
         ("Newly substituted (recommended + partial)", str(newly_repl)),
         (f"{target} coverage", f"{coverage} ({cov_pct} of components reviewed)"),
+        ("Verified drop-ins (original identified, all specs met)", f"{verified} ({ver_pct})"),
         ("No equivalent available", str(no_sub)),
     ]
     for i, (metric, value) in enumerate(rows_summary):

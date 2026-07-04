@@ -4426,24 +4426,29 @@ def _stage_param_check(state: CrossRefState) -> None:
         # when the original is known shipped as a "HIGH exact match" only because
         # the original wasn't in the DB. Cap at 'partial' with an explicit
         # unverified-original caveat so verdicts follow physics, not DB gaps.
+        # Fires on ANY substituted status (including a row already 'partial' from
+        # another stage) — otherwise an out-of-DB power inductor that reached
+        # 'partial' via ranking/footprint kept a MED badge and empty guardrails
+        # while blank-MPN caps correctly showed UNVERIFIED (the L1 inconsistency).
         if (
             has_sub
             and orig_params is None
             and cat not in _IDENTITY_MATCHED_CATEGORIES
-            and row.get("status") in ("recommended", "exact")
+            and row.get("status") in ("recommended", "exact", "partial")
         ):
-            row["status"] = "partial"
-            prior = (row.get("notes") or "").strip()
-            row["notes"] = (
-                (prior + " | " if prior else "")
-                + f"original {row.get('original_pn') or o_mpn!r} not identified in the "
-                "internal DB — matched on value/voltage/package only; dielectric, "
-                "temperature grade and current ratings are UNVERIFIED. Confirm against "
-                "the original's datasheet before use."
-            )
+            if row.get("status") in ("recommended", "exact"):
+                row["status"] = "partial"
             fires = row.setdefault("guardrail_fires", [])
             if "ORIGINAL_UNVERIFIED" not in fires:
                 fires.append("ORIGINAL_UNVERIFIED")
+                prior = (row.get("notes") or "").strip()
+                row["notes"] = (
+                    (prior + " | " if prior else "")
+                    + f"original {row.get('original_pn') or o_mpn!r} not identified in the "
+                    "internal DB — matched on value/voltage/package only; dielectric, "
+                    "temperature grade and current ratings are UNVERIFIED. Confirm against "
+                    "the original's datasheet before use."
+                )
 
         # MLCC DC-bias: compare effective capacitance at the component's
         # operating voltage (from sim stress, when available). Only meaningful
