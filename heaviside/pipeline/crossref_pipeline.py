@@ -4111,6 +4111,44 @@ def _stage_param_check(state: CrossRefState) -> None:
                 fires.append("NO_ORIGINAL_DATA")
             continue
 
+        # VALUE-MATCHED categories (mosfet/diode/capacitor/resistor/magnetic/…):
+        # the match is defined by the ORIGINAL's value/electrical specs. If the
+        # original has NO resolvable specs at all — not in the internal DB
+        # (orig_params is None) AND no usable value in the BOM — then a proposed
+        # substitute was matched against NOTHING and is an ungrounded guess.
+        # Same principle as identity-matched: no data on the original + can't
+        # verify → don't cross-reference. This is the defence-in-depth that stops
+        # a fabricated "partial" when a part can't be sourced from any distributor.
+        # (A sourced original — the normal case — has orig_params, so this never
+        # fires for it; a BOM that carries the value keeps its own value match.)
+        _bom_value = str(row.get("original_value") or "").strip().lower()
+        _no_bom_value = _bom_value in ("", "-", "–", "n/a", "na", "none", "nan", "?")
+        _genuine_sub = has_sub and s_mpn != o_mpn
+        if (
+            cat not in _IDENTITY_MATCHED_CATEGORIES
+            and _genuine_sub
+            and orig_params is None
+            and _no_bom_value
+            and row.get("status") in ("recommended", "partial", "exact")
+        ):
+            row["status"] = "no_substitute"
+            row["substitute_pn"] = None
+            for f in ("substitute_value", "substitute_voltage", "substitute_package"):
+                row[f] = ""
+            row.pop("_param_results", None)
+            prior = (row.get("notes") or "").strip()
+            reason = (
+                f"original {row.get('original_pn') or o_mpn!r} has no resolvable specs — not in "
+                "the internal DB and no value in the BOM — so a substitute cannot be verified "
+                "against it. Not cross-referenced (need the original's real specs from a "
+                "datasheet/distributor first)."
+            )
+            row["notes"] = (prior + " | " if prior else "") + reason
+            fires = row.setdefault("guardrail_fires", [])
+            if "NO_ORIGINAL_DATA" not in fires:
+                fires.append("NO_ORIGINAL_DATA")
+            continue
+
         results = evaluate_params(cat, orig_params, sub_params)
 
         # MLCC DC-bias: compare effective capacitance at the component's

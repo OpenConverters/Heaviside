@@ -155,3 +155,62 @@ def test_stage_missing_substitute_esr_fails(tmp_path, monkeypatch):
     verdicts = {r["name"]: r["verdict"] for r in row["_param_results"]}
     assert verdicts["esr"] == "fail"
     assert row["status"] == "partial"
+
+
+def _mag_env(mpn, *, ind=1e-6, dcr=0.05, isat=5.0):
+    # MAS magnetic: datasheetInfo.electrical is an ARRAY of winding entries.
+    return {"magnetic": {"manufacturerInfo": {
+        "reference": mpn, "name": "TestMfr", "status": "active",
+        "datasheetInfo": {
+            "part": {"partNumber": mpn, "description": "inductor"},
+            "electrical": [{
+                "subtype": "inductor",
+                "inductance": {"nominal": ind, "minimum": ind * 0.8, "maximum": ind * 1.2},
+                "dcResistance": {"maximum": dcr},
+                "saturationCurrentPeak": isat,
+            }],
+        }}}}
+
+
+def _write_mags(tmp_path, envs):
+    (tmp_path / "magnetics.ndjson").write_text("\n".join(json.dumps(e) for e in envs) + "\n")
+
+
+def _mag_state(tmp_path, monkeypatch, row):
+    monkeypatch.setattr(cp, "_tas_data_dir", lambda: tmp_path, raising=False)
+    monkeypatch.setattr("heaviside.catalogue.selector._tas_data_dir", lambda: tmp_path)
+    state = CrossRefState(source_bom=[], target_manufacturer="TestMfr")
+    state.crossref_result = [row]
+    cp._stage_param_check(state)
+    return state.crossref_result[0]
+
+
+def test_value_matched_no_original_forces_no_substitute(tmp_path, monkeypatch):
+    # Only the substitute is in the DB; the original is unknown AND the BOM has no
+    # value → the substitute was matched against nothing → no_substitute.
+    _write_mags(tmp_path, [_mag_env("SUB_IND", ind=3.3e-7, dcr=0.0085, isat=12.4)])
+    row = _mag_state(tmp_path, monkeypatch, {
+        "ref_des": "L1", "component_type": "magnetic",
+        "original_pn": "IHLP1616ABER1R5M11", "substitute_pn": "SUB_IND",
+        "original_value": "", "status": "partial", "notes": "",
+    })
+    assert row["status"] == "no_substitute"
+    assert row["substitute_pn"] is None
+    assert "NO_ORIGINAL_DATA" in row["guardrail_fires"]
+    assert "no resolvable specs" in row["notes"]
+
+
+def test_value_matched_sourced_original_not_demoted(tmp_path, monkeypatch):
+    # When the original IS in the DB, the normal value check runs — the guardrail
+    # must NOT fire (this is the sourced-IHLP case after the converter fix).
+    _write_mags(tmp_path, [
+        _mag_env("IHLP1616ABER1R5M11", ind=1.5e-6, dcr=0.075, isat=3.25),
+        _mag_env("SUB_IND", ind=1.5e-6, dcr=0.06, isat=4.0),
+    ])
+    row = _mag_state(tmp_path, monkeypatch, {
+        "ref_des": "L1", "component_type": "magnetic",
+        "original_pn": "IHLP1616ABER1R5M11", "substitute_pn": "SUB_IND",
+        "original_value": "", "status": "recommended", "notes": "",
+    })
+    assert row["status"] != "no_substitute"  # sourced original → verified normally
+    assert "NO_ORIGINAL_DATA" not in row.get("guardrail_fires", [])
