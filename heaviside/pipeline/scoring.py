@@ -91,6 +91,22 @@ def _over_penalty(surplus: float) -> float:
     """Concave, capped over-dimensioning penalty for a log-ratio ``surplus``≥0."""
     return _K_OVER * math.sqrt(min(surplus, _X_OVER_CAP))
 
+
+def over_dimensioning_penalty(required: float | None, actual: float | None, *, weight: float = 1.0) -> float:
+    """Ranking penalty (≥0) for a rating that EXCEEDS its requirement, with
+    diminishing returns (concave, capped): 2× costs a little, 10× a little more,
+    but the marginal cost shrinks and freezes past ~8×. Returns 0 when the part
+    is at-or-under the requirement or an input is missing/invalid.
+
+    Use as a SMALL tie-breaker in candidate ranking so that, among candidates
+    that all meet a requirement, the right-sized one outranks a grossly-
+    oversized (bulkier / costlier / worse-parasitics) one — never large enough
+    to override value-proximity or footprint fit.
+    """
+    if not required or not actual or required <= 0 or actual <= required:
+        return 0.0
+    return weight * _over_penalty(math.log(actual / required))
+
 # Deficit (a HIGHER_BETTER rating that falls short, or a LOWER_BETTER parasitic
 # that overshoots): a steep exponential. A few percent short is a small,
 # compensable penalty (WARN); past the gate it is a hard FAIL. The exponential

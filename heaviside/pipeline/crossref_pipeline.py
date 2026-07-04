@@ -46,6 +46,7 @@ from heaviside.pipeline.crossref import (
     CrossRefOutcome,
     CrossRefState,
 )
+from heaviside.pipeline.scoring import over_dimensioning_penalty
 
 logger = logging.getLogger(__name__)
 
@@ -1795,8 +1796,14 @@ def _rank_candidates(
                     cand_v = float(cand_v)
                     if cand_v < target_voltage:
                         voltage_penalty = 5.0  # strongly penalize insufficient voltage
-                    elif cand_v > target_voltage * 2:
-                        voltage_penalty = 0.2  # slight penalty for overkill
+                    else:
+                        # Graded over-dimensioning: among caps that meet the
+                        # rail voltage, prefer the right-sized one (a 100 V cap
+                        # on a 3.3 V rail is bulkier/costlier, worse DC-bias).
+                        # Small weight — only breaks ties, never beats value/fit.
+                        voltage_penalty = over_dimensioning_penalty(
+                            target_voltage, cand_v, weight=0.15
+                        )
             except (KeyError, TypeError, ValueError):
                 pass
         # Stress-based penalties (from RE simulation)
@@ -1831,6 +1838,13 @@ def _rank_candidates(
                     i_rated = cand_elec.get("ratedCurrent")
                     if isat and stress.i_peak and float(isat) < stress.i_peak:
                         stress_penalty += 5.0
+                    elif isat and stress.i_peak:
+                        # Meets the peak — prefer a right-sized inductor over a
+                        # grossly-oversized one (the 12.4 A-for-3.25 A case).
+                        # Small weight: only a tie-breaker among compliant parts.
+                        stress_penalty += over_dimensioning_penalty(
+                            stress.i_peak, float(isat), weight=0.1
+                        )
                     if i_rated and stress.i_rms and float(i_rated) < stress.i_rms:
                         stress_penalty += 3.0
                 elif category == "mosfet":
