@@ -4166,7 +4166,13 @@ _PRIMARY_SUMMARY_KEY = {
 _UNVERIFIABLE_CLAIM_PAT = re.compile(
     r"verified datasheet|exceeds (the )?original|exceeds on all|better than (the )?original"
     r"|much better|excellent electrical|electrical upgrade|superior (to|on)|beats the original"
-    r"|meets or exceeds|all parameters (exceed|met)|drop-?in upgrade",
+    r"|meets or exceeds|all parameters (exceed|met)|drop-?in upgrade"
+    # …and any sentence that asserts a SPECIFIC original spec or a numeric
+    # comparison to it — the original is unidentified, so "original 4.4A",
+    # "original Isat=7.5A and DCR=36mΩ", "vs original 10V", "1.75× worse",
+    # "5× margin vs original" are all fabrications.
+    r"|original[^.,;:]*\d|vs\.?\s+(the\s+)?original|than (the )?original"
+    r"|\d\s*[×x]\s*(worse|better)|margin vs|reduction|improvement over",
     re.IGNORECASE,
 )
 
