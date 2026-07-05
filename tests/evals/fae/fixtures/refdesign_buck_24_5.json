@@ -1,0 +1,30 @@
+{
+  "_comment": "Reference-design fixture for the from-design crossref flow. Unlike a bare-BOM fixture, this carries the TOPOLOGY + operating SPEC, so the pipeline derives each ref_des's real operating-point stress and gates substitutes against the CIRCUIT's currents/voltages — the FAE-parity path for parts whose MPN the BOM omits. L1 here is deliberately an unlabelled (null-MPN) inductor: an FAE would size it from the buck's peak inductor current (~3.45 A), and so must the tool.",
+  "title": "Buck 24V->5V @ 3A reference design (operating-point stress)",
+  "topology": "buck",
+  "target": "Würth Elektronik",
+  "spec": {
+    "inputVoltage": {"nominal": 24.0, "minimum": 20.0, "maximum": 28.0},
+    "currentRippleRatio": 0.3,
+    "operatingPoints": [
+      {
+        "outputVoltages": [5.0],
+        "outputCurrents": [3.0],
+        "switchingFrequency": 500000.0,
+        "ambientTemperature": 25.0
+      }
+    ]
+  },
+  "bom": [
+    {"ref_des": "L1", "component_type": "magnetic", "value": "4.7uH", "original_pn": ""},
+    {"ref_des": "C1", "component_type": "capacitor", "value": "22uF", "original_pn": "", "voltage": "25V"},
+    {"ref_des": "R1", "component_type": "resistor", "value": "10k", "original_pn": ""}
+  ],
+  "invariants": {
+    "L1": {
+      "category": "magnetic",
+      "operating_current_A": 3.45,
+      "note": "L1 is a null-MPN inductor. Any substitute whose Isat is below the ~3.45 A peak inductor current is a hard no_substitute — it would saturate in this buck. The tool must resolve the requirement from the circuit, not defer as 'unverified'."
+    }
+  }
+}

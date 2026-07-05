@@ -1171,3 +1171,57 @@ __all__ = [
     "weinberg_stresses",
     "zeta_stresses",
 ]
+
+def derive_stress_by_ref(
+    topology: str,
+    spec: Mapping[str, Any],
+    bom: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Map a converter DESIGN's operating point to per-component electrical
+    stress, keyed by ref_des — the "start from the reference design, not a bare
+    BOM" path. Each BOM row is stamped with the worst-case V/I its class sees at
+    the design's operating point (from :func:`derive_stresses`), so the
+    cross-reference gates can judge a substitute's adequacy even when the
+    ORIGINAL has no MPN — resolving the requirement from the circuit the way an
+    FAE reads it off the schematic, instead of deferring to "unverified".
+
+    Returns ``{ref_des: SimDerivedStress}``. Empty when the topology has no
+    deriver or the spec is incomplete (fail-soft: the pipeline then runs
+    stress-free, exactly as a bare-BOM crossref does).
+    """
+    from heaviside.pipeline.crossref import SimDerivedStress
+
+    try:
+        cs = derive_stresses(topology, spec)
+    except StressDerivationError:
+        return {}
+    if cs is None:
+        return {}
+    try:
+        _vout, iout = _vout_iout(spec, "design")
+    except StressDerivationError:
+        iout = None
+
+    out: dict[str, Any] = {}
+    for comp in bom:
+        ref = str(comp.get("ref_des") or "").strip()
+        cat = str(comp.get("component_type") or comp.get("category") or "").strip()
+        if not ref:
+            continue
+        kw: dict[str, Any] = {"ref_des": ref, "role": str(comp.get("role") or "")}
+        if cat == "mosfet":
+            kw.update(v_peak=cs.vds_stress, i_peak=cs.id_stress)
+        elif cat == "diode":
+            kw.update(v_peak=cs.vr_stress, i_avg=cs.if_avg_stress)
+        elif cat == "capacitor":
+            kw.update(v_peak=cs.v_working, v_dc=cs.v_working, i_rms=cs.i_ripple)
+        elif cat in ("magnetic", "inductor", "chipBead"):
+            # The switching inductor carries the switch peak current (buck: the
+            # high-side FET and L share the same peak); RMS ≈ the DC output.
+            kw.update(i_peak=cs.id_stress)
+            if iout is not None:
+                kw.update(i_rms=iout)
+        else:
+            continue
+        out[ref] = SimDerivedStress(**kw)
+    return out

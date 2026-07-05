@@ -4512,6 +4512,7 @@ def _stage_param_check(state: CrossRefState) -> None:
         # 'partial' instead.
         if cat == "magnetic" and has_sub and sub_params:
             _bom = _bom_by_ref.get(row.get("ref_des")) or {}
+            _stress = state.stress_by_ref.get(row.get("ref_des"))
 
             def _orig_current(db_key: str, *bom_keys: str) -> float | None:
                 _v = (orig_params or {}).get(db_key)
@@ -4528,22 +4529,32 @@ def _stage_param_check(state: CrossRefState) -> None:
                 return None
 
             _severe = None
-            for _k, _lbl, *_bk in (
-                ("saturation_current", "Isat", "saturation_current", "isat"),
-                ("rated_current", "Irms", "rated_current", "current", "i_rms"),
+            for _k, _lbl, _stress_attr, *_bk in (
+                ("saturation_current", "Isat", "i_peak", "saturation_current", "isat"),
+                ("rated_current", "Irms", "i_rms", "rated_current", "current", "i_rms"),
             ):
-                _o = _orig_current(_k, *_bk)
                 _s = sub_params.get(_k)
-                if _o and isinstance(_s, (int, float)) and _s < 0.7 * _o:
-                    _severe = (_lbl, _s, _o, _k)
+                if not isinstance(_s, (int, float)):
+                    continue
+                # The DESIGN's operating current (from the reference-design stress
+                # path) is a HARD floor — a part that can't carry the actual
+                # circuit current saturates/overheats regardless of the original.
+                _op = getattr(_stress, _stress_attr, None) if _stress is not None else None
+                if isinstance(_op, (int, float)) and _op > 0 and _s < _op:
+                    _severe = (_lbl, _s, _op, _k, "operating current")
+                    break
+                # Else: far below a KNOWN original rating (DB / seeker / BOM).
+                _o = _orig_current(_k, *_bk)
+                if _o and _s < 0.7 * _o:
+                    _severe = (_lbl, _s, _o, _k, "original's rating")
                     break
             if _severe is not None:
-                _lbl, _s, _o, _k = _severe
+                _lbl, _s, _req, _k, _basis = _severe
+                _rel = "below" if _basis == "operating current" else "far below (< 70%)"
                 _force_no_substitute(
                     row,
-                    f"{_lbl} {_s:g} A is far below the original's {_o:g} A (< 70%) — the "
-                    "substitute would saturate / overheat at the operating current and is "
-                    "not a viable in-kind substitute.",
+                    f"{_lbl} {_s:g} A is {_rel} the {_req:g} A {_basis} — the substitute would "
+                    "saturate / overheat and is not a viable in-kind substitute.",
                     fire=f"CURRENT:{_k}",
                 )
                 continue

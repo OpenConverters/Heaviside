@@ -270,3 +270,74 @@ def test_derive_stresses_per_op_returns_one_per_op() -> None:
     assert per_op[0].id_stress == pytest.approx(3.0 * 1.2)
     assert per_op[1].id_stress == pytest.approx(7.0 * 1.2)
     assert per_op[2].id_stress == pytest.approx(5.0 * 1.2)
+
+
+# ---------------------------------------------------------------------------
+# Reference-design → per-ref operating-point stress (derive_stress_by_ref)
+#
+# This is the "start from the reference design, not a BOM" path: given a
+# topology + operating spec + BOM, tag each BOM row with the CIRCUIT stress its
+# ref_des actually sees. The cross-reference gates then judge substitutes
+# against real operating current/voltage — how an FAE resolves an unlabelled
+# part — instead of only comparing catalogue values.
+# ---------------------------------------------------------------------------
+
+
+def test_derive_stress_by_ref_tags_each_class_from_topology() -> None:
+    from heaviside.pipeline.stress import derive_stress_by_ref
+
+    bom = [
+        {"ref_des": "Q1", "component_type": "mosfet"},
+        {"ref_des": "D1", "component_type": "diode"},
+        {"ref_des": "L1", "component_type": "magnetic"},
+        {"ref_des": "C1", "component_type": "capacitor"},
+        {"ref_des": "U1", "component_type": "controller"},  # no per-class stress
+    ]
+    by_ref = derive_stress_by_ref("buck", _BUCK_OK, bom)
+
+    # Buck 48->12@5A, ripple 0.4 (same hand-calc as test_buck_stresses_*).
+    assert by_ref["Q1"].v_peak == 60.0
+    assert by_ref["Q1"].i_peak == pytest.approx(6.0)
+    assert by_ref["D1"].v_peak == 60.0
+    assert by_ref["D1"].i_avg == pytest.approx(4.0)
+    # The switching inductor carries the switch peak current; RMS ~= Iout.
+    assert by_ref["L1"].i_peak == pytest.approx(6.0)
+    assert by_ref["L1"].i_rms == pytest.approx(5.0)
+    assert by_ref["C1"].v_peak == 12.0
+    assert by_ref["C1"].i_rms == pytest.approx(0.5773, abs=1e-3)
+    # A class with no per-component stress mapping is simply omitted.
+    assert "U1" not in by_ref
+
+
+def test_derive_stress_by_ref_result_is_immutable() -> None:
+    """SimDerivedStress is a frozen dataclass — the deriver must build it in one
+    construction, never mutate after (the FrozenInstanceError regression)."""
+    import dataclasses
+
+    from heaviside.pipeline.stress import derive_stress_by_ref
+
+    by_ref = derive_stress_by_ref(
+        "buck", _BUCK_OK, [{"ref_des": "L1", "component_type": "magnetic"}]
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        by_ref["L1"].i_peak = 999.0
+
+
+def test_derive_stress_by_ref_empty_for_unported_topology() -> None:
+    from heaviside.pipeline.stress import derive_stress_by_ref
+
+    by_ref = derive_stress_by_ref(
+        "totally_made_up", _BUCK_OK, [{"ref_des": "L1", "component_type": "magnetic"}]
+    )
+    assert by_ref == {}
+
+
+def test_derive_stress_by_ref_skips_rows_without_ref_des() -> None:
+    from heaviside.pipeline.stress import derive_stress_by_ref
+
+    by_ref = derive_stress_by_ref(
+        "buck",
+        _BUCK_OK,
+        [{"component_type": "magnetic"}, {"ref_des": "L2", "component_type": "magnetic"}],
+    )
+    assert set(by_ref) == {"L2"}

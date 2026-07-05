@@ -49,5 +49,11 @@
       "title": "ST STEVAL-0606 6V/6A step-down (real BOM)",
       "invariants": {}
     }
+  ],
+  "_design_comment": "Reference-design fixtures drive POST /jobs/crossref/from-design: each carries a topology + operating spec + BOM so the pipeline derives per-ref operating-point stress and gates substitutes against the CIRCUIT (the FAE-parity path for null-MPN parts). Kept separate from the BOM-only 'fixtures' above because they exercise a different endpoint.",
+  "design_fixtures": [
+    {
+      "file": "refdesign_buck_24_5.json"
+    }
   ]
 }

@@ -405,6 +405,20 @@ class CrossRefRequest(BaseModel):
     circuit_context: str | None = None
 
 
+class CrossRefFromDesignRequest(BaseModel):
+    """Cross-reference a reference design (topology + operating spec + BOM), not a
+    bare BOM. The topology and spec let the pipeline derive each component's real
+    operating-point stress (a buck inductor's peak/RMS current, a FET's Vds, …)
+    and gate substitutes against the CIRCUIT — the way a senior FAE resolves a
+    part whose MPN the BOM omits — instead of only comparing catalog values."""
+
+    topology: str
+    spec: dict[str, Any]
+    source_bom: list[dict[str, Any]]
+    target_manufacturer: str
+    circuit_context: str | None = None
+
+
 @app.post("/crossref")
 def crossref_endpoint(req: CrossRefRequest) -> dict[str, Any]:
     """Run the cross-reference pipeline."""
@@ -1113,6 +1127,55 @@ async def submit_crossref_from_bom(
                 input_file_data=raw,
                 input_bom=source_bom,
                 target_manufacturer=target_manufacturer,
+            ),
+        )
+    }
+
+
+@app.post("/jobs/crossref/from-design")
+def submit_crossref_from_design(req: CrossRefFromDesignRequest) -> dict[str, str]:
+    """Cross-reference a reference design: derive per-component operating-point
+    stress from (topology, spec) and gate substitutes against the circuit's real
+    currents/voltages, then run the normal CR pipeline over the BOM. This is the
+    flow that closes the FAE gap on null-MPN parts — an unlabelled inductor is
+    judged against the buck's peak inductor current, not left 'unverified'."""
+    from heaviside.api.jobs import registry
+    from heaviside.api.telemetry import wrap_job
+    from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
+    from heaviside.pipeline.stress import derive_stress_by_ref
+
+    # Derive operating-point stress up front so a bad topology/spec fails fast
+    # (422) instead of inside the background job. An empty result is legitimate
+    # (topology whose stresses we can't derive) — the pipeline then behaves like
+    # from-bom, so we do not treat "no stress" as an error.
+    try:
+        stress = derive_stress_by_ref(req.topology, req.spec, req.source_bom)
+    except Exception as exc:  # noqa: BLE001 - surface as a 422, not a 500
+        raise HTTPException(status_code=422, detail=f"stress derivation failed: {exc}") from exc
+
+    def run(update: Any) -> dict[str, Any]:
+        cb = _crossref_progress_cb(update, _CROSSREF_CORE_STAGES)
+        outcome = run_crossref_pipeline(
+            req.source_bom,
+            req.target_manufacturer,
+            circuit_context=req.circuit_context,
+            stress_by_ref=stress or None,
+            progress=cb,
+        )
+        result = _crossref_outcome_dict(outcome)
+        result["topology"] = req.topology
+        result["stress_refs"] = sorted(stress.keys())
+        return result
+
+    return {
+        "job_id": registry.submit(
+            "crossref_design",
+            wrap_job(
+                run,
+                job_kind="crossref_design",
+                input_type="bom_json",
+                input_bom=req.source_bom,
+                target_manufacturer=req.target_manufacturer,
             ),
         )
     }

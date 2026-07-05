@@ -74,6 +74,17 @@ def _post_multipart_bom(base_url: str, target: str, csv_path: Path) -> str:
         return json.loads(resp.read().decode())["job_id"]
 
 
+def _post_json(base_url: str, path: str, payload: dict) -> str:
+    """POST a JSON body to `path` and return the job_id (the from-design flow)."""
+    url = f"{base_url}{path}"
+    req = request.Request(
+        url, data=json.dumps(payload).encode(), method="POST"
+    )
+    req.add_header("Content-Type", "application/json")
+    with request.urlopen(req, timeout=60.0) as resp:
+        return json.loads(resp.read().decode())["job_id"]
+
+
 def _poll(base_url: str, job_id: str, *, timeout_s: float = 1200.0) -> dict:
     """Poll GET /jobs/{id} until done/error (the GUI polls every 2.5 s)."""
     deadline = time.monotonic() + timeout_s
@@ -154,9 +165,11 @@ def main() -> int:
     manifest = json.loads((FIXTURES_DIR / "manifest.json").read_text())
     target = manifest["target"]
     fixtures = manifest["fixtures"]
+    design_fixtures = manifest.get("design_fixtures", [])
     if args.only:
         fixtures = [f for f in fixtures if Path(f["file"]).stem == args.only]
-        if not fixtures:
+        design_fixtures = [f for f in design_fixtures if Path(f["file"]).stem == args.only]
+        if not fixtures and not design_fixtures:
             print(f"no fixture matching {args.only!r}", file=sys.stderr)
             return 2
 
@@ -210,6 +223,52 @@ def main() -> int:
               f"{row['coverage_pct']}%, invariants {flag}", flush=True)
         for v in violations:
             print(f"      - {v['ref_des']}/{v['parameter']}: {v['detail']}", flush=True)
+
+    # ── Reference-design fixtures → POST /jobs/crossref/from-design ──────────
+    # These carry topology + operating spec + BOM, so the pipeline derives
+    # per-ref operating-point stress and gates substitutes against the circuit.
+    for fx in design_fixtures:
+        stem = Path(fx["file"]).stem
+        design = json.loads((FIXTURES_DIR / fx["file"]).read_text())
+        d = run_dir / stem
+        d.mkdir(exist_ok=True)
+        dtarget = design.get("target", target)
+        print(f"\n▶ {stem} (design): {design.get('topology')} → {dtarget}", flush=True)
+        payload = {
+            "topology": design["topology"],
+            "spec": design["spec"],
+            "source_bom": design["bom"],
+            "target_manufacturer": dtarget,
+        }
+        try:
+            job_id = _post_json(args.base_url, "/jobs/crossref/from-design", payload)
+            job = _poll(args.base_url, job_id)
+        except Exception as e:
+            print(f"  ✗ {stem} failed: {e}", flush=True)
+            summary.append({"design": stem, "error": str(e)})
+            continue
+        result = job.get("result", {})
+        (d / "result.json").write_text(json.dumps(result, indent=2))
+        has_pdf = _download_pdf(args.base_url, job_id, d / "report.pdf")
+        has_html = _render_html(result, d / "report.html", title=design.get("title", stem))
+        violations = _grade(result, design.get("invariants", {}))
+        (d / "violations.json").write_text(json.dumps(violations, indent=2))
+        summary.append({
+            "design": stem,
+            "job_id": job_id,
+            "flow": "from-design",
+            "topology": design.get("topology"),
+            "stress_refs": result.get("stress_refs"),
+            "coverage_pct": result.get("coverage_pct"),
+            "n_components": len(result.get("components", [])),
+            "n_violations": len(violations),
+            "judge_artifact": str(d / ("report.pdf" if has_pdf else "report.html"))
+            if (has_pdf or has_html)
+            else None,
+        })
+        stressed = result.get("stress_refs") or []
+        print(f"  ✓ {stem}: {len(result.get('components', []))} rows, "
+              f"operating-point stress on {stressed}", flush=True)
 
     (run_dir / "run_summary.json").write_text(json.dumps(summary, indent=2))
     total_viol = sum(r.get("n_violations", 0) for r in summary)
