@@ -180,3 +180,67 @@ def _headline(points: Iterable[dict] | None) -> float | None:
     if based:
         return min(based, key=lambda p: abs((p.percent_drop or 0) - CANONICAL_PERCENT_DROP)).current
     return pts[0].current
+
+
+def points_from_inductance_curve(inductance_points: Iterable[dict] | None) -> list[dict]:
+    """Derive saturation-current points (with a real %-drop basis) from an L-vs-DC-
+    bias-current curve — the existing `inductancePoints` field (1,455 catalogue
+    parts already carry it). For each measured current the roll-off criterion is
+    ``percent_drop = (L0 - L)/L0 · 100`` where L0 is the small-signal inductance
+    (the value at the lowest measured bias). Manufacturer-agnostic — it reads a
+    physical curve, not a vendor convention. Returns [] when there's no usable
+    saturating curve, so the caller falls back to saturationCurrents / the scalar.
+
+    A curve may carry several temperatures; we use a single temperature (prefer
+    ~25 °C, else the coolest — the datasheet-nominal) so the derived criteria are
+    self-consistent."""
+    raw = []
+    for p in inductance_points or []:
+        if not isinstance(p, dict):
+            continue
+        L = p.get("inductance")
+        I = p.get("current")
+        if isinstance(L, (int, float)) and L > 0 and isinstance(I, (int, float)) and I >= 0:
+            raw.append((float(I), float(L), p.get("temperature")))
+    if len(raw) < 2:
+        return []
+    temps = {t for _, _, t in raw if isinstance(t, (int, float))}
+    if temps:
+        pick = min(temps, key=lambda t: abs(t - 25.0))
+        raw = [(i, l, t) for i, l, t in raw if t == pick]
+    raw.sort(key=lambda x: x[0])  # by bias current
+    l0 = raw[0][1]  # small-signal inductance = value at the lowest bias
+    # A rising-then-flat signal inductor never saturates in range → l0 is the max.
+    l0 = max(l0, max(l for _, l, _ in raw))
+    out = []
+    for i, l, _ in raw:
+        drop = (l0 - l) / l0 * 100.0
+        if drop > 0.5:  # in the saturation region (ignore measurement noise near L0)
+            out.append({"percent_drop": drop, "current": i})
+    return out
+
+
+def resolve_saturation_points(electrical: dict | None) -> list[dict]:
+    """Best available saturation-current representation for one datasheet
+    electrical entry, in priority order (all manufacturer-agnostic):
+      1. explicit ``saturationCurrents`` table (carries the stated %-drop basis);
+      2. derived from the ``inductancePoints`` L-vs-I curve;
+      3. the legacy ``saturationCurrentPeak`` scalar as a single basis-unknown
+         point (percent_drop=None → the honest-caveat path).
+    Returns [] when the part states no saturation current at all."""
+    if not isinstance(electrical, dict):
+        return []
+    sc = electrical.get("saturationCurrents")
+    if isinstance(sc, list) and sc:
+        return [
+            {"percent_drop": p.get("percentInductanceDrop"), "current": p.get("current"),
+             "temperature": p.get("temperature")}
+            for p in sc if isinstance(p, dict)
+        ]
+    derived = points_from_inductance_curve(electrical.get("inductancePoints"))
+    if derived:
+        return derived
+    peak = electrical.get("saturationCurrentPeak")
+    if isinstance(peak, (int, float)) and peak > 0:
+        return [{"percent_drop": None, "current": float(peak)}]
+    return []

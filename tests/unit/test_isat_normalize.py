@@ -95,3 +95,40 @@ class TestCompareUnknownBasis:
     def test_missing_current_is_uncertain(self):
         assert compare_isat(None, WE_MAPI).verdict == UNCERTAIN
         assert compare_isat(WE_MAPI, None).verdict == UNCERTAIN
+
+
+class TestDeriveFromCurve:
+    # A synthetic saturating L-vs-I curve: 10 µH small-signal, dropping with bias.
+    CURVE = [
+        {"inductance": 10.0e-6, "current": 0.0, "temperature": 25},
+        {"inductance": 9.0e-6, "current": 4.0, "temperature": 25},   # 10% drop @4A
+        {"inductance": 8.0e-6, "current": 6.0, "temperature": 25},   # 20% drop @6A
+        {"inductance": 7.0e-6, "current": 7.5, "temperature": 25},   # 30% drop @7.5A
+    ]
+
+    def test_derives_percent_drop_points(self):
+        from heaviside.pipeline.isat_normalize import points_from_inductance_curve
+        pts = points_from_inductance_curve(self.CURVE)
+        by = {round(p["percent_drop"]): p["current"] for p in pts}
+        assert by[10] == 4.0 and by[20] == 6.0 and by[30] == 7.5
+
+    def test_resolver_prefers_explicit_then_curve_then_scalar(self):
+        from heaviside.pipeline.isat_normalize import resolve_saturation_points
+        # explicit table wins
+        e1 = {"saturationCurrents": [{"percentInductanceDrop": 20, "current": 5.0}],
+              "inductancePoints": self.CURVE, "saturationCurrentPeak": 2.0}
+        assert resolve_saturation_points(e1) == [{"percent_drop": 20, "current": 5.0, "temperature": None}]
+        # else derive from the curve
+        e2 = {"inductancePoints": self.CURVE, "saturationCurrentPeak": 2.0}
+        assert any(round(p["percent_drop"]) == 20 for p in resolve_saturation_points(e2))
+        # else the legacy scalar (basis unknown)
+        e3 = {"saturationCurrentPeak": 2.0}
+        assert resolve_saturation_points(e3) == [{"percent_drop": None, "current": 2.0}]
+
+    def test_curve_derived_comparison_matches_at_20pct(self):
+        # An original curve giving 6A@20% vs a substitute scalar 2A (unknown basis)
+        # -> ratio 0.33, too low for any basis diff -> still a real SHORTFALL.
+        from heaviside.pipeline.isat_normalize import resolve_saturation_points
+        orig = resolve_saturation_points({"inductancePoints": self.CURVE})
+        sub = resolve_saturation_points({"saturationCurrentPeak": 2.0})
+        assert compare_isat(orig, sub).verdict == SHORTFALL
