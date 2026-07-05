@@ -206,8 +206,8 @@ def test_grounding_replaces_fabricated_fields(
     ]
     _ground_row_fields_in_catalogue(state)
     row = state.crossref_result[0]
-    assert row["original_value"] == "10.0µF"
-    assert row["substitute_value"] == "10.0µF"
+    assert row["original_value"] == "10µF"
+    assert row["substitute_value"] == "10µF"
     assert row["original_voltage"] == "25V"
     assert row["substitute_voltage"] == "25V"
     assert row["original_package"] == "0805"
@@ -266,7 +266,7 @@ def test_grounding_bom_value_beats_catalogue(
     assert row["original_value"] == "22uF"
     assert row["original_package"] == "1210"
     # The substitute side always comes from the catalogue.
-    assert row["substitute_value"] == "10.0µF"
+    assert row["substitute_value"] == "10µF"
     assert row["substitute_package"] == "0805"
 
 
@@ -346,7 +346,10 @@ def test_normalize_backfills_bare_mpn_from_catalogue(
     # Category, value and package all come from the catalogue — candidate
     # ranking can value-filter and G1/G2 have something to check against.
     assert row["component_type"] == "capacitor"
-    assert row["value"] == "10.0µF"
+    # "10µF", not "10.0µF": _humanize_value now rounds a clean integer mantissa
+    # (1e-5/1e-6 = 10.000000000000002 in IEEE-754) instead of always printing one
+    # decimal. The old "10.0µF" captured that float-slack bug.
+    assert row["value"] == "10µF"
     assert row["package"] == "0805"
     assert row["rated_voltage"] == "25V"
 
