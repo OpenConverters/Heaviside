@@ -422,6 +422,27 @@ def _merge_original_datasheet_specs(env: dict[str, Any], cat: str) -> None:
                 row["dcResistance"] = {"maximum": float(specs["dcr"])}
 
 
+# Keys that do NOT, on their own, VERIFY an out-of-DB original's electrical
+# identity: its part number, its physical size, and its primary value (which is
+# BOM-authoritative anyway). An enrichment carrying only these has told us
+# nothing about the RATINGS the gates check — so it must NOT flip the original
+# from "unverified" to "verified" (that would defeat the P1 honesty cap and let a
+# dimensions-only cache entry certify a part we cannot actually judge).
+_NON_VERIFYING_KEYS = frozenset(
+    {"mpn", "dimensions_mm", "inductance", "capacitance", "resistance", "value_si"}
+)
+
+
+def _verifies_original(params: dict[str, Any] | None) -> bool:
+    """True only if ``params`` carries at least one electrical RATING/characteristic
+    (Isat, Irms, DCR, voltage, temp, dielectric, Rds(on), Vf, …) — not just the
+    MPN, geometry, or primary value. This is the gate for whether a sourced
+    original counts as VERIFIED."""
+    if not isinstance(params, dict):
+        return False
+    return any(k not in _NON_VERIFYING_KEYS for k in params)
+
+
 def _enrich_original_params(
     orig_pn: str, cat: str, bom_row: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -445,7 +466,7 @@ def _enrich_original_params(
         from heaviside.librarian.datasheet import seeker as _seeker
 
         cached = _seeker.read(cat, orig_pn)
-        if cached:
+        if _verifies_original(cached):
             return cached
     except Exception:
         _seeker = None
@@ -481,24 +502,19 @@ def _enrich_original_params(
 
     # The datasheet-seeker: a Kimi k2.5 call reads the datasheet the way a senior
     # FAE would (Heaviside's only available LLM — the in-prod replacement for the
-    # Haiku seeker agent). Grounded in ``datasheet_text`` when we have it, else
-    # Kimi's conservative knowledge of the exact MPN. Kimi is called
-    # NON-REASONING first; a weak magnetic result triggers a reasoning retry —
-    # that logic lives in ``kimi_seek``. The caller bounds how many originals get
-    # a live LLM call (``_enrich_budget``), so this never runs unbounded. The
-    # mapped summary is memoised into the seeker cache so a repeat run is free.
-    if _seeker is not None:
+    # Haiku seeker agent). It runs ONLY when we have real datasheet text: like the
+    # Haiku agent it replaces ("NO memory"), it must never answer from Kimi's
+    # knowledge of the MPN — a knowledge guess would fabricate ratings for a part
+    # we cannot actually verify and defeat the honesty gates (an unknown original
+    # must stay UNVERIFIED, not be "confirmed" from memory). No datasheet → no
+    # enrichment. Kimi is NON-REASONING first, with a reasoning retry on a weak
+    # magnetic result (inside kimi_seek). The mapped summary is memoised so a
+    # repeat run is free.
+    if _seeker is not None and datasheet_text:
         try:
             raw = _seeker.kimi_seek(orig_pn, mfr, cat, datasheet_text=datasheet_text)
             summ = _seeker.summary_from_seeker(cat, raw or {})
-            if not datasheet_text:
-                # An UNGROUNDED (knowledge-only) seek must not supply the primary
-                # value: that field is BOM-authoritative and knowledge inductance/
-                # capacitance is unreliable (SI-prefix slips). Drop it — keep only
-                # ratings Kimi was confident enough to pin from memory.
-                for _pk in ("inductance", "capacitance", "resistance", "value_si"):
-                    summ.pop(_pk, None)
-            if summ and any(k != "mpn" for k in summ):
+            if _verifies_original(summ):
                 with contextlib.suppress(Exception):
                     _seeker.write(cat, orig_pn, summ)
                 return summ
@@ -511,7 +527,9 @@ def _enrich_original_params(
         try:
             from heaviside.librarian.datasheet.enrich import enrich_from_datasheet
 
-            return enrich_from_datasheet(orig_pn, cat, url) or None
+            parsed = enrich_from_datasheet(orig_pn, cat, url)
+            if _verifies_original(parsed):
+                return parsed
         except Exception as exc:
             logger.debug("CR param-check: original enrich of %s failed: %s", orig_pn, exc)
     return None
