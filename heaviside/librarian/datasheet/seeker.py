@@ -162,6 +162,104 @@ def kimi_seek(
     return specs
 
 
+def _num(v: Any) -> float | None:
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _capacitor_summary_from_seeker(specs: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {"mpn": specs.get("mpn")}
+    for src, dst in (
+        ("capacitance_F", "capacitance"),
+        ("voltage_V", "voltage"),
+        ("esr_ohm", "esr"),
+        ("ripple_current_A", "ripple_current"),
+        ("temp_max_C", "temp_max_C"),
+    ):
+        v = _num(specs.get(src))
+        if v is not None:
+            out[dst] = v
+    if isinstance(specs.get("capacitance_F"), (int, float)):
+        out["value_si"] = float(specs["capacitance_F"])
+    if specs.get("dielectric_code"):
+        out["dielectric_code"] = str(specs["dielectric_code"])
+    tf = _num(specs.get("tolerance_frac"))
+    if tf is not None:
+        out["tolerance_pct"] = tf * 100.0
+    return out
+
+
+def _mosfet_summary_from_seeker(specs: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {"mpn": specs.get("mpn")}
+    for src, dst in (
+        ("vds_V", "vds"),
+        ("rds_on_ohm", "rds_on"),
+        ("id_A", "rated_current"),
+        ("qg_C", "qg"),
+        ("vgs_th_max_V", "vgs_threshold_max"),
+        ("temp_max_C", "temp_max_C"),
+    ):
+        v = _num(specs.get(src))
+        if v is not None:
+            out[dst] = v
+    return out
+
+
+def _diode_summary_from_seeker(specs: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {"mpn": specs.get("mpn")}
+    for src, dst in (
+        ("vrrm_V", "vrrm"),
+        ("vf_V", "vf"),
+        ("if_A", "if_avg"),
+        ("qrr_C", "qrr"),
+        ("trr_s", "trr"),
+        ("temp_max_C", "temp_max_C"),
+    ):
+        v = _num(specs.get(src))
+        if v is not None:
+            out[dst] = v
+    return out
+
+
+def _resistor_summary_from_seeker(specs: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {"mpn": specs.get("mpn")}
+    for src, dst in (
+        ("resistance_ohm", "resistance"),
+        ("power_W", "power_rating"),
+        ("tcr_ppm", "tcr"),
+        ("temp_max_C", "temp_max_C"),
+    ):
+        v = _num(specs.get(src))
+        if v is not None:
+            out[dst] = v
+    if isinstance(specs.get("resistance_ohm"), (int, float)):
+        out["value_si"] = float(specs["resistance_ohm"])
+    tf = _num(specs.get("tolerance_frac"))
+    if tf is not None:
+        out["tolerance_pct"] = tf * 100.0
+    return out
+
+
+_SUMMARY_BY_CATEGORY = {
+    "capacitor": _capacitor_summary_from_seeker,
+    "mosfet": _mosfet_summary_from_seeker,
+    "diode": _diode_summary_from_seeker,
+    "resistor": _resistor_summary_from_seeker,
+}
+
+
+def summary_from_seeker(category: str, specs: dict[str, Any]) -> dict[str, Any]:
+    """Map a raw datasheet-seeker JSON (from `kimi_seek`) to the flat
+    `_summarize_candidate`-keyed dict the cross-reference gates read, per
+    category. Magnetic/chipBead use the current-rating mapper; the rest map their
+    category's electrical fields. Absent fields are omitted — never guessed."""
+    if not isinstance(specs, dict):
+        return {}
+    if category in ("magnetic", "inductor", "chipBead"):
+        return magnetic_summary_from_seeker(specs)
+    fn = _SUMMARY_BY_CATEGORY.get(category)
+    return fn(specs) if fn else {"mpn": specs.get("mpn")}
+
+
 def magnetic_summary_from_seeker(specs: dict[str, Any]) -> dict[str, Any]:
     """Map a datasheet-seeker magnetic JSON to the _summarize_candidate keys the
     gates read. Isat uses the CONSERVATIVE lowest-drop value (10% preferred);

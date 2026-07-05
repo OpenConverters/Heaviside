@@ -440,6 +440,7 @@ def _enrich_original_params(
     # returned directly — no live fetch, no bot-gate. This is the "read the
     # datasheet like an FAE" path for parts whose PDF the headless resolver
     # can't reach (e.g. Coilcraft's GUID URLs).
+    _seeker = None
     try:
         from heaviside.librarian.datasheet import seeker as _seeker
 
@@ -447,42 +448,73 @@ def _enrich_original_params(
         if cached:
             return cached
     except Exception:
-        pass
-    try:
-        from heaviside.librarian.datasheet.enrich import enrich_from_datasheet
-    except Exception:
-        return None
+        _seeker = None
+    mfr = str(bom_row.get("manufacturer") or "").strip()
     # A BOM-provided URL is untrusted, so require a .pdf extension.
     url = str(bom_row.get("datasheet") or bom_row.get("datasheet_url") or "").strip()
     if url and not url.lower().endswith(".pdf"):
         url = ""
-    if not url:
-        # Live per-part vendor-URL resolution + fetch is OFF by default: it hits
-        # manufacturer CDNs synchronously and stalls on bot-gates, so it must not
-        # sit in the request path. The fast, reliable source is the seeker cache
-        # (checked above) — populated offline by the datasheet-seeker agent — and
-        # Digi-Key enrichment in the async librarian stage on prod. Opt in with
-        # HEAVISIDE_ENRICH_LIVE_FETCH=1 for offline backfills.
-        if os.environ.get("HEAVISIDE_ENRICH_LIVE_FETCH") != "1":
-            return None
-        mfr = str(bom_row.get("manufacturer") or "").strip()
-        if mfr and orig_pn:
-            try:
-                from heaviside.librarian.datasheet.magnetics_url import (
-                    resolve_datasheet_pdf_url,
-                )
+    if not url and os.environ.get("HEAVISIDE_ENRICH_LIVE_FETCH") == "1" and mfr and orig_pn:
+        # Live per-part vendor-URL resolution is opt-in: it hits manufacturer
+        # CDNs synchronously and can stall on bot-gates. When on, resolve the
+        # PDF so the seeker reads the REAL datasheet.
+        try:
+            from heaviside.librarian.datasheet.magnetics_url import (
+                resolve_datasheet_pdf_url,
+            )
 
-                url = resolve_datasheet_pdf_url(mfr, orig_pn) or ""
-            except Exception:
-                url = ""
-    if not url:
-        return None
-    try:
-        specs = enrich_from_datasheet(orig_pn, cat, url)
-    except Exception as exc:
-        logger.debug("CR param-check: original enrich of %s failed: %s", orig_pn, exc)
-        return None
-    return specs or None
+            url = resolve_datasheet_pdf_url(mfr, orig_pn) or ""
+        except Exception:
+            url = ""
+
+    # Pull the datasheet TEXT when a PDF is reachable, so the Kimi seeker below
+    # extracts EXACT values (grounded), not knowledge guesses.
+    datasheet_text: str | None = None
+    if url:
+        try:
+            from heaviside.librarian.datasheet.enrich import PdfCache, _pdf_full_text
+
+            datasheet_text = _pdf_full_text(PdfCache().fetch(url)) or None
+        except Exception as exc:
+            logger.debug("CR param-check: datasheet fetch of %s failed: %s", orig_pn, exc)
+            datasheet_text = None
+
+    # The datasheet-seeker: a Kimi k2.5 call reads the datasheet the way a senior
+    # FAE would (Heaviside's only available LLM — the in-prod replacement for the
+    # Haiku seeker agent). Grounded in ``datasheet_text`` when we have it, else
+    # Kimi's conservative knowledge of the exact MPN. Kimi is called
+    # NON-REASONING first; a weak magnetic result triggers a reasoning retry —
+    # that logic lives in ``kimi_seek``. The caller bounds how many originals get
+    # a live LLM call (``_enrich_budget``), so this never runs unbounded. The
+    # mapped summary is memoised into the seeker cache so a repeat run is free.
+    if _seeker is not None:
+        try:
+            raw = _seeker.kimi_seek(orig_pn, mfr, cat, datasheet_text=datasheet_text)
+            summ = _seeker.summary_from_seeker(cat, raw or {})
+            if not datasheet_text:
+                # An UNGROUNDED (knowledge-only) seek must not supply the primary
+                # value: that field is BOM-authoritative and knowledge inductance/
+                # capacitance is unreliable (SI-prefix slips). Drop it — keep only
+                # ratings Kimi was confident enough to pin from memory.
+                for _pk in ("inductance", "capacitance", "resistance", "value_si"):
+                    summ.pop(_pk, None)
+            if summ and any(k != "mpn" for k in summ):
+                with contextlib.suppress(Exception):
+                    _seeker.write(cat, orig_pn, summ)
+                return summ
+        except Exception as exc:
+            logger.debug("CR param-check: Kimi seek of %s failed: %s", orig_pn, exc)
+
+    # Deterministic datasheet parse as a fallback when the LLM seek yielded
+    # nothing (e.g. Kimi unavailable) but we do have a reachable PDF.
+    if url:
+        try:
+            from heaviside.librarian.datasheet.enrich import enrich_from_datasheet
+
+            return enrich_from_datasheet(orig_pn, cat, url) or None
+        except Exception as exc:
+            logger.debug("CR param-check: original enrich of %s failed: %s", orig_pn, exc)
+    return None
 
 
 def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
