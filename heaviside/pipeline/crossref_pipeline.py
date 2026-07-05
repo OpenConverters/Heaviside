@@ -4386,6 +4386,8 @@ def _stage_param_check(state: CrossRefState) -> None:
     # Target-manufacturer envelopes cached across the stage for the
     # operating-point magnetic rescue (scanned at most once).
     _mag_rescue_cache: dict[str, list[dict[str, Any]]] = {}
+    # Per-run cache for the emitted-MPN datasheet-existence validator.
+    _mpn_exists_cache: dict[str, bool | None] = {}
 
     # Collect the (category, mpn) pairs to resolve — original and substitute,
     # for spec'd categories only.
@@ -4639,7 +4641,12 @@ def _stage_param_check(state: CrossRefState) -> None:
                 _resc = None
                 if _basis == "operating current" and _stress is not None:
                     _resc = _operating_point_magnetic_rescue(
-                        state.target_manufacturer, _stress, _mag_rescue_cache
+                        state.target_manufacturer,
+                        _stress,
+                        _mag_rescue_cache,
+                        validate_exists=lambda mfr, mpn: _mpn_datasheet_exists(
+                            mfr, mpn, _mpn_exists_cache
+                        ),
                     )
                 if _resc is not None:
                     _rs = _resc["summary"]
@@ -5014,6 +5021,11 @@ _L_OVERSIZE_CAP = 4.0
 # bulk + cost, not merit — the FAE finding). 1.15 clears the peak with a little
 # room while still letting a right-sized part win.
 _ISAT_MARGIN = 1.15
+# Thermal (rated-current) headroom above the operating RMS: a part whose IR sits
+# right on the RMS load runs at its temperature-rise limit (the FAE finding — a
+# real 10µH WE-MAPI with IR,40K=3.05A on a 3.0A rail is ~2% margin). Require the
+# rated current to clear the RMS by ~25% so the pick has genuine thermal headroom.
+_IR_MARGIN = 1.25
 
 
 # A flat SMD power inductor is wider than it is tall; a thin, tall cylinder is a
@@ -5060,20 +5072,74 @@ def _footprint_area_mm2(summary: dict[str, Any]) -> float:
     return area
 
 
+# Datasheet-URL patterns for validating that an emitted order code resolves to a
+# REAL, orderable part (catches catalogue phantom MPNs). Only manufacturers whose
+# URL scheme we know are validated; others return None ("unknown, don't block").
+_DATASHEET_URL_BUILDERS = {
+    # Key is the _normalize_manufacturer() form (accent-stripped, lowercased).
+    "wurth elektronik": lambda mpn: f"https://www.we-online.com/components/products/datasheet/{mpn}.pdf",
+}
+
+
+def _mpn_datasheet_exists(
+    manufacturer: str, mpn: str, _cache: dict[str, bool | None]
+) -> bool | None:
+    """Best-effort check that ``mpn`` resolves to a real manufacturer datasheet.
+    Returns False only on a definitive not-found (HTTP 404), True on a confirmed
+    hit, and None when it cannot be determined (unknown vendor URL scheme, a
+    network/timeout error, or validation disabled) — so a phantom order code is
+    dropped while a transient failure never blocks a real part. Results cached."""
+    if not mpn or os.environ.get("HEAVISIDE_VALIDATE_MPN") == "0":
+        return None
+    build = _DATASHEET_URL_BUILDERS.get(_normalize_manufacturer(manufacturer))
+    if build is None:
+        return None
+    key = f"{_normalize_manufacturer(manufacturer)}:{mpn}"
+    if key in _cache:
+        return _cache[key]
+    import urllib.error
+    import urllib.request
+
+    # A browser-like User-Agent — the manufacturer CDN 404s a bare Python-urllib
+    # agent behind a bot-gate (inconclusive) instead of the real not-found.
+    _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+    result: bool | None = None
+    try:
+        req = urllib.request.Request(build(mpn), method="HEAD", headers={"User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=4.0) as resp:
+            result = 200 <= resp.status < 400
+    except urllib.error.HTTPError as exc:
+        # 404 → definitively absent; other HTTP errors are inconclusive.
+        result = False if exc.code == 404 else None
+    except Exception:
+        result = None  # network/timeout: inconclusive, never block on it
+    _cache[key] = result
+    return result
+
+
 def _operating_point_magnetic_rescue(
     target_manufacturer: str,
     stress: Any,
     cache: dict[str, list[dict[str, Any]]],
+    *,
+    validate_exists: Any = None,
 ) -> dict[str, Any] | None:
     """Size a switching inductor from the CIRCUIT when its in-kind (BOM-value)
     substitute fails the operating-current gate. Scans the target manufacturer's
     magnetics for a part whose inductance covers the ripple requirement
     (l_required ≤ L ≤ cap·l_required) AND whose saturation / rated current clears
     the operating peak / RMS with margin — then RIGHT-SIZES: among the qualifying
-    parts it picks the SMALLEST board footprint, not the biggest current rating
-    (a 12 A / 13 mm block for a 3 A buck is over-dimensioned bulk, not merit — the
-    FAE finding). Returns the best fit's summary + envelope, or None. Every value
-    is read from the catalogue record — nothing is fabricated."""
+    parts it prefers an inductance close to the requirement, then the SMALLEST
+    board footprint (not the biggest current rating — a 12 A / 13 mm block for a
+    3 A buck is bulk, not merit). Returns the best fit's summary + envelope, or
+    None. Every value is read from the catalogue record — nothing is fabricated.
+
+    ``validate_exists(manufacturer, mpn) -> bool | None`` (optional): when given,
+    candidates are considered best-first and the first whose MPN is NOT
+    definitively rejected (returns False) is chosen — so a catalogue order code
+    that resolves to no real datasheet (a phantom MPN) is skipped in favour of a
+    genuinely orderable part. ``None``/``True`` from the validator means "keep"
+    (unknown or confirmed). Tests pass no validator (fully offline)."""
     l_req = getattr(stress, "l_required", None)
     i_pk = getattr(stress, "i_peak", None)
     i_rms = getattr(stress, "i_rms", None)
@@ -5081,7 +5147,7 @@ def _operating_point_magnetic_rescue(
         return None
     if not (isinstance(i_pk, (int, float)) and i_pk > 0):
         return None
-    best: tuple[tuple[int, float, float, float], dict[str, Any], dict[str, Any], float] | None = None
+    ranked: list[tuple[tuple[int, float, float, float], dict[str, Any], dict[str, Any], float]] = []
     for env in _target_manufacturer_envelopes(target_manufacturer, "magnetic", cache):
         s = _summarize_candidate(env, "magnetic")
         L = s.get("inductance")
@@ -5095,10 +5161,11 @@ def _operating_point_magnetic_rescue(
         # saturating inductor collapses — the hard failure).
         if not isinstance(isat, (int, float)) or isat < _ISAT_MARGIN * i_pk:
             continue
-        # RMS/thermal rating must clear the operating RMS when both are known.
+        # RMS/thermal rating must clear the operating RMS with headroom when
+        # known (a part sitting on its temperature-rise limit is not a safe pick).
         irms = s.get("rated_current")
         if isinstance(i_rms, (int, float)) and i_rms > 0:
-            if not isinstance(irms, (int, float)) or irms < i_rms:
+            if not isinstance(irms, (int, float)) or irms < _IR_MARGIN * i_rms:
                 continue
         # Right-sizing, two-tier: FIRST prefer an inductance CLOSE to the
         # requirement (tier 0 = within 1.5× of l_required — the design target),
@@ -5109,12 +5176,21 @@ def _operating_point_magnetic_rescue(
         # over-sizes the inductance) while still right-sizing the footprint.
         l_tier = 0 if L <= 1.5 * l_req else 1
         key = (l_tier, _footprint_area_mm2(s), L / l_req, float(isat))
-        if best is None or key < best[0]:
-            best = (key, s, env, float(L))
-    if best is None:
+        ranked.append((key, s, env, float(L)))
+    if not ranked:
         return None
-    _, s, env, L = best
-    return {"summary": s, "env": env, "inductance": L}
+    ranked.sort(key=lambda t: t[0])
+    for _key, s, env, L in ranked:
+        # Skip a phantom order code (validator says the part does not resolve to a
+        # real datasheet); keep the first that is confirmed or unknown.
+        if validate_exists is not None:
+            try:
+                if validate_exists(target_manufacturer, s.get("mpn")) is False:
+                    continue
+            except Exception:
+                pass  # best-effort: a validator failure never blocks the rescue
+        return {"summary": s, "env": env, "inductance": L}
+    return None
 
 
 def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:

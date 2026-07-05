@@ -50,10 +50,13 @@ def test_rescue_finds_adequate_wurth_inductor_from_operating_point() -> None:
     assert s["saturation_current"] > stress.i_peak
 
 
-def test_low_isat_inkind_sub_is_rescued_not_rejected() -> None:
+def test_low_isat_inkind_sub_is_rescued_not_rejected(monkeypatch) -> None:
     """A low-Isat 4.7µH Würth candidate for the buck's L1 must be REPLACED by an
     operating-point-sized part (partial + RESCUE fire), not dropped to
     no_substitute."""
+    # Keep the stage offline — the emitted-MPN datasheet validator hits the
+    # network; disable it so this test exercises only the selection logic.
+    monkeypatch.setenv("HEAVISIDE_VALIDATE_MPN", "0")
     from heaviside.stages.component_match import find_candidates
 
     stress_by_ref = derive_stress_by_ref(
@@ -98,6 +101,36 @@ def test_no_rescue_without_derivable_inductance() -> None:
     # No l_required (e.g. topology we can't size) → no rescue, returns None.
     stress = SimpleNamespace(l_required=None, i_peak=3.45, i_rms=3.0)
     assert _operating_point_magnetic_rescue("Würth Elektronik", stress, {}) is None
+
+
+def test_rescue_skips_phantom_mpn_via_validator() -> None:
+    """A validator that rejects the top-ranked order code (a catalogue phantom
+    whose datasheet 404s) must cause the rescue to fall through to the next real
+    candidate — never ship a non-orderable MPN."""
+    stress = _stress_L1()
+    top = _operating_point_magnetic_rescue("Würth Elektronik", stress, {})
+    assert top is not None
+    phantom = top["summary"]["mpn"]
+    # Reject exactly the top pick → expect a DIFFERENT, still-valid part.
+    picked = _operating_point_magnetic_rescue(
+        "Würth Elektronik", stress, {},
+        validate_exists=lambda mfr, mpn: False if mpn == phantom else True,
+    )
+    assert picked is not None
+    assert picked["summary"]["mpn"] != phantom
+
+
+def test_rescue_requires_ir_thermal_margin() -> None:
+    """The rescued part's rated current must clear the operating RMS with thermal
+    headroom (not sit on its temperature-rise limit)."""
+    stress = _stress_L1()
+    resc = _operating_point_magnetic_rescue("Würth Elektronik", stress, {})
+    assert resc is not None
+    irms = resc["summary"].get("rated_current")
+    # Either the rating is comfortably above the RMS load, or it wasn't known
+    # (the gate only enforces the margin when IR is present).
+    if isinstance(irms, (int, float)):
+        assert irms >= 1.25 * stress.i_rms
 
 
 def test_rescue_right_sizes_compact_smd_not_a_high_current_block() -> None:
