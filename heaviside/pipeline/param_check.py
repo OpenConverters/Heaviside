@@ -533,6 +533,46 @@ def compare_param(spec: ParamSpec, orig: Any, sub: Any) -> dict[str, Any]:
     }
 
 
+def _render_param(spec: ParamSpec, orig: Any, sub: Any, verdict: str) -> dict[str, Any]:
+    """Build the render-ready dict for one parameter. The VERDICT is Kelvin's
+    decision; the display strings + note are Python glue."""
+    if spec.direction == CLASS_MATCH:
+        o_disp = str(orig) if orig is not None else ""
+        s_disp = str(sub) if sub is not None else ""
+    elif spec.direction == EXACT_MATCH:
+        of, sf = _as_float(orig), _as_float(sub)
+        o_disp = f"{of:g}{spec.unit}" if of is not None else (str(orig) if orig is not None else "")
+        s_disp = f"{sf:g}{spec.unit}" if sf is not None else (str(sub) if sub is not None else "")
+    else:
+        of, sf = _as_float(orig), _as_float(sub)
+        o_disp = f"{of:g}{spec.unit}" if of is not None else ""
+        s_disp = f"{sf:g}{spec.unit}" if sf is not None else ""
+    if sub is None and orig is None:
+        note = f"{spec.label}: not specified on either part"
+    elif sub is None:
+        note = (
+            f"{spec.label}: substitute has no {spec.label} data — cannot verify"
+            if spec.missing_substitute == "exclude"
+            else f"{spec.label}: substitute has no {spec.label} data"
+        )
+    elif orig is None:
+        hint = {"minimize": " (lowest available preferred)", "maximize": " (highest available preferred)"}.get(
+            spec.missing_original, ""
+        )
+        note = f"{spec.label}: original unknown; substitute = {s_disp}{hint}"
+    else:
+        note = f"{spec.label}: {s_disp} vs {o_disp}"
+    return {
+        "name": spec.key,
+        "label": spec.label,
+        "original": o_disp,
+        "substitute": s_disp,
+        "verdict": verdict,
+        "note": note,
+        "critical": spec.unverified_demotes,
+    }
+
+
 def evaluate_params(
     category: str,
     orig_params: dict[str, Any] | None,
@@ -541,17 +581,22 @@ def evaluate_params(
     """Evaluate every spec'd parameter for a category. Returns one result per
     parameter that has data on at least one side (skips fully-absent pairs to
     avoid noise). ``orig_params``/``sub_params`` are ``_summarize_candidate``
-    outputs (or None when the MPN didn't resolve in the DB)."""
-    specs = PARAM_SPECS.get(category, [])
+    outputs (or None when the MPN didn't resolve in the DB).
+
+    The per-parameter VERDICT is computed by Kelvin (the deterministic engine,
+    golden-parity-locked); Python builds the display dict + note around it."""
+    from heaviside.pipeline._kelvin_primitives import evaluate_params as _kv
+
     orig_params = orig_params or {}
     sub_params = sub_params or {}
+    verdicts = {r["name"]: r["verdict"] for r in _kv(category, orig_params, sub_params)}
     results: list[dict[str, Any]] = []
-    for spec in specs:
-        o = orig_params.get(spec.key)
-        s = sub_params.get(spec.key)
-        if o is None and s is None:
-            continue  # neither side has it — nothing to say
-        results.append(compare_param(spec, o, s))
+    for spec in PARAM_SPECS.get(category, []):
+        if spec.key not in verdicts:  # Kelvin only reports params with data (same filter)
+            continue
+        results.append(
+            _render_param(spec, orig_params.get(spec.key), sub_params.get(spec.key), verdicts[spec.key])
+        )
     return results
 
 
