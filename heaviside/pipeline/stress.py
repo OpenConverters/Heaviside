@@ -194,36 +194,15 @@ def required_inductance(topology: str, spec: Mapping[str, Any], *, op_index: int
     so this returns None and the inductor rescue does not fire (no wrong-type
     pick — the no-fallback rule).
     """
-    topo = (topology or "").strip().lower()
-    try:
-        op = _op_at(spec, op_index, "L-sizing")
-        fsw = _fsw(op)
-        if fsw is None:
-            return None
-        ripple = _ripple_pp(spec)
-        if topo == "buck":
-            vmax = _vmax(spec, "L-sizing")
-            vout, iout = _vout_iout(spec, "L-sizing", op_index=op_index)
-            if vout >= vmax or iout <= 0:
-                return None
-            di_l = ripple * iout
-            return vout * (vmax - vout) / (vmax * fsw * di_l)
-        if topo == "boost":
-            vmin = _require_positive(spec, ("inputVoltage", "minimum"), "L-sizing")
-            vmax = _require_positive(spec, ("inputVoltage", "maximum"), "L-sizing")
-            vout, iout = _vout_iout(spec, "L-sizing", op_index=op_index)
-            if vout <= vmax or iout <= 0:
-                return None
-            # L(Vin) ∝ Vin²·(Vout−Vin); size at the Vin that maximises it across
-            # [Vin_min, Vin_max] so ripple stays within spec at every input.
-            v_interior = 2.0 * vout / 3.0
-            v_worst = max(vmin, min(vmax, v_interior)) if vmin <= v_interior <= vmax else vmin
-            candidates = {vmin, vmax, v_worst}
-            worst = max(v * v * (vout - v) for v in candidates)
-            return worst / (ripple * iout * vout * vout * fsw)
-    except StressDerivationError:
-        return None
-    return None
+    # Delegated to Kelvin (the deterministic engine); golden-parity-locked. The
+    # spec is passed through as JSON; Kelvin returns the buck/boost inductance or
+    # None (coupled/multi-inductor topologies). op_index != 0 isn't used by any
+    # caller and isn't in the C++ engine's binding.
+    if op_index != 0:
+        raise StressDerivationError("required_inductance: op_index != 0 not supported (Kelvin engine)")
+    from heaviside.pipeline._kelvin_primitives import required_inductance as _kv
+
+    return _kv(topology, spec)
 
 
 # ---------------------------------------------------------------------------

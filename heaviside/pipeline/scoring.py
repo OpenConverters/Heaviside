@@ -103,9 +103,12 @@ def over_dimensioning_penalty(required: float | None, actual: float | None, *, w
     oversized (bulkier / costlier / worse-parasitics) one — never large enough
     to override value-proximity or footprint fit.
     """
-    if not required or not actual or required <= 0 or actual <= required:
-        return 0.0
-    return weight * _over_penalty(math.log(actual / required))
+    # Delegated to Kelvin (the deterministic engine); golden-parity-locked.
+    from heaviside.pipeline._kelvin_primitives import (
+        over_dimensioning_penalty as _kv_over,
+    )
+
+    return _kv_over(required, actual, weight)
 
 # Deficit (a HIGHER_BETTER rating that falls short, or a LOWER_BETTER parasitic
 # that overshoots): a steep exponential. A few percent short is a small,
@@ -364,23 +367,17 @@ def score_primary_value(
     spec = PRIMARY_VALUE_SPECS.get(category)
     if spec is None:
         return None
-    if spec.mode is Mode.RANGE:
-        return score_range(
-            original,
-            substitute,
-            tight_lo=spec.tight_lo,
-            tight_hi=spec.tight_hi,
-            accept_lo=spec.accept_lo,
-            accept_hi=spec.accept_hi,
-            label=spec.label,
-            unit=spec.unit,
-        )
-    return score_directional(
-        original,
-        substitute,
-        spec.mode,
-        warn_factor=spec.warn_factor,
-        gate_factor=spec.gate_factor,
-        label=spec.label,
-        unit=spec.unit,
-    )
+    # The DECISION (verdict + penalty) is Kelvin's — the deterministic engine,
+    # golden-parity-locked. The note is display glue kept in Python.
+    from heaviside.pipeline._kelvin_primitives import score_primary_value as _kv
+
+    d = _kv(category, original, substitute)
+    if d is None:
+        return None
+    if original is None or substitute is None:
+        note = f"{spec.label}: {'original' if original is None else 'substitute'} value not specified"
+        ratio = None
+    else:
+        ratio = (substitute / original) if original else None
+        note = f"{spec.label}: {_fmt(substitute, spec.unit)} vs {_fmt(original, spec.unit)}"
+    return ScoreResult(penalty=d["penalty"], verdict=d["verdict"], note=note, ratio=ratio)

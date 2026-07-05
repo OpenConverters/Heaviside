@@ -5039,26 +5039,16 @@ def _footprint_area_mm2(summary: dict[str, Any]) -> float:
     footprint), or physically inconsistent with the part's current rating (bad
     data) — so the right-sizing sort prefers a real compact SMD part over a thin
     tall choke, a mis-sized record, or a part we can't compare."""
-    dims = summary.get("dimensions_mm") or summary.get("dimensions") or {}
-    if not isinstance(dims, dict):
-        return float("inf")
-    length, width, height = dims.get("length"), dims.get("width"), dims.get("height")
-    if not (isinstance(length, (int, float)) and isinstance(width, (int, float)) and length > 0 and width > 0):
-        return float("inf")
-    area = float(length) * float(width)
-    if area < _MIN_PLAUSIBLE_FOOTPRINT_MM2:
-        return float("inf")
-    # A tall part (height >> footprint) is a leaded/axial choke, not an SMD chip.
-    if isinstance(height, (int, float)) and height > _MAX_HEIGHT_TO_FOOTPRINT * max(length, width):
-        return float("inf")
-    # Footprint must be physically consistent with the current rating — a tiny
-    # area on a many-amp part is bad dimension data, not a compact marvel.
-    current = summary.get("saturation_current")
-    if not isinstance(current, (int, float)):
-        current = summary.get("rated_current")
-    if isinstance(current, (int, float)) and current > 0 and area < _MIN_FOOTPRINT_MM2_PER_AMP * current:
-        return float("inf")
-    return area
+    # Delegated to Kelvin (the deterministic engine); golden-parity-locked. Pass
+    # only the fields Kelvin reads so an arbitrary summary can't break JSON.
+    from heaviside.pipeline._kelvin_primitives import footprint_area_mm2 as _kv
+
+    payload = {
+        "dimensions_mm": summary.get("dimensions_mm") or summary.get("dimensions"),
+        "saturation_current": summary.get("saturation_current"),
+        "rated_current": summary.get("rated_current"),
+    }
+    return _kv(payload)
 
 
 # Datasheet-URL patterns for validating that an emitted order code resolves to a
@@ -5185,50 +5175,50 @@ def _operating_point_magnetic_rescue(
         return None
     if not (isinstance(i_pk, (int, float)) and i_pk > 0):
         return None
-    ranked: list[tuple[tuple[int, float, float, float], dict[str, Any], dict[str, Any], float]] = []
+    # Catalogue access stays in Python; the sizing/ranking DECISION is Kelvin's
+    # (the deterministic engine, golden-parity-locked). Build a clean candidate
+    # pool (only the fields Kelvin reads) + a map back to the full summary/env.
+    from heaviside.pipeline._kelvin_primitives import (
+        operating_point_magnetic_rescue as _kv_rescue,
+    )
+
+    full_by_mpn: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    pool: list[dict[str, Any]] = []
     for env in _target_manufacturer_envelopes(target_manufacturer, "magnetic", cache):
         s = _summarize_candidate(env, "magnetic")
         L = s.get("inductance")
         if not isinstance(L, (int, float)):
             L = _extract_value(env, "magnetic")
-        isat = s.get("saturation_current")
-        # Inductance must cover the ripple requirement without absurd over-sizing.
-        if not isinstance(L, (int, float)) or L < l_req or L > _L_OVERSIZE_CAP * l_req:
-            continue
-        # Saturation current must clear the operating PEAK with headroom (a
-        # saturating inductor collapses — the hard failure).
-        if not isinstance(isat, (int, float)) or isat < _ISAT_MARGIN * i_pk:
-            continue
-        # RMS/thermal rating must clear the operating RMS with headroom when
-        # known (a part sitting on its temperature-rise limit is not a safe pick).
-        irms = s.get("rated_current")
-        if isinstance(i_rms, (int, float)) and i_rms > 0:
-            if not isinstance(irms, (int, float)) or irms < _IR_MARGIN * i_rms:
-                continue
-        # Right-sizing, two-tier: FIRST prefer an inductance CLOSE to the
-        # requirement (tier 0 = within 1.5× of l_required — the design target),
-        # only then a larger-but-in-cap value (tier 1). WITHIN a tier, pick the
-        # smallest board footprint, then the value closest to l_required, then the
-        # least saturation-current over-margin. This keeps L near the design point
-        # (a compact 10 µH/6×6 mm part beats a smaller 22 µH/4×4 mm part that
-        # over-sizes the inductance) while still right-sizing the footprint.
-        l_tier = 0 if L <= 1.5 * l_req else 1
-        key = (l_tier, _footprint_area_mm2(s), L / l_req, float(isat))
-        ranked.append((key, s, env, float(L)))
-    if not ranked:
-        return None
-    ranked.sort(key=lambda t: t[0])
-    for _key, s, env, L in ranked:
-        # Skip a phantom order code (validator says the part does not resolve to a
-        # real datasheet); keep the first that is confirmed or unknown.
-        if validate_exists is not None:
+        mpn = s.get("mpn")
+        pool.append({
+            "mpn": mpn,
+            "value_si": L if isinstance(L, (int, float)) else None,
+            "saturation_current": s.get("saturation_current"),
+            "rated_current": s.get("rated_current"),
+            "dimensions_mm": s.get("dimensions_mm") or s.get("dimensions"),
+        })
+        if mpn:
+            full_by_mpn[mpn] = (s, env)
+    i_rms_v = float(i_rms) if isinstance(i_rms, (int, float)) and i_rms > 0 else None
+    # Kelvin ranks + returns the right-sized top pick. Skip a phantom order code
+    # (validator says its datasheet doesn't resolve) and re-rank without it.
+    excluded: set[str] = set()
+    while True:
+        cands = [c for c in pool if c.get("mpn") not in excluded]
+        r = _kv_rescue(float(l_req), float(i_pk), i_rms_v, cands)
+        if r is None:
+            return None
+        picked = r["summary"]
+        mpn = picked.get("mpn")
+        if validate_exists is not None and mpn:
             try:
-                if validate_exists(target_manufacturer, s.get("mpn")) is False:
+                if validate_exists(target_manufacturer, mpn) is False:
+                    excluded.add(mpn)
                     continue
             except Exception:
                 pass  # best-effort: a validator failure never blocks the rescue
-        return {"summary": s, "env": env, "inductance": L}
-    return None
+        s_full, env = full_by_mpn.get(mpn, (picked, None))
+        return {"summary": s_full, "env": env, "inductance": r["inductance"]}
 
 
 def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
