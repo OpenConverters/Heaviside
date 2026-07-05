@@ -435,6 +435,19 @@ def _enrich_original_params(
     (constructs + verifies per-vendor patterns). Best-effort: any failure → None,
     and P1's unverified-original caveat remains the honest fallback. No
     fabrication — only datasheet-parsed values."""
+    # The datasheet-seeker cache is checked FIRST: an out-of-DB original whose
+    # datasheet a seeker agent already read (grounded specs, keyed by MPN) is
+    # returned directly — no live fetch, no bot-gate. This is the "read the
+    # datasheet like an FAE" path for parts whose PDF the headless resolver
+    # can't reach (e.g. Coilcraft's GUID URLs).
+    try:
+        from heaviside.librarian.datasheet import seeker as _seeker
+
+        cached = _seeker.read(cat, orig_pn)
+        if cached:
+            return cached
+    except Exception:
+        pass
     try:
         from heaviside.librarian.datasheet.enrich import enrich_from_datasheet
     except Exception:
