@@ -21,6 +21,7 @@ from heaviside.pipeline.crossref_pipeline import (
     _footprint_area_mm2,
     _operating_point_magnetic_rescue,
 )
+from heaviside.pipeline.param_check import evaluate_params
 from heaviside.pipeline.scoring import over_dimensioning_penalty, score_primary_value
 from heaviside.pipeline.stress import required_inductance
 
@@ -73,6 +74,13 @@ def test_footprint_area_matches_golden() -> None:
     for c in _golden()["footprint_area_mm2"]:
         got = _footprint_area_mm2(c["summary"])
         assert _approx(c["expect"], got), c["summary"]
+
+
+def test_evaluate_params_matches_golden() -> None:
+    for c in _golden()["evaluate_params"]:
+        results = evaluate_params(c["category"], c["original"], c["substitute"])
+        got = {r["name"]: r["verdict"] for r in results if "name" in r and "verdict" in r}
+        assert got == c["expect"], f"{c['category']}: {got} != {c['expect']}"
 
 
 def test_operating_point_rescue_matches_golden(monkeypatch) -> None:

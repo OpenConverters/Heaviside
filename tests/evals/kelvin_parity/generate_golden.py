@@ -33,6 +33,7 @@ from heaviside.pipeline.crossref_pipeline import (  # noqa: E402
     _footprint_area_mm2,
     _operating_point_magnetic_rescue,
 )
+from heaviside.pipeline.param_check import evaluate_params  # noqa: E402
 from heaviside.pipeline.scoring import (  # noqa: E402
     over_dimensioning_penalty,
     score_primary_value,
@@ -181,6 +182,44 @@ def _gen_rescue() -> list[dict[str, Any]]:
     return out
 
 
+# ── evaluate_params: the per-category secondary-gate engine (param_check.py) ──
+# (category, original_params, substitute_params). Expected = {param_name: verdict}
+# from the REAL evaluate_params, exercising each direction/comparator per family.
+_EVAL_CASES: list[tuple[str, dict, dict]] = [
+    # capacitor: esr lower-better, ripple higher, dielectric class-match, temp abs_tol, tol lower
+    ("capacitor", {"esr": 0.02, "ripple_current": 2.0, "dielectric_code": "X7R", "temp_max_C": 125.0, "tolerance_pct": 10.0},
+                  {"esr": 0.015, "ripple_current": 2.5, "dielectric_code": "X7R", "temp_max_C": 125.0, "tolerance_pct": 10.0}),
+    ("capacitor", {"dielectric_code": "X7R", "temp_max_C": 125.0}, {"dielectric_code": "Y5V", "temp_max_C": 85.0}),  # class down + temp down
+    ("capacitor", {"esr": 0.02}, {"esr": 0.08}),  # esr much worse -> WARN/FAIL
+    # mosfet: all lower-better
+    ("mosfet", {"rds_on": 0.05, "qg": 12e-9, "coss": 100e-12, "vgs_threshold_max": 3.0},
+               {"rds_on": 0.04, "qg": 10e-9, "coss": 90e-12, "vgs_threshold_max": 2.8}),
+    ("mosfet", {"rds_on": 0.05}, {"rds_on": 0.20}),  # much worse
+    # diode: lower-better
+    ("diode", {"vf": 0.45, "qrr": 50e-9, "trr": 35e-9}, {"vf": 0.40, "qrr": 45e-9, "trr": 30e-9}),
+    # resistor: power higher, tol lower, tcr lower-magnitude
+    ("resistor", {"power_rating": 0.1, "tolerance_pct": 1.0, "tcr": 100.0},
+                 {"power_rating": 0.25, "tolerance_pct": 1.0, "tcr": 50.0}),
+    ("resistor", {"power_rating": 0.25}, {"power_rating": 0.1}),  # power deficit
+    # magnetic: isat higher, dcr lower, irms higher
+    ("magnetic", {"saturation_current": 5.0, "dcr": 0.03, "rated_current": 4.0},
+                 {"saturation_current": 6.0, "dcr": 0.025, "rated_current": 4.5}),
+    ("magnetic", {"saturation_current": 5.0}, {"saturation_current": 2.0}),  # severe deficit
+    # chipBead: impedance/srf higher, dcr lower, irms higher
+    ("chipBead", {"impedance_100mhz": 600.0, "srf": 100e6, "dcr": 0.05, "rated_current": 2.0},
+                 {"impedance_100mhz": 800.0, "srf": 120e6, "dcr": 0.04, "rated_current": 2.5}),
+]
+
+
+def _gen_evaluate_params() -> list[dict[str, Any]]:
+    out = []
+    for cat, orig, sub in _EVAL_CASES:
+        results = evaluate_params(cat, orig, sub)
+        verdicts = {r["name"]: r["verdict"] for r in results if "name" in r and "verdict" in r}
+        out.append({"category": cat, "original": orig, "substitute": sub, "expect": verdicts})
+    return out
+
+
 def main() -> int:
     corpus = {
         "_comment": "GOLDEN crossref corpus generated from the Python engine. Python reproduces it "
@@ -190,6 +229,7 @@ def main() -> int:
         "required_inductance": _gen_required_inductance(),
         "footprint_area_mm2": _gen_footprint(),
         "operating_point_rescue": _gen_rescue(),
+        "evaluate_params": _gen_evaluate_params(),
     }
     _KELVIN_GOLDEN.parent.mkdir(parents=True, exist_ok=True)
     _KELVIN_GOLDEN.write_text(json.dumps(corpus, indent=1) + "\n")
