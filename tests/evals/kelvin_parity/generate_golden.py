@@ -208,6 +208,27 @@ _EVAL_CASES: list[tuple[str, dict, dict]] = [
     # chipBead: impedance/srf higher, dcr lower, irms higher
     ("chipBead", {"impedance_100mhz": 600.0, "srf": 100e6, "dcr": 0.05, "rated_current": 2.0},
                  {"impedance_100mhz": 800.0, "srf": 120e6, "dcr": 0.04, "rated_current": 2.5}),
+    # connector: EXACT family (equivalence group), positions, pitch tol, ratings, temp abs_tol
+    ("connector", {"family": "pinHeaderSocket", "positions": 10, "polarity": "male", "pitch_mm": 2.54,
+                   "rated_current_A": 3.0, "temp_max_C": 105.0, "mating_cycles": 500},
+                  {"family": "boardToBoard", "positions": 10, "polarity": "male", "pitch_mm": 2.5399,
+                   "rated_current_A": 4.0, "temp_max_C": 105.0, "mating_cycles": 500}),  # family same-group PASS
+    ("connector", {"family": "wireToBoard", "positions": 4, "pitch_mm": 2.0},
+                  {"family": "wireToBoard", "positions": 6, "pitch_mm": 2.54}),  # positions + pitch mismatch
+    # analog: EXACT subtype/channels/package, supply abs_tol, gbw higher, Vos magnitude, rail-to-rail class
+    ("analog", {"subtype": "opamp", "channels": 2, "package": "SOIC-8", "supply_min_V": 1.8,
+                "gbw": 1e6, "input_offset_voltage": 100e-6, "rail_to_rail_input": "yes"},
+               {"subtype": "opamp", "channels": 2, "package": "SOIC-8", "supply_min_V": 2.0,
+                "gbw": 1.5e6, "input_offset_voltage": -80e-6, "rail_to_rail_input": "yes"}),
+    ("analog", {"subtype": "opamp", "channels": 1, "rail_to_rail_output": "yes"},
+               {"subtype": "comparator", "channels": 1, "rail_to_rail_output": "no"}),  # subtype fail + rail down
+    # timeBase: EXACT frequency (1e-4 tol) / technology / load_C (5% tol), ppm lower
+    ("timeBase", {"subtype": "crystal", "technology": "quartz", "frequency": 25e6,
+                  "load_capacitance_pF": 18.0, "tolerance_ppm": 30.0, "esr": 40.0},
+                 {"subtype": "crystal", "technology": "quartz", "frequency": 25.001e6,
+                  "load_capacitance_pF": 18.5, "tolerance_ppm": 20.0, "esr": 35.0}),  # freq beyond 1e-4 -> fail
+    ("timeBase", {"subtype": "crystal", "technology": "quartz", "frequency": 16e6, "load_capacitance_pF": 20.0},
+                 {"subtype": "mems", "technology": "mems", "frequency": 16e6, "load_capacitance_pF": 20.0}),  # tech fail
 ]
 
 
