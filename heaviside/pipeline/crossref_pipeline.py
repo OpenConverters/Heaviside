@@ -452,14 +452,19 @@ def _enrich_original_params(
         from heaviside.librarian.datasheet.enrich import enrich_from_datasheet
     except Exception:
         return None
-    # A BOM-provided URL is untrusted, so require a .pdf extension; a resolver
-    # URL is already content-verified (the resolver fetches and checks the bytes
-    # are a real PDF), so use it regardless of extension — many vendor datasheets
-    # are served from an extension-less document endpoint.
+    # A BOM-provided URL is untrusted, so require a .pdf extension.
     url = str(bom_row.get("datasheet") or bom_row.get("datasheet_url") or "").strip()
     if url and not url.lower().endswith(".pdf"):
         url = ""
     if not url:
+        # Live per-part vendor-URL resolution + fetch is OFF by default: it hits
+        # manufacturer CDNs synchronously and stalls on bot-gates, so it must not
+        # sit in the request path. The fast, reliable source is the seeker cache
+        # (checked above) — populated offline by the datasheet-seeker agent — and
+        # Digi-Key enrichment in the async librarian stage on prod. Opt in with
+        # HEAVISIDE_ENRICH_LIVE_FETCH=1 for offline backfills.
+        if os.environ.get("HEAVISIDE_ENRICH_LIVE_FETCH") != "1":
+            return None
         mfr = str(bom_row.get("manufacturer") or "").strip()
         if mfr and orig_pn:
             try:
