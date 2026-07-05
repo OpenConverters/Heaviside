@@ -75,6 +75,18 @@ def _corrections(row: dict, ds: dict) -> dict:
     isat = ds.get("isat_10pct") or ds.get("isat_20pct") or ds.get("isat_30pct")
     if isat is not None and _differs(row.get("saturationCurrentPeak"), isat):
         out["saturationCurrentPeak"] = isat
+    # Full I_sat table WITH its inductance-drop basis (MAS saturationCurrents),
+    # so cross-manufacturer comparison can normalize to a common %-drop instead of
+    # comparing a WE 10 %-drop figure against a competitor's 20 %-drop figure. The
+    # datasheet parser exposes the per-criterion values; store every one it found.
+    # The FIELD is manufacturer-agnostic — this WE parser is just its first filler.
+    sat_points = [
+        {"percentInductanceDrop": pct, "current": ds[key]}
+        for pct, key in ((10, "isat_10pct"), (20, "isat_20pct"), (30, "isat_30pct"))
+        if isinstance(ds.get(key), (int, float)) and ds[key] > 0
+    ]
+    if sat_points and row.get("saturationCurrents") != sat_points:
+        out["saturationCurrents"] = sat_points
     # Use the STANDARD rated current (IR,40K), not the best-case IRP,40K, when the
     # datasheet distinguishes them (parse_we_magnetic_text.rated_current does).
     rated = ds.get("rated_current")

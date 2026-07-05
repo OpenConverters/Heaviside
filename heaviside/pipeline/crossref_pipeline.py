@@ -2677,6 +2677,8 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             dcr_val = (dcr.get("typical") or dcr.get("maximum")) if isinstance(dcr, dict) else dcr
             rc = elec.get("ratedCurrents")
             rated_current = rc[0] if isinstance(rc, list) and rc else None
+            from heaviside.pipeline.isat_normalize import resolve_saturation_points
+
             summary = {
                 "mpn": mi.get("reference", "?"),
                 "inductance": ind_val,
@@ -2688,6 +2690,10 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
                     if isat is not None
                     else "unavailable"
                 ),
+                # I_sat points WITH their inductance-drop basis (saturationCurrents
+                # table, else derived from the inductancePoints curve, else the
+                # basis-unknown scalar) for %-drop-normalized comparison.
+                "saturation_points": resolve_saturation_points(elec),
                 "rated_current": rated_current,
                 "dcr": dcr_val,
                 "srf": elec.get("selfResonantFrequency"),
@@ -4634,9 +4640,32 @@ def _stage_param_check(state: CrossRefState) -> None:
                     break
                 # Else: far below a KNOWN original rating (DB / seeker / BOM).
                 _o = _orig_current(_k, *_bk)
-                if _o and _s < 0.7 * _o:
-                    _severe = (_lbl, _s, _o, _k, "original's rating")
-                    break
+                if _o:
+                    if _k == "saturation_current":
+                        # Normalize the I_sat comparison to a common inductance-drop
+                        # criterion before judging (FAE #134): a vendor quoting
+                        # I_sat@10% vs another's @20% is not a real shortfall. Only a
+                        # gap that survives normalization (or is too large for any
+                        # basis difference to explain) is severe; a basis-uncertain
+                        # near-miss becomes a caveat, not a rejection. margin=0.7
+                        # keeps the 'severe = big shortfall' threshold.
+                        from heaviside.pipeline.isat_normalize import (
+                            SHORTFALL as _ISAT_SHORTFALL,
+                            compare_isat as _compare_isat,
+                        )
+
+                        _op_pts = (orig_params or {}).get("saturation_points") or [
+                            {"percent_drop": None, "current": _o}
+                        ]
+                        _sp_pts = sub_params.get("saturation_points") or [
+                            {"percent_drop": None, "current": _s}
+                        ]
+                        if _compare_isat(_op_pts, _sp_pts, margin=0.7).verdict == _ISAT_SHORTFALL:
+                            _severe = (_lbl, _s, _o, _k, "original's rating")
+                            break
+                    elif _s < 0.7 * _o:
+                        _severe = (_lbl, _s, _o, _k, "original's rating")
+                        break
             if _severe is not None:
                 _lbl, _s, _req, _k, _basis = _severe
                 # Operating-point magnetic rescue: the in-kind (BOM-value) part
