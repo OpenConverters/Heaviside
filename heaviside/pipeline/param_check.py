@@ -437,90 +437,23 @@ def _compare_numeric(spec: ParamSpec, o: float | None, s: float | None) -> tuple
     return FAIL, f"{spec.label}: {s:g} below {o:g}{spec.unit} beyond the allowed margin"
 
 
-def _compare_exact(spec: ParamSpec, o: Any, s: Any) -> tuple[str, str]:
-    """Identity comparison: the substitute must EQUAL the original.
-
-    Numbers compare within a relative window of ``tol_factor`` (0.0 = strict;
-    pitch uses 0.02 to absorb metric/imperial rounding). Strings compare
-    case/space/dash-insensitively ("Board-to-Board" == "boardToBoard" is NOT
-    assumed — normalization only strips formatting, never meaning). A mismatch
-    is always FAIL: identity parameters have no 'close enough'.
-    """
-    if o is None and s is None:
-        return UNVERIFIED, f"{spec.label}: not specified on either part"
-    if s is None:
-        if spec.missing_substitute == "exclude":
-            return FAIL, f"{spec.label}: substitute has no {spec.label} data — cannot verify"
-        return UNVERIFIED, f"{spec.label}: substitute has no {spec.label} data"
-    if o is None:
-        return UNVERIFIED, f"{spec.label}: original unknown; substitute = {s}{spec.unit}"
-    # Equivalence groups (via class_rank): values mapping to the same group id
-    # compare equal — used for connector families where vendor taxonomies
-    # drift (a 2.54 mm header is 'pinHeaderSocket' at one vendor and
-    # 'boardToBoard' at another).
-    if spec.class_rank:
-        og = spec.class_rank.get(_norm_class(o), _norm_class(o))
-        sg = spec.class_rank.get(_norm_class(s), _norm_class(s))
-        if og == sg:
-            return PASS, f"{spec.label}: {o} ≈ {s} (same class group)"
-        return FAIL, f"{spec.label}: '{s}' ≠ original '{o}'"
-    of, sf = _as_float(o), _as_float(s)
-    if of is not None and sf is not None:
-        if of == sf:
-            return PASS, f"{spec.label}: {sf:g}{spec.unit} (exact)"
-        denom = max(abs(of), abs(sf))
-        if denom > 0 and abs(of - sf) / denom <= spec.tol_factor:
-            return PASS, f"{spec.label}: {sf:g} ≈ {of:g}{spec.unit}"
-        return FAIL, f"{spec.label}: {sf:g}{spec.unit} ≠ original {of:g}{spec.unit}"
-    if _norm_class(o) == _norm_class(s) and _norm_class(o):
-        return PASS, f"{spec.label}: {s} (match)"
-    return FAIL, f"{spec.label}: '{s}' ≠ original '{o}'"
-
-
-def _compare_class(spec: ParamSpec, o: Any, s: Any) -> tuple[str, str]:
-    """Categorical equal-or-better comparison (dielectric class, rail-to-rail
-    capability, …) driven by the spec's class_rank map."""
-    on, sn = _norm_class(o), _norm_class(s)
-    rank = spec.class_rank or {}
-    o_rank = next((v for k, v in rank.items() if k in on), None)
-    s_rank = next((v for k, v in rank.items() if k in sn), None)
-    if o_rank is None and s_rank is None:
-        # Neither value is a recognised class code — compare raw strings.
-        if on and sn and on != sn:
-            return WARN, f"{spec.label}: {o} → {s} (different class)"
-        if on and sn:
-            return PASS, f"{spec.label}: same class ({o})"
-        return UNVERIFIED, f"{spec.label}: not a recognised class code"
-    if s_rank is None:
-        return UNVERIFIED, f"{spec.label}: substitute class '{s}' unrecognised"
-    if o_rank is None:
-        return UNVERIFIED, f"{spec.label}: original class '{o}' unrecognised"
-    if s_rank >= o_rank:
-        return PASS, f"{spec.label}: {o} → {s} (equal-or-better)"
-    return FAIL, f"{spec.label}: {o} → {s} is a class downgrade"
+# _compare_exact / _compare_class removed: the CLASS_MATCH / EXACT_MATCH gate
+# logic (dielectric rank, connector-family equivalence, exact identity) now runs
+# in Kelvin (CrossRefParams.hpp) via evaluate_params.
 
 
 def compare_param(spec: ParamSpec, orig: Any, sub: Any) -> dict[str, Any]:
-    """Evaluate one parameter; returns a render-ready dict."""
-    if spec.direction == CLASS_MATCH:
-        verdict, note = _compare_class(spec, orig, sub)
-        o_disp, s_disp = (
-            (str(orig) if orig is not None else ""),
-            (str(sub) if sub is not None else ""),
-        )
-    elif spec.direction == EXACT_MATCH:
-        verdict, note = _compare_exact(spec, orig, sub)
-        of, sf = _as_float(orig), _as_float(sub)
-        o_disp = f"{of:g}{spec.unit}" if of is not None else (str(orig) if orig is not None else "")
-        s_disp = f"{sf:g}{spec.unit}" if sf is not None else (str(sub) if sub is not None else "")
-    else:
-        of, sf = _as_float(orig), _as_float(sub)
-        # magnitude specs judge |value| but display the signed datasheet value.
-        cmp_o = abs(of) if (spec.magnitude and of is not None) else of
-        cmp_s = abs(sf) if (spec.magnitude and sf is not None) else sf
-        verdict, note = _compare_numeric(spec, cmp_o, cmp_s)
-        o_disp = f"{of:g}{spec.unit}" if of is not None else ""
-        s_disp = f"{sf:g}{spec.unit}" if sf is not None else ""
+    """Evaluate one NUMERIC parameter; returns a render-ready dict. The general
+    per-category gates (incl. CLASS/EXACT) now run in Kelvin via evaluate_params;
+    this remains only for mlcc_bias_param's synthetic effective-capacitance gate
+    (a HIGHER_BETTER numeric comparison)."""
+    of, sf = _as_float(orig), _as_float(sub)
+    # magnitude specs judge |value| but display the signed datasheet value.
+    cmp_o = abs(of) if (spec.magnitude and of is not None) else of
+    cmp_s = abs(sf) if (spec.magnitude and sf is not None) else sf
+    verdict, note = _compare_numeric(spec, cmp_o, cmp_s)
+    o_disp = f"{of:g}{spec.unit}" if of is not None else ""
+    s_disp = f"{sf:g}{spec.unit}" if sf is not None else ""
     return {
         "name": spec.key,
         "label": spec.label,
