@@ -4674,19 +4674,25 @@ def _stage_param_check(state: CrossRefState) -> None:
                         _orig_L = _pL
                 _orig_isat = _orig_current("saturation_current", "saturation_current", "isat")
                 _orig_ir = _orig_current("rated_current", "rated_current", "current", "i_rms")
-                if _orig_L and (_orig_isat or _orig_ir):
-                    _req_pk = _orig_isat or _orig_ir
+                # Gate ONLY on the original's Isat (the real saturation limit), not
+                # its IR (a 40 °C-rise thermal rating that is often 15–30 A even on
+                # small parts — requiring it forces grossly over-dimensioned / THT
+                # picks, the FAE finding). value_cap keeps the substitute near the
+                # original's inductance; the flat-SMD guard rejects tall/THT parts.
+                if _orig_L and _orig_isat:
                     _resc_cm = _operating_point_magnetic_rescue(
                         state.target_manufacturer,
-                        _MagReq(_orig_L, _req_pk, _orig_ir or _orig_isat),
+                        _MagReq(_orig_L, _orig_isat, None),
                         _mag_rescue_cache,
                         validate_exists=lambda mfr, mpn: _mpn_datasheet_exists(
                             mfr, mpn, _mpn_exists_cache
                         ),
+                        value_cap=1.25,
+                        orig_dims=(orig_params or {}).get("dimensions_mm"),
                     )
                     if _resc_cm is not None:
                         _apply_current_match_rescue(
-                            row, _resc_cm, _orig_L, _orig_isat, _orig_ir
+                            row, _resc_cm, _orig_L, _orig_isat, None
                         )
                         continue
                 _rel = "below" if _basis == "operating current" else "far below (< 70%)"
@@ -4767,17 +4773,20 @@ def _stage_param_check(state: CrossRefState) -> None:
                     _oL = _pLb
             _oIsat = _orig_cur_b("saturation_current", "saturation_current", "isat")
             _oIr = _orig_cur_b("rated_current", "rated_current", "current", "i_rms")
-            if _oL and (_oIsat or _oIr):
+            # Isat-only gate + value cap + flat-SMD guard (see Case A above).
+            if _oL and _oIsat:
                 _resc_cb = _operating_point_magnetic_rescue(
                     state.target_manufacturer,
-                    _MagReq(_oL, _oIsat or _oIr, _oIr or _oIsat),
+                    _MagReq(_oL, _oIsat, None),
                     _mag_rescue_cache,
                     validate_exists=lambda mfr, mpn: _mpn_datasheet_exists(
                         mfr, mpn, _mpn_exists_cache
                     ),
+                    value_cap=1.25,
+                    orig_dims=(_orig_b or {}).get("dimensions_mm"),
                 )
                 if _resc_cb is not None:
-                    _apply_current_match_rescue(row, _resc_cb, _oL, _oIsat, _oIr)
+                    _apply_current_match_rescue(row, _resc_cb, _oL, _oIsat, None)
                     continue
 
         # P1 — UNVERIFIED ORIGINAL: when the original part could not be
@@ -5345,11 +5354,54 @@ def _apply_current_match_rescue(
         ratebits.append(f"IR {irms:g} A")
     if ratebits:
         note += " — this part: " + ", ".join(ratebits)
-    note += ". Verify the footprint fits the original's board space."
+    # Quantify the footprint change honestly: Würth's equal-current part is often
+    # physically larger than a very compact Coilcraft/MPS original, so state the
+    # board-area increase explicitly rather than a vague "verify footprint".
+    _oa = resc.get("orig_area_mm2")
+    _sa = resc.get("sub_area_mm2")
+    if isinstance(_oa, (int, float)) and isinstance(_sa, (int, float)) and _oa > 0:
+        _ratio = _sa / _oa
+        if _ratio >= 1.3:
+            note += (
+                f". NOTE: ~{_ratio:.1f}× the original's board area "
+                f"({_sa:.0f} vs {_oa:.0f} mm²) — this needs a board/land-pattern change, not a drop-in"
+            )
+        else:
+            note += ". Verify the footprint fits the original's board space"
+    else:
+        note += ". Verify the footprint fits the original's board space"
+    note += "."
     row["notes"] = note
     fires = row.setdefault("guardrail_fires", [])
     if "RESCUE:current_match" not in fires:
         fires.append("RESCUE:current_match")
+
+
+def _dims_area_mm2(dims: Any) -> float | None:
+    """length × width (mm²) of a part's footprint, or None when unknown. Used to
+    compare a rescue candidate's board area against the original's."""
+    if not isinstance(dims, dict):
+        return None
+    L, W = dims.get("length"), dims.get("width")
+    if isinstance(L, (int, float)) and isinstance(W, (int, float)) and L > 0 and W > 0:
+        return float(L) * float(W)
+    return None
+
+
+def _is_flat_smd_geometry(dims: Any) -> bool:
+    """True if the part's dimensions look like a FLAT surface-mount power
+    inductor (height not taller than its shortest lateral dimension). A tall
+    block — height ≫ footprint — is a leaded / through-hole / axial choke (the
+    ABT-#130-followup FAE findings: a 14×8×16 mm tall part and a 12×12×10 mm
+    WE-HCIT THROUGH-HOLE inductor proposed as 'in-kind' drop-ins for 3–6 mm SMD
+    originals). Unknown dims → True (best-effort; a separate footprint sort still
+    prefers compact parts). Never let a THT/tall part win an SMD rescue."""
+    if not isinstance(dims, dict):
+        return True
+    L, W, H = dims.get("length"), dims.get("width"), dims.get("height")
+    if not all(isinstance(x, (int, float)) and x > 0 for x in (L, W, H)):
+        return True
+    return H <= 1.3 * min(L, W)
 
 
 def _operating_point_magnetic_rescue(
@@ -5358,6 +5410,10 @@ def _operating_point_magnetic_rescue(
     cache: dict[str, list[dict[str, Any]]],
     *,
     validate_exists: Any = None,
+    value_cap: float | None = None,
+    require_flat_smd: bool = True,
+    orig_dims: Any = None,
+    max_area_ratio: float = 3.0,
 ) -> dict[str, Any] | None:
     """Size a switching inductor from the CIRCUIT when its in-kind (BOM-value)
     substitute fails the operating-current gate. Scans the target manufacturer's
@@ -5391,11 +5447,19 @@ def _operating_point_magnetic_rescue(
 
     full_by_mpn: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
     pool: list[dict[str, Any]] = []
+    # value_cap bounds the inductance for an IN-KIND value match (current-matched
+    # rescue): a substitute inductor must be near the original's value, not merely
+    # ≥ it — 680 nH for a 470 nH original (+45%) is a different part (FAE finding),
+    # so cap L at value_cap·l_required. The operating-point (ripple) rescue passes
+    # no cap and keeps Kelvin's ripple-floor semantics (L ≥ l_required).
+    l_max = value_cap * l_req if value_cap else None
     for env in _target_manufacturer_envelopes(target_manufacturer, "magnetic", cache):
         s = _summarize_candidate(env, "magnetic")
         L = s.get("inductance")
         if not isinstance(L, (int, float)):
             L = _extract_value(env, "magnetic")
+        if l_max is not None and isinstance(L, (int, float)) and L > l_max:
+            continue
         mpn = s.get("mpn")
         pool.append({
             "mpn": mpn,
@@ -5408,7 +5472,10 @@ def _operating_point_magnetic_rescue(
             full_by_mpn[mpn] = (s, env)
     i_rms_v = float(i_rms) if isinstance(i_rms, (int, float)) and i_rms > 0 else None
     # Kelvin ranks + returns the right-sized top pick. Skip a phantom order code
-    # (validator says its datasheet doesn't resolve) and re-rank without it.
+    # (validator says its datasheet doesn't resolve) or a tall/THT geometry (not
+    # an SMD drop-in) and re-rank without it. When nothing survives, return None —
+    # the caller keeps its honest partial/no_substitute (which a real FAE prefers
+    # over an un-buildable or over-dimensioned "rescue").
     excluded: set[str] = set()
     while True:
         cands = [c for c in pool if c.get("mpn") not in excluded]
@@ -5424,8 +5491,31 @@ def _operating_point_magnetic_rescue(
                     continue
             except Exception:
                 pass  # best-effort: a validator failure never blocks the rescue
+        if require_flat_smd and not _is_flat_smd_geometry(picked.get("dimensions_mm")):
+            if mpn:
+                excluded.add(mpn)
+                continue
+            return None  # can't identify it to exclude → stop rather than ship it
+        # Footprint sanity vs the ORIGINAL (when its dims are known): a substitute
+        # more than max_area_ratio× the original's board area is not a drop-in — it
+        # needs a board respin (the FAE finding: a 17×12 mm brick for a 6×6 mm
+        # part). Reject and re-rank; if nothing compact enough qualifies, return
+        # None so the caller keeps its honest verdict rather than ship a misfit.
+        _oa = _dims_area_mm2(orig_dims)
+        _ca = _dims_area_mm2(picked.get("dimensions_mm"))
+        if _oa and _ca and _ca > max_area_ratio * _oa:
+            if mpn:
+                excluded.add(mpn)
+                continue
+            return None
         s_full, env = full_by_mpn.get(mpn, (picked, None))
-        return {"summary": s_full, "env": env, "inductance": r["inductance"]}
+        return {
+            "summary": s_full,
+            "env": env,
+            "inductance": r["inductance"],
+            "orig_area_mm2": _oa,
+            "sub_area_mm2": _ca,
+        }
 
 
 def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
