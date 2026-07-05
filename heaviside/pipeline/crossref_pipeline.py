@@ -5022,13 +5022,22 @@ _MAX_HEIGHT_TO_FOOTPRINT = 1.5
 # A power inductor carrying amps has a real footprint; a sub-2×2 mm "area" is bad
 # data or a signal part mis-sized — don't let it win the smallest-footprint sort.
 _MIN_PLAUSIBLE_FOOTPRINT_MM2 = 4.0
+# Physical consistency floor between footprint and current: a shielded SMD power
+# inductor's board area scales with the current it carries (survey: ~4×4 mm ≈ 3 A,
+# ~6×6 mm ≈ 5 A, ~8×8 mm ≈ 10 A → area ≈ 5–6 mm²/A). A record claiming a tiny
+# footprint for a many-amp part is BAD DIMENSION DATA (the 7847709100 case:
+# catalogue said 3.2×2.5 mm for a real 12×12 mm / 7.5 A WE-PD block). Distrust it
+# rather than let wrong data win the smallest-footprint sort. 3.0 mm²/A is
+# conservative — only egregiously-wrong records fail, real parts pass easily.
+_MIN_FOOTPRINT_MM2_PER_AMP = 3.0
 
 
 def _footprint_area_mm2(summary: dict[str, Any]) -> float:
     """length × width (mm²) of an SMD-like power inductor, or +inf when the size
-    is unknown, implausibly small, or a tall leaded/axial geometry (height ≫
-    footprint) — so the right-sizing sort prefers a real compact SMD part over a
-    thin tall choke or a part we can't compare."""
+    is unknown, implausibly small, a tall leaded/axial geometry (height ≫
+    footprint), or physically inconsistent with the part's current rating (bad
+    data) — so the right-sizing sort prefers a real compact SMD part over a thin
+    tall choke, a mis-sized record, or a part we can't compare."""
     dims = summary.get("dimensions_mm") or summary.get("dimensions") or {}
     if not isinstance(dims, dict):
         return float("inf")
@@ -5040,6 +5049,13 @@ def _footprint_area_mm2(summary: dict[str, Any]) -> float:
         return float("inf")
     # A tall part (height >> footprint) is a leaded/axial choke, not an SMD chip.
     if isinstance(height, (int, float)) and height > _MAX_HEIGHT_TO_FOOTPRINT * max(length, width):
+        return float("inf")
+    # Footprint must be physically consistent with the current rating — a tiny
+    # area on a many-amp part is bad dimension data, not a compact marvel.
+    current = summary.get("saturation_current")
+    if not isinstance(current, (int, float)):
+        current = summary.get("rated_current")
+    if isinstance(current, (int, float)) and current > 0 and area < _MIN_FOOTPRINT_MM2_PER_AMP * current:
         return float("inf")
     return area
 
@@ -5065,7 +5081,7 @@ def _operating_point_magnetic_rescue(
         return None
     if not (isinstance(i_pk, (int, float)) and i_pk > 0):
         return None
-    best: tuple[tuple[float, float, float], dict[str, Any], dict[str, Any], float] | None = None
+    best: tuple[tuple[int, float, float, float], dict[str, Any], dict[str, Any], float] | None = None
     for env in _target_manufacturer_envelopes(target_manufacturer, "magnetic", cache):
         s = _summarize_candidate(env, "magnetic")
         L = s.get("inductance")
@@ -5084,11 +5100,15 @@ def _operating_point_magnetic_rescue(
         if isinstance(i_rms, (int, float)) and i_rms > 0:
             if not isinstance(irms, (int, float)) or irms < i_rms:
                 continue
-        # Right-sizing: prefer the SMALLEST board footprint, then the inductance
-        # closest to the requirement, then the least saturation-current over-
-        # margin. This picks a compact ~6×6 mm / ~5 A part over a 13 mm / 12 A
-        # block that merely also happens to fit.
-        key = (_footprint_area_mm2(s), L / l_req, float(isat))
+        # Right-sizing, two-tier: FIRST prefer an inductance CLOSE to the
+        # requirement (tier 0 = within 1.5× of l_required — the design target),
+        # only then a larger-but-in-cap value (tier 1). WITHIN a tier, pick the
+        # smallest board footprint, then the value closest to l_required, then the
+        # least saturation-current over-margin. This keeps L near the design point
+        # (a compact 10 µH/6×6 mm part beats a smaller 22 µH/4×4 mm part that
+        # over-sizes the inductance) while still right-sizing the footprint.
+        l_tier = 0 if L <= 1.5 * l_req else 1
+        key = (l_tier, _footprint_area_mm2(s), L / l_req, float(isat))
         if best is None or key < best[0]:
             best = (key, s, env, float(L))
     if best is None:

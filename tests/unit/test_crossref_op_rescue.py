@@ -127,3 +127,29 @@ def test_footprint_metric_rejects_tall_leaded_and_tiny() -> None:
     assert _footprint_area_mm2({"dimensions_mm": {"length": 1.0, "width": 1.0, "height": 0.5}}) == float("inf")
     # Unknown dimensions: inf (can't compare).
     assert _footprint_area_mm2({}) == float("inf")
+
+
+def test_footprint_metric_rejects_dims_inconsistent_with_current() -> None:
+    """BAD DIMENSION DATA guard: a tiny footprint on a many-amp part is a wrong
+    record (the 7847709100 case: catalogue said 3.2×2.5mm for a real 12×12mm /
+    7.5A WE-PD block). It must not win the smallest-footprint sort."""
+    from heaviside.pipeline.crossref_pipeline import _footprint_area_mm2
+
+    # 3.2×2.5 mm (8 mm²) claimed for a 7.5A part → physically impossible → inf.
+    assert _footprint_area_mm2(
+        {"saturation_current": 7.5, "rated_current": 5.0, "dimensions_mm": {"length": 3.2, "width": 2.5}}
+    ) == float("inf")
+    # 6×6 mm (36 mm²) for a 5.5A part → consistent → real area.
+    assert _footprint_area_mm2(
+        {"saturation_current": 5.5, "rated_current": 4.5, "dimensions_mm": {"length": 6.0, "width": 6.0, "height": 3.0}}
+    ) == 36.0
+
+
+def test_rescue_prefers_inductance_close_to_required() -> None:
+    """Two-tier sort: an L close to the ripple requirement (~9.1µH) beats a
+    smaller-footprint part that over-sizes the inductance (e.g. 22µH). The pick's
+    inductance must stay within ~1.5× of the required value."""
+    stress = _stress_L1()
+    resc = _operating_point_magnetic_rescue("Würth Elektronik", stress, {})
+    assert resc is not None
+    assert resc["inductance"] <= 1.5 * stress.l_required
