@@ -1,0 +1,12 @@
+ref_des,type,part,value,package,voltage,manufacturer,description
+U1,ic,LT80603,,,,Analog Devices,
+L1,inductor,XGL4040-152ME,,,,Coilcraft,
+CIN1,capacitor,GRM32ER72A475K,,,,Murata,
+CIN2,capacitor,GRM188R72A104K,,,,Murata,
+CIN3,capacitor,GRM188R72A104K,,,,Murata,
+CBST,capacitor,GRM188R71C104K,,,,Murata,
+COUT,capacitor,GRM32ER71C226K,,,,Murata,
+CBIAS,capacitor,GRM21BR71C225K,,,,Murata,
+CSS,capacitor,GRM188R71E822K,,,,Murata,
+R1,resistor,RC0603FR-07100KL,,,,Yageo,
+R2,resistor,RC0603FR-0732K4L,,,,Yageo,
