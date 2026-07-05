@@ -97,6 +97,34 @@ def test_low_isat_inkind_sub_is_rescued_not_rejected(monkeypatch) -> None:
     assert "cannot carry" not in _n
 
 
+def test_no_substitute_magnetic_is_resurrected_from_operating_point(monkeypatch) -> None:
+    """Case B: when the LLM/reviewer leaves a magnetic row NO_SUBSTITUTE (it gave
+    up) but the circuit is derivable, the operating-point rescue must resurrect it
+    with a real, sized part — not ship a false negative."""
+    monkeypatch.setenv("HEAVISIDE_VALIDATE_MPN", "0")  # keep offline
+    stress = derive_stress_by_ref(
+        "buck", _BUCK, [{"ref_des": "L1", "component_type": "magnetic", "value": "4.7uH"}]
+    )
+    l1 = {
+        "ref_des": "L1", "component_type": "magnetic", "original_pn": "", "original_value": "4.7uH",
+        "substitute_pn": None, "substitute_value": "", "status": "no_substitute",
+        "notes": "No Würth inductor meets requirements.",
+    }
+    # A second row with an MPN so the param-check stage's needed-set is non-empty
+    # (else the stage early-returns before the row loop).
+    r1 = {"ref_des": "R1", "component_type": "resistor", "original_pn": "",
+          "substitute_pn": "560112110020", "status": "partial"}
+    state = SimpleNamespace(
+        crossref_result=[l1, r1], stress_by_ref=stress,
+        source_bom=[{"ref_des": "L1", "component_type": "magnetic", "value": "4.7uH"}],
+        target_manufacturer="Würth Elektronik",
+    )
+    _stage_param_check(state)
+    assert l1["status"] == "partial"
+    assert l1["substitute_pn"]  # a real part was found
+    assert "RESCUE:operating_point" in l1.get("guardrail_fires", [])
+
+
 def test_no_rescue_without_derivable_inductance() -> None:
     # No l_required (e.g. topology we can't size) → no rescue, returns None.
     stress = SimpleNamespace(l_required=None, i_peak=3.45, i_rms=3.0)

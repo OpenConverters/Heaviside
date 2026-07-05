@@ -4649,58 +4649,7 @@ def _stage_param_check(state: CrossRefState) -> None:
                         ),
                     )
                 if _resc is not None:
-                    _rs = _resc["summary"]
-                    _lval = _resc["inductance"]
-                    _op_pk = getattr(_stress, "i_peak", None)
-                    _op_rms = getattr(_stress, "i_rms", None)
-                    _l_req = getattr(_stress, "l_required", None)
-                    _bom_val = str(row.get("original_value") or "").strip()
-                    row["status"] = "partial"
-                    row["substitute_pn"] = _rs.get("mpn")
-                    row["substitute_value"] = _humanize_value(str(_lval), "magnetic")
-                    row["substitute_package"] = _rs.get("package", "") or ""
-                    row.pop("_param_results", None)
-                    _isat = _rs.get("saturation_current")
-                    _irms = _rs.get("rated_current")
-                    # Honest rationale: the value is sized to the RIPPLE spec (the
-                    # true reason it differs from the BOM), and the part is checked
-                    # against the operating current — NOT "in-kind parts can't carry
-                    # the current" (false: some BOM-value parts can; the value is
-                    # simply wrong for the ripple target).
-                    _req_txt = (
-                        f"≈{_humanize_value(str(_l_req), 'magnetic')}"
-                        if isinstance(_l_req, (int, float))
-                        else "a higher value"
-                    )
-                    _note = (
-                        f"Sized to the design's ripple spec, which needs {_req_txt}"
-                        + (
-                            f"; the {_bom_val} BOM value under-sizes L (more ripple than specified)"
-                            if _bom_val
-                            else ""
-                        )
-                        + f". This {row['substitute_value']} Würth part meets the required inductance and "
-                        "the operating current"
-                    )
-                    _curbits = []
-                    if isinstance(_op_pk, (int, float)):
-                        _curbits.append(f"{_op_pk:g} A peak")
-                    if isinstance(_op_rms, (int, float)):
-                        _curbits.append(f"{_op_rms:g} A RMS")
-                    if _curbits:
-                        _note += " (" + " / ".join(_curbits) + ")"
-                    _ratebits = []
-                    if isinstance(_isat, (int, float)):
-                        _ratebits.append(f"Isat {_isat:g} A")
-                    if isinstance(_irms, (int, float)):
-                        _ratebits.append(f"IR {_irms:g} A")
-                    if _ratebits:
-                        _note += " — " + ", ".join(_ratebits)
-                    _note += ". Verify loop/transient response for the increased inductance."
-                    row["notes"] = _note
-                    _fires = row.setdefault("guardrail_fires", [])
-                    if "RESCUE:operating_point" not in _fires:
-                        _fires.append("RESCUE:operating_point")
+                    _apply_op_rescue(row, _resc, _stress)
                     continue
                 _rel = "below" if _basis == "operating current" else "far below (< 70%)"
                 _force_no_substitute(
@@ -4710,6 +4659,27 @@ def _stage_param_check(state: CrossRefState) -> None:
                     fire=f"CURRENT:{_k}",
                 )
                 continue
+
+        # Operating-point rescue, Case B: a magnetic row the LLM/reviewer left
+        # NO_SUBSTITUTE (it gave up — "no catalogue part meets the current")
+        # despite a derivable circuit. Size the inductor from the operating point
+        # and offer a real, orderable, adequately-rated part rather than ship a
+        # false negative. (Case A above handles a proposed sub that FAILS the
+        # current gate; this handles no proposal at all.)
+        if cat == "magnetic" and row.get("status") == "no_substitute":
+            _stress_b = state.stress_by_ref.get(row.get("ref_des"))
+            if _stress_b is not None and getattr(_stress_b, "l_required", None):
+                _resc_b = _operating_point_magnetic_rescue(
+                    state.target_manufacturer,
+                    _stress_b,
+                    _mag_rescue_cache,
+                    validate_exists=lambda mfr, mpn: _mpn_datasheet_exists(
+                        mfr, mpn, _mpn_exists_cache
+                    ),
+                )
+                if _resc_b is not None:
+                    _apply_op_rescue(row, _resc_b, _stress_b)
+                    continue
 
         # P1 — UNVERIFIED ORIGINAL: when the original part could not be
         # identified in the internal DB (and datasheet enrichment didn't fill
@@ -5115,6 +5085,55 @@ def _mpn_datasheet_exists(
         result = None  # network/timeout: inconclusive, never block on it
     _cache[key] = result
     return result
+
+
+def _apply_op_rescue(row: dict[str, Any], resc: dict[str, Any], stress: Any) -> None:
+    """Patch a magnetic ROW with an operating-point-sized substitute (status
+    partial) and an honest ripple-based note. Shared by both rescue triggers:
+    a proposed in-kind sub that fails the current gate, and a row the LLM left
+    no_substitute despite a derivable circuit."""
+    s = resc["summary"]
+    lval = resc["inductance"]
+    op_pk = getattr(stress, "i_peak", None)
+    op_rms = getattr(stress, "i_rms", None)
+    l_req = getattr(stress, "l_required", None)
+    bom_val = str(row.get("original_value") or "").strip()
+    row["status"] = "partial"
+    row["substitute_pn"] = s.get("mpn")
+    row["substitute_value"] = _humanize_value(str(lval), "magnetic")
+    row["substitute_package"] = s.get("package", "") or ""
+    row.pop("_param_results", None)
+    isat = s.get("saturation_current")
+    irms = s.get("rated_current")
+    req_txt = (
+        f"≈{_humanize_value(str(l_req), 'magnetic')}"
+        if isinstance(l_req, (int, float))
+        else "a higher value"
+    )
+    note = (
+        f"Sized to the design's ripple spec, which needs {req_txt}"
+        + (f"; the {bom_val} BOM value under-sizes L (more ripple than specified)" if bom_val else "")
+        + f". This {row['substitute_value']} Würth part meets the required inductance and the operating current"
+    )
+    curbits = []
+    if isinstance(op_pk, (int, float)):
+        curbits.append(f"{op_pk:g} A peak")
+    if isinstance(op_rms, (int, float)):
+        curbits.append(f"{op_rms:g} A RMS")
+    if curbits:
+        note += " (" + " / ".join(curbits) + ")"
+    ratebits = []
+    if isinstance(isat, (int, float)):
+        ratebits.append(f"Isat {isat:g} A")
+    if isinstance(irms, (int, float)):
+        ratebits.append(f"IR {irms:g} A")
+    if ratebits:
+        note += " — " + ", ".join(ratebits)
+    note += ". Verify loop/transient response for the increased inductance."
+    row["notes"] = note
+    fires = row.setdefault("guardrail_fires", [])
+    if "RESCUE:operating_point" not in fires:
+        fires.append("RESCUE:operating_point")
 
 
 def _operating_point_magnetic_rescue(
