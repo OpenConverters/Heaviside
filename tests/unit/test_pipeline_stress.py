@@ -373,10 +373,53 @@ def test_required_inductance_none_without_fsw() -> None:
         {"outputVoltages": [12.0], "outputCurrents": [5.0]}]}) is None
 
 
-def test_required_inductance_none_for_unsupported_topology() -> None:
+def test_required_inductance_boost_hand_calc() -> None:
+    """Boost 9-15V -> 24V @ 2A, ripple 0.4, fsw 150kHz. L(Vin) ∝ Vin²(Vout-Vin);
+    interior max at 2·24/3 = 16V is OUTSIDE [9,15], so the worst is the larger
+    endpoint Vin=15: f = 15²·(24-15) = 2025. L = 2025/(0.4·2·24²·150e3) ≈ 29.3 µH."""
+    from heaviside.pipeline.stress import required_inductance
+
+    spec = {
+        "inputVoltage": {"minimum": 9.0, "maximum": 15.0},
+        "currentRippleRatio": 0.4,
+        "operatingPoints": [
+            {"outputVoltages": [24.0], "outputCurrents": [2.0], "switchingFrequency": 150_000.0}
+        ],
+    }
+    L = required_inductance("boost", spec)
+    expected = 2025.0 / (0.4 * 2.0 * 24.0**2 * 150_000.0)
+    assert L == pytest.approx(expected, rel=1e-6)
+    assert L == pytest.approx(29.3e-6, rel=1e-2)
+
+
+def test_required_inductance_boost_uses_interior_max_when_in_range() -> None:
+    """When 2·Vout/3 falls inside [Vin_min, Vin_max], the ripple peaks there, so L
+    is sized at that interior worst case (larger than either endpoint)."""
+    from heaviside.pipeline.stress import required_inductance
+
+    # Vout=24 → interior max at 16V, inside [10, 20].
+    spec = {
+        "inputVoltage": {"minimum": 10.0, "maximum": 20.0},
+        "currentRippleRatio": 0.4,
+        "operatingPoints": [
+            {"outputVoltages": [24.0], "outputCurrents": [2.0], "switchingFrequency": 150_000.0}
+        ],
+    }
+    L = required_inductance("boost", spec)
+    f16 = 16.0**2 * (24.0 - 16.0)  # 2048, > f(10)=2800? f(10)=100*14=1400; f(20)=400*4=1600
+    expected = f16 / (0.4 * 2.0 * 24.0**2 * 150_000.0)
+    assert L == pytest.approx(expected, rel=1e-6)
+
+
+def test_required_inductance_none_for_coupled_inductor_topologies() -> None:
+    """Flyback / Cuk use a coupled inductor or transformer — a 2-terminal power
+    inductor is the wrong PART TYPE, so no inductance is emitted (the rescue must
+    not fire and pick a wrong-type part)."""
     from heaviside.pipeline.stress import required_inductance
 
     assert required_inductance("flyback", _BUCK_OK) is None
+    assert required_inductance("cuk", _BUCK_OK) is None
+    assert required_inductance("sepic", _BUCK_OK) is None
 
 
 def test_derive_stress_by_ref_sets_l_required_on_inductor() -> None:

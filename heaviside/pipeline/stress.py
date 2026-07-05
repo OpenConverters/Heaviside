@@ -182,7 +182,17 @@ def required_inductance(topology: str, spec: Mapping[str, Any], *, op_index: int
     field (fsw, ripple, V/I) is missing — the caller then does NOT size the part
     (no fabricated inductance).
 
-    Buck:  L = Vout·(Vin_max − Vout) / (Vin_max · fsw · ΔI_L),  ΔI_L = ripple·Iout
+    Buck:   L = Vout·(Vin_max − Vout) / (Vin_max · fsw · ripple·Iout)  [worst at Vin_max]
+    Boost:  L = Vin²·(Vout − Vin) / (ripple·Iout · Vout² · fsw), the inductor
+            being on the INPUT and carrying Iin = Iout·Vout/Vin. The ripple grows
+            with Vin²(Vout−Vin), peaking at Vin = 2·Vout/3, so L is sized at the
+            worst Vin across the input range (endpoints + that interior maximum).
+
+    Only single-power-inductor topologies are sized here. Flyback / Cuk /
+    SEPIC use a COUPLED inductor or transformer (or two inductors); a 2-terminal
+    power inductor from the magnetics catalogue is the WRONG PART TYPE for them,
+    so this returns None and the inductor rescue does not fire (no wrong-type
+    pick — the no-fallback rule).
     """
     topo = (topology or "").strip().lower()
     try:
@@ -198,6 +208,19 @@ def required_inductance(topology: str, spec: Mapping[str, Any], *, op_index: int
                 return None
             di_l = ripple * iout
             return vout * (vmax - vout) / (vmax * fsw * di_l)
+        if topo == "boost":
+            vmin = _require_positive(spec, ("inputVoltage", "minimum"), "L-sizing")
+            vmax = _require_positive(spec, ("inputVoltage", "maximum"), "L-sizing")
+            vout, iout = _vout_iout(spec, "L-sizing", op_index=op_index)
+            if vout <= vmax or iout <= 0:
+                return None
+            # L(Vin) ∝ Vin²·(Vout−Vin); size at the Vin that maximises it across
+            # [Vin_min, Vin_max] so ripple stays within spec at every input.
+            v_interior = 2.0 * vout / 3.0
+            v_worst = max(vmin, min(vmax, v_interior)) if vmin <= v_interior <= vmax else vmin
+            candidates = {vmin, vmax, v_worst}
+            worst = max(v * v * (vout - v) for v in candidates)
+            return worst / (ripple * iout * vout * vout * fsw)
     except StressDerivationError:
         return None
     return None

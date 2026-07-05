@@ -4809,13 +4809,24 @@ def _stage_param_check(state: CrossRefState) -> None:
 
 
 def _best_inkind_candidate(
-    comp: dict[str, Any], cat: str, candidates: list[dict[str, Any]]
+    comp: dict[str, Any],
+    cat: str,
+    candidates: list[dict[str, Any]],
+    *,
+    target_manufacturer: str | None = None,
+    validate_exists: Any = None,
 ) -> dict[str, Any] | None:
     """Deterministic in-kind gate: the best prefetched candidate that PROVABLY
     satisfies the cross-referencer's own substitution criteria (same chemistry
     family + voltage >= original + value in range). Candidates are pre-ranked,
     so the first that passes is the best. Returns a substitute row patch, or
-    None when no candidate qualifies (a genuine no_substitute)."""
+    None when no candidate qualifies (a genuine no_substitute).
+
+    ``validate_exists(manufacturer, mpn) -> bool | None`` (optional): a candidate
+    whose emitted order code does NOT resolve to a real datasheet (returns False —
+    a catalogue phantom) is skipped in favour of the next qualifying part, so the
+    deterministic rescue never ships a non-orderable MPN for ANY category (the
+    same guard the magnetic rescue applies)."""
     from heaviside.pipeline.scoring import (
         FAIL as _S_FAIL,
         PASS as _S_PASS,
@@ -4908,6 +4919,14 @@ def _best_inkind_candidate(
             verified.append("voltage")
         if cat == "capacitor" and orig_fam is not None:
             verified.append("chemistry")
+        # Never ship a non-orderable order code: skip a candidate whose datasheet
+        # does not resolve (a definitive 404 → catalogue phantom) and keep looking.
+        if validate_exists is not None and target_manufacturer:
+            try:
+                if validate_exists(target_manufacturer, s.get("mpn")) is False:
+                    continue
+            except Exception:
+                pass  # best-effort — a validator failure never blocks a real part
         return {
             "substitute_pn": s.get("mpn"),
             "substitute_value": s.get("value", ""),
@@ -5220,6 +5239,7 @@ def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
     removing the run-to-run variance (e.g. um3491's X7T caps)."""
     by_ref = {c.get("ref_des", c.get("name", "?")): c for c in state.source_bom}
     ondemand_cache: dict[str, list[dict[str, Any]]] = {}
+    mpn_exists_cache: dict[str, bool | None] = {}
     rescued = 0
     for row in state.crossref_result:
         if row.get("status") != "no_substitute":
@@ -5257,7 +5277,13 @@ def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
         prior_notes = (row.get("notes") or "").lower()
         if "no suitable" in prior_notes and "substitute available" in prior_notes:
             continue
-        patch = _best_inkind_candidate(comp, cat, cands)
+        patch = _best_inkind_candidate(
+            comp,
+            cat,
+            cands,
+            target_manufacturer=state.target_manufacturer,
+            validate_exists=lambda mfr, mpn: _mpn_datasheet_exists(mfr, mpn, mpn_exists_cache),
+        )
         if patch is None:
             continue
         # verified_basis lists ONLY the criteria that actually ran (value always;

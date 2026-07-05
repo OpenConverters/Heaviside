@@ -45,6 +45,7 @@ def test_stage_rescues_no_substitute_row() -> None:
         pass
 
     st = _State()
+    st.target_manufacturer = "Würth Elektronik"
     st.source_bom = [{"ref_des": "C1", "component_type": "capacitor",
                       "value_si": 22e-6, "rated_voltage": 10.0, "technology": "X7T"}]
     st.crossref_result = [{"ref_des": "C1", "component_type": "capacitor",
