@@ -56,6 +56,33 @@ def select_components(tas: dict[str, Any], options: dict[str, Any] | None = None
     return eng.select_components(tas, options or {})
 
 
+def cross_reference(
+    category: str,
+    original: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    *,
+    original_verified: bool = True,
+    max_results: int = 25,
+) -> dict[str, Any]:
+    """Deterministic cross-reference ranker (Kelvin C++). Given an ORIGINAL part's
+    spec dict and category-appropriate candidate spec dicts (SI base units),
+    returns ``{category, original_verified, candidates:[{mpn, status, penalty,
+    params, ...}]}`` ranked best-first with the honesty gates applied.
+
+    This is the shared selection authority: Kirchhoff consumes ``candidates[]``
+    directly (program-only); Heaviside runs its LLM chooser over the same list
+    (program + LLM). No LLM ever enters Kelvin. ``original_verified=False`` tells
+    the ranker the original's specs weren't resolved, so nothing is a clean
+    'recommended' (capped at 'partial')."""
+    pk, _ = _engine()
+    return pk.cross_reference(
+        category,
+        original,
+        candidates,
+        {"original_verified": original_verified, "max_results": max_results},
+    )
+
+
 def chooser_candidates(result: dict[str, Any], limit: int = 25) -> list[dict[str, Any]]:
     """Project a SelectionResult into the compact records HS's LLM chooser
     (`component_match.select_candidate`) consumes: pick-among a ranked list, never invent."""
