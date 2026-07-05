@@ -4280,13 +4280,20 @@ def _strip_unverifiable_claims(notes: str) -> str:
 # writes "for all TAS candidates" / "not in TAS"; rewrite it to a neutral phrase
 # in every customer-facing note.
 _INTERNAL_DB_PAT = re.compile(r"\bTAS\b")
+# Internal VARIABLE / code names an LLM stage sometimes copies verbatim into a
+# customer note (FAE finding: "No candidates provided in _tas_candidates"). Strip
+# the code identifier to a plain-English phrase — case-insensitive, with or
+# without the leading underscore.
+_INTERNAL_VAR_PAT = re.compile(r"(?<![A-Za-z0-9])_?tas_candidates\b", re.IGNORECASE)
 
 
 def _sanitize_internal_names(text: str) -> str:
-    """Replace internal-only names (the ``TAS`` database) in customer-facing text
-    with a neutral phrase, so a report/API/CLI note never leaks them."""
+    """Replace internal-only names (the ``TAS`` database, internal variable names)
+    in customer-facing text with neutral phrasing, so a report/API/CLI note never
+    leaks an implementation detail."""
     if not text:
         return text
+    text = _INTERNAL_VAR_PAT.sub("the candidate list", text)
     return _INTERNAL_DB_PAT.sub("our internal catalogue", text)
 
 
@@ -4841,7 +4848,7 @@ def _stage_param_check(state: CrossRefState) -> None:
     # no note reaching the report / API / CLI leaks an implementation detail.
     for row in rows:
         _n = row.get("notes")
-        if isinstance(_n, str) and "TAS" in _n:
+        if isinstance(_n, str) and _n:
             row["notes"] = _sanitize_internal_names(_n)
 
 
