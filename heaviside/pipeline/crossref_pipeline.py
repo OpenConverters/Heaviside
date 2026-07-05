@@ -4190,7 +4190,14 @@ _UNVERIFIABLE_CLAIM_PAT = re.compile(
     # "original Isat=7.5A and DCR=36mΩ", "vs original 10V", "1.75× worse",
     # "5× margin vs original" are all fabrications.
     r"|original[^.,;:]*\d|vs\.?\s+(the\s+)?original|than (the )?original"
-    r"|\d\s*[×x]\s*(worse|better)|margin vs|reduction|improvement over",
+    r"|\d\s*[×x]\s*(worse|better)|margin vs|reduction|improvement over"
+    # …and reassurances of adequacy/headroom that CANNOT be true when the
+    # original's requirement is unknown (the FAE finding: "adequate current
+    # margin" / "voltage headroom" asserted against an undefined requirement on
+    # an unidentified original).
+    r"|adequate (current |voltage |electrical )?(margin|fit|headroom|for)"
+    r"|voltage headroom|current headroom|sufficient (margin|headroom|for)"
+    r"|meets? (the )?(requirement|application)|comfortabl[ey]|plenty of|ample ",
     re.IGNORECASE,
 )
 
