@@ -3531,8 +3531,10 @@ def _humanize_value(value: str, category: str) -> str:
     for scale, prefix in prefixes:
         if abs(v) >= scale:
             scaled = v / scale
-            if scaled == int(scaled):
-                return f"{int(scaled)}{prefix}{unit}"
+            # Tolerance, not ==: 1.5e-5/1e-6 is 15.000000000000002 in IEEE-754,
+            # which would otherwise render "15.0µH" instead of the clean "15µH".
+            if abs(scaled - round(scaled)) < 1e-9:
+                return f"{round(scaled)}{prefix}{unit}"
             return f"{scaled:.1f}{prefix}{unit}"
     return f"{v}{unit}"
 

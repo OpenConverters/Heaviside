@@ -53,7 +53,11 @@ def test_value_and_package_recovered_from_description():
     size (the 'Test BOM -V2.xlsx' failure: warnings on every row, nothing
     referenced)."""
     bom = [
-        {"ref_des": "L1", "original_mpn": "SRR1260-150M",
+        # An MPN NOT in the internal catalogue, so this row exercises the
+        # description-recovery path specifically (a real SRR1260-150M is now in
+        # the DB and would backfill its canonical "15µH" instead — a different,
+        # equally-valid path covered elsewhere).
+        {"ref_des": "L1", "original_mpn": "SRR1260-150M-DISTRIBUTORONLY",
          "description": "Inductor Power Shielded Wirewound 15uH 20% 5A 0.027Ohm DCR"},
         {"ref_des": "L2", "original_mpn": "0402CS-10NXGLU",
          "description": "Inductor RF Chip 0.01uH 2% 250MHz 0.48A 0.2Ohm DCR 0402"},
