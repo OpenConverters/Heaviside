@@ -29,6 +29,11 @@ class SimDerivedStress:
     i_avg: float | None = None
     i_rms: float | None = None
     p_dissipated: float | None = None
+    # For a switching inductor: the ripple-derived minimum inductance (H) the
+    # circuit needs. Lets the cross-ref size a null-MPN inductor from the
+    # operating point (not just the BOM value) when in-kind parts fail the
+    # current gate. None for non-inductor refs or when it can't be derived.
+    l_required: float | None = None
 
 
 class SubstitutionStatus(StrEnum):

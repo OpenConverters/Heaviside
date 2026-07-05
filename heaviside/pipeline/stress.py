@@ -169,6 +169,40 @@ def buck_stresses(spec: Mapping[str, Any], *, op_index: int = 0) -> ComponentStr
     )
 
 
+def _fsw(op: Mapping[str, Any]) -> float | None:
+    f = op.get("switchingFrequency")
+    return float(f) if isinstance(f, (int, float)) and f > 0 else None
+
+
+def required_inductance(topology: str, spec: Mapping[str, Any], *, op_index: int = 0) -> float | None:
+    """Minimum main-inductor inductance (H) needed to hold the peak-to-peak
+    current ripple within the spec's ``currentRippleRatio`` — the value a
+    designer sizes L to. Worst case is taken at Vin_max for a buck (ripple grows
+    with Vin). Returns None when the topology isn't supported here or a required
+    field (fsw, ripple, V/I) is missing — the caller then does NOT size the part
+    (no fabricated inductance).
+
+    Buck:  L = Vout·(Vin_max − Vout) / (Vin_max · fsw · ΔI_L),  ΔI_L = ripple·Iout
+    """
+    topo = (topology or "").strip().lower()
+    try:
+        op = _op_at(spec, op_index, "L-sizing")
+        fsw = _fsw(op)
+        if fsw is None:
+            return None
+        ripple = _ripple_pp(spec)
+        if topo == "buck":
+            vmax = _vmax(spec, "L-sizing")
+            vout, iout = _vout_iout(spec, "L-sizing", op_index=op_index)
+            if vout >= vmax or iout <= 0:
+                return None
+            di_l = ripple * iout
+            return vout * (vmax - vout) / (vmax * fsw * di_l)
+    except StressDerivationError:
+        return None
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Boost stresses (Maniktala Ch.2)
 # ---------------------------------------------------------------------------
@@ -1201,6 +1235,7 @@ def derive_stress_by_ref(
         _vout, iout = _vout_iout(spec, "design")
     except StressDerivationError:
         iout = None
+    l_req = required_inductance(topology, spec)
 
     out: dict[str, Any] = {}
     for comp in bom:
@@ -1221,6 +1256,8 @@ def derive_stress_by_ref(
             kw.update(i_peak=cs.id_stress)
             if iout is not None:
                 kw.update(i_rms=iout)
+            if l_req is not None:
+                kw.update(l_required=l_req)
         else:
             continue
         out[ref] = SimDerivedStress(**kw)

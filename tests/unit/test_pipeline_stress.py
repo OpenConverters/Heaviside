@@ -341,3 +341,53 @@ def test_derive_stress_by_ref_skips_rows_without_ref_des() -> None:
         [{"component_type": "magnetic"}, {"ref_des": "L2", "component_type": "magnetic"}],
     )
     assert set(by_ref) == {"L2"}
+
+
+# ---------------------------------------------------------------------------
+# Ripple-required inductance (sizes the inductor from the circuit)
+# ---------------------------------------------------------------------------
+
+
+def test_required_inductance_buck_hand_calc() -> None:
+    """Buck 24V(max 28)->5V @ 3A, ripple 0.3, fsw 500kHz:
+    L = Vout·(Vmax-Vout)/(Vmax·fsw·ΔIL), ΔIL = 0.3·3 = 0.9A
+      = 5·(28-5)/(28·5e5·0.9) = 115/1.26e7 ≈ 9.127 µH."""
+    from heaviside.pipeline.stress import required_inductance
+
+    spec = {
+        "inputVoltage": {"minimum": 20.0, "maximum": 28.0},
+        "currentRippleRatio": 0.3,
+        "operatingPoints": [
+            {"outputVoltages": [5.0], "outputCurrents": [3.0], "switchingFrequency": 500_000.0}
+        ],
+    }
+    L = required_inductance("buck", spec)
+    assert L == pytest.approx(9.127e-6, rel=1e-3)
+
+
+def test_required_inductance_none_without_fsw() -> None:
+    from heaviside.pipeline.stress import required_inductance
+
+    # No switching frequency → cannot size L → None (never fabricated).
+    assert required_inductance("buck", _BUCK_OK | {"operatingPoints": [
+        {"outputVoltages": [12.0], "outputCurrents": [5.0]}]}) is None
+
+
+def test_required_inductance_none_for_unsupported_topology() -> None:
+    from heaviside.pipeline.stress import required_inductance
+
+    assert required_inductance("flyback", _BUCK_OK) is None
+
+
+def test_derive_stress_by_ref_sets_l_required_on_inductor() -> None:
+    from heaviside.pipeline.stress import derive_stress_by_ref
+
+    spec = {
+        "inputVoltage": {"minimum": 20.0, "maximum": 28.0},
+        "currentRippleRatio": 0.3,
+        "operatingPoints": [
+            {"outputVoltages": [5.0], "outputCurrents": [3.0], "switchingFrequency": 500_000.0}
+        ],
+    }
+    by_ref = derive_stress_by_ref("buck", spec, [{"ref_des": "L1", "component_type": "magnetic"}])
+    assert by_ref["L1"].l_required == pytest.approx(9.127e-6, rel=1e-3)

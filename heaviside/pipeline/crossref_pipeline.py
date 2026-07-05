@@ -4249,7 +4249,17 @@ _UNVERIFIABLE_CLAIM_PAT = re.compile(
     # an unidentified original).
     r"|adequate (current |voltage |electrical )?(margin|fit|headroom|for)"
     r"|voltage headroom|current headroom|sufficient (margin|headroom|for)"
-    r"|meets? (the )?(requirement|application)|comfortabl[ey]|plenty of|ample ",
+    r"|meets? (the )?(requirement|application)|comfortabl[ey]|plenty of|ample "
+    # …and fabricated PACKAGE PROVENANCE: the original's package is unknown, so
+    # "upgraded from 1206", "package upgrade 0805->1210", "two sizes up" invent a
+    # baseline that doesn't exist (the FAE finding on C1 — contradictory 1206 vs
+    # 0805 "upgraded from"). Also a case-code transition "0805 to 1210".
+    r"|upgraded? from|package upgrade|sizes? up|up from \d{3,4}"
+    r"|\b\d{3,4}\s*(?:to|->|→|/)\s*\d{3,4}\b"
+    # …and generic, non-datasheet numeric ESTIMATES presented as fact
+    # ("typically achieving 400-600mA", "typically ±100-200ppm") plus bare
+    # "(assumed)" hedges that dress an unknown original spec as a match.
+    r"|typically (?:achiev|provid|[±\d])|\(assumed\)|matches original",
     re.IGNORECASE,
 )
 
@@ -4262,7 +4272,22 @@ def _strip_unverifiable_claims(notes: str) -> str:
         return ""
     sentences = re.split(r"(?<=[.!?])\s+|\s*\|\s*", notes)
     kept = [s.strip() for s in sentences if s.strip() and not _UNVERIFIABLE_CLAIM_PAT.search(s)]
-    return " ".join(kept)
+    return _sanitize_internal_names(" ".join(kept))
+
+
+# The internal parts database is never named to the customer (it is an
+# implementation detail, and "TAS" is meaningless to them). LLM prose sometimes
+# writes "for all TAS candidates" / "not in TAS"; rewrite it to a neutral phrase
+# in every customer-facing note.
+_INTERNAL_DB_PAT = re.compile(r"\bTAS\b")
+
+
+def _sanitize_internal_names(text: str) -> str:
+    """Replace internal-only names (the ``TAS`` database) in customer-facing text
+    with a neutral phrase, so a report/API/CLI note never leaks them."""
+    if not text:
+        return text
+    return _INTERNAL_DB_PAT.sub("our internal catalogue", text)
 
 
 def _force_no_substitute(row: dict[str, Any], reason: str, *, fire: str = "NO_ORIGINAL_DATA") -> None:
@@ -4358,6 +4383,9 @@ def _stage_param_check(state: CrossRefState) -> None:
     # the number of live datasheet fetches per run so a large BOM can't stall.
     _enrich_cache: dict[tuple[str, str], dict[str, Any] | None] = {}
     _enrich_budget = [_ENRICH_ORIGINALS_CAP]
+    # Target-manufacturer envelopes cached across the stage for the
+    # operating-point magnetic rescue (scanned at most once).
+    _mag_rescue_cache: dict[str, list[dict[str, Any]]] = {}
 
     # Collect the (category, mpn) pairs to resolve — original and substitute,
     # for spec'd categories only.
@@ -4602,6 +4630,47 @@ def _stage_param_check(state: CrossRefState) -> None:
                     break
             if _severe is not None:
                 _lbl, _s, _req, _k, _basis = _severe
+                # Operating-point magnetic rescue: the in-kind (BOM-value) part
+                # can't carry the circuit current, but a DIFFERENT-value target
+                # part sized from the operating point may — the FAE move (a
+                # 4.7µH/low-A part fails a 3A buck; a 10µH/8A catalogue part
+                # serves it). Only attempt when the rejection is against the
+                # actual operating current AND we could size L from the circuit.
+                _resc = None
+                if _basis == "operating current" and _stress is not None:
+                    _resc = _operating_point_magnetic_rescue(
+                        state.target_manufacturer, _stress, _mag_rescue_cache
+                    )
+                if _resc is not None:
+                    _rs = _resc["summary"]
+                    _lval = _resc["inductance"]
+                    _op_pk = getattr(_stress, "i_peak", None)
+                    _bom_val = str(row.get("original_value") or "").strip()
+                    row["status"] = "partial"
+                    row["substitute_pn"] = _rs.get("mpn")
+                    row["substitute_value"] = _humanize_value(str(_lval), "magnetic")
+                    row["substitute_package"] = _rs.get("package", "") or ""
+                    row.pop("_param_results", None)
+                    _isat = _rs.get("saturation_current")
+                    _note = (
+                        f"Sized from the operating point: in-kind {_bom_val or 'BOM-value'} parts "
+                        f"cannot carry the {_op_pk:g} A peak inductor current"
+                        if isinstance(_op_pk, (int, float))
+                        else f"Sized from the operating point: in-kind {_bom_val or 'BOM-value'} parts "
+                        "cannot carry the peak inductor current"
+                    )
+                    _note += (
+                        f"; this {row['substitute_value']} part"
+                        + (f" (Isat {_isat:g} A)" if isinstance(_isat, (int, float)) else "")
+                        + " covers the ripple requirement and the operating current"
+                    )
+                    if _bom_val:
+                        _note += f" (inductance increased from {_bom_val} → lower ripple, verify transient response)"
+                    row["notes"] = _note + "."
+                    _fires = row.setdefault("guardrail_fires", [])
+                    if "RESCUE:operating_point" not in _fires:
+                        _fires.append("RESCUE:operating_point")
+                    continue
                 _rel = "below" if _basis == "operating current" else "far below (< 70%)"
                 _force_no_substitute(
                     row,
@@ -4729,6 +4798,14 @@ def _stage_param_check(state: CrossRefState) -> None:
                 if tag not in fires:
                     fires.append(tag)
 
+    # Final pass: strip internal-only names (the "TAS" database) from every
+    # customer-facing note, wherever an LLM stage wrote them. One choke point so
+    # no note reaching the report / API / CLI leaks an implementation detail.
+    for row in rows:
+        _n = row.get("notes")
+        if isinstance(_n, str) and "TAS" in _n:
+            row["notes"] = _sanitize_internal_names(_n)
+
 
 def _best_inkind_candidate(
     comp: dict[str, Any], cat: str, candidates: list[dict[str, Any]]
@@ -4841,16 +4918,14 @@ def _best_inkind_candidate(
     return None
 
 
-def _ondemand_candidates(
+def _target_manufacturer_envelopes(
     target_manufacturer: str,
     category: str,
-    comp: dict[str, Any],
     cache: dict[str, list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    """Load + rank target-manufacturer candidates for one component straight
-    from TAS, used by the deterministic rescue when prefetch left none. The
-    per-category manufacturer rows are cached across the rescue call so each
-    NDJSON is scanned at most once."""
+    """All target-manufacturer catalogue envelopes for ``category``, loaded once
+    and cached across the call. Shared by the deterministic rescue and the
+    operating-point magnetic rescue."""
     files = {
         "capacitor": "capacitors.ndjson",
         "resistor": "resistors.ndjson",
@@ -4886,7 +4961,80 @@ def _ondemand_candidates(
             except CatalogueReadError:
                 pass
         cache[category] = rows
-    return _rank_candidates(comp, category, cache[category], max_results=50)
+    return cache[category]
+
+
+def _ondemand_candidates(
+    target_manufacturer: str,
+    category: str,
+    comp: dict[str, Any],
+    cache: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Load + rank target-manufacturer candidates for one component straight
+    from TAS, used by the deterministic rescue when prefetch left none. The
+    per-category manufacturer rows are cached across the rescue call so each
+    NDJSON is scanned at most once."""
+    envs = _target_manufacturer_envelopes(target_manufacturer, category, cache)
+    if not envs:
+        return []
+    return _rank_candidates(comp, category, envs, max_results=50)
+
+
+# Don't offer an inductor more than this multiple of the ripple-required
+# inductance: over-sizing L slows the transient response and wastes board area /
+# copper (higher DCR for a given size). The floor is l_required itself, so ripple
+# stays within spec.
+_L_OVERSIZE_CAP = 4.0
+
+
+def _operating_point_magnetic_rescue(
+    target_manufacturer: str,
+    stress: Any,
+    cache: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    """Size a switching inductor from the CIRCUIT when its in-kind (BOM-value)
+    substitutes all fail the operating-current gate. Scans the target
+    manufacturer's magnetics for a part whose inductance covers the ripple
+    requirement (l_required ≤ L ≤ cap·l_required) AND whose saturation / rated
+    current clears the operating peak / RMS. Returns the best fit's candidate
+    summary + envelope, or None. Every value is read from the catalogue record —
+    nothing is fabricated. This is the FAE move: a 4.7 µH/low-current part can't
+    serve a 3 A buck, but a 10 µH/8 A part from the same catalogue can."""
+    l_req = getattr(stress, "l_required", None)
+    i_pk = getattr(stress, "i_peak", None)
+    i_rms = getattr(stress, "i_rms", None)
+    if not (isinstance(l_req, (int, float)) and l_req > 0):
+        return None
+    if not (isinstance(i_pk, (int, float)) and i_pk > 0):
+        return None
+    best: tuple[tuple[float, float], dict[str, Any], dict[str, Any], float] | None = None
+    for env in _target_manufacturer_envelopes(target_manufacturer, "magnetic", cache):
+        s = _summarize_candidate(env, "magnetic")
+        L = s.get("inductance")
+        if not isinstance(L, (int, float)):
+            L = _extract_value(env, "magnetic")
+        isat = s.get("saturation_current")
+        # Inductance must cover the ripple requirement without absurd over-sizing.
+        if not isinstance(L, (int, float)) or L < l_req or L > _L_OVERSIZE_CAP * l_req:
+            continue
+        # Saturation current must clear the operating PEAK (a saturating inductor
+        # collapses — the hard failure the judge flagged).
+        if not isinstance(isat, (int, float)) or isat <= i_pk:
+            continue
+        # RMS/thermal rating must clear the operating RMS when both are known.
+        irms = s.get("rated_current")
+        if isinstance(i_rms, (int, float)) and i_rms > 0:
+            if not isinstance(irms, (int, float)) or irms < i_rms:
+                continue
+        # Prefer the inductance closest to (but ≥) the requirement — least
+        # over-sizing — then the most saturation-current margin as a tiebreak.
+        key = (L / l_req, -float(isat))
+        if best is None or key < best[0]:
+            best = (key, s, env, float(L))
+    if best is None:
+        return None
+    _, s, env, L = best
+    return {"summary": s, "env": env, "inductance": L}
 
 
 def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
