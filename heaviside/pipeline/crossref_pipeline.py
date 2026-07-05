@@ -4645,6 +4645,8 @@ def _stage_param_check(state: CrossRefState) -> None:
                     _rs = _resc["summary"]
                     _lval = _resc["inductance"]
                     _op_pk = getattr(_stress, "i_peak", None)
+                    _op_rms = getattr(_stress, "i_rms", None)
+                    _l_req = getattr(_stress, "l_required", None)
                     _bom_val = str(row.get("original_value") or "").strip()
                     row["status"] = "partial"
                     row["substitute_pn"] = _rs.get("mpn")
@@ -4652,21 +4654,43 @@ def _stage_param_check(state: CrossRefState) -> None:
                     row["substitute_package"] = _rs.get("package", "") or ""
                     row.pop("_param_results", None)
                     _isat = _rs.get("saturation_current")
+                    _irms = _rs.get("rated_current")
+                    # Honest rationale: the value is sized to the RIPPLE spec (the
+                    # true reason it differs from the BOM), and the part is checked
+                    # against the operating current — NOT "in-kind parts can't carry
+                    # the current" (false: some BOM-value parts can; the value is
+                    # simply wrong for the ripple target).
+                    _req_txt = (
+                        f"≈{_humanize_value(str(_l_req), 'magnetic')}"
+                        if isinstance(_l_req, (int, float))
+                        else "a higher value"
+                    )
                     _note = (
-                        f"Sized from the operating point: in-kind {_bom_val or 'BOM-value'} parts "
-                        f"cannot carry the {_op_pk:g} A peak inductor current"
-                        if isinstance(_op_pk, (int, float))
-                        else f"Sized from the operating point: in-kind {_bom_val or 'BOM-value'} parts "
-                        "cannot carry the peak inductor current"
+                        f"Sized to the design's ripple spec, which needs {_req_txt}"
+                        + (
+                            f"; the {_bom_val} BOM value under-sizes L (more ripple than specified)"
+                            if _bom_val
+                            else ""
+                        )
+                        + f". This {row['substitute_value']} Würth part meets the required inductance and "
+                        "the operating current"
                     )
-                    _note += (
-                        f"; this {row['substitute_value']} part"
-                        + (f" (Isat {_isat:g} A)" if isinstance(_isat, (int, float)) else "")
-                        + " covers the ripple requirement and the operating current"
-                    )
-                    if _bom_val:
-                        _note += f" (inductance increased from {_bom_val} → lower ripple, verify transient response)"
-                    row["notes"] = _note + "."
+                    _curbits = []
+                    if isinstance(_op_pk, (int, float)):
+                        _curbits.append(f"{_op_pk:g} A peak")
+                    if isinstance(_op_rms, (int, float)):
+                        _curbits.append(f"{_op_rms:g} A RMS")
+                    if _curbits:
+                        _note += " (" + " / ".join(_curbits) + ")"
+                    _ratebits = []
+                    if isinstance(_isat, (int, float)):
+                        _ratebits.append(f"Isat {_isat:g} A")
+                    if isinstance(_irms, (int, float)):
+                        _ratebits.append(f"IR {_irms:g} A")
+                    if _ratebits:
+                        _note += " — " + ", ".join(_ratebits)
+                    _note += ". Verify loop/transient response for the increased inductance."
+                    row["notes"] = _note
                     _fires = row.setdefault("guardrail_fires", [])
                     if "RESCUE:operating_point" not in _fires:
                         _fires.append("RESCUE:operating_point")
@@ -4985,6 +5009,39 @@ def _ondemand_candidates(
 # copper (higher DCR for a given size). The floor is l_required itself, so ripple
 # stays within spec.
 _L_OVERSIZE_CAP = 4.0
+# Saturation-current headroom above the operating peak — a switcher wants margin
+# on Isat, but not the 3–4× a max-current block would give (over-dimensioning is
+# bulk + cost, not merit — the FAE finding). 1.15 clears the peak with a little
+# room while still letting a right-sized part win.
+_ISAT_MARGIN = 1.15
+
+
+# A flat SMD power inductor is wider than it is tall; a thin, tall cylinder is a
+# leaded/axial choke (e.g. 1.2×1.2×8 mm), which is NOT a drop-in for an SMD buck.
+_MAX_HEIGHT_TO_FOOTPRINT = 1.5
+# A power inductor carrying amps has a real footprint; a sub-2×2 mm "area" is bad
+# data or a signal part mis-sized — don't let it win the smallest-footprint sort.
+_MIN_PLAUSIBLE_FOOTPRINT_MM2 = 4.0
+
+
+def _footprint_area_mm2(summary: dict[str, Any]) -> float:
+    """length × width (mm²) of an SMD-like power inductor, or +inf when the size
+    is unknown, implausibly small, or a tall leaded/axial geometry (height ≫
+    footprint) — so the right-sizing sort prefers a real compact SMD part over a
+    thin tall choke or a part we can't compare."""
+    dims = summary.get("dimensions_mm") or summary.get("dimensions") or {}
+    if not isinstance(dims, dict):
+        return float("inf")
+    length, width, height = dims.get("length"), dims.get("width"), dims.get("height")
+    if not (isinstance(length, (int, float)) and isinstance(width, (int, float)) and length > 0 and width > 0):
+        return float("inf")
+    area = float(length) * float(width)
+    if area < _MIN_PLAUSIBLE_FOOTPRINT_MM2:
+        return float("inf")
+    # A tall part (height >> footprint) is a leaded/axial choke, not an SMD chip.
+    if isinstance(height, (int, float)) and height > _MAX_HEIGHT_TO_FOOTPRINT * max(length, width):
+        return float("inf")
+    return area
 
 
 def _operating_point_magnetic_rescue(
@@ -4993,13 +5050,14 @@ def _operating_point_magnetic_rescue(
     cache: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any] | None:
     """Size a switching inductor from the CIRCUIT when its in-kind (BOM-value)
-    substitutes all fail the operating-current gate. Scans the target
-    manufacturer's magnetics for a part whose inductance covers the ripple
-    requirement (l_required ≤ L ≤ cap·l_required) AND whose saturation / rated
-    current clears the operating peak / RMS. Returns the best fit's candidate
-    summary + envelope, or None. Every value is read from the catalogue record —
-    nothing is fabricated. This is the FAE move: a 4.7 µH/low-current part can't
-    serve a 3 A buck, but a 10 µH/8 A part from the same catalogue can."""
+    substitute fails the operating-current gate. Scans the target manufacturer's
+    magnetics for a part whose inductance covers the ripple requirement
+    (l_required ≤ L ≤ cap·l_required) AND whose saturation / rated current clears
+    the operating peak / RMS with margin — then RIGHT-SIZES: among the qualifying
+    parts it picks the SMALLEST board footprint, not the biggest current rating
+    (a 12 A / 13 mm block for a 3 A buck is over-dimensioned bulk, not merit — the
+    FAE finding). Returns the best fit's summary + envelope, or None. Every value
+    is read from the catalogue record — nothing is fabricated."""
     l_req = getattr(stress, "l_required", None)
     i_pk = getattr(stress, "i_peak", None)
     i_rms = getattr(stress, "i_rms", None)
@@ -5007,7 +5065,7 @@ def _operating_point_magnetic_rescue(
         return None
     if not (isinstance(i_pk, (int, float)) and i_pk > 0):
         return None
-    best: tuple[tuple[float, float], dict[str, Any], dict[str, Any], float] | None = None
+    best: tuple[tuple[float, float, float], dict[str, Any], dict[str, Any], float] | None = None
     for env in _target_manufacturer_envelopes(target_manufacturer, "magnetic", cache):
         s = _summarize_candidate(env, "magnetic")
         L = s.get("inductance")
@@ -5017,18 +5075,20 @@ def _operating_point_magnetic_rescue(
         # Inductance must cover the ripple requirement without absurd over-sizing.
         if not isinstance(L, (int, float)) or L < l_req or L > _L_OVERSIZE_CAP * l_req:
             continue
-        # Saturation current must clear the operating PEAK (a saturating inductor
-        # collapses — the hard failure the judge flagged).
-        if not isinstance(isat, (int, float)) or isat <= i_pk:
+        # Saturation current must clear the operating PEAK with headroom (a
+        # saturating inductor collapses — the hard failure).
+        if not isinstance(isat, (int, float)) or isat < _ISAT_MARGIN * i_pk:
             continue
         # RMS/thermal rating must clear the operating RMS when both are known.
         irms = s.get("rated_current")
         if isinstance(i_rms, (int, float)) and i_rms > 0:
             if not isinstance(irms, (int, float)) or irms < i_rms:
                 continue
-        # Prefer the inductance closest to (but ≥) the requirement — least
-        # over-sizing — then the most saturation-current margin as a tiebreak.
-        key = (L / l_req, -float(isat))
+        # Right-sizing: prefer the SMALLEST board footprint, then the inductance
+        # closest to the requirement, then the least saturation-current over-
+        # margin. This picks a compact ~6×6 mm / ~5 A part over a 13 mm / 12 A
+        # block that merely also happens to fit.
+        key = (_footprint_area_mm2(s), L / l_req, float(isat))
         if best is None or key < best[0]:
             best = (key, s, env, float(L))
     if best is None:

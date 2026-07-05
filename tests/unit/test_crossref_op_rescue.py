@@ -87,10 +87,43 @@ def test_low_isat_inkind_sub_is_rescued_not_rejected() -> None:
     assert row["status"] == "partial"
     assert "RESCUE:operating_point" in row.get("guardrail_fires", [])
     assert row["substitute_pn"] != low  # a different, adequately-rated part
-    assert "operating point" in row["notes"].lower()
+    # The note states the RIPPLE reason (not a false "can't carry current"), and
+    # references the operating current the part meets.
+    _n = row["notes"].lower()
+    assert "ripple" in _n and "operating current" in _n
+    assert "cannot carry" not in _n
 
 
 def test_no_rescue_without_derivable_inductance() -> None:
     # No l_required (e.g. topology we can't size) → no rescue, returns None.
     stress = SimpleNamespace(l_required=None, i_peak=3.45, i_rms=3.0)
     assert _operating_point_magnetic_rescue("Würth Elektronik", stress, {}) is None
+
+
+def test_rescue_right_sizes_compact_smd_not_a_high_current_block() -> None:
+    """Over-dimensioning is not merit: among parts that meet the ripple + current,
+    the rescue must pick a COMPACT SMD footprint, not the biggest high-current
+    block that merely also fits (the FAE finding on the 13mm/12A pick)."""
+    stress = _stress_L1()
+    resc = _operating_point_magnetic_rescue("Würth Elektronik", stress, {})
+    assert resc is not None
+    from heaviside.pipeline.crossref_pipeline import _footprint_area_mm2
+
+    area = _footprint_area_mm2(resc["summary"])
+    # A right-sized buck inductor is a small chip, not a 13×12.8mm (~166mm²) block.
+    assert area < 60.0, f"picked an over-sized {area:.0f}mm² part"
+    # Still clears the operating peak with the saturation margin.
+    assert resc["summary"]["saturation_current"] >= 1.15 * stress.i_peak
+
+
+def test_footprint_metric_rejects_tall_leaded_and_tiny() -> None:
+    from heaviside.pipeline.crossref_pipeline import _footprint_area_mm2
+
+    # A flat SMD chip: real footprint.
+    assert _footprint_area_mm2({"dimensions_mm": {"length": 6.0, "width": 6.0, "height": 3.0}}) == 36.0
+    # A thin tall cylinder (leaded/axial choke): rejected → inf.
+    assert _footprint_area_mm2({"dimensions_mm": {"length": 1.2, "width": 1.2, "height": 8.0}}) == float("inf")
+    # Implausibly small footprint for a power inductor: rejected → inf.
+    assert _footprint_area_mm2({"dimensions_mm": {"length": 1.0, "width": 1.0, "height": 0.5}}) == float("inf")
+    # Unknown dimensions: inf (can't compare).
+    assert _footprint_area_mm2({}) == float("inf")
