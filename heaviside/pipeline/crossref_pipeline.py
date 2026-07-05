@@ -4216,11 +4216,14 @@ def _force_no_substitute(row: dict[str, Any], reason: str, *, fire: str = "NO_OR
     for f in ("substitute_value", "substitute_voltage", "substitute_package"):
         row[f] = ""
     row.pop("_param_results", None)
-    # Strip the LLM's fabricated original-spec claims from the carried-over prose
-    # (e.g. "Original ... typical Isat ~2.5-3.5A" contradicting the deterministic
-    # 11A gate). The authoritative statement is `reason`, built from real data.
-    prior = _strip_unverifiable_claims((row.get("notes") or "").strip())
-    row["notes"] = (prior + " | " if prior else "") + reason
+    # On a rejection, the note is ONLY the deterministic `reason` (built from
+    # real seeker/DB data). The LLM's carried-over prose keeps inventing the
+    # original's specs (an "Isat=13A" the datasheet doesn't list, even when the
+    # seeker honestly left Isat null) — a datasheet-honesty violation the FAE
+    # rejects — so it is dropped entirely rather than sanitised sentence by
+    # sentence. Any deterministic footprint/param note is irrelevant once the row
+    # is no_substitute.
+    row["notes"] = reason
     fires = row.setdefault("guardrail_fires", [])
     if fire not in fires:
         fires.append(fire)
