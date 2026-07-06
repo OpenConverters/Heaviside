@@ -4334,7 +4334,9 @@ _LLM_NUMERIC_GARBLING_PAT = re.compile(
     r"|\b\d+(?:\.\d+)?\s*%\s+error\b"                                     # "55% error" (stale value-error claim)
     r"|\bunacceptable\b"                                                  # stale contradiction ("...unacceptable")
     r"|\b\d+(?:\.\d+)?\s*A\s*(?:≥|>=|>)\s*(?:original\s+)?\d"            # "3.05A ≥ 3.25", "34A > 25"
-    r"|\b\d+(?:\.\d+)?\s*V\s*(?:≥|>=|>)\s*(?:original\s+)?\d",           # "10V > 6.3V original" (fabricated V upgrade)
+    r"|\b\d+(?:\.\d+)?\s*V\s*(?:≥|>=|>)\s*(?:original\s+)?\d"            # "10V > 6.3V original" (fabricated V upgrade)
+    r"|\bdielectric\s+maintained\b"                                      # "X7R dielectric maintained" (fabricated equivalence)
+    r"|\bmatches\s+original\b[^.|]*~",                                   # "DCR 3mΩ matches original ~8mΩ" (fabricated approx)
     re.IGNORECASE,
 )
 
@@ -5019,9 +5021,10 @@ def _stage_param_check(state: CrossRefState) -> None:
                     row["notes"] = (prior + " | " if prior else "") + (
                         f"original {row.get('original_pn') or o_mpn!r} is an automotive "
                         "(AEC-Q200) part; the proposed substitute is not automotive-qualified "
-                        "— an automotive→commercial grade downgrade (typically also a "
-                        "125 °C→85 °C temperature and dielectric-grade drop). Verify the "
-                        "design's qualification and temperature requirements before use."
+                        "— an automotive→commercial grade downgrade that loses the AEC-Q200 "
+                        "qualification the design required. Verify the substitute's temperature "
+                        "grade and dielectric class against the original (a commercial part is "
+                        "often rated to a lower temperature and/or a lower dielectric grade)."
                     )
 
         # Voltage-rating downgrade (FAE round-4 CRITICAL): a cap substitute rated
