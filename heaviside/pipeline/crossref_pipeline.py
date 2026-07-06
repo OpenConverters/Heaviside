@@ -4869,7 +4869,8 @@ def _stage_param_check(state: CrossRefState) -> None:
                             mfr, mpn, _mpn_exists_cache
                         ),
                         value_cap=1.25,
-                        orig_dims=(orig_params or {}).get("dimensions_mm"),
+                        orig_dims=(orig_params or {}).get("dimensions_mm")
+                        or _source_dims_mm(_bom.get("_source_dims_m")),
                         req_ir=_req_ir,
                     )
                     if _resc_cm is not None:
@@ -4949,7 +4950,8 @@ def _stage_param_check(state: CrossRefState) -> None:
                         mfr, mpn, _mpn_exists_cache
                     ),
                     value_cap=1.25,
-                    orig_dims=(_orig_b or {}).get("dimensions_mm"),
+                    orig_dims=(_orig_b or {}).get("dimensions_mm")
+                    or _source_dims_mm(_bomb.get("_source_dims_m")),
                     req_ir=_reqIrb,
                 )
                 if _resc_cb is not None:
