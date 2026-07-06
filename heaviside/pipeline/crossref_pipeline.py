@@ -5176,6 +5176,39 @@ def _stage_param_check(state: CrossRefState) -> None:
                     fire="MPN_PHANTOM",
                 )
 
+    # FAE-memory guard (the ONLINE half of the adversarial learning loop): a
+    # substitute a past FAE judge flagged with a real (major/critical) defect,
+    # recorded in the durable store, is capped at 'partial' and carries the known
+    # finding as a caveat — so the agent never re-ships a pick review already
+    # rejected. Conservative: it only demotes recommended/exact → partial and adds
+    # a 'verify' caveat (never a hard reject), so a slightly-broad match is harmless.
+    try:
+        from heaviside.pipeline.fae_memory import known_findings_for
+
+        for row in rows:
+            if row.get("status") not in _SUBSTITUTED_STATUSES:
+                continue
+            s_mpn = str(row.get("substitute_pn") or "").strip()
+            if not s_mpn or s_mpn == "no_substitute":
+                continue
+            _hits = known_findings_for(s_mpn)
+            if not _hits:
+                continue
+            _top = _hits[0]
+            if row.get("status") in ("recommended", "exact"):
+                row["status"] = "partial"
+            fires = row.setdefault("guardrail_fires", [])
+            _tag = f"FAE_MEMORY:{_top.get('parameter', '')}"
+            if _tag not in fires:
+                fires.append(_tag)
+                prior = (row.get("notes") or "").strip()
+                row["notes"] = (prior + " | " if prior else "") + (
+                    f"prior FAE review flagged this substitute ({_top.get('severity')}, "
+                    f"{_top.get('parameter')}): {str(_top.get('reality', ''))[:220]} Verify before use."
+                )
+    except Exception as exc:  # a memory-store hiccup must never break a crossref
+        logger.debug("FAE-memory guard skipped: %s", exc)
+
     # Final pass: (1) drop LLM numeric-adequacy garbling that would contradict the
     # correct deterministic compare-table (FAE #138 — "3.05A ≥ 3.25A, acceptable"
     # etc.), keeping deterministic caveats; (2) strip internal-only names. One
