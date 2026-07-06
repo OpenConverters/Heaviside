@@ -4333,7 +4333,8 @@ _LLM_NUMERIC_GARBLING_PAT = re.compile(
     r"|\b(?:adequate|sufficient|higher|more)\s+margin\b"                 # "adequate/higher margin"
     r"|\b\d+(?:\.\d+)?\s*%\s+error\b"                                     # "55% error" (stale value-error claim)
     r"|\bunacceptable\b"                                                  # stale contradiction ("...unacceptable")
-    r"|\b\d+(?:\.\d+)?\s*A\s*(?:≥|>=|>)\s*(?:original\s+)?\d",           # "3.05A ≥ 3.25", "34A > 25"
+    r"|\b\d+(?:\.\d+)?\s*A\s*(?:≥|>=|>)\s*(?:original\s+)?\d"            # "3.05A ≥ 3.25", "34A > 25"
+    r"|\b\d+(?:\.\d+)?\s*V\s*(?:≥|>=|>)\s*(?:original\s+)?\d",           # "10V > 6.3V original" (fabricated V upgrade)
     re.IGNORECASE,
 )
 
