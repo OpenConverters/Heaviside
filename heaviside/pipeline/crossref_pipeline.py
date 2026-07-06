@@ -4941,6 +4941,34 @@ def _stage_param_check(state: CrossRefState) -> None:
                         "design's qualification and temperature requirements before use."
                     )
 
+        # Voltage-rating downgrade (FAE round-4 CRITICAL): a cap substitute rated
+        # BELOW the original's voltage (C19 10 V for a 50 V original; C2 6.3 V for
+        # 16 V) risks over-voltage failure and must never ship as recommended/exact
+        # — a rating must be ≥ the original. Flag + demote when both ratings are
+        # known (DB record or BOM). We can't know the node voltage, so it stays a
+        # loud partial ('verify the node is below the substitute's rating'), not an
+        # auto-reject — but it is never sold as a clean match.
+        if cat == "capacitor" and has_sub:
+            _ov = _to_volts((orig_params or {}).get("voltage")) or _to_volts(
+                row.get("original_voltage")
+            )
+            _sv = _to_volts((sub_params or {}).get("voltage")) or _to_volts(
+                row.get("substitute_voltage")
+            )
+            if _ov and _sv and _sv < _ov:
+                if row.get("status") in ("recommended", "exact"):
+                    row["status"] = "partial"
+                fires = row.setdefault("guardrail_fires", [])
+                if "VOLTAGE_DOWNGRADE" not in fires:
+                    fires.append("VOLTAGE_DOWNGRADE")
+                    prior = (row.get("notes") or "").strip()
+                    row["notes"] = (prior + " | " if prior else "") + (
+                        f"voltage-rating DOWNGRADE: substitute {_sv:g} V is below the original's "
+                        f"{_ov:g} V — a rating must be ≥ the original, so this is NOT a drop-in "
+                        "unless the node voltage is confirmed below the substitute's rating "
+                        "(risk of over-voltage failure)."
+                    )
+
         # MLCC DC-bias: compare effective capacitance at the component's
         # operating voltage (from sim stress, when available). Only meaningful
         # for capacitors with a known bias and class-2 model anchors.
