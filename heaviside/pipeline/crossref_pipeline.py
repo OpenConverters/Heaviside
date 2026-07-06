@@ -4754,6 +4754,37 @@ def _stage_param_check(state: CrossRefState) -> None:
                 if _resc is not None:
                     _apply_op_rescue(row, _resc, _stress)
                     continue
+                # Current-matched in-kind rescue (FAE #130/round-4): the proposed
+                # sub is under-current, but the value-only prefetch may have starved
+                # the LLM of the RIGHT part — the catalogue can hold a same-VALUE
+                # part from a higher-current family (EVL1653F L1 1.5µH/18A → a real
+                # 1.5µH/20A+ Würth part). Re-scan the FULL catalogue for a part at
+                # the ORIGINAL's inductance meeting its Isat, and (guards) flat-SMD,
+                # value ≤1.25×, footprint ≤3× the original's — never over-dimensioned
+                # or a THT brick. Only when the original's value + Isat are known.
+                _orig_L = None
+                _ov = (orig_params or {}).get("inductance")
+                if isinstance(_ov, (int, float)) and _ov > 0:
+                    _orig_L = float(_ov)
+                else:
+                    _pL = _parse_value_si(row.get("original_value") or _bom.get("value"), "magnetic")
+                    if _pL:
+                        _orig_L = _pL
+                _orig_isat = _orig_current("saturation_current", "saturation_current", "isat")
+                if _orig_L and _orig_isat:
+                    _resc_cm = _operating_point_magnetic_rescue(
+                        state.target_manufacturer,
+                        _MagReq(_orig_L, _orig_isat, None),
+                        _mag_rescue_cache,
+                        validate_exists=lambda mfr, mpn: _mpn_datasheet_exists(
+                            mfr, mpn, _mpn_exists_cache
+                        ),
+                        value_cap=1.25,
+                        orig_dims=(orig_params or {}).get("dimensions_mm"),
+                    )
+                    if _resc_cm is not None:
+                        _apply_current_match_rescue(row, _resc_cm, _orig_L, _orig_isat, None)
+                        continue
                 _rel = "below" if _basis == "operating current" else "far below (< 70%)"
                 _force_no_substitute(
                     row,
@@ -4782,6 +4813,53 @@ def _stage_param_check(state: CrossRefState) -> None:
                 )
                 if _resc_b is not None:
                     _apply_op_rescue(row, _resc_b, _stress_b)
+                    continue
+            # No sim stress, but the LLM gave up on a magnetic (round-4): if the
+            # ORIGINAL's value + Isat can be established (enrich its datasheet if
+            # out-of-DB — the no_substitute path skipped the earlier enrichment),
+            # current-match it against the full catalogue with the same guards.
+            _orig_b = orig_params
+            if (
+                _orig_b is None
+                and o_mpn
+                and cat not in _IDENTITY_MATCHED_CATEGORIES
+                and _enrich_budget[0] > 0
+            ):
+                _ckb = (cat, o_mpn)
+                if _ckb in _enrich_cache:
+                    _orig_b = _enrich_cache[_ckb]
+                else:
+                    _enrich_budget[0] -= 1
+                    _orig_b = _enrich_original_params(
+                        str(row.get("original_pn") or o_mpn),
+                        cat,
+                        _bom_by_ref.get(row.get("ref_des")) or {},
+                    )
+                    _enrich_cache[_ckb] = _orig_b
+            _bomb = _bom_by_ref.get(row.get("ref_des")) or {}
+            _oLb = None
+            _ovb = (_orig_b or {}).get("inductance")
+            if isinstance(_ovb, (int, float)) and _ovb > 0:
+                _oLb = float(_ovb)
+            else:
+                _pLb = _parse_value_si(row.get("original_value") or _bomb.get("value"), "magnetic")
+                if _pLb:
+                    _oLb = _pLb
+            _oIsatb = (_orig_b or {}).get("saturation_current")
+            _oIsatb = float(_oIsatb) if isinstance(_oIsatb, (int, float)) and _oIsatb > 0 else None
+            if _oLb and _oIsatb:
+                _resc_cb = _operating_point_magnetic_rescue(
+                    state.target_manufacturer,
+                    _MagReq(_oLb, _oIsatb, None),
+                    _mag_rescue_cache,
+                    validate_exists=lambda mfr, mpn: _mpn_datasheet_exists(
+                        mfr, mpn, _mpn_exists_cache
+                    ),
+                    value_cap=1.25,
+                    orig_dims=(_orig_b or {}).get("dimensions_mm"),
+                )
+                if _resc_cb is not None:
+                    _apply_current_match_rescue(row, _resc_cb, _oLb, _oIsatb, None)
                     continue
 
         # P1 — UNVERIFIED ORIGINAL: when the original part could not be
@@ -5324,6 +5402,89 @@ def _dims_area_mm2(dims: Any) -> float | None:
     if isinstance(L, (int, float)) and isinstance(W, (int, float)) and L > 0 and W > 0:
         return float(L) * float(W)
     return None
+
+
+class _MagReq:
+    """A minimal duck-typed stress carrier so the operating-point magnetic rescue
+    (which ranks the FULL target catalogue by value-close + current-adequate +
+    smallest-footprint) can be driven from a KNOWN part's requirement instead of a
+    sim operating point. Used by the current-matched rescue: l_required = the
+    original's inductance, i_peak = the original's Isat — so the rescue returns a
+    Würth part that matches the original's value AND meets its current."""
+
+    __slots__ = ("l_required", "i_peak", "i_rms", "v_peak")
+
+    def __init__(self, l_required: float, i_peak: float, i_rms: float | None) -> None:
+        self.l_required = l_required
+        self.i_peak = i_peak
+        self.i_rms = i_rms
+        self.v_peak = None
+
+
+def _apply_current_match_rescue(
+    row: dict[str, Any],
+    resc: dict[str, Any],
+    orig_L: float | None,
+    isat_req: float | None,
+    ir_req: float | None,
+) -> None:
+    """Patch a magnetic ROW with an in-kind, current-matched substitute (status
+    partial) when the value-proximity prefetch surfaced only under-current parts
+    for a high-current original but the catalogue holds a footprint-compatible
+    higher-current part at the same value (FAE: EVL1653F L1 1.5µH/18A → WE-XHMI
+    74439370150 1.5µH/20A). The note cites value + Isat and quantifies the
+    footprint change honestly — never a thermal proxy, never over-dimensioned
+    (the rescue's guards enforce value ≤1.25×, flat-SMD, footprint ≤3× original)."""
+    s = resc["summary"]
+    lval = resc["inductance"]
+    row["status"] = "partial"
+    row["substitute_pn"] = s.get("mpn")
+    row["substitute_value"] = _humanize_value(str(lval), "magnetic")
+    row["substitute_package"] = s.get("package", "") or ""
+    row.pop("_param_results", None)
+    isat = s.get("saturation_current")
+    irms = s.get("rated_current")
+    Lt = (
+        _humanize_value(str(orig_L), "magnetic")
+        if isinstance(orig_L, (int, float))
+        else "the original value"
+    )
+    note = (
+        f"In-kind current-matched substitute: this {row['substitute_value']} Würth "
+        f"part matches the original's {Lt} inductance and meets its current rating"
+    )
+    reqbits = []
+    if isinstance(isat_req, (int, float)):
+        reqbits.append(f"Isat ≥ {isat_req:g} A")
+    if isinstance(ir_req, (int, float)):
+        reqbits.append(f"IR ≥ {ir_req:g} A")
+    if reqbits:
+        note += " (needs " + ", ".join(reqbits) + ")"
+    ratebits = []
+    if isinstance(isat, (int, float)):
+        ratebits.append(f"Isat {isat:g} A")
+    if isinstance(irms, (int, float)):
+        ratebits.append(f"IR {irms:g} A")
+    if ratebits:
+        note += " — this part: " + ", ".join(ratebits)
+    _oa = resc.get("orig_area_mm2")
+    _sa = resc.get("sub_area_mm2")
+    if isinstance(_oa, (int, float)) and isinstance(_sa, (int, float)) and _oa > 0:
+        _ratio = _sa / _oa
+        if _ratio >= 1.3:
+            note += (
+                f". Footprint is ~{_ratio:.1f}× the original's board area "
+                f"({_sa:.0f} vs {_oa:.0f} mm²) — verify board/land-pattern fit, not a pure drop-in"
+            )
+        else:
+            note += ". Verify the footprint fits the original's board space"
+    else:
+        note += ". Verify the footprint fits the original's board space"
+    note += "."
+    row["notes"] = note
+    fires = row.setdefault("guardrail_fires", [])
+    if "RESCUE:current_match" not in fires:
+        fires.append("RESCUE:current_match")
 
 
 def _is_flat_smd_geometry(dims: Any) -> bool:

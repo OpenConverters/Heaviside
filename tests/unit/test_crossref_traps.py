@@ -53,6 +53,7 @@ def _state(rows: list[dict], source_bom: list[dict] | None = None):
         crossref_result=rows,
         stress_by_ref={},
         source_bom=source_bom if source_bom is not None else rows,
+        target_manufacturer="Würth Elektronik",
     )
 
 
@@ -142,8 +143,10 @@ class TestPrimaryValueGateStage:
 
     def test_severe_isat_shortfall_rejected(self):
         # P3: original 74437377015 (Isat 25.5A) vs substitute 7440320015
-        # (Isat 2.1A) — far below 70% → the substitute would saturate; must be
-        # no_substitute, not a coverage-inflating 'partial'. Both in the DB.
+        # (Isat 2.1A) — far below 70% → the garbage substitute must never ship.
+        # The current-match rescue may REPLACE it with a real same-value part that
+        # meets the 25.5A rating (a better outcome than no_substitute); either way
+        # the 2.1A part is gone and the row is never 'recommended'/'exact'.
         row = {
             "ref_des": "L1", "component_type": "magnetic",
             "original_pn": "74437377015", "original_value": "1.5µH",
@@ -151,8 +154,13 @@ class TestPrimaryValueGateStage:
             "status": "recommended", "notes": "",
         }
         _stage_param_check(_state([row]))
-        assert row["status"] == "no_substitute"
-        assert any(f.startswith("CURRENT:") for f in row.get("guardrail_fires", []))
+        assert row["status"] not in ("recommended", "exact")
+        assert row.get("substitute_pn") != "7440320015"  # garbage 2.1A part gone
+        fires = row.get("guardrail_fires", [])
+        if row["status"] == "no_substitute":
+            assert any(f.startswith("CURRENT:") for f in fires)
+        else:  # rescued to a real current-adequate part
+            assert row["status"] == "partial" and "RESCUE:current_match" in fires
 
     def test_bom_rated_current_rejects_undersized_out_of_db_original(self):
         # P3 back-stop: the original isn't in the DB, but the BOM states 18 A —
