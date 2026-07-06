@@ -4771,10 +4771,19 @@ def _stage_param_check(state: CrossRefState) -> None:
                     if _pL:
                         _orig_L = _pL
                 _orig_isat = _orig_current("saturation_current", "saturation_current", "isat")
+                _orig_ir = _orig_current("rated_current", "rated_current", "current", "i_rms")
+                # A drop-in must handle the current BOTH at saturation (Isat) AND
+                # thermally (Irms) — gating on Isat alone shipped a 1.75 A-rated part
+                # for a 3.25 A original (FAE round-4). Require the candidate's IR ≥
+                # the original's IR (or, when the original's IR is unknown, ≥ its
+                # Isat as a conservative thermal floor). The footprint guard keeps
+                # this from over-dimensioning: an IR-adequate part that doesn't fit
+                # ≤3× the original's area is rejected → honest no_substitute.
+                _req_ir = _orig_ir or _orig_isat
                 if _orig_L and _orig_isat:
                     _resc_cm = _operating_point_magnetic_rescue(
                         state.target_manufacturer,
-                        _MagReq(_orig_L, _orig_isat, None),
+                        _MagReq(_orig_L, _orig_isat, _req_ir),
                         _mag_rescue_cache,
                         validate_exists=lambda mfr, mpn: _mpn_datasheet_exists(
                             mfr, mpn, _mpn_exists_cache
@@ -4783,7 +4792,7 @@ def _stage_param_check(state: CrossRefState) -> None:
                         orig_dims=(orig_params or {}).get("dimensions_mm"),
                     )
                     if _resc_cm is not None:
-                        _apply_current_match_rescue(row, _resc_cm, _orig_L, _orig_isat, None)
+                        _apply_current_match_rescue(row, _resc_cm, _orig_L, _orig_isat, _req_ir)
                         continue
                 _rel = "below" if _basis == "operating current" else "far below (< 70%)"
                 _force_no_substitute(
@@ -4847,10 +4856,13 @@ def _stage_param_check(state: CrossRefState) -> None:
                     _oLb = _pLb
             _oIsatb = (_orig_b or {}).get("saturation_current")
             _oIsatb = float(_oIsatb) if isinstance(_oIsatb, (int, float)) and _oIsatb > 0 else None
+            _oIrb = (_orig_b or {}).get("rated_current")
+            _oIrb = float(_oIrb) if isinstance(_oIrb, (int, float)) and _oIrb > 0 else None
+            _reqIrb = _oIrb or _oIsatb
             if _oLb and _oIsatb:
                 _resc_cb = _operating_point_magnetic_rescue(
                     state.target_manufacturer,
-                    _MagReq(_oLb, _oIsatb, None),
+                    _MagReq(_oLb, _oIsatb, _reqIrb),
                     _mag_rescue_cache,
                     validate_exists=lambda mfr, mpn: _mpn_datasheet_exists(
                         mfr, mpn, _mpn_exists_cache
@@ -4859,7 +4871,7 @@ def _stage_param_check(state: CrossRefState) -> None:
                     orig_dims=(_orig_b or {}).get("dimensions_mm"),
                 )
                 if _resc_cb is not None:
-                    _apply_current_match_rescue(row, _resc_cb, _oLb, _oIsatb, None)
+                    _apply_current_match_rescue(row, _resc_cb, _oLb, _oIsatb, _reqIrb)
                     continue
 
         # P1 — UNVERIFIED ORIGINAL: when the original part could not be
