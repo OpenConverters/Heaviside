@@ -4289,10 +4289,14 @@ _LLM_NUMERIC_GARBLING_PAT = re.compile(
     r"|\b(?:margin|acceptable|adequate)\b[^.|]*\b\d+(?:\.\d+)?\s*A\b"    # reversed order
     r"|\b\d+(?:\.\d+)?\s*%\s*(?:margin|derating)\b"                      # "4% margin", "47% derating"
     r"|\bderating\b"                                                      # any derating claim (LLM-only)
-    r"|\b(?:higher|superior|better)\s+temp\w*\s+rating"                  # fabricated temperature upgrade
+    r"|\b(?:higher|superior|better|improved)\s+temp\w*(?:\s+rating|\s+performance)?"  # fabricated temp upgrade
+    r"|\bupgraded?\s+to\s+\d+\s*°?\s*C"                                  # "upgraded to 125°C"
+    r"|\(\s*was\s+\d+\s*°?\s*C\s*\)"                                     # "(was 85°C)"
     r"|\bexceeds\b[^.|]*\b(?:original|requirement)\b"                    # "exceeds original/requirement …"
     r"|\bviable only if\b"                                                # LLM hedge ("viable only if Ipeak<7A")
-    r"|\b(?:adequate|sufficient)\s+margin\b"                             # "adequate margin"
+    r"|\b(?:adequate|sufficient|higher|more)\s+margin\b"                 # "adequate/higher margin"
+    r"|\b\d+(?:\.\d+)?\s*%\s+error\b"                                     # "55% error" (stale value-error claim)
+    r"|\bunacceptable\b"                                                  # stale contradiction ("...unacceptable")
     r"|\b\d+(?:\.\d+)?\s*A\s*(?:≥|>=|>)\s*(?:original\s+)?\d",           # "3.05A ≥ 3.25", "34A > 25"
     re.IGNORECASE,
 )
