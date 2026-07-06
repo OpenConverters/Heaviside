@@ -4275,6 +4275,45 @@ _UNVERIFIABLE_CLAIM_PAT = re.compile(
 )
 
 
+# LLM note prose that asserts a NUMERIC ADEQUACY/MARGIN judgment which the
+# deterministic compare-table already renders correctly (and which the LLM often
+# gets WRONG — the FAE round-3 finding: "3.05A ≥ 3.25A with 4% margin, acceptable"
+# [3.05<3.25], "8.4A vs 18A, 47% derating" [confusing Irms for Isat], "34A vs 25A"
+# [phantom], "higher temp rating 125 vs 85" [fabricated upgrade]). We drop these
+# sentences and let the deterministic params-table + verdicts speak. Keyed on the
+# adequacy VERB (margin/derating/acceptable/adequate/exceeds/viable-if/higher-temp),
+# NOT bare numbers — so deterministic NEGATIVE caveats ("Isat 7.8A is far below the
+# 18A original", "automotive→commercial downgrade", "verify board space") survive.
+_LLM_NUMERIC_GARBLING_PAT = re.compile(
+    r"\b\d+(?:\.\d+)?\s*A\b[^.|]*\b(?:margin|acceptable|adequate)\b"     # "3.05A … margin/acceptable/adequate"
+    r"|\b(?:margin|acceptable|adequate)\b[^.|]*\b\d+(?:\.\d+)?\s*A\b"    # reversed order
+    r"|\b\d+(?:\.\d+)?\s*%\s*(?:margin|derating)\b"                      # "4% margin", "47% derating"
+    r"|\bderating\b"                                                      # any derating claim (LLM-only)
+    r"|\b(?:higher|superior|better)\s+temp\w*\s+rating"                  # fabricated temperature upgrade
+    r"|\bexceeds\b[^.|]*\b(?:original|requirement)\b"                    # "exceeds original/requirement …"
+    r"|\bviable only if\b"                                                # LLM hedge ("viable only if Ipeak<7A")
+    r"|\b(?:adequate|sufficient)\s+margin\b"                             # "adequate margin"
+    r"|\b\d+(?:\.\d+)?\s*A\s*(?:≥|>=|>)\s*(?:original\s+)?\d",           # "3.05A ≥ 3.25", "34A > 25"
+    re.IGNORECASE,
+)
+
+
+def _strip_llm_numeric_garbling(notes: str) -> str:
+    """Drop LLM sentences that assert a numeric adequacy/margin/derating judgment
+    (the deterministic table already carries the correct figures + verdict). Keeps
+    every non-adequacy sentence — deterministic rejections, downgrade caveats,
+    footprint notes — intact."""
+    if not notes:
+        return notes
+    out_segs: list[str] = []
+    for seg in re.split(r"\s*\|\s*", notes):  # preserve deterministic-caveat segments
+        sents = re.split(r"(?<=[.!?])\s+", seg)
+        kept = [x.strip() for x in sents if x.strip() and not _LLM_NUMERIC_GARBLING_PAT.search(x)]
+        if kept:
+            out_segs.append(" ".join(kept))
+    return " | ".join(out_segs)
+
+
 def _strip_unverifiable_claims(notes: str) -> str:
     """Drop sentences that claim verification of / superiority over an original
     that was never identified. Keeps every other sentence (footprint caveats,
@@ -4924,13 +4963,14 @@ def _stage_param_check(state: CrossRefState) -> None:
                     fire="MPN_PHANTOM",
                 )
 
-    # Final pass: strip internal-only names (the "TAS" database) from every
-    # customer-facing note, wherever an LLM stage wrote them. One choke point so
-    # no note reaching the report / API / CLI leaks an implementation detail.
+    # Final pass: (1) drop LLM numeric-adequacy garbling that would contradict the
+    # correct deterministic compare-table (FAE #138 — "3.05A ≥ 3.25A, acceptable"
+    # etc.), keeping deterministic caveats; (2) strip internal-only names. One
+    # choke point so no note reaching the report / API / CLI is wrong or leaky.
     for row in rows:
         _n = row.get("notes")
         if isinstance(_n, str) and _n:
-            row["notes"] = _sanitize_internal_names(_n)
+            row["notes"] = _sanitize_internal_names(_strip_llm_numeric_garbling(_n))
 
 
 def _best_inkind_candidate(
