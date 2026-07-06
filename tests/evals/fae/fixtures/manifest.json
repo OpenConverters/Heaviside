@@ -36,151 +36,36 @@
     },
     {
       "file": "design_EVL1653F.csv",
-      "title": "ST EVL1653F reference design (real BOM)",
-      "invariants": {}
+      "title": "MPS EVL1653F-TF-00A reference design (real BOM)",
+      "invariants": {
+        "C1A": {"category": "capacitor", "original_value_si": 2.2e-5, "dielectric_class_min": "X5R"},
+        "C1B": {"category": "capacitor", "original_value_si": 1e-7, "dielectric_class_min": "X7R"},
+        "C2": {"category": "capacitor", "original_value_si": 2.2e-5, "dielectric_class_min": "X5R"},
+        "C2A": {"category": "capacitor", "original_value_si": 2.2e-5, "dielectric_class_min": "X5R"},
+        "C3": {"category": "capacitor", "original_value_si": 1e-7, "dielectric_class_min": "X7R"},
+        "C4": {"category": "capacitor", "original_value_si": 4.7e-10, "dielectric_class_min": "X7R"}
+      }
     },
     {
       "file": "design_lt80603evkit.csv",
       "title": "ADI LT80603 eval kit (real BOM)",
       "invariants": {
-        "L2": {
-          "category": "magnetic",
-          "original_value_si": 1.5e-5,
-          "primary_value_accept_lo": 0.8,
-          "primary_value_accept_hi": 1.25,
-          "note": "L2 original is Coilcraft XGL5050-153ME (15uH). Any substitute must be within 0.8-1.25x of 15uH; grounded from the identified eval-board inductor."
-        }
+        "C1": {"category": "capacitor", "original_value_si": 1e-7, "dielectric_class_min": "X7R"},
+        "C2": {"category": "capacitor", "original_value_si": 2.2e-10, "dielectric_class_min": "X7R"},
+        "C6": {"category": "capacitor", "original_value_si": 4.7e-6, "dielectric_class_min": "X7R"},
+        "C12": {"category": "capacitor", "original_value_si": 4.7e-6, "dielectric_class_min": "X7R"},
+        "C13": {"category": "capacitor", "original_value_si": 4.7e-6, "dielectric_class_min": "X7R"},
+        "C18": {"category": "capacitor", "original_value_si": 2.2e-6, "dielectric_class_min": "X7R"},
+        "C19": {"category": "capacitor", "original_value_si": 8.2e-9, "dielectric_class_min": "X7R"},
+        "C20": {"category": "capacitor", "original_value_si": 1e-6, "dielectric_class_min": "X7R"},
+        "C21": {"category": "capacitor", "original_value_si": 4.7e-5, "dielectric_class_min": "X7R"},
+        "C22": {"category": "capacitor", "original_value_si": 2.2e-5, "dielectric_class_min": "X7R"}
       }
     },
     {
       "file": "design_um3491.csv",
       "title": "ST STEVAL-0606 6V/6A step-down (real BOM)",
       "invariants": {}
-    },
-    {
-      "file": "design_lt7153sp_evb.csv",
-      "title": "ADI LT7153SP eval board (real BOM)",
-      "invariants": {
-        "C12": {
-          "category": "capacitor",
-          "dielectric_class_min": "X5R",
-          "note": "Original GRT155R70J105KE01D is a Murata X7R (temp-char R7); a substitute must not drop below X5R to a Y5V/Z5U class-worst part."
-        },
-        "R11": {
-          "category": "resistor",
-          "original_value_si": 100000.0,
-          "primary_value_accept_lo": 0.95,
-          "primary_value_accept_hi": 1.05,
-          "note": "Original ERJ-2RKF1003X is a Panasonic 100k 1% (code 1003); substitute must be ~100k."
-        }
-      }
-    },
-    {
-      "file": "design_lt8340x_evb.csv",
-      "title": "ADI LT83401/LT83402 eval board (real BOM)",
-      "invariants": {
-        "L1": {
-          "category": "magnetic",
-          "original_value_si": 2.2e-6,
-          "primary_value_accept_lo": 0.8,
-          "primary_value_accept_hi": 1.25,
-          "note": "Original XEL4020-222MEC is a Coilcraft 2.2uH (code 222 = 22x10^2 nH); substitute must be within 0.8-1.25x."
-        },
-        "C13": {
-          "category": "capacitor",
-          "dielectric_class_min": "X5R",
-          "note": "Original C1005X7R1H104K050BB is an explicit X7R (token in the MPN); substitute must not drop below X5R."
-        },
-        "R3": {
-          "category": "resistor",
-          "original_value_si": 100000.0,
-          "primary_value_accept_lo": 0.95,
-          "primary_value_accept_hi": 1.05,
-          "note": "Original ERJ-3EKF1003V is a Panasonic 100k 1% (code 1003); substitute must be ~100k."
-        }
-      }
-    },
-    {
-      "file": "design_lt83402_ta.csv",
-      "title": "ADI LT83402 typical-application BOM (real)",
-      "invariants": {
-        "L1": {
-          "category": "magnetic",
-          "original_value_si": 2.2e-6,
-          "primary_value_accept_lo": 0.8,
-          "primary_value_accept_hi": 1.25,
-          "note": "Original XGL6030-222MEC is a Coilcraft 2.2uH (code 222 = 22x10^2 nH); substitute must be within 0.8-1.25x."
-        },
-        "C4": {
-          "category": "capacitor",
-          "dielectric_class_min": "X5R",
-          "note": "Original GRM155R71H104KE14 is a Murata X7R (temp-char R7); substitute must not drop below X5R."
-        },
-        "R2": {
-          "category": "resistor",
-          "original_value_si": 47500.0,
-          "primary_value_accept_lo": 0.95,
-          "primary_value_accept_hi": 1.05,
-          "note": "Original RC0402FR-0747K5L is a Yageo 47.5k 1% (code 47K5); substitute must be ~47.5k."
-        }
-      }
-    },
-    {
-      "file": "design_lt80603_ta.csv",
-      "title": "ADI LT80603 typical-application BOM (real)",
-      "invariants": {
-        "L1": {
-          "category": "magnetic",
-          "original_value_si": 1.5e-6,
-          "primary_value_accept_lo": 0.8,
-          "primary_value_accept_hi": 1.25,
-          "note": "Original XGL4040-152ME is a Coilcraft 1.5uH (code 152 = 15x10^2 nH); substitute must be within 0.8-1.25x."
-        },
-        "CBST": {
-          "category": "capacitor",
-          "dielectric_class_min": "X5R",
-          "note": "Original GRM188R71C104K is a Murata X7R (temp-char R7); substitute must not drop below X5R."
-        },
-        "R1": {
-          "category": "resistor",
-          "original_value_si": 100000.0,
-          "primary_value_accept_lo": 0.95,
-          "primary_value_accept_hi": 1.05,
-          "note": "Original RC0603FR-07100KL is a Yageo 100k 1% (code 100K); substitute must be ~100k."
-        }
-      }
-    },
-    {
-      "file": "design_mpq3359_evb.csv",
-      "title": "MPS MPQ3359 (EVQ3359C-LE-00A) eval board (real BOM)",
-      "invariants": {
-        "L1": {
-          "category": "magnetic",
-          "original_value_si": 4.7e-6,
-          "primary_value_accept_lo": 0.8,
-          "primary_value_accept_hi": 1.25,
-          "note": "Original XEL4030-472MEB is a Coilcraft 4.7uH (code 472 = 47x10^2 nH); substitute must be within 0.8-1.25x."
-        },
-        "L2": {
-          "category": "magnetic",
-          "original_value_si": 1e-5,
-          "primary_value_accept_lo": 0.8,
-          "primary_value_accept_hi": 1.25,
-          "note": "Original XAL4040-103MEB is a Coilcraft 10uH (code 103 = 10x10^3 nH); substitute must be within 0.8-1.25x."
-        },
-        "C13": {
-          "category": "capacitor",
-          "dielectric_class_min": "X5R",
-          "note": "Original C2012X7R1H103K is an explicit X7R (token in the MPN); substitute must not drop below X5R."
-        },
-        "R12": {
-          "category": "resistor",
-          "original_value_si": 100000.0,
-          "primary_value_accept_lo": 0.95,
-          "primary_value_accept_hi": 1.05,
-          "note": "Original RC0603FR-07100KL is a Yageo 100k 1% (code 100K); substitute must be ~100k."
-        }
-      }
     }
   ],
   "_design_comment": "Reference-design fixtures drive POST /jobs/crossref/from-design: each carries a topology + operating spec + BOM so the pipeline derives per-ref operating-point stress and gates substitutes against the CIRCUIT (the FAE-parity path for null-MPN parts). Kept separate from the BOM-only 'fixtures' above because they exercise a different endpoint.",
