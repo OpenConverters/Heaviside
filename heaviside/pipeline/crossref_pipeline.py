@@ -4336,7 +4336,17 @@ _LLM_NUMERIC_GARBLING_PAT = re.compile(
     r"|\b\d+(?:\.\d+)?\s*A\s*(?:≥|>=|>)\s*(?:original\s+)?\d"            # "3.05A ≥ 3.25", "34A > 25"
     r"|\b\d+(?:\.\d+)?\s*V\s*(?:≥|>=|>)\s*(?:original\s+)?\d"            # "10V > 6.3V original" (fabricated V upgrade)
     r"|\bdielectric\s+maintained\b"                                      # "X7R dielectric maintained" (fabricated equivalence)
-    r"|\bmatches\s+original\b[^.|]*~",                                   # "DCR 3mΩ matches original ~8mΩ" (fabricated approx)
+    r"|\bmatches\s+original\b[^.|]*~"                                    # "DCR 3mΩ matches original ~8mΩ" (fabricated approx)
+    r"|\bX[567][RST]\s+dielectric\b[^.|]*\bvs\b"                         # "X7R dielectric (vs original X5R)" (fabricated compare)
+    r"|\bX[567][RST]\s*\(\s*vs\b"                                        # "X7R (vs original X5R)" parenthetical (fabricated)
+    r"|\b(?:substitute|original)\s+is\s+X[567][RST]\b"                   # "substitute is X7R"/"original is X5R" (ungrounded identity)
+    r"|\bupgrade\b[^.|]*\bstabilit"                                       # "upgrade in temperature stability"
+    r"|\bstabilit\w*[^.|]*\bupgrade\b"                                   # reversed
+    r"|\bupgrade\s+(?:in|from)\s+temp\w*"                                # "upgrade in temperature ..."
+    r"|\bhigher\s+(?:V|voltage)\b[^.|]*\bvs\b"                           # "higher V (25V vs 16V)" (phantom V upgrade)
+    r"|\beliminat\w*\s+(?:the\s+)?DC[\s-]?bias"                          # "eliminates DC bias" (rated-V headroom ≠ bias)
+    r"|\bvoltage\s+margin\s+eliminat"                                    # "voltage margin eliminates ..."
+    r"|\bceramic[\s-]class[\s-]2\s+maintained\b",                        # "ceramic-class-2 maintained" (ungrounded)
     re.IGNORECASE,
 )
 
@@ -4350,6 +4360,12 @@ def _strip_llm_numeric_garbling(notes: str) -> str:
         return notes
     out_segs: list[str] = []
     for seg in re.split(r"\s*\|\s*", notes):  # preserve deterministic-caveat segments
+        # A deterministic 'parameter check:' segment carries the authoritative
+        # table (e.g. "Dielectric: X5R vs X7R") — never strip it; the patterns
+        # target LLM prose, not the engine's own render.
+        if seg.strip().lower().startswith("parameter check"):
+            out_segs.append(seg.strip())
+            continue
         sents = re.split(r"(?<=[.!?])\s+", seg)
         kept = [x.strip() for x in sents if x.strip() and not _LLM_NUMERIC_GARBLING_PAT.search(x)]
         if kept:
@@ -4978,6 +4994,9 @@ def _stage_param_check(state: CrossRefState) -> None:
         if (
             has_sub
             and orig_params is None
+            and o_mpn != s_mpn  # not a self-substitution: an identical-MPN row IS
+            # the part — "matched on value/voltage/package only … UNVERIFIED" would
+            # contradict "already a catalogue part" (FAE EVL1653F C1B/C3/C4).
             and cat not in _IDENTITY_MATCHED_CATEGORIES
             and row.get("status") in ("recommended", "exact", "partial")
         ):
@@ -5617,9 +5636,29 @@ def _apply_current_match_rescue(
         if isinstance(orig_L, (int, float))
         else "the original value"
     )
+    # Be honest about the inductance delta — a rescue value may legitimately
+    # differ from the original (the rescue cap allows ≤1.25×), and claiming it
+    # "matches" a value it is +20% away from is exactly the table-contradicting
+    # prose the FAE catches (EVL1653F L1: 1.8µH offered as "matches 1.5µH").
+    _lpct: float | None = None
+    if isinstance(orig_L, (int, float)) and orig_L > 0 and isinstance(lval, (int, float)):
+        _lpct = (float(lval) / float(orig_L) - 1.0) * 100.0
+    if _lpct is None or abs(_lpct) < 3.0:
+        _lphrase = f"matches the original's {Lt} inductance"
+    else:
+        _lphrase = (
+            f"is the closest in-kind value to the original's {Lt} "
+            f"({row['substitute_value']} vs {Lt}, {_lpct:+.0f}%"
+            + (
+                ", within the ±20% inductor tolerance band"
+                if abs(_lpct) <= 20.0
+                else " — verify the operating point tolerates this inductance shift"
+            )
+            + ")"
+        )
     note = (
         f"In-kind current-matched substitute: this {row['substitute_value']} Würth "
-        f"part matches the original's {Lt} inductance and meets its current rating"
+        f"part {_lphrase} and meets its current rating"
     )
     reqbits = []
     if isinstance(isat_req, (int, float)):
