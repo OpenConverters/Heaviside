@@ -4308,6 +4308,29 @@ def _sanitize_internal_names(text: str) -> str:
     return _INTERNAL_DB_PAT.sub("our internal catalogue", text)
 
 
+# Automotive (AEC-Q200) qualification is encoded in the MPN by several vendors.
+# It is decodable from the part number even when the part isn't in our catalogue,
+# so we can flag a commercial-for-automotive downgrade without full identification.
+# Manufacturer-agnostic in intent: it lists each vendor's automotive convention
+# (grade of the PART), not a preferred vendor. Conservative — only well-known
+# automotive series, so a commercial part is never mis-flagged as automotive.
+_AUTOMOTIVE_MPN_PAT = re.compile(
+    r"(?:^(?:GC[MJG]|GRT|GJ8|KRM|KCM)\d)"  # Murata automotive MLCC (GCM/GCJ/GCG/GRT/GJ8/KRM/KCM); GRM = commercial
+    r"|AUTO(?:\b|$)"                        # KEMET/AVX ...AUTO suffix
+    r"|(?:^CGA\d)"                          # TDK CGA automotive
+    r"|(?:^AC\d)"                           # Yageo AC automotive
+    r"|(?:^AEC)",                            # explicit AEC marking
+    re.IGNORECASE,
+)
+
+
+def _is_automotive_grade(mpn: str) -> bool:
+    """True if the MPN denotes an automotive (AEC-Q200) part by a known vendor
+    convention. Conservative: unknown → False (never claim automotive we can't
+    read), so this only ever flags a real automotive→commercial downgrade."""
+    return bool(mpn) and bool(_AUTOMOTIVE_MPN_PAT.search(str(mpn).strip()))
+
+
 def _force_no_substitute(row: dict[str, Any], reason: str, *, fire: str = "NO_ORIGINAL_DATA") -> None:
     """Reject a proposed substitute in place: clear it, set no_substitute, append
     a reason to the notes, and record a guardrail fire. Shared by the
@@ -4762,6 +4785,30 @@ def _stage_param_check(state: CrossRefState) -> None:
                     "temperature grade and current ratings are UNVERIFIED. Confirm against "
                     "the original's datasheet before use."
                 )
+
+        # Automotive-grade downgrade (FAE #135): an automotive AEC-Q200 original
+        # (decodable from its MPN — Murata GRT/GCM, KEMET …AUTO, TDK CGA …)
+        # replaced by a non-automotive part loses the qualification the design was
+        # built around, and on an automotive rail an 85 °C commercial cap can be
+        # out of spec. Flag it even when the original isn't in the DB (the grade is
+        # in the part number), and never sell it as a clean 'recommended'/'exact'.
+        if cat == "capacitor" and has_sub:
+            _o_auto = _is_automotive_grade(row.get("original_pn") or o_mpn)
+            _s_auto = _is_automotive_grade(str(row.get("substitute_pn") or ""))
+            if _o_auto and not _s_auto:
+                if row.get("status") in ("recommended", "exact"):
+                    row["status"] = "partial"
+                fires = row.setdefault("guardrail_fires", [])
+                if "AUTOMOTIVE_DOWNGRADE" not in fires:
+                    fires.append("AUTOMOTIVE_DOWNGRADE")
+                    prior = (row.get("notes") or "").strip()
+                    row["notes"] = (prior + " | " if prior else "") + (
+                        f"original {row.get('original_pn') or o_mpn!r} is an automotive "
+                        "(AEC-Q200) part; the proposed substitute is not automotive-qualified "
+                        "— an automotive→commercial grade downgrade (typically also a "
+                        "125 °C→85 °C temperature and dielectric-grade drop). Verify the "
+                        "design's qualification and temperature requirements before use."
+                    )
 
         # MLCC DC-bias: compare effective capacitance at the component's
         # operating voltage (from sim stress, when available). Only meaningful
