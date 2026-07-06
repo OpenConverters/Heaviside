@@ -2561,6 +2561,32 @@ def _reconcile_crossref_coverage(state: CrossRefState, bom_for_llm: list[dict[st
         )
 
 
+_FABRICATED_CAP_CEILING_PAT = re.compile(
+    r"\bmax(?:imum)?\s+(?:available\s+)?cap\w*[^|]*?\b\d[\d.]*\s*[pnµu]?F\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_fabricated_cap_ceiling(notes: str) -> str:
+    """Drop an LLM 'maximum available capacitance … is NµF' sentence — the model
+    invents a catalogue ceiling it never queried (FAE trap C2: prose claimed the
+    Würth 1206 ceiling is 47µF when a 100µF/6.3V 1206 exists). We deliberately do
+    NOT substitute our own number: the internal catalogue can itself be
+    incomplete (it holds zero Würth 1206 ≥6.3V parts), so emitting "the max is X"
+    OR "none exist" from it would just fabricate catalogue completeness a
+    different way. Strip the unfounded claim; the honest verdict ("no drop-in
+    exists; retain the original") already stands. Real fix = data backfill."""
+    if not notes:
+        return notes
+    out_segs: list[str] = []
+    for seg in re.split(r"\s*\|\s*", notes):
+        sents = re.split(r"(?<=[.!?])\s+", seg)
+        kept = [x.strip() for x in sents if x.strip() and not _FABRICATED_CAP_CEILING_PAT.search(x)]
+        if kept:
+            out_segs.append(" ".join(kept))
+    return " | ".join(out_segs)
+
+
 def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
     """Extract a brief summary from a TAS envelope for the LLM."""
     summary: dict[str, Any] = {}
@@ -5084,6 +5110,13 @@ def _stage_param_check(state: CrossRefState) -> None:
         # MLCC DC-bias: compare effective capacitance at the component's
         # operating voltage (from sim stress, when available). Only meaningful
         # for capacitors with a known bias and class-2 model anchors.
+        if cat == "capacitor" and row.get("status") == "no_substitute":
+            # Strip any fabricated "max available is NµF" ceiling prose (FAE trap
+            # C2) — the honest "no drop-in; retain original" verdict stands.
+            _stripped = _strip_fabricated_cap_ceiling(row.get("notes") or "")
+            if _stripped != (row.get("notes") or ""):
+                row["notes"] = _stripped
+
         if cat == "capacitor":
             ref = row.get("ref_des", "")
             stress = state.stress_by_ref.get(ref)
