@@ -4128,6 +4128,39 @@ def _ground_row_fields_in_catalogue(state: CrossRefState) -> None:
                     row[f"substitute_{field}"] = db_sub[field]
 
 
+# EIA metric case codes (mm×10) → their imperial (in×100) equivalents, so a
+# metric-coded package matches the same physical size in imperial. Same-size only;
+# a genuine size change (0402→0805) still differs.
+_EIA_METRIC_TO_IMPERIAL = {
+    "0402": "01005", "0603": "0201", "1005": "0402", "1608": "0603",
+    "2012": "0805", "2520": "1008", "3216": "1206", "3225": "1210",
+    "4516": "1806", "4532": "1812", "5025": "2010", "6332": "2512",
+    "5750": "2220", "5650": "2220",
+}
+
+
+# Metric-ONLY codes (no imperial cap of the same digits exists), safe to convert
+# even without an explicit marker. The ambiguous ones (0402/0603/1005 exist in
+# BOTH systems meaning different sizes) are converted ONLY with a metric marker.
+_UNAMBIGUOUS_METRIC = {"1608", "2012", "2520", "3216", "3225", "4516", "4532", "5025", "6332", "5750", "5650"}
+
+
+def _normalize_package_code(pkg: str) -> str:
+    """Canonicalize a case-size code to imperial so metric and imperial forms of
+    the SAME physical size compare equal (1608m == 0603, 1005m == 0402). A bare
+    ambiguous code (0402/0603/1005 — valid in both systems) is treated as imperial
+    unless an explicit metric marker ('m'/'metric') is present, so a normal 0402
+    is never mis-converted. Unknown strings pass through."""
+    if not pkg:
+        return ""
+    p = pkg.strip().lower().replace(" ", "")
+    is_metric = bool(re.search(r"metric", p)) or bool(re.match(r"^\d{3,4}m$|^m\d{3,4}$", p))
+    digits = re.sub(r"[^0-9]", "", p)
+    if (is_metric or digits in _UNAMBIGUOUS_METRIC) and digits in _EIA_METRIC_TO_IMPERIAL:
+        return _EIA_METRIC_TO_IMPERIAL[digits]
+    return digits or p
+
+
 def build_match_detail(row: dict[str, Any]) -> dict[str, Any]:
     """Deterministic per-parameter rationale for ONE cross-reference row.
 
@@ -4164,11 +4197,14 @@ def build_match_detail(row: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    # package — string equality (case/space-insensitive)
+    # package — equality on a NORMALIZED code so a metric case size matches its
+    # imperial equivalent (1608 metric == 0603 imperial, 1005 == 0402, …) instead
+    # of a false 'differs' (FAE round-4 finding).
     o_p = str(row.get("original_package", "")).strip().lower()
     s_p = str(row.get("substitute_package", "")).strip().lower()
     if o_p or s_p:
-        verdict = "same" if (o_p and o_p == s_p) else ("differs" if (o_p and s_p) else "n/a")
+        _on, _sn = _normalize_package_code(o_p), _normalize_package_code(s_p)
+        verdict = "same" if (_on and _on == _sn) else ("differs" if (_on and _sn) else "n/a")
         params.append(
             {
                 "name": "package",
@@ -4365,6 +4401,46 @@ _AUTOMOTIVE_MPN_PAT = re.compile(
     r"|(?:^AEC)",                            # explicit AEC marking
     re.IGNORECASE,
 )
+
+
+# Murata/TDK 2-char rated-voltage codes (the code sits right before the 3-digit
+# capacitance code in GRM/GRT/GCM/GCJ/…). Decoding voltage from the MPN lets the
+# voltage-downgrade gate fire even when the original isn't in the catalogue.
+_CAP_VOLTAGE_CODE = {
+    "0E": 2.5, "0G": 4.0, "0J": 6.3, "1A": 10.0, "1C": 16.0, "1D": 20.0,
+    "1E": 25.0, "1V": 35.0, "YA": 35.0, "1H": 50.0, "2A": 100.0, "2D": 200.0,
+    "2E": 250.0, "2W": 450.0, "2J": 630.0, "3A": 1000.0, "3D": 2000.0,
+}
+# Dielectric class codes that appear LITERALLY in some vendors' MPNs (Venkel,
+# KEMET, …). Murata encodes it as a coded temp characteristic, NOT literally, so
+# we never guess it there — only decode what is unambiguously present.
+_CAP_DIELECTRIC_LITERAL = ["C0G", "NP0", "X8R", "X7T", "X7S", "X7R", "X6S", "X5R", "U2J", "Y5V", "Z5U"]
+
+
+def _decode_cap_mpn(mpn: str) -> dict[str, Any]:
+    """Best-effort decode of a capacitor's rated VOLTAGE (and dielectric when it is
+    literal) straight from the MPN — so an original that isn't in the catalogue can
+    still be voltage-gated. Returns {} when nothing is confidently decodable; never
+    guesses (a wrong decode would mis-gate)."""
+    if not mpn:
+        return {}
+    m = str(mpn).strip().upper()
+    out: dict[str, Any] = {}
+    for d in _CAP_DIELECTRIC_LITERAL:
+        if d in m:
+            out["dielectric"] = "C0G/NP0" if d in ("C0G", "NP0") else d
+            break
+    # Murata/TDK 2-char voltage code immediately before the 3-digit cap code.
+    hits = list(re.finditer(r"([0-9][A-Z])(\d{3})[A-Z]", m))
+    if hits and hits[-1].group(1) in _CAP_VOLTAGE_CODE:
+        out["voltage"] = _CAP_VOLTAGE_CODE[hits[-1].group(1)]
+    elif "dielectric" in out:
+        # Venkel/generic: 3 digits right after an explicit dielectric literal =
+        # EIA voltage code (500=50V, 101=100V, 250=25V: two sig figs × 10^mult).
+        vm = re.search(r"(?:C0G|NP0|X[5678][RST]|Y5V|Z5U)(\d)(\d)(\d)", m)
+        if vm:
+            out["voltage"] = int(vm.group(1) + vm.group(2)) * (10 ** int(vm.group(3)))
+    return out
 
 
 def _is_automotive_grade(mpn: str) -> bool:
@@ -4959,6 +5035,13 @@ def _stage_param_check(state: CrossRefState) -> None:
             _sv = _to_volts((sub_params or {}).get("voltage")) or _to_volts(
                 row.get("substitute_voltage")
             )
+            # Decode the rating from the MPN when the catalogue/BOM didn't give it
+            # (the C19 case: original C0402X7R500822KNP not in the DB but decodes to
+            # 50 V) — so the downgrade gate fires on an unidentified original too.
+            if _ov is None:
+                _ov = _decode_cap_mpn(row.get("original_pn") or o_mpn).get("voltage")
+            if _sv is None:
+                _sv = _decode_cap_mpn(str(row.get("substitute_pn") or "")).get("voltage")
             if _ov and _sv and _sv < _ov:
                 if row.get("status") in ("recommended", "exact"):
                     row["status"] = "partial"
