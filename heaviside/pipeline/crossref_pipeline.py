@@ -5615,12 +5615,27 @@ def _apply_op_rescue(row: dict[str, Any], resc: dict[str, Any], stress: Any) -> 
 
 def _dims_area_mm2(dims: Any) -> float | None:
     """length × width (mm²) of a part's footprint, or None when unknown. Used to
-    compare a rescue candidate's board area against the original's."""
+    quantify a rescue candidate's board area vs the original's for the note."""
     if not isinstance(dims, dict):
         return None
     L, W = dims.get("length"), dims.get("width")
     if isinstance(L, (int, float)) and isinstance(W, (int, float)) and L > 0 and W > 0:
         return float(L) * float(W)
+    return None
+
+
+def _dims_tuple_mm(dims: Any) -> tuple[float, float, float | None] | None:
+    """A part's (length, width, height) in mm as the tuple the main footprint
+    matcher (_footprint_tier / _footprint_penalty) consumes — so the magnetic
+    rescue gates footprint with the SAME per-axis + height rule as normal ranking
+    (not an area-only proxy that collapses aspect ratio and ignores height; the
+    FAE EVL1653F L1 finding was a taller part whose height was never compared)."""
+    if not isinstance(dims, dict):
+        return None
+    L, W, H = dims.get("length"), dims.get("width"), dims.get("height")
+    if isinstance(L, (int, float)) and isinstance(W, (int, float)) and L > 0 and W > 0:
+        h = float(H) if isinstance(H, (int, float)) and H > 0 else None
+        return (float(L), float(W), h)
     return None
 
 
@@ -5709,12 +5724,24 @@ def _apply_current_match_rescue(
         note += " — this part: " + ", ".join(ratebits)
     _oa = resc.get("orig_area_mm2")
     _sa = resc.get("sub_area_mm2")
+    # Height delta (FAE EVL1653F L1: a taller part whose +0.3 mm height was never
+    # called out). Surface it alongside the area ratio so the fit note is 3D.
+    _oh = (resc.get("orig_dims_mm") or {}).get("height")
+    _sh = (resc.get("sub_dims_mm") or {}).get("height")
+    _hbit = ""
+    if isinstance(_oh, (int, float)) and isinstance(_sh, (int, float)) and _oh > 0 and _sh > _oh * 1.02:
+        _hbit = f", and ~{_sh / _oh:.1f}× taller ({_sh:g} vs {_oh:g} mm height)"
     if isinstance(_oa, (int, float)) and isinstance(_sa, (int, float)) and _oa > 0:
         _ratio = _sa / _oa
-        if _ratio >= 1.3:
+        if _ratio >= 1.3 or _hbit:
+            _abit = (
+                f"~{_ratio:.1f}× the original's board area ({_sa:.0f} vs {_oa:.0f} mm²)"
+                if _ratio >= 1.3
+                else "the original's board area"
+            )
             note += (
-                f". Footprint is ~{_ratio:.1f}× the original's board area "
-                f"({_sa:.0f} vs {_oa:.0f} mm²) — verify board/land-pattern fit, not a pure drop-in"
+                f". Footprint is {_abit}{_hbit} — verify board/land-pattern fit "
+                "and height clearance, not a pure drop-in"
             )
         else:
             note += ". Verify the footprint fits the original's board space"
@@ -5836,14 +5863,24 @@ def _operating_point_magnetic_rescue(
                 excluded.add(mpn)
                 continue
             return None  # can't identify it to exclude → stop rather than ship it
-        # Footprint sanity vs the ORIGINAL (when its dims are known): a substitute
-        # more than max_area_ratio× the original's board area is not a drop-in — it
-        # needs a board respin (the FAE finding: a 17×12 mm brick for a 6×6 mm
-        # part). Reject and re-rank; if nothing compact enough qualifies, return
-        # None so the caller keeps its honest verdict rather than ship a misfit.
+        # Footprint sanity vs the ORIGINAL (when its dims are known): gate with the
+        # SAME per-axis + height rule the main matcher uses (_footprint_tier), not
+        # an area-only proxy — area collapses aspect ratio (a long-thin part with
+        # the same area doesn't fit a square pad) and ignores height (the FAE
+        # EVL1653F L1 finding: a taller part shipped because height was never
+        # compared). A candidate that overflows by ≥ ~2 sizes in ANY axis (tier
+        # False) needs a board respin — reject and re-rank; if nothing compact
+        # enough qualifies, return None so the caller keeps its honest verdict.
+        # `max_area_ratio` (retained for API compat) still applies as a coarser
+        # area backstop for callers that pass a tighter-than-tier bound.
+        _od = _dims_tuple_mm(orig_dims)
+        _cd = _dims_tuple_mm(picked.get("dimensions_mm"))
         _oa = _dims_area_mm2(orig_dims)
         _ca = _dims_area_mm2(picked.get("dimensions_mm"))
-        if _oa and _ca and _ca > max_area_ratio * _oa:
+        _misfit = _footprint_tier(_od, _cd) is False or (
+            bool(_oa) and bool(_ca) and _ca > max_area_ratio * _oa
+        )
+        if _misfit:
             if mpn:
                 excluded.add(mpn)
                 continue
@@ -5868,6 +5905,8 @@ def _operating_point_magnetic_rescue(
             "inductance": r["inductance"],
             "orig_area_mm2": _oa,
             "sub_area_mm2": _ca,
+            "orig_dims_mm": orig_dims if isinstance(orig_dims, dict) else None,
+            "sub_dims_mm": picked.get("dimensions_mm"),
         }
 
 
