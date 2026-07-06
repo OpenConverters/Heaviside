@@ -4783,13 +4783,14 @@ def _stage_param_check(state: CrossRefState) -> None:
                 if _orig_L and _orig_isat:
                     _resc_cm = _operating_point_magnetic_rescue(
                         state.target_manufacturer,
-                        _MagReq(_orig_L, _orig_isat, _req_ir),
+                        _MagReq(_orig_L, _orig_isat, None),
                         _mag_rescue_cache,
                         validate_exists=lambda mfr, mpn: _mpn_datasheet_exists(
                             mfr, mpn, _mpn_exists_cache
                         ),
                         value_cap=1.25,
                         orig_dims=(orig_params or {}).get("dimensions_mm"),
+                        req_ir=_req_ir,
                     )
                     if _resc_cm is not None:
                         _apply_current_match_rescue(row, _resc_cm, _orig_L, _orig_isat, _req_ir)
@@ -4862,13 +4863,14 @@ def _stage_param_check(state: CrossRefState) -> None:
             if _oLb and _oIsatb:
                 _resc_cb = _operating_point_magnetic_rescue(
                     state.target_manufacturer,
-                    _MagReq(_oLb, _oIsatb, _reqIrb),
+                    _MagReq(_oLb, _oIsatb, None),
                     _mag_rescue_cache,
                     validate_exists=lambda mfr, mpn: _mpn_datasheet_exists(
                         mfr, mpn, _mpn_exists_cache
                     ),
                     value_cap=1.25,
                     orig_dims=(_orig_b or {}).get("dimensions_mm"),
+                    req_ir=_reqIrb,
                 )
                 if _resc_cb is not None:
                     _apply_current_match_rescue(row, _resc_cb, _oLb, _oIsatb, _reqIrb)
@@ -5524,7 +5526,8 @@ def _operating_point_magnetic_rescue(
     value_cap: float | None = None,
     require_flat_smd: bool = True,
     orig_dims: Any = None,
-    max_area_ratio: float = 3.0,
+    max_area_ratio: float = 2.0,
+    req_ir: float | None = None,
 ) -> dict[str, Any] | None:
     """Size a switching inductor from the CIRCUIT when its in-kind (BOM-value)
     substitute fails the operating-current gate. Scans the target manufacturer's
@@ -5619,6 +5622,19 @@ def _operating_point_magnetic_rescue(
                 excluded.add(mpn)
                 continue
             return None
+        # Thermal (rated-current) floor: a drop-in must carry the current thermally
+        # too, not just at saturation — gating on Isat alone shipped a 1.75 A-rated
+        # part for a 3.25 A original (FAE round-4). Require rated_current ≥ req_ir
+        # (the original's IR, or its Isat when IR is unknown). Kept in Python at
+        # margin 1.0 so a part that merely MEETS the original's IR (e.g. 11.5 A vs
+        # 11 A) isn't rejected by a hidden over-margin.
+        if req_ir:
+            _cir = picked.get("rated_current")
+            if not isinstance(_cir, (int, float)) or _cir < req_ir:
+                if mpn:
+                    excluded.add(mpn)
+                    continue
+                return None
         s_full, env = full_by_mpn.get(mpn, (picked, None))
         return {
             "summary": s_full,
