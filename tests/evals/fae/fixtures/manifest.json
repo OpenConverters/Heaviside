@@ -42,7 +42,15 @@
     {
       "file": "design_lt80603evkit.csv",
       "title": "ADI LT80603 eval kit (real BOM)",
-      "invariants": {}
+      "invariants": {
+        "L2": {
+          "category": "magnetic",
+          "original_value_si": 1.5e-5,
+          "primary_value_accept_lo": 0.8,
+          "primary_value_accept_hi": 1.25,
+          "note": "L2 original is Coilcraft XGL5050-153ME (15uH). Any substitute must be within 0.8-1.25x of 15uH; grounded from the identified eval-board inductor."
+        }
+      }
     },
     {
       "file": "design_um3491.csv",
