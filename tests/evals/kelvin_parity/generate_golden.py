@@ -205,6 +205,18 @@ _EVAL_CASES: list[tuple[str, dict, dict]] = [
     ("magnetic", {"saturation_current": 5.0, "dcr": 0.03, "rated_current": 4.0},
                  {"saturation_current": 6.0, "dcr": 0.025, "rated_current": 4.5}),
     ("magnetic", {"saturation_current": 5.0}, {"saturation_current": 2.0}),  # severe deficit
+    # magnetic Isat %-drop normalization (manufacturer-agnostic): a substitute
+    # quoted @10 %/@30 % must not FALSE-fail against an original at another
+    # criterion. Raw scalar (2.5 A) < 0.9·orig would fail; normalized it doesn't.
+    ("magnetic", {"saturation_current": 3.25},  # orig basis-unknown scalar -> UNCERTAIN=warn
+                 {"saturation_current": 2.5,
+                  "saturation_points": [{"percent_drop": 10.0, "current": 2.5},
+                                        {"percent_drop": 30.0, "current": 4.7}]}),
+    ("magnetic", {"saturation_current": 3.25,   # both at a real basis; ~3.6 A @20 % -> adequate=pass
+                  "saturation_points": [{"percent_drop": 20.0, "current": 3.25}]},
+                 {"saturation_current": 2.5,
+                  "saturation_points": [{"percent_drop": 10.0, "current": 2.5},
+                                        {"percent_drop": 30.0, "current": 4.7}]}),
     # chipBead: impedance/srf higher, dcr lower, irms higher
     ("chipBead", {"impedance_100mhz": 600.0, "srf": 100e6, "dcr": 0.05, "rated_current": 2.0},
                  {"impedance_100mhz": 800.0, "srf": 120e6, "dcr": 0.04, "rated_current": 2.5}),
