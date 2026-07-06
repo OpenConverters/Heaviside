@@ -4265,7 +4265,12 @@ _UNVERIFIABLE_CLAIM_PAT = re.compile(
     # …and generic, non-datasheet numeric ESTIMATES presented as fact
     # ("typically achieving 400-600mA", "typically ±100-200ppm") plus bare
     # "(assumed)" hedges that dress an unknown original spec as a match.
-    r"|typically (?:achiev|provid|[±\d])|\(assumed\)|matches original",
+    r"|typically (?:achiev|provid|[±\d])|\(assumed\)|matches original"
+    # …and FABRICATED PHYSICS invented to justify a downgrade (the FAE finding on
+    # um3491 C9: "X7R at 125°C loses ~40% capacitance at 85°C" — physically false;
+    # X7R is ±15% to 125°C). A specific %-loss/derating figure or a "same … as
+    # original" equivalence against an unidentified original is a hallucination.
+    r"|loses?\s+~?\s*\d|derat\w*\s+~?\s*\d|as (the )?original|same[^.,;:]*\bas\b",
     re.IGNORECASE,
 )
 
