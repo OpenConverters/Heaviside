@@ -24,7 +24,7 @@ from __future__ import annotations
 import enum
 import os
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 try:
@@ -864,6 +864,47 @@ def select_capacitor(
         margins=margins,
         alternatives_considered=len(passing),
     )
+
+
+def catalogue_max_capacitance(
+    manufacturer: str,
+    *,
+    v_rated_min: float,
+    case: str | None = None,
+    case_matcher: "Callable[[str, str], bool] | None" = None,
+    tas_data_dir: Path | None = None,
+) -> tuple[float, str, str] | None:
+    """Largest-capacitance part a manufacturer actually offers at ``case`` and
+    ``v_rated >= v_rated_min``, excluding only KNOWN-dead parts (obsolete/nrnd) —
+    unknown/production both count, so a null-status row is not silently dropped.
+    Returns (capacitance_F, mpn, case) or None when nothing matches.
+
+    Answers the no-substitute question deterministically — "what is the real
+    ceiling in this family?" — instead of letting an LLM invent one (FAE trap C2:
+    prose claimed 47µF was the Würth 1206 ceiling; a 100µF/6.3V 1206 exists and
+    is now in the catalogue). ``case_matcher`` supplies a package normaliser (EIA
+    metric↔imperial) so "1206" matches whatever spelling the row carries."""
+    root = tas_data_dir if tas_data_dir is not None else _tas_data_dir()
+    path = root / "capacitors.ndjson"
+    mfr_l = (manufacturer or "").strip().lower()
+    best: tuple[float, str, str] | None = None
+    for _lineno, env in iter_envelopes(path):
+        cap = Capacitor.from_envelope(env)
+        if cap is None or cap.status in ("obsolete", "nrnd"):
+            continue
+        if mfr_l and cap.manufacturer.strip().lower() != mfr_l:
+            continue
+        if cap.v_rated < v_rated_min:
+            continue
+        if case:
+            if case_matcher is not None:
+                if not case_matcher(case, cap.case):
+                    continue
+            elif cap.case.strip().lower() != case.strip().lower():
+                continue
+        if best is None or cap.capacitance > best[0]:
+            best = (cap.capacitance, cap.mpn, cap.case)
+    return best
 
 
 # ---------------------------------------------------------------------------

@@ -2587,6 +2587,56 @@ def _strip_fabricated_cap_ceiling(notes: str) -> str:
     return " | ".join(out_segs)
 
 
+def _annotate_true_cap_ceiling(
+    row: dict[str, Any],
+    orig_params: dict[str, Any] | None,
+    target_mfr: str,
+    tas_dir: "Path | None",
+) -> None:
+    """Append the REAL largest-capacitance part the target manufacturer offers at
+    the original's package + voltage, so a capacitor no_substitute states the
+    true ceiling deterministically (FAE trap C2) instead of leaving the customer
+    to guess how close the catalogue gets. Best-effort: silent when the original
+    package/voltage/value is unknown or the catalogue read fails — never a guess."""
+    if not target_mfr:
+        return
+    op = orig_params or {}
+    req_c = op.get("capacitance")
+    if not isinstance(req_c, (int, float)):
+        req_c = _parse_value_si(row.get("original_value"), "capacitor")
+    dec = _decode_cap_mpn(str(row.get("original_pn") or ""))
+    v_min = op.get("voltage") if isinstance(op.get("voltage"), (int, float)) else dec.get("voltage")
+    pkg = op.get("package") or ""
+    if not (isinstance(req_c, (int, float)) and req_c > 0 and isinstance(v_min, (int, float)) and pkg):
+        return
+    from heaviside.catalogue.selector import catalogue_max_capacitance
+
+    try:
+        best = catalogue_max_capacitance(
+            target_mfr,
+            v_rated_min=float(v_min),
+            case=pkg,
+            case_matcher=lambda a, b: _normalize_package_code(a) == _normalize_package_code(b),
+            tas_data_dir=tas_dir,
+        )
+    except (CatalogueReadError, OSError):
+        return
+    if best is None:
+        return
+    maxc, mpn, _case = best
+    if maxc >= req_c:
+        return  # a same-or-larger part exists — the no_substitute is about another axis
+    short = (1.0 - maxc / req_c) * 100.0
+    cav = (
+        f"Largest {target_mfr} {pkg} part at ≥{v_min:g} V is "
+        f"{_humanize_value(str(maxc), 'capacitor')} ({mpn}) — {short:.0f}% short of the "
+        f"{_humanize_value(str(req_c), 'capacitor')} original; retain the original or move "
+        "to a larger case / other chemistry."
+    )
+    notes = (row.get("notes") or "").strip()
+    row["notes"] = (notes + " | " if notes else "") + cav
+
+
 def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
     """Extract a brief summary from a TAS envelope for the LLM."""
     summary: dict[str, Any] = {}
@@ -5112,10 +5162,15 @@ def _stage_param_check(state: CrossRefState) -> None:
         # for capacitors with a known bias and class-2 model anchors.
         if cat == "capacitor" and row.get("status") == "no_substitute":
             # Strip any fabricated "max available is NµF" ceiling prose (FAE trap
-            # C2) — the honest "no drop-in; retain original" verdict stands.
+            # C2), then append the REAL catalogue ceiling at the original's
+            # package + voltage (deterministic — the data is complete + status-
+            # backfilled now, so this is trustworthy, not an LLM guess).
             _stripped = _strip_fabricated_cap_ceiling(row.get("notes") or "")
             if _stripped != (row.get("notes") or ""):
                 row["notes"] = _stripped
+            _annotate_true_cap_ceiling(
+                row, orig_params, state.target_manufacturer, tas_dir
+            )
 
         if cat == "capacitor":
             ref = row.get("ref_des", "")

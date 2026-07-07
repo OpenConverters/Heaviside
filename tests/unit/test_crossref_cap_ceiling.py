@@ -36,3 +36,48 @@ def test_legit_no_substitute_note_untouched():
 def test_empty_and_none_safe():
     assert strip("") == ""
     assert strip(None) is None
+
+
+def test_true_ceiling_appended_from_catalogue(tmp_path, monkeypatch):
+    # After the REDEXPERT status+reference backfill the catalogue holds the real
+    # Würth 1206 high-CV parts; the no_substitute note must state the TRUE ceiling
+    # (100µF, 55% short) rather than the LLM's fabricated 47µF.
+    import json
+
+    from heaviside.pipeline.crossref_pipeline import _annotate_true_cap_ceiling
+
+    def _cap(mpn, cap_f, v, case):
+        return {"capacitor": {"manufacturerInfo": {
+            "name": "Würth Elektronik", "reference": mpn, "status": "production",
+            "datasheetInfo": {"electrical": {"capacitance": {"nominal": cap_f}, "ratedVoltage": v},
+                              "part": {"case": case}}}}}
+
+    (tmp_path / "capacitors.ndjson").write_text("\n".join(json.dumps(e) for e in [
+        _cap("A", 47e-6, 6.3, "1206"),
+        _cap("B", 100e-6, 6.3, "1206"),   # the real ceiling
+        _cap("C", 220e-6, 6.3, "1210"),   # wrong package — must not count
+    ]) + "\n")
+
+    row = {"original_pn": "GRM31CR60J227ME39", "original_value": "220uF", "status": "no_substitute",
+           "notes": "Retain original."}
+    op = {"capacitance": 220e-6, "voltage": 6.3, "package": "1206"}
+    _annotate_true_cap_ceiling(row, op, "Würth Elektronik", tmp_path)
+    assert "100µF" in row["notes"]
+    assert "55% short" in row["notes"]
+    assert "B" in row["notes"]  # cites the real MPN
+    assert "47µF" not in row["notes"].split("Largest")[-1]  # ceiling isn't the 47µF part
+
+
+def test_true_ceiling_silent_when_larger_exists(tmp_path):
+    import json
+
+    from heaviside.pipeline.crossref_pipeline import _annotate_true_cap_ceiling
+
+    (tmp_path / "capacitors.ndjson").write_text(json.dumps({"capacitor": {"manufacturerInfo": {
+        "name": "Würth Elektronik", "reference": "B", "status": "production",
+        "datasheetInfo": {"electrical": {"capacitance": {"nominal": 100e-6}, "ratedVoltage": 6.3},
+                          "part": {"case": "1206"}}}}}) + "\n")
+    row = {"original_pn": "X", "original_value": "47uF", "status": "no_substitute", "notes": "n"}
+    op = {"capacitance": 47e-6, "voltage": 6.3, "package": "1206"}  # 100µF >= 47µF
+    _annotate_true_cap_ceiling(row, op, "Würth Elektronik", tmp_path)
+    assert "short" not in row["notes"]  # a larger part exists → no ceiling caveat
