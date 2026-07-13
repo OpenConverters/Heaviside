@@ -7,6 +7,7 @@ import InputText from 'primevue/inputtext'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
 import { api, myJobs } from '../api.js'
+import { trackEvent } from '../telemetry.js'
 
 const target = ref('Würth Elektronik')
 const manufacturers = ref([])
@@ -33,8 +34,14 @@ onMounted(async () => {
   } catch (e) { /* dropdown stays empty */ }
 })
 
-function onPdf(e) { pdfFile.value = e.target.files?.[0] || null }
-function onBom(e) { bomFile.value = e.target.files?.[0] || null }
+function onPdf(e) {
+  pdfFile.value = e.target.files?.[0] || null
+  if (pdfFile.value) trackEvent('file_upload', { target: 'pdf', name: pdfFile.value.name, size: pdfFile.value.size })
+}
+function onBom(e) {
+  bomFile.value = e.target.files?.[0] || null
+  if (bomFile.value) trackEvent('file_upload', { target: 'bom', name: bomFile.value.name, size: bomFile.value.size })
+}
 
 async function run() {
   error.value = null; running.value = true
@@ -70,6 +77,7 @@ async function run() {
         ;({ job_id } = await api.submitCrossrefBom(f, target.value))
       }
     }
+    trackEvent('crossref_submit', { target: target.value, mode: mode.value, job_id })
     myJobs.add(job_id)
     location.hash = `#/jobs/${job_id}`
   } catch (e) { error.value = e?.message ?? String(e) }

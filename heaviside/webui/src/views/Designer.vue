@@ -4,6 +4,7 @@ import InputNumber from 'primevue/inputnumber'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
 import { api, myJobs } from '../api.js'
+import { trackEvent } from '../telemetry.js'
 
 const advanced = ref(false)
 const d = ref({
@@ -79,6 +80,11 @@ async function run() {
     const body = { spec: buildSpec(), candidates_per_topology: 3 }
     if (d.value.topology) body.topologies = [d.value.topology]
     const { job_id } = await api.submitDesignClosedLoop(body)
+    trackEvent('design_submit', {
+      target: d.value.topology || 'auto',
+      rails: d.value.outputs.length,
+      job_id,
+    })
     myJobs.add(job_id)
     location.hash = `#/jobs/${job_id}`
   } catch (e) { error.value = e?.message ?? String(e) }
