@@ -15,6 +15,7 @@ Launch:
 from __future__ import annotations
 
 import logging
+import os
 import unicodedata
 from collections.abc import Mapping
 from typing import Any
@@ -86,10 +87,18 @@ def _configure_heaviside_logging() -> None:
 
 _configure_heaviside_logging()
 
+# Interactive API docs (/docs, /redoc) and the OpenAPI schema expose the full
+# route/parameter surface — an attacker's map of a live app. Disabled unless
+# HEAVISIDE_ENABLE_DOCS=1 (dev/local only). Production ALSO blocks these paths at
+# the nginx layer as defence-in-depth (security assessment M3, 2026-07).
+_docs_enabled = os.environ.get("HEAVISIDE_ENABLE_DOCS") == "1"
 app = FastAPI(
     title="Heaviside",
     description="Power converter auto-design API",
     version="0.1.0",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 
