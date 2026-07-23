@@ -22,8 +22,9 @@ _EMITTED = [
     ("Sweep done: fsw* = 300 kHz, 7 feasible magnetics", "Frequency sweep"),
     ("Picking the magnetic from the loss-annotated front", "Magnetic pick"),
     ("Reconciling the magnetic across all operating points", "Cross-OP reconcile"),
-    ("Realizing converter: selecting real TAS parts + MKF SPICE netlist", "Realize: real BOM + SPICE"),
-    ("Re-simulating with SPICE knobs from the real parts (FET RON, diode RS)", "Tune SPICE from real parts"),
+    # della-Pollock cutover: realize + real-part sim are ONE Kirchhoff pass, so
+    # there is no separate "Re-simulating"/"Tune SPICE" stage anymore.
+    ("Realizing via Kirchhoff (della-Pollock: parts + real-model sim around the pinned magnetic)", "Realize: real BOM + SPICE"),
     ("Realism gate + gatekeeper on the simulated waveforms", "Realism gate + gatekeeper"),
     ("Adversarial review starting (Ray + Nicola)", "Review: Ray (engineering)"),
     ("Reviewing — Ray (engineering)", "Review: Ray (engineering)"),

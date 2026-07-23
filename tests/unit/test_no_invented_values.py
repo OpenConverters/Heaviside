@@ -377,20 +377,21 @@ def test_g2_wrong_value_resistor_demoted_on_component_type_row(tas_dir: Path) ->
 # ── Dielectric: equal technologies pass ──────────────────────────────────────
 
 
-def test_dielectric_same_non_ceramic_technology_passes() -> None:
-    from heaviside.pipeline.param_check import PARAM_SPECS, compare_param
+def _tech_verdict(orig: str, sub: str) -> str:
+    # The technology CLASS gate runs in Kelvin (evaluate_params), not the numeric
+    # compare_param — evaluate one capacitor "technology" pair and read its verdict.
+    from heaviside.pipeline.param_check import evaluate_params
 
-    spec = next(s for s in PARAM_SPECS["capacitor"] if s.key == "technology")
-    result = compare_param(spec, "supercapacitor-edlc", "supercapacitor-edlc")
-    assert result["verdict"] == "pass"
+    res = evaluate_params("capacitor", {"technology": orig}, {"technology": sub})
+    return next(r["verdict"] for r in res if r["name"] == "technology")
+
+
+def test_dielectric_same_non_ceramic_technology_passes() -> None:
+    assert _tech_verdict("supercapacitor-edlc", "supercapacitor-edlc") == "pass"
 
 
 def test_dielectric_different_technology_warns() -> None:
-    from heaviside.pipeline.param_check import PARAM_SPECS, compare_param
-
-    spec = next(s for s in PARAM_SPECS["capacitor"] if s.key == "technology")
-    result = compare_param(spec, "film-polypropylene", "aluminum-electrolytic-wet")
-    assert result["verdict"] == "warn"
+    assert _tech_verdict("film-polypropylene", "aluminum-electrolytic-wet") == "warn"
 
 
 # ── TCR: judged on |value|, displayed signed ─────────────────────────────────

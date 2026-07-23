@@ -67,7 +67,14 @@ def _base_magnetic_json() -> str:
 @functools.cache
 def _autocomplete_json(spec_json: str) -> str:
     """Build + autocomplete a magnetic from a normalised spec; cached."""
-    pyom = pytest.importorskip("PyOpenMagnetics")
+    # PyOpenMagnetics is a namespace package; the compiled extension is the
+    # SUBMODULE PyOpenMagnetics.PyOpenMagnetics. Skip if it isn't built, and reach
+    # it through the same gateway prod uses (settings applied, CI-enforced) rather
+    # than the top-level namespace (which carries no functions).
+    pytest.importorskip("PyOpenMagnetics.PyOpenMagnetics")
+    from heaviside.bridge import _import_pyom
+
+    pyom = _import_pyom()
     spec = json.loads(spec_json)
     base = json.loads(_base_magnetic_json())
     wire_template = base["coil"]["functionalDescription"][0]
@@ -96,7 +103,7 @@ def _autocomplete_json(spec_json: str) -> str:
     # regenerates the bobbin geometry for the chosen shape; dropping it
     # makes autocomplete fail with ``key 'bobbin' not found``.
 
-    full = pyom.PyOpenMagnetics.magnetic_autocomplete(mag, {})
+    full = pyom.magnetic_autocomplete(mag, {})
     if not (isinstance(full, dict) and "coil" in full and "core" in full):
         # autocomplete signals a schema/processing failure by returning
         # ``{"data": "Exception: ..."}`` — surface it loudly.
@@ -146,7 +153,10 @@ def isat_of(magnetic: dict[str, Any], temperature_c: float = 100.0) -> float:
     Use in tests to compute the expected Isat the extractor should stamp
     (ground truth = MKF, never the analytical formula).
     """
-    pyom = pytest.importorskip("PyOpenMagnetics")
+    pytest.importorskip("PyOpenMagnetics.PyOpenMagnetics")
+    from heaviside.bridge import _import_pyom
+
+    pyom = _import_pyom()
     return float(
-        pyom.PyOpenMagnetics.calculate_saturation_current(dict(magnetic), float(temperature_c))
+        pyom.calculate_saturation_current(dict(magnetic), float(temperature_c))
     )
