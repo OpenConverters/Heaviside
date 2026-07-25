@@ -15,7 +15,7 @@ def test_csv_messy_headers_canonicalised():
         b"L1,744066047,Wurth,inductor,4.7uH,\n"
         b"C1,GRM188R61A106KE69D,Murata,capacitor,10uF,25V\n"
     )
-    bom = parse_bom_file(raw, "bom.csv")
+    bom = parse_bom_file(raw, "bom.csv", allow_llm=False)  # deterministic canonicalisation (no LLM)
     assert len(bom) == 2
     assert bom[0]["ref_des"] == "L1"
     assert bom[0]["original_mpn"] == "744066047"
@@ -27,18 +27,22 @@ def test_csv_messy_headers_canonicalised():
 
 
 def test_csv_semicolon_delimiter_sniffed():
-    bom = parse_bom_file(b"MPN;Manufacturer;Type\nABC123;TDK;capacitor\n", "x.csv")
+    bom = parse_bom_file(b"MPN;Manufacturer;Type\nABC123;TDK;capacitor\n", "x.csv", allow_llm=False)
     assert bom == [{"original_mpn": "ABC123", "manufacturer": "TDK", "component_type": "capacitor"}]
 
 
 def test_csv_tab_delimiter():
-    bom = parse_bom_file(b"Part\tMfr\nXYZ\tVishay\n", "x.tsv")
+    bom = parse_bom_file(b"Part\tMfr\nXYZ\tVishay\n", "x.tsv", allow_llm=False)
     assert bom[0]["original_mpn"] == "XYZ"
     assert bom[0]["manufacturer"] == "Vishay"
 
 
 def test_unknown_columns_carried_through_lowercased():
-    bom = parse_bom_file(b"MPN,Tolerance,DK Part\nR1,1%,foo\n", "x.csv")
+    # allow_llm=False isolates the DETERMINISTIC lower-cased passthrough this test verifies. With the
+    # default allow_llm=True and a real LLM key present (e.g. MOONSHOT_API_KEY, as the eval suite sets),
+    # the bom-header-mapper is consulted and may rename an unknown column ("DK Part" -> not "dk_part"),
+    # so the result depended on ambient LLM availability -> order/env-dependent flake (+ real API calls).
+    bom = parse_bom_file(b"MPN,Tolerance,DK Part\nR1,1%,foo\n", "x.csv", allow_llm=False)
     assert bom[0]["original_mpn"] == "R1"
     assert bom[0]["tolerance"] == "1%"
     assert bom[0]["dk_part"] == "foo"
@@ -54,7 +58,7 @@ def test_xlsx_roundtrip():
     ws.append(["GRM188", "Murata", "capacitor"])
     buf = io.BytesIO()
     wb.save(buf)
-    bom = parse_bom_file(buf.getvalue(), "bom.xlsx")
+    bom = parse_bom_file(buf.getvalue(), "bom.xlsx", allow_llm=False)  # deterministic xlsx parse (no LLM)
     assert len(bom) == 2
     assert bom[0]["original_mpn"] == "744066047"
     assert bom[1]["component_type"] == "capacitor"
@@ -168,7 +172,7 @@ def test_legacy_xls_rejected():
 
 def test_blank_rows_skipped():
     raw = b"MPN,Mfr\nA1,X\n\n  ,\nA2,Y\n"
-    bom = parse_bom_file(raw, "x.csv")
+    bom = parse_bom_file(raw, "x.csv", allow_llm=False)  # deterministic row skipping (no LLM)
     assert [c["original_mpn"] for c in bom] == ["A1", "A2"]
 
 
@@ -183,7 +187,9 @@ def test_lumiquote_decorated_headers_resolve():
         b"123,S SELF 15UH,Inductor Power Shielded 15uH,Fixed Inductors,"
         b"SRR1260-150M,Bourns\n"
     )
-    bom = parse_bom_file(raw, "bom.csv")
+    # allow_llm=False: the fix under test is the DETERMINISTIC decoration-stripping in _canon_header
+    # (verified by test_canon_header_preserves_punctuation_aliases), not an LLM remap.
+    bom = parse_bom_file(raw, "bom.csv", allow_llm=False)
     assert len(bom) == 1
     assert bom[0]["original_mpn"] == "SRR1260-150M"
     assert bom[0]["manufacturer"] == "Bourns"

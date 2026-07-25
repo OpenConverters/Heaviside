@@ -44,6 +44,27 @@ def _comp(tas, name):
     )
 
 
+def _design_boost_magnetic(pyom):
+    """Design a real MKF magnetic for the ``_BOOST`` spec via the CURRENT two-step
+    vendor API. ``design_magnetics_from_converter`` no longer returns finished
+    candidates: the magnetic seed moved into Kirchhoff (della-Pollock / ABT #34),
+    so it now returns a bare MAS ``Inputs`` envelope (the per-winding excitation
+    seed), and ``calculate_advised_magnetics_fast`` turns that envelope into scored
+    magnetic candidates (``data[].mas.magnetic``). The old combined call that
+    returned ``data[].mas.magnetic`` directly was split at that seam."""
+    inputs = pyom.design_magnetics_from_converter("boost", _BOOST, 1, "available cores", False, None)
+    if not isinstance(inputs, dict) or "error" in inputs:
+        raise AssertionError(f"design_magnetics_from_converter failed: {inputs}")
+    advised = pyom.calculate_advised_magnetics_fast(dict(inputs), 1, "available cores")
+    if not isinstance(advised, dict) or advised.get("error") or not advised.get("data"):
+        raise AssertionError(f"calculate_advised_magnetics_fast failed: {advised}")
+    # The fast geometry-advise selects a core + turns but leaves the coil un-wound, so a
+    # SPICE export would compute NaN energy; autocomplete fills the derived coil geometry
+    # against the same seed (exactly as production's full_design._simulate_kirchhoff_backend
+    # does before stamp_mkf_magnetic) so export_magnetic_as_subcircuit can compute it.
+    return pyom.magnetic_autocomplete(advised["data"][0]["mas"]["magnetic"], dict(inputs))
+
+
 def test_fill_selects_and_stamps_real_parts():
     tas = ka.design_topology_tas("boost", _BOOST)
     recs = {r["name"]: r for r in fill_kirchhoff_bom(tas)}
@@ -312,25 +333,7 @@ def test_stage3_kirchhoff_backend_stamps_regulated_operating_point():
         pyom = bridge._import_pyom_vendor()
     except Exception as exc:
         pytest.skip(f"PyOM vendor not available: {exc}")
-    conv = {
-        "inputVoltage": {"nominal": 12.0},
-        "efficiency": 0.9,
-        "diodeVoltageDrop": 0.7,
-        "currentRippleRatio": 0.4,
-        "operatingPoints": [
-            {
-                "inputVoltage": 12.0,
-                "switchingFrequency": 100000.0,
-                "ambientTemperature": 25.0,
-                "currentRippleRatio": 0.4,
-                "outputVoltages": [24.0],
-                "outputCurrents": [1.0],
-            }
-        ],
-    }
-    mag = pyom.design_magnetics_from_converter("boost", conv, 1, "available cores", False, None)[
-        "data"
-    ][0]["mas"]["magnetic"]
+    mag = _design_boost_magnetic(pyom)
     components = types.SimpleNamespace(main_magnetic=types.SimpleNamespace(mas={"magnetic": mag}))
     spec_dict = {
         "inputVoltage": {"nominal": 12.0},
@@ -398,26 +401,7 @@ def test_full_cutover_real_semis_and_mkf_magnetic():
         pyom = bridge._import_pyom_vendor()
     except Exception as exc:
         pytest.skip(f"PyOM vendor not available: {exc}")
-    conv = {
-        "inputVoltage": {"nominal": 12.0},
-        "efficiency": 0.9,
-        "diodeVoltageDrop": 0.7,
-        "currentRippleRatio": 0.4,
-        "operatingPoints": [
-            {
-                "inputVoltage": 12.0,
-                "switchingFrequency": 100000.0,
-                "ambientTemperature": 25.0,
-                "currentRippleRatio": 0.4,
-                "outputVoltages": [24.0],
-                "outputCurrents": [1.0],
-            }
-        ],
-    }
-    designed = pyom.design_magnetics_from_converter(
-        "boost", conv, 1, "available cores", False, None
-    )
-    magnetic = designed["data"][0]["mas"]["magnetic"]
+    magnetic = _design_boost_magnetic(pyom)
 
     tas = ka.design_topology_tas("boost", _BOOST)
     fill_kirchhoff_bom(tas)

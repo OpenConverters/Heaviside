@@ -13,6 +13,13 @@ def _wait(reg, jid, timeout=5.0):
     while time.monotonic() - t0 < timeout:
         j = reg.get(jid)
         if j and j.status in ("done", "error", "cancelled"):
+            # `status` flips to terminal in the worker BEFORE its finally-block writes the
+            # persisted file (persistence is intentionally best-effort/decoupled — jobs.py
+            # `_persist_job`). A restore test that reads the persist dir the instant status
+            # is terminal can therefore beat the disk write, so it intermittently restores a
+            # job with no (or a mid-flight) stage-duration snapshot. Block until the worker has
+            # fully drained (task_done() runs after the persist) so restore sees the final file.
+            reg._queue.join()
             return j
         time.sleep(0.02)
     raise AssertionError("job did not finish")
