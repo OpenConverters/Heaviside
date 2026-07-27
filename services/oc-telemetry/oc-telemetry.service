@@ -1,0 +1,28 @@
+# systemd unit for the shared OpenConverters interaction-telemetry receiver.
+# Install to /etc/systemd/system/oc-telemetry.service on the box (51.15.253.66).
+#
+# The OM_DB_* secrets are NOT hardcoded here — they are read from
+# /etc/oc-telemetry.env (root-owned, 0600), the same managed DB the OM backend
+# and the telemetry/heaviside_telemetry/umami schemas already use.
+[Unit]
+Description=OpenConverters interaction-telemetry receiver (Kelvin/Kirchhoff/Heaviside)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/oc-telemetry
+EnvironmentFile=/etc/oc-telemetry.env
+ExecStart=/opt/oc-telemetry/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8787
+Restart=always
+RestartSec=3
+# Least privilege: this process only needs to reach the DB and bind loopback.
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/opt/oc-telemetry
+
+[Install]
+WantedBy=multi-user.target
