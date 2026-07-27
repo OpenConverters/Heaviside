@@ -89,3 +89,36 @@ def test_magnetic_electrical_list_does_not_break_match_score():
     src = {"ref_des": "L1", "type": "magnetic", "value": "22uH"}
     score = compute_match_score(comp, src, env)
     assert isinstance(score, dict)
+
+
+def test_capacitance_above_the_tolerance_band_is_a_caveat_not_a_pass():
+    """ABT #136 item 1: a +22% comp/timing cap is NOT 'better' — a green tick
+    there contradicts the tool's own 'verify pole/zero' warning."""
+    d = build_match_detail({
+        "component_type": "capacitor", "status": "recommended",
+        "original_value": "8.2nF", "substitute_value": "10nF",
+        "original_voltage": "50V", "substitute_voltage": "50V",
+        "original_package": "0402", "substitute_package": "0402",
+    })
+    assert _params(d)["value"] == "differs"
+
+
+def test_capacitance_inside_the_tolerance_band_still_passes():
+    d = build_match_detail({
+        "component_type": "capacitor", "status": "recommended",
+        "original_value": "10uF", "substitute_value": "11uF",   # +10%, inside ±20%
+        "original_voltage": "16V", "substitute_voltage": "16V",
+        "original_package": "0805", "substitute_package": "0805",
+    })
+    assert _params(d)["value"] == "exceeds"
+
+
+def test_voltage_rating_has_no_upper_ceiling():
+    """A rating is not a value: 16 V -> 100 V is a genuine upgrade, not a caveat."""
+    d = build_match_detail({
+        "component_type": "capacitor", "status": "recommended",
+        "original_value": "10uF", "substitute_value": "10uF",
+        "original_voltage": "16V", "substitute_voltage": "100V",
+        "original_package": "0805", "substitute_package": "0805",
+    })
+    assert _params(d)["voltage"] == "exceeds"

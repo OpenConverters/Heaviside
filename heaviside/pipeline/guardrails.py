@@ -35,6 +35,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from heaviside.pipeline import mpn_packaging
 from heaviside.pipeline.value_parse import parse_si_value
 
 # ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ _TAS_LOOKUP_CACHE: dict[tuple[str, str, str], dict | None] = {}
 # O(N × file) — the latter made a large BOM (hundreds of magnetic substitutes,
 # each previously scanning the whole 50 MB magnetics.ndjson) take ~20 min.
 _TAS_INDEX_CACHE: dict[str, dict[str, dict]] = {}
+_TAS_BASE_INDEX_CACHE: dict[str, dict[str, dict]] = {}
 
 # Register both caches with the shared memory guard so a large crossref can't
 # grow them past the RSS budget and OOM a shared host (index_budget).
@@ -64,6 +66,7 @@ try:
     from heaviside.pipeline.index_budget import register_cache as _register_cache
 
     _register_cache(_TAS_INDEX_CACHE)
+    _register_cache(_TAS_BASE_INDEX_CACHE)
     _register_cache(_TAS_LOOKUP_CACHE)
 except Exception:  # pragma: no cover - guard is best-effort
     pass
@@ -226,6 +229,17 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
     return index
 
 
+def _tas_base_index(path: Path) -> dict[str, dict]:
+    """Packaging-base → record index for a catalogue file (ABT #137), cached
+    alongside the exact index it is derived from."""
+    exact = _tas_file_index(path)   # first: an eviction here must not be masked
+    cached = _TAS_BASE_INDEX_CACHE.get(str(path))
+    if cached is None:
+        cached = mpn_packaging.build_base_index(exact)
+        _TAS_BASE_INDEX_CACHE[str(path)] = cached
+    return cached
+
+
 def _lookup_tas_part(
     part_number: str,
     component_kind: str,
@@ -256,7 +270,11 @@ def _lookup_tas_part(
         path = root / fname
         if not path.is_file():
             continue
-        hit = _tas_file_index(path).get(mpn_l)
+        # Packaging-suffix aware (ABT #137): the BOM lists the base orderable
+        # MPN while the catalogue stores the reeled variant (XGL5050-153ME vs
+        # -153MEC). Exact hits still win, so no MPN that resolves today moves.
+        index = _tas_file_index(path)
+        hit = mpn_packaging.resolve(mpn_l, index, _tas_base_index(path))
         if hit is not None:
             result = hit
             break

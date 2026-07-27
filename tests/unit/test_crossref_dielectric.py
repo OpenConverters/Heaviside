@@ -60,3 +60,40 @@ def test_codes_are_sourced_from_cas() -> None:
     codes = _eia_dielectric_codes()
     assert "X7T" in codes and "X7R" in codes and "C0G" in codes
     assert len(codes) >= 20
+
+
+def test_literal_dielectric_decoded_from_mpn_fills_the_param(monkeypatch=None) -> None:
+    """ABT #148 item 2: _decode_cap_mpn already reads a literal X7R out of the
+    MPN, but only its voltage was consumed — so a catalogue record missing
+    dielectricCode still rendered UNVERIFIED and an X7R->X5R change hid."""
+    from heaviside.pipeline.crossref_pipeline import _fill_decoded_dielectric
+
+    params = {"capacitance": 8.2e-9, "voltage": 50.0, "dielectric_code": None}
+    _fill_decoded_dielectric(params, "C0402X7R500822KNP")
+    assert params["dielectric_code"] == "X7R"
+
+
+def test_decoded_dielectric_never_overwrites_the_catalogue_value() -> None:
+    from heaviside.pipeline.crossref_pipeline import _fill_decoded_dielectric
+
+    params = {"dielectric_code": "X5R"}
+    _fill_decoded_dielectric(params, "C0402X7R500822KNP")
+    assert params["dielectric_code"] == "X5R"
+
+
+def test_missing_record_is_never_synthesised_from_an_mpn_decode() -> None:
+    """A None params dict must stay None: fabricating one would make the
+    no-original-data gates believe an unidentified original was resolved."""
+    from heaviside.pipeline.crossref_pipeline import _fill_decoded_dielectric
+
+    assert _fill_decoded_dielectric(None, "C0402X7R500822KNP") is None
+
+
+def test_internal_severity_tags_never_reach_customer_prose() -> None:
+    """ABT #136 item 2 residual: the severity belongs to the deterministic
+    verdict/badge, not to the customer-facing note."""
+    from heaviside.pipeline.crossref_pipeline import _sanitize_internal_names
+
+    out = _sanitize_internal_names("CRITICAL: voltage-rating downgrade on C19")
+    assert out == "voltage-rating downgrade on C19"
+    assert "critical" not in out.lower()

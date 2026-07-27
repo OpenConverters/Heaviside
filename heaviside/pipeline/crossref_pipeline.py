@@ -41,6 +41,7 @@ from heaviside.agents.llm_call import (
     extract_json_block,
     normalize_reviewer_verdict,
 )
+from heaviside.pipeline import mpn_packaging
 from heaviside.pipeline.case_dimensions import resolve_dimensions
 from heaviside.pipeline.crossref import (
     CrossRefOutcome,
@@ -688,6 +689,9 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
             from heaviside.pipeline import match_score as _ms
 
             _g._TAS_INDEX_CACHE.clear()
+            # the base index is DERIVED from the exact one — clearing one
+            # without the other would resolve against an evicted catalogue
+            _g._TAS_BASE_INDEX_CACHE.clear()
             _g._TAS_LOOKUP_CACHE.clear()
             _ms._MPN_ENV_INDEX_CACHE.clear()
         except Exception:
@@ -4121,19 +4125,47 @@ def _parse_value_si(value: Any, category: str) -> float | None:
         return None
 
 
-def _param_verdict(orig: float | None, sub: float | None, *, higher_is_ok: bool) -> str:
+def _param_verdict(
+    orig: float | None,
+    sub: float | None,
+    *,
+    higher_is_ok: bool,
+    higher_ok_within: float | None = None,
+) -> str:
     """Compare two numeric parameters → exact / exceeds / lower / differs / n-a.
 
     ``higher_is_ok`` (voltage rating, bypass capacitance): a larger substitute is
     fine ('exceeds'); a smaller one is a real downgrade ('lower'). For value-type
-    params where exactness matters, the caller passes higher_is_ok=False."""
+    params where exactness matters, the caller passes higher_is_ok=False.
+
+    ``higher_ok_within`` bounds how far "higher is fine" stretches (ABT #136):
+    capacitance tolerates a larger part only inside the ±20% tolerance band —
+    a +22% comp/timing cap is NOT better, and a green '✓ exceeds' there
+    contradicts the tool's own "verify pole/zero" caveat. Past the band the
+    verdict is 'differs' (amber caveat), never a pass. A rating (voltage) has
+    no such ceiling and leaves this None."""
     if orig is None or sub is None:
         return "n/a"
     if abs(sub - orig) <= 0.02 * abs(orig) if orig else sub == orig:
         return "exact"
     if sub > orig:
-        return "exceeds" if higher_is_ok else "differs"
+        if not higher_is_ok:
+            return "differs"
+        if (
+            higher_ok_within is not None
+            and orig
+            and (sub - orig) > higher_ok_within * abs(orig)
+        ):
+            return "differs"
+        return "exceeds"
     return "lower" if higher_is_ok else "differs"
+
+
+# How far above the original a "higher is fine" VALUE may sit and still read as a
+# pass. The house tolerance band for passives (±20%, the same one the in-kind
+# rescue prose quotes); beyond it the substitute is off-value and gets an amber
+# caveat instead of a green tick (ABT #136 item 1).
+_VALUE_HIGHER_OK_BAND = 0.20
 
 
 # Which flat-record field is a category's "value" (for the report's value row).
@@ -4256,6 +4288,9 @@ def build_match_detail(row: dict[str, Any]) -> dict[str, Any]:
             _parse_value_si(o_val, cat),
             _parse_value_si(s_val, cat),
             higher_is_ok=(cat == "capacitor"),  # bypass/bulk caps tolerate higher
+            # ...but only inside the ±20% tolerance band: past it the part is
+            # off-value (a comp/timing cap is not "better" at +22%) — ABT #136.
+            higher_ok_within=_VALUE_HIGHER_OK_BAND,
         )
         params.append(
             {"name": "value", "original": str(o_val), "substitute": str(s_val), "verdict": v}
@@ -4470,6 +4505,12 @@ _INTERNAL_DB_PAT = re.compile(r"\bTAS\b")
 # the code identifier to a plain-English phrase — case-insensitive, with or
 # without the leading underscore.
 _INTERNAL_VAR_PAT = re.compile(r"(?<![A-Za-z0-9])_?tas_candidates\b", re.IGNORECASE)
+# Internal severity tags the LLM/gate stages prefix onto notes ("CRITICAL: ...").
+# The severity belongs to the deterministic verdict/badge, not to customer prose
+# (ABT #136 item 2 residual).
+_INTERNAL_SEVERITY_PAT = re.compile(
+    r"(?<![A-Za-z0-9])(CRITICAL|MAJOR|MINOR|BLOCKER)\s*:\s*", re.IGNORECASE
+)
 
 
 def _sanitize_internal_names(text: str) -> str:
@@ -4479,6 +4520,7 @@ def _sanitize_internal_names(text: str) -> str:
     if not text:
         return text
     text = _INTERNAL_VAR_PAT.sub("the candidate list", text)
+    text = _INTERNAL_SEVERITY_PAT.sub("", text)
     return _INTERNAL_DB_PAT.sub("our internal catalogue", text)
 
 
@@ -4536,6 +4578,22 @@ def _decode_cap_mpn(mpn: str) -> dict[str, Any]:
         if vm:
             out["voltage"] = int(vm.group(1) + vm.group(2)) * (10 ** int(vm.group(3)))
     return out
+
+
+def _fill_decoded_dielectric(params: dict[str, Any] | None, mpn: str) -> None:
+    """Fill a capacitor params dict's ``dielectric_code`` from its MPN when the
+    catalogue record didn't carry one (ABT #148 item 2): _decode_cap_mpn already
+    reads literal codes (Venkel/KEMET ``…X7R…``), but only its voltage was ever
+    consumed, so an X7R→X5R downgrade still rendered UNVERIFIED.
+
+    Enriches an EXISTING dict only. A missing record stays missing: synthesising
+    a params dict from an MPN decode would make the no-original-data gates
+    believe the original was identified when it was not."""
+    if not isinstance(params, dict) or params.get("dielectric_code"):
+        return
+    code = _decode_cap_mpn(mpn).get("dielectric")
+    if code:
+        params["dielectric_code"] = code
 
 
 def _is_automotive_grade(mpn: str) -> bool:
@@ -4665,6 +4723,24 @@ def _stage_param_check(state: CrossRefState) -> None:
     for cat in needed:
         cats_by_file.setdefault(category_files[cat], []).append(cat)
 
+    # Packaging-suffix aware resolution (ABT #137). Two directions, both keyed
+    # back onto the WANTED mpn so downstream lookups stay unchanged:
+    #   BOM base ← catalogue reeled variant (XGL5050-153ME ← -153MEC): the
+    #     record's own packaging base is a wanted key.
+    #   BOM reeled variant ← catalogue base: the wanted mpn's base is the key
+    #     the catalogue carries.
+    _wanted_from_record_base: dict[str, dict[str, str]] = {
+        cat: mpn_packaging.expand_wanted(refs) for cat, refs in needed.items()
+    }
+    _wanted_by_own_base: dict[str, dict[str, str]] = {}
+    for cat, refs in needed.items():
+        table: dict[str, str] = {}
+        for want in refs:
+            base = mpn_packaging.packaging_base(want)
+            if base:
+                table[base.lower()] = want
+        _wanted_by_own_base[cat] = table
+
     params_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for fname, cats in cats_by_file.items():
         path = tas_dir / fname
@@ -4677,10 +4753,20 @@ def _stage_param_check(state: CrossRefState) -> None:
                     if not refs:
                         continue
                     ref = str(_envelope_reference(env, cat) or "").strip().lower()
-                    if ref and ref in refs and (cat, ref) not in params_by_key:
+                    if not ref:
+                        continue
+                    # exact first, so no MPN that resolves today ever moves
+                    want = ref if ref in refs else None
+                    if want is None:
+                        rbase = mpn_packaging.packaging_base(ref)
+                        if rbase:
+                            want = _wanted_from_record_base[cat].get(rbase.lower())
+                    if want is None:
+                        want = _wanted_by_own_base[cat].get(ref)
+                    if want is not None and (cat, want) not in params_by_key:
                         summ = _summarize_candidate(env, cat)
                         if summ:
-                            params_by_key[(cat, ref)] = summ
+                            params_by_key[(cat, want)] = summ
         except CatalogueReadError:
             continue
 
@@ -4714,6 +4800,13 @@ def _stage_param_check(state: CrossRefState) -> None:
                     _bom_by_ref.get(row.get("ref_des")) or {},
                 )
                 _enrich_cache[_ck] = orig_params
+
+        # A literal dielectric code in the MPN beats an unrecorded one: decode it
+        # into the params both sides compare with (ABT #148 item 2), so a real
+        # X7R→X5R grade change flags instead of reading UNVERIFIED.
+        if cat == "capacitor":
+            _fill_decoded_dielectric(orig_params, str(row.get("original_pn") or o_mpn))
+            _fill_decoded_dielectric(sub_params, str(row.get("substitute_pn") or ""))
 
         # IDENTITY-MATCHED categories (connector / analog / crystal): the match
         # is defined by the ORIGINAL's identity (connector family+positions+
