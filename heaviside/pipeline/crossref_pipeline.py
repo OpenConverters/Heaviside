@@ -803,6 +803,21 @@ def _is_chip_bead_env(env: dict[str, Any]) -> bool:
         return False
 
 
+def _is_cable_core_env(env: dict[str, Any]) -> bool:
+    """Return True when a magnetics.ndjson envelope is a clamp-on cable core.
+
+    A cableCore is an impedance-vs-frequency suppression part (you thread a cable
+    through it), not a wound magnetic — it carries no inductance and is never a
+    drop-in for an inductor/transformer, so it must stay out of the magnetic
+    candidate pools. The value scorer already drops it (null primary value); this
+    keeps it out of the operating-point magnetic rescue too."""
+    try:
+        el = env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+        return bool(el) and el[0].get("subtype") == "cableCore"
+    except (KeyError, TypeError, IndexError):
+        return False
+
+
 def _chip_bead_impedance_at_100mhz(env: dict[str, Any]) -> float | None:
     """Return the impedance magnitude (Ω) at 100 MHz from a chip bead envelope.
 
@@ -5585,6 +5600,10 @@ def _target_manufacturer_envelopes(
             try:
                 for _lineno, env in iter_envelopes(path):
                     if category == "chipBead" and not _is_chip_bead_env(env):
+                        continue
+                    # cableCores are impedance-suppression parts, never a wound-
+                    # magnetic drop-in — keep them out of the magnetic candidate pool.
+                    if category == "magnetic" and _is_cable_core_env(env):
                         continue
                     mfr = _extract_manufacturer(env, category)
                     if mfr and target in _normalize_manufacturer(mfr):
