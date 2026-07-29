@@ -2724,8 +2724,14 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
                 "tolerance_pct": (_ctol * 100.0 if isinstance(_ctol, (int, float)) else None),
                 "esr": elec.get("esr"),
                 "ripple_current": elec.get("rippleCurrent"),
-                # MLCC DC-bias model anchors (nullable for non-MLCC) — used to
-                # compare effective capacitance at the operating voltage.
+                # MLCC DC-bias data, used to compare EFFECTIVE capacitance at the
+                # operating voltage. capacitanceBiasPoints[] is the measured C-vs-Vdc
+                # curve straight from the manufacturer (CAS field, populated for
+                # 7,305 parts as of ABT #304) and is preferred: interpolating real
+                # points beats fitting a 2-anchor model. The two *MLCC anchors below
+                # were never CAS fields and are always None against this catalogue —
+                # kept only so an externally-supplied part dict still works.
+                "capacitance_bias_points": elec.get("capacitanceBiasPoints"),
                 "capacitance_saturation_mlcc": elec.get("capacitanceSaturationMLCC"),
                 "vth_mlcc": elec.get("vthMLCC"),
                 "package": part.get("case", ""),

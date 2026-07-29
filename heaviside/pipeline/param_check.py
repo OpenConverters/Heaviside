@@ -573,6 +573,70 @@ def effective_capacitance_at_bias(
     return c_nom / (1.0 + (v_op / vth) ** k)
 
 
+def capacitance_from_bias_curve(
+    points: Any, c_nom: float | None, v_op: float
+) -> float | None:
+    """Effective capacitance at ``v_op`` read off the MEASURED C-vs-Vdc curve.
+
+    ``points`` is CAS ``capacitanceBiasPoints[]`` — ``[{voltage, capacitance, ...}]``
+    in SI (V, F), typically 201 points from 0 V to the part's rated voltage. This is
+    preferred over ``effective_capacitance_at_bias``: it interpolates the
+    manufacturer's own measurement instead of fitting a two-anchor model, so there is
+    no model error and no dependence on anchors this catalogue never carried.
+
+    Linear interpolation between bracketing points. Returns None — never an
+    extrapolation — if ``v_op`` lies beyond the measured range, since a class-2
+    ceramic's roll-off past the last point is exactly what must not be guessed.
+    """
+    if not isinstance(points, (list, tuple)) or len(points) < 2 or v_op < 0:
+        return None
+    pts = []
+    for p in points:
+        if not isinstance(p, dict):
+            continue
+        v, c = p.get("voltage"), p.get("capacitance")
+        if isinstance(v, (int, float)) and isinstance(c, (int, float)) and c > 0:
+            pts.append((float(v), float(c)))
+    if len(pts) < 2:
+        return None
+    pts.sort(key=lambda t: t[0])
+    if v_op < pts[0][0] or v_op > pts[-1][0]:
+        return None
+    for (v0, c0), (v1, c1) in zip(pts, pts[1:]):
+        if v0 <= v_op <= v1:
+            if v1 == v0:
+                return c0
+            f = (v_op - v0) / (v1 - v0)
+            c = c0 + f * (c1 - c0)
+            break
+    else:
+        return None
+    # The curve is the part's own measurement; c_nom only rescales when the
+    # catalogue's nominal disagrees with the curve's 0 V value (different
+    # tolerance bin of the same die). Guarded so a bogus c_nom cannot invert it.
+    c0v = pts[0][1]
+    if (isinstance(c_nom, (int, float)) and c_nom > 0 and c0v > 0
+            and 0.5 <= c_nom / c0v <= 2.0):
+        c *= c_nom / c0v
+    return c
+
+
+def _effective_capacitance(part: dict[str, Any], v_op: float) -> float | None:
+    """Measured curve first, two-anchor model as fallback."""
+    c_nom = _as_float(part.get("capacitance"))
+    from_curve = capacitance_from_bias_curve(
+        part.get("capacitance_bias_points"), c_nom, v_op)
+    if from_curve is not None:
+        return from_curve
+    return effective_capacitance_at_bias(
+        c_nom,
+        _as_float(part.get("voltage")),
+        _as_float(part.get("capacitance_saturation_mlcc")),
+        _as_float(part.get("vth_mlcc")),
+        v_op,
+    )
+
+
 def mlcc_bias_param(
     orig: dict[str, Any], sub: dict[str, Any], v_op: float | None
 ) -> dict[str, Any] | None:
@@ -582,20 +646,8 @@ def mlcc_bias_param(
     model anchors absent — surfaced elsewhere as the nominal-value check)."""
     if v_op is None or v_op <= 0:
         return None
-    oc = effective_capacitance_at_bias(
-        _as_float(orig.get("capacitance")),
-        _as_float(orig.get("voltage")),
-        _as_float(orig.get("capacitance_saturation_mlcc")),
-        _as_float(orig.get("vth_mlcc")),
-        v_op,
-    )
-    sc = effective_capacitance_at_bias(
-        _as_float(sub.get("capacitance")),
-        _as_float(sub.get("voltage")),
-        _as_float(sub.get("capacitance_saturation_mlcc")),
-        _as_float(sub.get("vth_mlcc")),
-        v_op,
-    )
+    oc = _effective_capacitance(orig, v_op)
+    sc = _effective_capacitance(sub, v_op)
     if oc is None and sc is None:
         return None
     spec = ParamSpec("c_bias", f"C @ {v_op:g}V", "F", HIGHER_BETTER, 0.9)
