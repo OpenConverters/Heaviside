@@ -33,7 +33,13 @@ APPLY=""
 [ "${1:-}" = "--apply" ] && APPLY=1
 
 SSH="ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o ConnectTimeout=20"
-R() { $SSH "$PROD_HOST" "cd $PROD_DIR && $*"; }
+
+# Everything that touches the repo, the venv or the app's own files runs as ALF, never as
+# root. The tree is alf:ubuntu and supervisor starts heaviside with user=alf, so a git
+# pull or pip install performed as root leaves root-owned files inside an alf-owned tree
+# that the service then cannot write. Only supervisorctl runs as root.
+R() { $SSH "$PROD_HOST" "su alf -c 'cd $PROD_DIR && $*'"; }
+ROOT() { $SSH "$PROD_HOST" "$*"; }
 say() { printf '\n=== %s ===\n' "$1"; }
 
 say "0. Where prod is vs origin/main"
@@ -48,13 +54,13 @@ else
 fi
 
 say "1. Can prod reach GitHub?"
-if R 'ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -T git@github.com 2>&1 | head -1' \
+if ROOT 'ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -T git@github.com 2>&1 | head -1' \
      | grep -q 'successfully authenticated'; then
   echo "yes"
 else
   echo "NO — prod cannot authenticate to GitHub."
   echo "Add this as a deploy key on OpenConverters/Heaviside, then re-run:"
-  R 'cat /root/.ssh/id_ed25519.pub' || true
+  ROOT 'cat /root/.ssh/id_ed25519.pub' || true
   exit 1
 fi
 
@@ -80,7 +86,7 @@ say "4. Sync runtime deps (openai/openpyxl are REQUIRED by the crossref agents)"
 R '.venv/bin/pip install -q -e . 2>&1 | tail -3'
 
 say "5. Restart"
-R 'supervisorctl restart heaviside' || true
+ROOT 'supervisorctl restart heaviside' || true
 sleep 12
 
 say "6. Verify it actually RUNS — not just that files landed"
