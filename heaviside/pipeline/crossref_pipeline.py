@@ -53,13 +53,27 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_manufacturer(name: str) -> str:
-    """Lowercase + strip accents for manufacturer name matching.
+    """Lowercase + strip accents + fold German umlaut transliterations.
 
-    Handles the Würth/Wurth, Murata/murata, etc. mismatch between
-    user input and TAS records.
+    Handles the Würth/Wurth, Murata/murata, etc. mismatch between user input and
+    TAS records.
+
+    Accent-stripping ALONE is not enough: it maps "Würth" -> "wurth", but the
+    standard German ASCII transliteration writes the umlaut as a digraph, so
+    "Wuerth" -> "wuerth" and the two never matched. Würth themselves use "Wuerth"
+    in ASCII contexts, so a perfectly reasonable request failed on prod with
+    "CR pipeline FAILED: mixed" while the identical request spelled "Würth"
+    passed. Folding ue/oe/ae makes all three spellings converge.
+
+    Checked against every manufacturer name in TAS/data (146 distinct): the fold
+    produces ZERO collisions between different manufacturers, and only AEL and
+    STMicroelectronics contain the digraphs at all. Both sides of every
+    comparison go through this function, so the folded form never needs to be
+    human-readable — it is a matching key, not a display name.
     """
     nfkd = unicodedata.normalize("NFKD", name.lower())
-    return "".join(c for c in nfkd if not unicodedata.combining(c))
+    stripped = "".join(c for c in nfkd if not unicodedata.combining(c))
+    return stripped.replace("ue", "u").replace("oe", "o").replace("ae", "a")
 
 
 class CrossRefPipelineError(RuntimeError):
@@ -1408,8 +1422,16 @@ def _connector_attrs(env: dict[str, Any]) -> dict[str, Any]:
 # Free-text fallbacks for originals that are not in the internal catalogue —
 # a BOM description like "Header, 2.54mm pitch, 10POS, vertical, receptacle"
 # still yields hard gates. Conservative: only unambiguous signals are used.
+# The separator must allow a HYPHEN, not just whitespace: BOM rows overwhelmingly
+# write the contact count as "2-pin" / "4-way" / "10-pos", and with \s* alone every
+# one of those parsed as UNKNOWN. Contact count is the strongest connector identity
+# gate, so losing it does not merely weaken ranking — it disables the gate entirely
+# (a missing attribute is not a mismatch), and the ranker then offers 6- and 8-way
+# headers as substitutes for a 2-way part. That is what made a real /crossref return
+# no_substitute while the correct Würth part sat in the catalogue.
 _CONN_POSITIONS_RE = re.compile(
-    r"(\d+)\s*(?:pos(?:ition)?s?|way|ckt|circuits?|contacts?|pins?|p)\b", re.I
+    r"(\d+)\s*[-‐-―]?\s*(?:pos(?:ition)?s?|way|ckt|circuits?|contacts?|pins?|p)\b",
+    re.I,
 )
 _CONN_PITCH_LABELLED_RE = re.compile(
     r"(?:pitch[^0-9]{0,6}(\d+(?:\.\d+)?)\s*mm)|(?:(\d+(?:\.\d+)?)\s*mm\s*pitch)", re.I
