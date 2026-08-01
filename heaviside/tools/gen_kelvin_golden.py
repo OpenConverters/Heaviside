@@ -206,7 +206,9 @@ def gen_capacitor(fixtures: Path) -> list[dict]:
                                   capacitance_max=x.capacitance * 1.15, v_rated_min=x.v_rated * 0.5,
                                   exclude_discontinued=False),
              CapacitorTiebreaker.HIGHEST_CAPACITANCE)
-        if x.ripple_current_rms > 0:
+        # ripple_current_rms is None when the part publishes no rating (ABT #455) — such a
+        # row cannot seed a ripple-constrained case, so skip it rather than comparing None.
+        if x.ripple_current_rms is not None and x.ripple_current_rms > 0:
             emit(CapacitorConstraints(capacitance_min=x.capacitance * 0.5,
                                       capacitance_max=x.capacitance * 3.0, v_rated_min=x.v_rated * 0.5,
                                       ripple_current_min=x.ripple_current_rms * 0.5,

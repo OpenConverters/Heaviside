@@ -655,8 +655,8 @@ class Capacitor:
     manufacturer: str
     capacitance: float  # capacitance.nominal (farads)
     v_rated: float  # ratedVoltage (volts)
-    ripple_current_rms: float  # rippleCurrent (amps RMS)
-    esr: float  # esr (ohms); 0 for MLCC when not declared
+    ripple_current_rms: float | None  # rippleCurrent (amps RMS); None when not published
+    esr: float | None  # esr (ohms); None when not published — never 0 (ABT #455)
     rth: float | None  # thermalResistance (K/W) case-to-ambient
     technology: str  # ceramic / aluminum_electrolytic / film / tantalum
     case: str
@@ -687,12 +687,21 @@ class Capacitor:
         if not all(isinstance(x, (int, float)) and x > 0 for x in (cap_nom, v_rated)):
             return None
 
+        # Absent stays None, NOT 0.0. Most of the catalogue does not publish these —
+        # 204,060 records carry no ESR and 218,775 no ripple current — and writing 0.0
+        # for "not stated" is an in-band sentinel: nothing downstream can tell an absent
+        # value from a real one, because they are the same value. A 0 ohm ESR is also
+        # physically impossible, and under the lowest_esr tiebreaker it sorted every part
+        # with NO data ahead of the genuinely low-ESR parts the caller asked for. A stated
+        # 0 is treated as not-stated for the same reason: no capacitor has zero ESR.
+        # (ABT #455; the identical defect was fixed in Kelvin's Views.cpp, and the parity
+        # golden is regenerated from here.)
         ripple = elec.get("rippleCurrent")
-        if not isinstance(ripple, (int, float)) or ripple < 0:
-            ripple = 0.0
+        if not isinstance(ripple, (int, float)) or ripple <= 0:
+            ripple = None
         esr = elec.get("esr")
-        if not isinstance(esr, (int, float)) or esr < 0:
-            esr = 0.0
+        if not isinstance(esr, (int, float)) or esr <= 0:
+            esr = None
 
         # Capacitor technology comes from part.family/series/subType — varies.
         tech = part.get("family") or part.get("subType") or part.get("series")
@@ -719,8 +728,8 @@ class Capacitor:
             manufacturer=manufacturer,
             capacitance=float(cap_nom),
             v_rated=float(v_rated),
-            ripple_current_rms=float(ripple),
-            esr=float(esr),
+            ripple_current_rms=float(ripple) if ripple is not None else None,
+            esr=float(esr) if esr is not None else None,
             rth=rth,
             technology=tech,
             case=case,
@@ -820,9 +829,16 @@ def select_capacitor(
         if cap.capacitance > c.capacitance_max:
             rejection["capacitance_high"] += 1
             continue
-        if c.ripple_current_min is not None and cap.ripple_current_rms < c.ripple_current_min:
-            rejection["ripple_low"] += 1
-            continue
+        if c.ripple_current_min is not None:
+            # An UNKNOWN ripple rating cannot satisfy a ripple requirement. Counted under
+            # its own reason so the histogram says "no published rating" rather than
+            # implying the part was measured and fell short.
+            if cap.ripple_current_rms is None:
+                rejection["ripple_unknown"] += 1
+                continue
+            if cap.ripple_current_rms < c.ripple_current_min:
+                rejection["ripple_low"] += 1
+                continue
         passing.append(cap)
 
     if not passing:
@@ -833,13 +849,21 @@ def select_capacitor(
         return x.rth is None
 
     if tiebreaker is CapacitorTiebreaker.LOWEST_ESR:
-        # MLCC rows often have esr=0; treat zero as "best" deliberately.
-        winner = min(passing, key=lambda x: (_no_thermal_c(x), x.esr))
+        # A part with NO published ESR must not win "lowest ESR". It used to: absence was
+        # stored as 0.0 and 0 sorts first, so the tiebreaker systematically returned the
+        # parts it knew least about, and a comment here called that deliberate. Unknown
+        # now ranks LAST behind a flag — never by substituting a number for the absent
+        # one, which is the defect (ABT #455).
+        winner = min(passing, key=lambda x: (_no_thermal_c(x), x.esr is None, x.esr or 0.0))
     elif tiebreaker is CapacitorTiebreaker.HIGHEST_RIPPLE_HEADROOM:
         ripple_min = c.ripple_current_min or 1.0  # avoid div by 0 / None
         winner = min(
             passing,
-            key=lambda x: (_no_thermal_c(x), -x.ripple_current_rms / ripple_min),
+            key=lambda x: (
+                _no_thermal_c(x),
+                x.ripple_current_rms is None,
+                -(x.ripple_current_rms or 0.0) / ripple_min,
+            ),
         )
     elif tiebreaker is CapacitorTiebreaker.HIGHEST_VOLTAGE_MARGIN:
         winner = min(passing, key=lambda x: (_no_thermal_c(x), -x.v_rated / c.v_rated_min))
@@ -853,7 +877,8 @@ def select_capacitor(
         "capacitance_ratio": winner.capacitance / c.capacitance_min,
         "ripple_headroom": (
             winner.ripple_current_rms / c.ripple_current_min
-            if (c.ripple_current_min and c.ripple_current_min > 0)
+            if (c.ripple_current_min and c.ripple_current_min > 0
+                and winner.ripple_current_rms is not None)
             else float("inf")
         ),
     }
