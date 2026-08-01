@@ -41,6 +41,12 @@ from typing import Any, Final
 from heaviside.catalogue._reader import iter_envelopes
 from heaviside.librarian.guards import BAD_DATASHEET_URL_PATTERNS
 
+# The one dimensionWithTolerance resolver, mirroring PEAS::resolve_dimensional_values.
+# A zener's breakdownVoltage is {minimum, nominal, maximum}, so it must be collapsed with
+# the shared rule rather than hand-reading a bound here — house rule, and it is the
+# difference between agreeing with Kelvin and quietly disagreeing with it.
+from heaviside.report.model import _resolve as resolve_dimensional_value
+
 # Default location of TAS/data/. ``HEAVISIDE_TAS_DATA_DIR`` lets tests
 # point at fixtures (matches the convention used by
 # heaviside.librarian.safe_access).
@@ -450,8 +456,8 @@ class Diode:
     mpn: str
     manufacturer: str
     vrrm_rated: float  # reverseVoltage (volts)
-    if_avg_rated: float  # forwardCurrent (amps)
-    vf_typ: float  # forwardVoltage (volts) at rated current
+    if_avg_rated: float | None  # forwardCurrent (amps); None for zener/TVS/ESD (ABT #466)
+    vf_typ: float | None  # forwardVoltage (volts); None when not published at rated current
     qrr: float  # reverseRecoveryCharge (coulombs); 0 for Schottky
     trr: float  # reverseRecoveryTime (seconds); 0 for Schottky
     rth_ja: float | None  # thermalResistanceJunctionAmbient (K/W)
@@ -479,14 +485,41 @@ class Diode:
         if not isinstance(mpn, str) or not isinstance(manufacturer, str):
             return None
 
+        # Diode subtypes are characterised by DIFFERENT parameters, and demanding the
+        # rectifier set from all of them silently emptied whole families: every TVS and
+        # ESD part, and all but ~100 zeners, were dropped as unreadable. Measured over
+        # TAS diodes.ndjson:
+        #   zener    carries breakdownVoltage (its Vz); only 101/8,274 carry reverseVoltage
+        #   tvs/esd  carry standoffVoltage; NEITHER carries forwardCurrent at all
+        # So take each subtype's own reverse-direction rating, and require the forward
+        # parameters only from the subtypes that actually have them. This mirrors
+        # Kelvin's extract_diode (ABT #423); the two are parity-locked, and Heaviside
+        # lagging here made the parity golden un-regenerable (ABT #466).
+        sub = part.get("subType")
+        sub = sub if isinstance(sub, str) else ""
+        rectifier_like = sub not in ("zener", "tvs", "esd")
+
         vrrm = elec.get("reverseVoltage")
+        if not (isinstance(vrrm, (int, float)) and vrrm > 0):
+            # _resolve, not a raw read: a zener's breakdownVoltage is a
+            # dimensionWithTolerance (Vz is a graded range, so all 8,274 are objects)
+            # and reading the field directly sees only a dict.
+            if sub == "zener":
+                vrrm = resolve_dimensional_value(elec.get("breakdownVoltage"))
+            elif sub in ("tvs", "esd"):
+                vrrm = resolve_dimensional_value(elec.get("standoffVoltage"))
+        if not (isinstance(vrrm, (int, float)) and vrrm > 0):
+            return None
+
         if_avg = elec.get("forwardCurrent")
         vf = elec.get("forwardVoltage")
-        # Vf REQUIRED: the LOWEST_VF tiebreaker would otherwise reward
-        # rows where Vf is missing (treated as 0 via silent fallback),
-        # which is exactly the "no silent fallbacks" trap. Rows without
-        # a published Vf get skipped here; the auditor flags them.
-        if not all(isinstance(x, (int, float)) and x > 0 for x in (vrrm, if_avg, vf)):
+        if_avg = float(if_avg) if isinstance(if_avg, (int, float)) and if_avg > 0 else None
+        vf = float(vf) if isinstance(vf, (int, float)) and vf > 0 else None
+        # Vf REQUIRED for a rectifier: the LOWEST_VF tiebreaker would otherwise reward
+        # rows where Vf is missing (treated as 0 via silent fallback), which is exactly
+        # the "no silent fallbacks" trap. A zener/TVS/ESD publishes no average forward
+        # current at all, so for those it stays None — absent, never 0.
+        if rectifier_like and (if_avg is None or vf is None):
             return None
 
         qrr = elec.get("reverseRecoveryCharge")
@@ -528,8 +561,8 @@ class Diode:
             mpn=mpn,
             manufacturer=manufacturer,
             vrrm_rated=float(vrrm),
-            if_avg_rated=float(if_avg),
-            vf_typ=float(vf),
+            if_avg_rated=if_avg,
+            vf_typ=vf,
             qrr=float(qrr),
             trr=float(trr),
             rth_ja=rth_ja,
@@ -600,6 +633,12 @@ def select_diode(
         if d.vrrm_rated < c.vrrm_min:
             rejection["vrrm_low"] += 1
             continue
+        # A zener/TVS/ESD publishes no average forward current, so it cannot satisfy a
+        # forward-current requirement. Counted under its own reason rather than
+        # if_avg_low, which would imply it was rated and fell short.
+        if d.if_avg_rated is None:
+            rejection["if_avg_unknown"] += 1
+            continue
         if d.if_avg_rated < c.if_avg_min:
             rejection["if_avg_low"] += 1
             continue
@@ -616,19 +655,28 @@ def select_diode(
         return d.rth_ja is None or d.tj_max is None
 
     if tiebreaker is DiodeTiebreaker.LOWEST_VF:
-        winner = min(passing, key=lambda d: (_no_thermal_d(d), d.vf_typ))
+        winner = min(passing, key=lambda d: (_no_thermal_d(d), d.vf_typ is None, d.vf_typ or 0.0))
     elif tiebreaker is DiodeTiebreaker.LOWEST_QRR:
         winner = min(passing, key=lambda d: (_no_thermal_d(d), d.qrr))
     elif tiebreaker is DiodeTiebreaker.HIGHEST_VRRM_MARGIN:
         winner = min(passing, key=lambda d: (_no_thermal_d(d), -d.vrrm_rated / c.vrrm_min))
     elif tiebreaker is DiodeTiebreaker.HIGHEST_IF_MARGIN:
-        winner = min(passing, key=lambda d: (_no_thermal_d(d), -d.if_avg_rated / c.if_avg_min))
+        winner = min(
+            passing,
+            key=lambda d: (
+                _no_thermal_d(d),
+                d.if_avg_rated is None,
+                -(d.if_avg_rated or 0.0) / c.if_avg_min,
+            ),
+        )
     else:  # pragma: no cover
         raise ValueError(f"unhandled tiebreaker {tiebreaker!r}")
 
     margins = {
         "vrrm_margin": winner.vrrm_rated / c.vrrm_min,
-        "if_avg_margin": winner.if_avg_rated / c.if_avg_min,
+        "if_avg_margin": (
+            winner.if_avg_rated / c.if_avg_min if winner.if_avg_rated is not None else None
+        ),
         "qrr_headroom": (
             (c.qrr_max / winner.qrr) if (c.qrr_max and winner.qrr > 0) else float("inf")
         ),
