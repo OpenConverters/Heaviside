@@ -50,6 +50,39 @@ def parse_tolerance(tol_str: str | None) -> dict[str, float] | None:
     return None
 
 
+# EIA RS-198 class-1 (temperature-compensating) three-character codes: significant
+# figure, multiplier, tolerance in ppm/K. C0G -> 0 +/-30, U2J -> 7.5 x -100 = -750
+# +/-120. Class-2 codes (X7R, X5R, ...) are NOT in this system -- their spec is a
+# percent capacitance-change band, not a coefficient -- and Murata's own designations
+# (ZLM, X8G) are not EIA at all; all of them decode to None here.
+EIA_SIGNIFICANT = {"C": 0.0, "B": 0.3, "L": 0.8, "A": 0.9, "M": 1.0,
+                   "P": 1.5, "R": 2.2, "S": 3.3, "T": 4.7, "V": 5.6, "U": 7.5}
+EIA_MULTIPLIER = {"0": -1, "1": -10, "2": -100, "3": -1000,
+                  "4": 1, "6": 10, "7": 100, "8": 1000}
+EIA_TOLERANCE = {"G": 30, "H": 60, "J": 120, "K": 250,
+                 "L": 500, "M": 1000, "N": 2500}
+
+
+def eia_tempco(code: str | None) -> dict[str, Any] | None:
+    """The temperature coefficient an EIA class-1 code specifies, in ppm/K.
+
+    `tcc` carries no unit of its own in CAS and the catalogue uses it for both a ppm/K
+    coefficient (class 1) and a percent band (class 2), so the unit is written down.
+    Returns None for anything that is not a decodable EIA class-1 code -- the caller
+    must then emit no tcc rather than a placeholder.
+    """
+    if not code or len(code) != 3:
+        return None
+    figure = EIA_SIGNIFICANT.get(code[0])
+    multiplier = EIA_MULTIPLIER.get(code[1])
+    tolerance = EIA_TOLERANCE.get(code[2])
+    if figure is None or multiplier is None or tolerance is None:
+        return None
+    nominal = figure * multiplier or 0.0        # C0G is 0.0 x -1; keep it off -0.0
+    return {"nominal": nominal, "minimum": nominal - tolerance,
+            "maximum": nominal + tolerance, "unit": "ppm/K"}
+
+
 def parse_size_code(size_str: str) -> tuple[float | None, float | None, float | None]:
     """Parse size code like '3225M/1210' or '2016/0806' into (L, W, H in mm).
 
@@ -249,8 +282,13 @@ def make_capacitor_document(
     thermal: dict[str, Any] = {"temperature": {}}
     if temp_max is not None:
         thermal["temperature"]["maximum"] = temp_max
-    if temp_characteristic:
-        thermal["tcc"] = {"nominal": 0}  # Placeholder
+    tempco = eia_tempco(temp_characteristic)
+    if tempco is not None:
+        # The CSV's characteristic column NAMES the dielectric; decode it. A code with
+        # no EIA coefficient (Murata's own ZLM, or any class-2 code, whose spec is a
+        # percent change band and not a coefficient) yields no tcc at all — an absent
+        # field is missing data, a zero is a claim that the part is temperature-stable.
+        thermal["tcc"] = tempco
 
     # Mechanical
     dimensions: dict[str, Any] = {}
@@ -279,13 +317,20 @@ def make_capacitor_document(
         mechanical["shape"] = shape
 
     # Build datasheetInfo
+    part: dict[str, Any] = {
+        "partNumber": part_number,
+        "series": series or "Unknown",
+        "technology": technology or "MLCC",
+        "case": case or "Unknown",
+    }
+    if tempco is not None:
+        # Only for codes decoded above, i.e. genuine EIA class-1 ones. A class-2 code
+        # cannot be filed here from this column alone: Murata's X8G/X8L/X8M/X8N are
+        # EIA-shaped but the product list marks them publicstandard MURATA, so telling
+        # a real EIA code from Murata's own needs that column, which is not read here.
+        part["dielectricCode"] = temp_characteristic
     datasheet_info: dict[str, Any] = {
-        "part": {
-            "partNumber": part_number,
-            "series": series or "Unknown",
-            "technology": technology or "MLCC",
-            "case": case or "Unknown",
-        },
+        "part": part,
         "electrical": electrical,
         "thermal": thermal,
     }
