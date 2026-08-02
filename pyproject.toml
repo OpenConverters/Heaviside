@@ -18,9 +18,12 @@ classifiers = [
 ]
 dependencies = [
   # Engine (built from vendor/PyOpenMagnetics submodule in CI; PyPI fallback for dev).
-  # Capped <1.3.12 until decomposer is ported: 1.3.12 removed the trailing bridgeMode
-  # arg from generate_ngspice_circuit, which would break heaviside/decomposer/api.py.
-  "PyOpenMagnetics>=1.3.10,<1.3.12",
+  # ALWAYS latest, never capped (global rule): the old <1.3.12 cap stranded the
+  # deterministic calculate_peak_winding_current (v1.4.6+5), forcing hand-rolled
+  # analytical ipeak_worst formulas; its justification (generate_ngspice_circuit's
+  # bridgeMode arg) was already dead — the decomposer was removed in the della-Pollock
+  # cutover (0 live callers of generate_ngspice_circuit).
+  "PyOpenMagnetics>=1.6.2",
   # Numerics
   "numpy>=2.0",
   "scipy>=1.13",
