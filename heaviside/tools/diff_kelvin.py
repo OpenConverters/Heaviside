@@ -55,6 +55,35 @@ def _hs_resistor(req, data_dir):
                                                max_value_deviation=0.2), tas_data_dir=data_dir)
 
 
+# ---- assemble.py path: the RICHER constraints kirchhoff_fill never exercises --------
+# assemble builds finite qg_max / a 0.8x..10x cap window / a 5%-deviation+1%-tol resistor,
+# which the Kelvin option surface could not express (ABT #125) until qgMax /
+# capacitanceMin|Max / maxValueDeviation|maxTolerance landed. These cases pass those
+# options and must match the Python selector, so a regression in the option plumbing
+# (or the selector.py delegation that will consume it) shows up here, not in prod.
+def _asm_mosfet(req, data_dir):
+    from heaviside.catalogue.selector import MosfetConstraints
+    mc = MosfetConstraints(vds_min=req["ratedDrainSourceVoltage"],
+                           id_min=req["ratedContinuousDrainCurrent"],
+                           rds_on_max=req["maximumOnResistance"], qg_max=req["_qg_max"], op_fsw=None)
+    return select_mosfet(mc, tiebreaker=MosfetTiebreaker.LOWEST_RDS_ON, tas_data_dir=data_dir)
+
+
+def _asm_capacitor(req, data_dir):
+    from heaviside.catalogue.selector import CapacitorConstraints, CapacitorTiebreaker
+    t = float(req["capacitance"]["nominal"])
+    cc = CapacitorConstraints(capacitance_min=t * 0.8, capacitance_max=t * 10,
+                              v_rated_min=req["ratedVoltage"])
+    return select_capacitor(cc, tiebreaker=CapacitorTiebreaker.LOWEST_ESR, tas_data_dir=data_dir)
+
+
+def _asm_resistor(req, data_dir):
+    from heaviside.catalogue.selector import ResistorConstraints
+    return select_resistor(ResistorConstraints(target_ohms=float(req["resistance"]["nominal"]),
+                                               max_tolerance=0.01, max_value_deviation=0.05),
+                           tas_data_dir=data_dir)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
@@ -85,8 +114,30 @@ def main() -> int:
             return ("err", None, dict(e.rejection_counts))
 
     for _ in range(args.cases):
-        which = rng.choice(["mosfet", "diode", "capacitor", "resistor"])
-        if which == "mosfet":
+        which = rng.choice(["mosfet", "diode", "capacitor", "resistor",
+                            "mosfet_asm", "capacitor_asm", "resistor_asm"])
+        if which == "mosfet_asm":
+            pout, fsw = rng.choice([5, 20, 50, 100]), 100000.0
+            req = {"ratedDrainSourceVoltage": rng.choice([30, 60, 100, 250, 400, 650]),
+                   "ratedContinuousDrainCurrent": rng.choice([1, 5, 10, 20]),
+                   "maximumOnResistance": rng.choice([0.005, 0.02, 0.1]),
+                   "_qg_max": (0.02 * pout) / (10 * fsw)}
+            k = kelvin("mosfet", {kk: v for kk, v in req.items() if not kk.startswith("_")},
+                       {"qgMax": req["_qg_max"]})
+            h = hs(_asm_mosfet, req, Path(args.data))
+            which = "mosfet"  # label
+        elif which == "capacitor_asm":
+            t = rng.choice([1e-9, 1e-7, 1e-6, 1e-5, 1e-4])
+            req = {"capacitance": {"nominal": t}, "ratedVoltage": rng.choice([25, 50, 100])}
+            k = kelvin("capacitor", req, {"capacitanceMin": t * 0.8, "capacitanceMax": t * 10})
+            h = hs(_asm_capacitor, req, Path(args.data))
+            which = "capacitor"
+        elif which == "resistor_asm":
+            req = {"resistance": {"nominal": rng.choice([1.0, 100.0, 1e3, 1e4, 1e5])}}
+            k = kelvin("resistor", req, {"maxValueDeviation": 0.05, "maxTolerance": 0.01})
+            h = hs(_asm_resistor, req, Path(args.data))
+            which = "resistor"
+        elif which == "mosfet":
             req = {"ratedDrainSourceVoltage": rng.choice([30, 60, 100, 250, 400, 650, 900]),
                    "ratedContinuousDrainCurrent": rng.choice([1, 5, 10, 20, 50]),
                    "maximumOnResistance": rng.choice([0.005, 0.02, 0.1, 0.5])}
