@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import enum
 import os
-from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -39,7 +38,6 @@ from pathlib import Path
 from typing import Any, Final
 
 from heaviside.catalogue._reader import iter_envelopes
-from heaviside.librarian.guards import BAD_DATASHEET_URL_PATTERNS
 
 # The one dimensionWithTolerance resolver, mirroring PEAS::resolve_dimensional_values.
 # A zener's breakdownVoltage is {minimum, nominal, maximum}, so it must be collapsed with
@@ -57,28 +55,6 @@ _DEFAULT_TAS_DATA_DIR: Final = _REPO_ROOT / "TAS" / "data"
 def _tas_data_dir() -> Path:
     env = os.environ.get("HEAVISIDE_TAS_DATA_DIR")
     return Path(env) if env else _DEFAULT_TAS_DATA_DIR
-
-
-def _datasheet_unusable(url: str) -> bool:
-    """True when a datasheetUrl is absent or a known-bad search /
-    aggregator / placeholder page (the same patterns the librarian
-    write-guard rejects). A part whose only datasheet link is dead can
-    neither be verified nor enriched, so the selector deprioritises it
-    rather than shipping a design around an undocumented part."""
-    if not url:
-        return True
-    return any(rx.search(url) for rx, _reason in BAD_DATASHEET_URL_PATTERNS)
-
-
-def _mosfet_evidence_incomplete(m: Mosfet) -> bool:
-    """A MOSFET the design cannot fully build or verify around: no
-    gate-charge datum (gate-drive and bootstrap-capacitor sizing are
-    impossible — this is exactly what leaves C_boot unsized) or no
-    usable datasheet. Used as the PRIMARY preference tier so a
-    documented, buildable part beats an otherwise-equal thin one. It is
-    never a hard reject: the legacy corpus has real enrichment gaps, so
-    emptying the pool would be worse than picking the best thin part."""
-    return m.qg_total <= 0 or _datasheet_unusable(m.datasheet_url)
 
 
 # ---------------------------------------------------------------------------
