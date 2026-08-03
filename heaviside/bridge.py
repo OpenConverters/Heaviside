@@ -44,6 +44,7 @@ Scope (Phase 2):
 from __future__ import annotations
 
 import math
+import os
 import re
 import time
 from collections.abc import Mapping, Sequence
@@ -139,6 +140,33 @@ _HEAVISIDE_PYOM_SETTINGS: dict[str, Any] = {
 }
 
 
+def _ensure_cci_coordinates_path() -> None:
+    """Guarantee MKF's painter CCI-coordinates path resolves before we call
+    ``get_settings()``.
+
+    MKF (>=1.6.x) serialises the painter CCI-coordinates path inside
+    ``get_settings()``, and its resolver *hard-throws* when the path cannot be
+    located (MKF ``Settings::get_painter_cci_coordinates_path``). A pip-installed
+    wheel has no MKF source tree and an arbitrary CWD, so the only resolution
+    that applies is the ``MKF_CCI_COORDINATES_PATH`` env var — which MKF
+    documents as the mechanism for "relocated installs (wheels, prod hosts)".
+
+    Heaviside never paints >1000-strand litz (strand counts up to 1000 use MKF's
+    build-time embedded coordinates), so the directory only has to *exist* for
+    ``get_settings()`` to succeed. We deliberately do NOT vendor MKF's
+    coordinate DATA downstream (that lives in MKF, per the "magnetics data lives
+    in MKF" rule); if an on-disk coordinate catalog is ever genuinely needed,
+    MKF fails loudly on the missing ``cciN.txt`` — never silently.
+
+    Respects an operator-provided ``MKF_CCI_COORDINATES_PATH`` if already set.
+    """
+    if os.environ.get("MKF_CCI_COORDINATES_PATH"):
+        return
+    managed = Path.home() / ".heaviside" / "cci_coords" / "coordinates"
+    managed.mkdir(parents=True, exist_ok=True)
+    os.environ["MKF_CCI_COORDINATES_PATH"] = str(managed)
+
+
 def _apply_pyom_settings(ext: Any) -> Any:
     """Apply and verify :data:`_HEAVISIDE_PYOM_SETTINGS` on ``ext``.
 
@@ -146,6 +174,7 @@ def _apply_pyom_settings(ext: Any) -> Any:
     keys or a value does not round-trip — a silently-dropped setting is
     a wrong simulation, not a degraded one.
     """
+    _ensure_cci_coordinates_path()
     current = ext.get_settings()
     missing = sorted(set(_HEAVISIDE_PYOM_SETTINGS) - set(current))
     if missing:
