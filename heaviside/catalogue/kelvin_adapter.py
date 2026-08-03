@@ -25,29 +25,56 @@ class KelvinUnavailable(RuntimeError):
     """PyKelvin is not importable / not built (never a silent fallback to the Python selector)."""
 
 
-@functools.lru_cache(maxsize=1)
-def _engine():
+def _default_data_dir() -> str:
+    data = os.environ.get("HEAVISIDE_TAS_DATA_DIR")
+    return data or str(Path(__file__).resolve().parents[2] / "TAS" / "data")
+
+
+@functools.lru_cache(maxsize=8)
+def _engine_for(data_dir: str):
+    """One Engine per data dir (the selector.py select_* accept a per-call
+    tas_data_dir; shards are content-keyed in KELVIN_INDEX_DIR so one cache serves
+    all data dirs). Cached because Engine construction builds/loads the index."""
     try:
         import PyKelvin  # noqa: PLC0415
     except ImportError as exc:  # build it — do not silently fall back
         raise KelvinUnavailable(
             "PyKelvin not importable; build Kelvin (cmake --build) and put it on PYTHONPATH"
         ) from exc
-    data = os.environ.get("HEAVISIDE_TAS_DATA_DIR")
-    if not data:
-        data = str(Path(__file__).resolve().parents[2] / "TAS" / "data")
     cache = os.environ.get("KELVIN_INDEX_DIR", str(Path.home() / ".kelvin" / "index"))
     Path(cache).mkdir(parents=True, exist_ok=True)
-    return PyKelvin, PyKelvin.Engine(data, cache, True)
+    return PyKelvin, PyKelvin.Engine(data_dir, cache, True)
 
 
-def select(category: str, design_requirements: dict[str, Any], options: dict[str, Any] | None = None
-           ) -> dict[str, Any]:
+def _engine(data_dir: str | None = None):
+    return _engine_for(str(data_dir) if data_dir else _default_data_dir())
+
+
+def no_candidates_payload(exc: Any) -> dict[str, Any]:
+    """Parse a PyKelvin.NoCandidates into {rejections, totalRowsConsidered, category}.
+    The exception's first line is the JSON payload (see CONTRACT.md); anything else
+    surfaces as empty so the caller still raises a well-formed SelectionError."""
+    import json  # noqa: PLC0415
+
+    head = str(exc).split("\n", 1)[0]
+    try:
+        return json.loads(head) if head.startswith("{") else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def select(category: str, design_requirements: dict[str, Any], options: dict[str, Any] | None = None,
+           *, data_dir: str | None = None) -> dict[str, Any]:
     """Return Kelvin's SelectionResult dict (see Kelvin/docs/CONTRACT.md). Raises PyKelvin
     exceptions (NoCandidates / InvalidOptions) unchanged so HS can map them to SelectionError /
     KirchhoffFillError exactly as today."""
-    _, eng = _engine()
+    _, eng = _engine(data_dir)
     return eng.select(category, design_requirements, options or {})
+
+
+def PyKelvin():  # noqa: N802 — the exception types the selector catches (NoCandidates, InvalidOptions)
+    pk, _ = _engine()
+    return pk
 
 
 def select_components(tas: dict[str, Any], options: dict[str, Any] | None = None) -> dict[str, Any]:

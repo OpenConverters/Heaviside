@@ -338,97 +338,32 @@ def select_mosfet(
     — caller MUST handle this. Reading errors on the NDJSON file
     surface as :class:`CatalogueReadError`.
     """
-    root = tas_data_dir if tas_data_dir is not None else _tas_data_dir()
-    path = root / "mosfets.ndjson"
+    from heaviside.catalogue import kelvin_adapter
 
-    passing: list[Mosfet] = []
-    rejection: Counter[str] = Counter()
-    total = 0
-
-    for _lineno, env in iter_envelopes(path):
-        total += 1
-        m = Mosfet.from_envelope(env)
-        if m is None:
-            rejection["unreadable_row"] += 1
-            continue
-        if c.exclude_discontinued and m.status != "production":
-            rejection["discontinued"] += 1
-            continue
-        if c.technology_allowed and m.technology not in c.technology_allowed:
-            rejection["technology"] += 1
-            continue
-        if m.vds_rated < c.vds_min:
-            rejection["vds_rated_low"] += 1
-            continue
-        if m.id_continuous < c.id_min:
-            rejection["id_continuous_low"] += 1
-            continue
-        if m.rds_on > c.rds_on_max:
-            rejection["rds_on_high"] += 1
-            continue
-        if m.qg_total > c.qg_max:
-            rejection["qg_total_high"] += 1
-            continue
-        passing.append(m)
-
-    if not passing:
-        raise SelectionError(c, rejection, total)
-
-    # Preference tiers (applied before the primary metric, most
-    # important first):
-    #   1. evidence-complete — a buildable, documented part (Qg present,
-    #      datasheet usable). A thin/undocumented part (e.g. a
-    #      discontinued FET with a dead datasheet and no Qg) only wins if
-    #      nothing better satisfies the hard constraints.
-    #   2. thermal-rich — Rth_ja + Tj_max populated, so the analyst can
-    #      compute Tj and the realism gate's thermal_limit check runs.
-    # Implemented as a tuple sort key so each tier orders within the one
-    # above it, finally falling to the primary metric. Both tiers are
-    # soft (re-rank, never reject) — the legacy corpus has real gaps.
-    def _no_thermal(m: Mosfet) -> bool:
-        return m.rth_ja is None or m.tj_max is None
-
-    _ev = _mosfet_evidence_incomplete
-
-    if tiebreaker is MosfetTiebreaker.LOWEST_RDS_ON:
-        winner = min(passing, key=lambda m: (_ev(m), _no_thermal(m), m.rds_on))
-    elif tiebreaker is MosfetTiebreaker.LOWEST_QG:
-        winner = min(passing, key=lambda m: (_ev(m), _no_thermal(m), m.qg_total))
-    elif tiebreaker is MosfetTiebreaker.HIGHEST_VDS_MARGIN:
-        winner = min(passing, key=lambda m: (_ev(m), _no_thermal(m), -m.vds_rated / c.vds_min))
-    elif tiebreaker is MosfetTiebreaker.HIGHEST_ID_MARGIN:
-        winner = min(passing, key=lambda m: (_ev(m), _no_thermal(m), -m.id_continuous / c.id_min))
+    req = {"ratedDrainSourceVoltage": c.vds_min, "ratedContinuousDrainCurrent": c.id_min,
+           "maximumOnResistance": c.rds_on_max}
+    opts: dict[str, Any] = {"tiebreaker": str(tiebreaker), "excludeDiscontinued": c.exclude_discontinued}
+    if c.qg_max != float("inf"):
+        opts["qgMax"] = c.qg_max
+    if c.technology_allowed and set(c.technology_allowed) != {"Si", "SiC", "GaN"}:
+        opts["technologyAllowed"] = sorted(c.technology_allowed)
+    _op = (c.op_i_rms, c.op_vds, c.op_duty, c.op_fsw)
+    if all(isinstance(x, (int, float)) and x > 0 for x in _op):
+        opts["operatingPoint"] = {"iRms": c.op_i_rms, "vds": c.op_vds, "duty": c.op_duty, "fsw": c.op_fsw}
     elif tiebreaker is MosfetTiebreaker.LOWEST_TOTAL_LOSS:
-        if not all(
-            isinstance(x, (int, float)) and x > 0
-            for x in (c.op_i_rms, c.op_vds, c.op_duty, c.op_fsw)
-        ):
-            raise ValueError(
-                "LOWEST_TOTAL_LOSS requires op_i_rms/op_vds/op_duty/op_fsw on MosfetConstraints"
-            )
-        _IG = 1.0  # gate-drive current proxy; matches analyst _GATE_DRIVE_CURRENT_A
+        raise ValueError(
+            "LOWEST_TOTAL_LOSS requires op_i_rms/op_vds/op_duty/op_fsw on MosfetConstraints"
+        )
 
-        def _total_loss(m: Mosfet) -> float:
-            p_cond = float(c.op_duty) * (float(c.op_i_rms) ** 2) * m.rds_on
-            p_sw = (
-                (0.5 * float(c.op_vds) * float(c.op_i_rms) * m.qg_total * float(c.op_fsw) / _IG)
-                if m.qg_total > 0
-                else 0.0
-            )
-            # Output-capacitance (Coss) switching loss: a hard-switched leg dumps E_oss = 0.5·Coss·Vds²
-            # each transition, so the per-device power is 0.5·Coss·Vds²·fsw. This DOMINATES for a
-            # HIGH-VOLTAGE, LOW-CURRENT stage (e.g. a 400 V resonant primary at <1 A), where conduction
-            # is negligible — there, ranking by lowest Rds (largest die, highest Coss) is exactly wrong
-            # (abt #64: a CLLC primary picked a 6.25 mΩ/875 pF part and lost ~55 W to Coss). A genuinely
-            # ZVS leg recovers E_oss, but the sim only partially achieves ZVS at 400 V, so the realism
-            # gate sees this loss; including it here makes the selector pick the part the gate scores well.
-            p_coss = 0.5 * m.coss * (float(c.op_vds) ** 2) * float(c.op_fsw) if m.coss > 0 else 0.0
-            return p_cond + p_sw + p_coss
+    pk = kelvin_adapter.PyKelvin()
+    try:
+        r = kelvin_adapter.select("mosfet", req, opts,
+                                  data_dir=str(tas_data_dir) if tas_data_dir else None)
+    except pk.NoCandidates as e:
+        pl = kelvin_adapter.no_candidates_payload(e)
+        raise SelectionError(c, pl.get("rejections", {}), pl.get("totalRowsConsidered", 0)) from e
 
-        winner = min(passing, key=lambda m: (_ev(m), _no_thermal(m), _total_loss(m)))
-    else:  # pragma: no cover — enum is exhaustive
-        raise ValueError(f"unhandled tiebreaker {tiebreaker!r}")
-
+    winner = Mosfet.from_envelope(r["candidates"][0]["envelope"])
     margins = {
         "vds_margin": winner.vds_rated / c.vds_min,
         "id_margin": winner.id_continuous / c.id_min,
@@ -440,7 +375,7 @@ def select_mosfet(
         constraints=c,
         tiebreaker=tiebreaker,
         margins=margins,
-        alternatives_considered=len(passing),
+        alternatives_considered=r["alternativesConsidered"],
     )
 
 
@@ -458,8 +393,13 @@ class Diode:
     vrrm_rated: float  # reverseVoltage (volts)
     if_avg_rated: float | None  # forwardCurrent (amps); None for zener/TVS/ESD (ABT #466)
     vf_typ: float | None  # forwardVoltage (volts); None when not published at rated current
-    qrr: float  # reverseRecoveryCharge (coulombs); 0 for Schottky
-    trr: float  # reverseRecoveryTime (seconds); 0 for Schottky
+    # reverseRecoveryCharge (coulombs) / reverseRecoveryTime (seconds). None when the
+    # record states neither — 15,165 of the 17,888 of them — because 0 is the IDEAL
+    # diode, and the 260 records that genuinely state Qrr = 0 (257 sicSchottky, 3
+    # schottky: no minority charge to recover) produce the same number from the opposite
+    # cause. Absent, never 0 — the same rule vf_typ above already follows (ABT #489).
+    qrr: float | None
+    trr: float | None
     rth_ja: float | None  # thermalResistanceJunctionAmbient (K/W)
     rth_jc: float | None  # thermalResistanceJunctionCase (K/W)
     tj_max: float | None  # junctionTemperatureMax (°C)
@@ -523,11 +463,9 @@ class Diode:
             return None
 
         qrr = elec.get("reverseRecoveryCharge")
-        if not isinstance(qrr, (int, float)) or qrr < 0:
-            qrr = 0.0
+        qrr = float(qrr) if isinstance(qrr, (int, float)) and qrr >= 0 else None
         trr = elec.get("reverseRecoveryTime")
-        if not isinstance(trr, (int, float)) or trr < 0:
-            trr = 0.0
+        trr = float(trr) if isinstance(trr, (int, float)) and trr >= 0 else None
 
         case = part.get("case")
         if not isinstance(case, str):
@@ -563,8 +501,8 @@ class Diode:
             vrrm_rated=float(vrrm),
             if_avg_rated=if_avg,
             vf_typ=vf,
-            qrr=float(qrr),
-            trr=float(trr),
+            qrr=qrr,
+            trr=trr,
             rth_ja=rth_ja,
             rth_jc=rth_jc,
             tj_max=tj_max,
@@ -614,79 +552,35 @@ def select_diode(
     tiebreaker: DiodeTiebreaker,
     tas_data_dir: Path | None = None,
 ) -> DiodeSelection:
-    root = tas_data_dir if tas_data_dir is not None else _tas_data_dir()
-    path = root / "diodes.ndjson"
+    from heaviside.catalogue import kelvin_adapter
 
-    passing: list[Diode] = []
-    rejection: Counter[str] = Counter()
-    total = 0
+    req = {"ratedReverseVoltage": c.vrrm_min, "ratedForwardCurrent": c.if_avg_min}
+    opts: dict[str, Any] = {"tiebreaker": str(tiebreaker), "excludeDiscontinued": c.exclude_discontinued}
+    if c.qrr_max is not None:
+        opts["qrrMax"] = c.qrr_max
 
-    for _lineno, env in iter_envelopes(path):
-        total += 1
-        d = Diode.from_envelope(env)
-        if d is None:
-            rejection["unreadable_row"] += 1
-            continue
-        if c.exclude_discontinued and d.status != "production":
-            rejection["discontinued"] += 1
-            continue
-        if d.vrrm_rated < c.vrrm_min:
-            rejection["vrrm_low"] += 1
-            continue
-        # A zener/TVS/ESD publishes no average forward current, so it cannot satisfy a
-        # forward-current requirement. Counted under its own reason rather than
-        # if_avg_low, which would imply it was rated and fell short.
-        if d.if_avg_rated is None:
-            rejection["if_avg_unknown"] += 1
-            continue
-        if d.if_avg_rated < c.if_avg_min:
-            rejection["if_avg_low"] += 1
-            continue
-        if c.qrr_max is not None and d.qrr > c.qrr_max:
-            rejection["qrr_high"] += 1
-            continue
-        passing.append(d)
+    pk = kelvin_adapter.PyKelvin()
+    try:
+        r = kelvin_adapter.select("diode", req, opts,
+                                  data_dir=str(tas_data_dir) if tas_data_dir else None)
+    except pk.NoCandidates as e:
+        pl = kelvin_adapter.no_candidates_payload(e)
+        raise SelectionError(c, pl.get("rejections", {}), pl.get("totalRowsConsidered", 0)) from e
 
-    if not passing:
-        raise SelectionError(c, rejection, total)
-
-    # Prefer thermal-rich parts (see MOSFET selector for the same rationale).
-    def _no_thermal_d(d: Diode) -> bool:
-        return d.rth_ja is None or d.tj_max is None
-
-    if tiebreaker is DiodeTiebreaker.LOWEST_VF:
-        winner = min(passing, key=lambda d: (_no_thermal_d(d), d.vf_typ is None, d.vf_typ or 0.0))
-    elif tiebreaker is DiodeTiebreaker.LOWEST_QRR:
-        winner = min(passing, key=lambda d: (_no_thermal_d(d), d.qrr))
-    elif tiebreaker is DiodeTiebreaker.HIGHEST_VRRM_MARGIN:
-        winner = min(passing, key=lambda d: (_no_thermal_d(d), -d.vrrm_rated / c.vrrm_min))
-    elif tiebreaker is DiodeTiebreaker.HIGHEST_IF_MARGIN:
-        winner = min(
-            passing,
-            key=lambda d: (
-                _no_thermal_d(d),
-                d.if_avg_rated is None,
-                -(d.if_avg_rated or 0.0) / c.if_avg_min,
-            ),
-        )
-    else:  # pragma: no cover
-        raise ValueError(f"unhandled tiebreaker {tiebreaker!r}")
-
+    winner = Diode.from_envelope(r["candidates"][0]["envelope"])
     margins = {
         "vrrm_margin": winner.vrrm_rated / c.vrrm_min,
         "if_avg_margin": (
             winner.if_avg_rated / c.if_avg_min if winner.if_avg_rated is not None else None
         ),
-        "qrr_headroom": (
-            (c.qrr_max / winner.qrr) if (c.qrr_max and winner.qrr > 0) else float("inf")
-        ),
+        "qrr_headroom": ((c.qrr_max / winner.qrr) if (c.qrr_max and winner.qrr) else float("inf")),
     }
     return DiodeSelection(
         chosen=winner,
         constraints=c,
         tiebreaker=tiebreaker,
         margins=margins,
-        alternatives_considered=len(passing),
+        alternatives_considered=r["alternativesConsidered"],
     )
 
 
@@ -849,77 +743,25 @@ def select_capacitor(
     tiebreaker: CapacitorTiebreaker,
     tas_data_dir: Path | None = None,
 ) -> CapacitorSelection:
-    root = tas_data_dir if tas_data_dir is not None else _tas_data_dir()
-    path = root / "capacitors.ndjson"
+    from heaviside.catalogue import kelvin_adapter
 
-    passing: list[Capacitor] = []
-    rejection: Counter[str] = Counter()
-    total = 0
+    req: dict[str, Any] = {"capacitance": {"nominal": c.capacitance_min}, "ratedVoltage": c.v_rated_min}
+    if c.ripple_current_min:
+        req["minimumRippleCurrent"] = c.ripple_current_min
+    opts: dict[str, Any] = {"tiebreaker": str(tiebreaker), "excludeDiscontinued": c.exclude_discontinued,
+                            "capacitanceMin": c.capacitance_min, "capacitanceMax": c.capacitance_max}
+    if c.technology_allowed:
+        opts["technologyAllowed"] = sorted(c.technology_allowed)
 
-    for _lineno, env in iter_envelopes(path):
-        total += 1
-        cap = Capacitor.from_envelope(env)
-        if cap is None:
-            rejection["unreadable_row"] += 1
-            continue
-        if c.exclude_discontinued and cap.status != "production":
-            rejection["discontinued"] += 1
-            continue
-        if c.technology_allowed and cap.technology not in c.technology_allowed:
-            rejection["technology"] += 1
-            continue
-        if cap.v_rated < c.v_rated_min:
-            rejection["v_rated_low"] += 1
-            continue
-        if cap.capacitance < c.capacitance_min:
-            rejection["capacitance_low"] += 1
-            continue
-        if cap.capacitance > c.capacitance_max:
-            rejection["capacitance_high"] += 1
-            continue
-        if c.ripple_current_min is not None:
-            # An UNKNOWN ripple rating cannot satisfy a ripple requirement. Counted under
-            # its own reason so the histogram says "no published rating" rather than
-            # implying the part was measured and fell short.
-            if cap.ripple_current_rms is None:
-                rejection["ripple_unknown"] += 1
-                continue
-            if cap.ripple_current_rms < c.ripple_current_min:
-                rejection["ripple_low"] += 1
-                continue
-        passing.append(cap)
+    pk = kelvin_adapter.PyKelvin()
+    try:
+        r = kelvin_adapter.select("capacitor", req, opts,
+                                  data_dir=str(tas_data_dir) if tas_data_dir else None)
+    except pk.NoCandidates as e:
+        pl = kelvin_adapter.no_candidates_payload(e)
+        raise SelectionError(c, pl.get("rejections", {}), pl.get("totalRowsConsidered", 0)) from e
 
-    if not passing:
-        raise SelectionError(c, rejection, total)
-
-    # Prefer thermal-rich parts (cap thermal lives in electrical.thermalResistance).
-    def _no_thermal_c(x: Capacitor) -> bool:
-        return x.rth is None
-
-    if tiebreaker is CapacitorTiebreaker.LOWEST_ESR:
-        # A part with NO published ESR must not win "lowest ESR". It used to: absence was
-        # stored as 0.0 and 0 sorts first, so the tiebreaker systematically returned the
-        # parts it knew least about, and a comment here called that deliberate. Unknown
-        # now ranks LAST behind a flag — never by substituting a number for the absent
-        # one, which is the defect (ABT #455).
-        winner = min(passing, key=lambda x: (_no_thermal_c(x), x.esr is None, x.esr or 0.0))
-    elif tiebreaker is CapacitorTiebreaker.HIGHEST_RIPPLE_HEADROOM:
-        ripple_min = c.ripple_current_min or 1.0  # avoid div by 0 / None
-        winner = min(
-            passing,
-            key=lambda x: (
-                _no_thermal_c(x),
-                x.ripple_current_rms is None,
-                -(x.ripple_current_rms or 0.0) / ripple_min,
-            ),
-        )
-    elif tiebreaker is CapacitorTiebreaker.HIGHEST_VOLTAGE_MARGIN:
-        winner = min(passing, key=lambda x: (_no_thermal_c(x), -x.v_rated / c.v_rated_min))
-    elif tiebreaker is CapacitorTiebreaker.HIGHEST_CAPACITANCE:
-        winner = min(passing, key=lambda x: (_no_thermal_c(x), -x.capacitance))
-    else:  # pragma: no cover
-        raise ValueError(f"unhandled tiebreaker {tiebreaker!r}")
-
+    winner = Capacitor.from_envelope(r["candidates"][0]["envelope"])
     margins = {
         "v_margin": winner.v_rated / c.v_rated_min,
         "capacitance_ratio": winner.capacitance / c.capacitance_min,
@@ -935,7 +777,7 @@ def select_capacitor(
         constraints=c,
         tiebreaker=tiebreaker,
         margins=margins,
-        alternatives_considered=len(passing),
+        alternatives_considered=r["alternativesConsidered"],
     )
 
 
@@ -1129,68 +971,27 @@ def select_controller(
     Tiebreaker: widest fsw-range headroom around the target (most robust
     margin), then widest Vin range. Raises SelectionError if none match.
     """
-    root = tas_data_dir if tas_data_dir is not None else _tas_data_dir()
-    path = root / "controllers.ndjson"
+    from heaviside.catalogue import kelvin_adapter
 
-    topo = c.topology.lower()
-    passing: list[Controller] = []
-    rejection: Counter[str] = Counter()
-    total = 0
+    opts: dict[str, Any] = {"topology": c.topology, "inputVoltage": c.vin_nom,
+                            "switchingFrequency": c.fsw_khz * 1000.0}
+    if c.integrated_fet is not None:
+        opts["integratedFet"] = c.integrated_fet
+    req = {"category": c.category} if c.category else {}
 
-    for _lineno, env in iter_envelopes(path):
-        total += 1
-        ctrl = Controller.from_envelope(env)
-        if ctrl is None:
-            rejection["unreadable_row"] += 1
-            continue
-        # A part that lists intendedTopologies must include this one; a part that
-        # lists NONE is topology-agnostic (typical of gate drivers) and matches any.
-        if (
-            ctrl.topologies
-            and topo not in ctrl.topologies
-            and "any" not in ctrl.topologies
-            and "all" not in ctrl.topologies
-        ):
-            rejection["topology"] += 1
-            continue
-        if not (ctrl.vin_min <= c.vin_nom <= ctrl.vin_max):
-            rejection["vin_out_of_range"] += 1
-            continue
-        if not (ctrl.fsw_min_khz <= c.fsw_khz <= ctrl.fsw_max_khz):
-            rejection["fsw_out_of_range"] += 1
-            continue
-        if c.integrated_fet is not None and ctrl.integrated_fet != c.integrated_fet:
-            rejection["integrated_fet_mismatch"] += 1
-            continue
-        if c.category is not None and ctrl.category != c.category:
-            rejection["category_mismatch"] += 1
-            continue
-        passing.append(ctrl)
+    pk = kelvin_adapter.PyKelvin()
+    try:
+        r = kelvin_adapter.select("controller", req, opts,
+                                  data_dir=str(tas_data_dir) if tas_data_dir else None)
+    except pk.NoCandidates as e:
+        pl = kelvin_adapter.no_candidates_payload(e)
+        raise SelectionError(c, pl.get("rejections", {}), pl.get("totalRowsConsidered", 0)) from e
 
-    if not passing:
-        raise SelectionError(c, rejection, total)
-
-    # Tiebreaker, in priority order:
-    #  1. Real switching controllers (fsw_min > 0) over gate-driver-like
-    #     parts that declare fsw_min=0 (those are drivers tagged with the
-    #     topology, not regulators).
-    #  2. Controllers with a known Vref — we can fully specify the design
-    #     (feedback divider) only when Vref is available. Both data-
-    #     completeness and a valid engineering choice.
-    #  3. A topology-specific part (lists this topology) over a generic agnostic one.
-    def _key(x: Controller) -> tuple[int, int, int]:
-        # A real regulator over a bare gate driver (CTAS category is authoritative;
-        # the catalog carries no fsw range to use as the old proxy).
-        real_ctrl = 0 if x.category == "gateDriver" else 1
-        has_vref = 1 if x.vref is not None else 0
-        topo_specific = 1 if c.topology.lower() in x.topologies else 0
-        return (real_ctrl, has_vref, topo_specific)
-
-    winner = max(passing, key=_key)
+    winner = Controller.from_envelope(r["candidates"][0]["envelope"])
     return ControllerSelection(
         chosen=winner,
         constraints=c,
-        alternatives_considered=len(passing),
+        alternatives_considered=r["alternativesConsidered"],
     )
 
 
@@ -1276,41 +1077,25 @@ def select_resistor(
 ) -> ResistorSelection:
     """Pick the resistor nearest ``target_ohms`` within tolerance + deviation
     bounds. Prefers tighter tolerance, then smallest |deviation|."""
-    root = tas_data_dir if tas_data_dir is not None else _tas_data_dir()
-    path = root / "resistors.ndjson"
+    from heaviside.catalogue import kelvin_adapter
 
-    best: Resistor | None = None
-    best_key: tuple[float, float] | None = None
-    rejection: Counter[str] = Counter()
-    total = 0
-    considered = 0
+    req = {"resistance": {"nominal": c.target_ohms}}
+    opts: dict[str, Any] = {"maxValueDeviation": c.max_value_deviation, "maxTolerance": c.max_tolerance}
 
-    for _lineno, env in iter_envelopes(path):
-        total += 1
-        r = Resistor.from_envelope(env)
-        if r is None:
-            rejection["unreadable_row"] += 1
-            continue
-        if r.tolerance > c.max_tolerance:
-            rejection["tolerance_loose"] += 1
-            continue
-        dev = abs(r.resistance - c.target_ohms) / c.target_ohms
-        if dev > c.max_value_deviation:
-            rejection["value_far"] += 1
-            continue
-        considered += 1
-        key = (r.tolerance, dev)
-        if best_key is None or key < best_key:
-            best_key = key
-            best = r
+    pk = kelvin_adapter.PyKelvin()
+    try:
+        r = kelvin_adapter.select("resistor", req, opts,
+                                  data_dir=str(tas_data_dir) if tas_data_dir else None)
+    except pk.NoCandidates as e:
+        pl = kelvin_adapter.no_candidates_payload(e)
+        raise SelectionError(c, pl.get("rejections", {}), pl.get("totalRowsConsidered", 0)) from e
 
-    if best is None:
-        raise SelectionError(c, rejection, total)
+    winner = Resistor.from_envelope(r["candidates"][0]["envelope"])
     return ResistorSelection(
-        chosen=best,
+        chosen=winner,
         constraints=c,
-        deviation=(best.resistance - c.target_ohms) / c.target_ohms,
-        alternatives_considered=considered,
+        deviation=(winner.resistance - c.target_ohms) / c.target_ohms,
+        alternatives_considered=r["alternativesConsidered"],
     )
 
 
