@@ -23,7 +23,7 @@ dependencies = [
   # analytical ipeak_worst formulas; its justification (generate_ngspice_circuit's
   # bridgeMode arg) was already dead — the decomposer was removed in the della-Pollock
   # cutover (0 live callers of generate_ngspice_circuit).
-  "PyOpenMagnetics>=1.6.2",
+  "PyOpenMagnetics>=1.6.3",
   # Numerics
   "numpy>=2.0",
   "scipy>=1.13",
