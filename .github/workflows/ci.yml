@@ -242,6 +242,22 @@ jobs:
         run: |
           git -C TAS lfs pull || echo "::warning::TAS LFS data unavailable (gated) — DB-backed tests will be skipped/failed"
 
+      - name: Build PyKelvin for the selector switchover (best-effort; org-gated)
+        # Heaviside's select_* now delegate to Kelvin (PyKelvin) — ABT #125 phase 4.
+        # Build it from the OpenConverters/Kelvin repo and put it on PYTHONPATH so
+        # tests/regression/test_selector_kelvin_golden.py (the frozen-golden gate that
+        # replaced diff_kelvin) runs. Best-effort like the TAS LFS fetch: if the repo
+        # is unreachable the PyKelvin-backed tests skip, they never silently pass.
+        run: |
+          sudo apt-get install -y cmake ninja-build
+          if git clone --depth 1 https://github.com/OpenConverters/Kelvin.git "$RUNNER_TEMP/Kelvin" \
+             && cmake -S "$RUNNER_TEMP/Kelvin" -B "$RUNNER_TEMP/Kelvin/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+             && ninja -C "$RUNNER_TEMP/Kelvin/build" PyKelvin; then
+            echo "PYTHONPATH=$RUNNER_TEMP/Kelvin/build" >> "$GITHUB_ENV"
+          else
+            echo "::warning::PyKelvin unavailable (org-gated) — Kelvin-backed selector tests will skip"
+          fi
+
       - name: Generate schema classes (quicktype)
         run: |
           npm install -g quicktype
