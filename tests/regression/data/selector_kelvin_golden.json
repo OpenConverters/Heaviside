@@ -1,0 +1,5200 @@
+{
+ "0:mosfet": {
+  "ok": true,
+  "mpn": "CSD17570Q5B",
+  "alt": 6486,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 60.0,
+   "rds_on_headroom": 192.307692308,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CSD17570Q5B",
+   "manufacturer": "Texas Instruments",
+   "vds_rated": 30.0,
+   "id_continuous": 120.0,
+   "rds_on": 0.00052,
+   "qg_total": 3.7e-08,
+   "coss": 3.7e-09,
+   "vgs_threshold_max": 1.8,
+   "rth_ja": 18.0,
+   "rth_jc": 1.4,
+   "tj_max": 150.0,
+   "case": "SON (5x6)",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Texas Instruments",
+       "reference": "CSD17570Q5B",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD17570Q5B",
+         "series": "NexFET",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "SON (5x6)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 30,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 120,
+         "pulsedDrainCurrent": 360,
+         "powerDissipation": 3.1,
+         "onResistance": 0.00052,
+         "onResistanceVgs": 10,
+         "onResistanceId": 100,
+         "gateThresholdVoltage": {
+          "minimum": 0.8,
+          "nominal": 1.2,
+          "maximum": 1.8
+         },
+         "inputCapacitance": 1.1e-08,
+         "outputCapacitance": 3.7e-09,
+         "reverseTransferCapacitance": 6.6e-10,
+         "capacitanceMeasurementVds": 15,
+         "totalGateCharge": 3.7e-08,
+         "gateSourceCharge": 1.28e-08,
+         "gateDrainCharge": 8.5e-09,
+         "bodyDiodeForwardVoltage": 0.75,
+         "figureOfMerit": 1.924e-11,
+         "continuousDrainCurrentAt100C": 84
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 1.4,
+         "thermalResistanceJunctionAmbient": 18,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "SON (5x6)"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API [citation verified 2026-08-01: the cited document was fetched and NAMES this part number (matched as exact). The stored VALUES were not re-derived from it; only the citation was checked.]",
+          "sourceUrl": "https://www.ti.com/lit/ds/symlink/csd17570q5b.pdf",
+          "retrievedDate": "2026-08-01"
+         }
+        ]
+       },
+       "datasheetUrl": "https://www.ti.com/lit/ds/symlink/csd17570q5b.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "1:mosfet": {
+  "ok": true,
+  "mpn": "CSD17381F4",
+  "alt": 1496,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 1.25,
+   "rds_on_headroom": 1.818181818,
+   "qg_headroom": 40.0
+  },
+  "chosen": {
+   "mpn": "CSD17381F4",
+   "manufacturer": "Texas Instruments",
+   "vds_rated": 30.0,
+   "id_continuous": 2.5,
+   "rds_on": 0.055,
+   "qg_total": 5e-10,
+   "coss": 4.5e-11,
+   "vgs_threshold_max": 1.0,
+   "rth_ja": 200.0,
+   "rth_jc": 60.0,
+   "tj_max": 150.0,
+   "case": "FemtoFET (0.8x0.8)",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Texas Instruments",
+       "reference": "CSD17381F4",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD17381F4",
+         "series": "NexFET",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "FemtoFET (0.8x0.8)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 30,
+         "gateSourceVoltageMax": 8,
+         "continuousDrainCurrent": 2.5,
+         "pulsedDrainCurrent": 10,
+         "powerDissipation": 0.78,
+         "onResistance": 0.055,
+         "onResistanceVgs": 4.5,
+         "onResistanceId": 2.5,
+         "gateThresholdVoltage": {
+          "minimum": 0.4,
+          "nominal": 0.65,
+          "maximum": 1.0
+         },
+         "inputCapacitance": 1.2e-10,
+         "outputCapacitance": 4.5e-11,
+         "reverseTransferCapacitance": 1.2e-11,
+         "capacitanceMeasurementVds": 15,
+         "totalGateCharge": 5e-10,
+         "gateSourceCharge": 2e-10,
+         "gateDrainCharge": 1.2e-10,
+         "bodyDiodeForwardVoltage": 0.8,
+         "figureOfMerit": 2.7500000000000002e-11,
+         "continuousDrainCurrentAt100C": 1.8
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 60,
+         "thermalResistanceJunctionAmbient": 200,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "FemtoFET (0.8x0.8)"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API [citation verified 2026-08-01: the cited document was fetched and NAMES this part number (matched as exact). The stored VALUES were not re-derived from it; only the citation was checked.]",
+          "sourceUrl": "https://www.ti.com/lit/ds/symlink/csd17381f4.pdf",
+          "retrievedDate": "2026-08-01"
+         }
+        ]
+       },
+       "datasheetUrl": "https://www.ti.com/lit/ds/symlink/csd17381f4.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "2:mosfet": {
+  "ok": true,
+  "mpn": "CSD17570Q5B",
+  "alt": 6101,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 12.0,
+   "rds_on_headroom": 192.307692308,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CSD17570Q5B",
+   "manufacturer": "Texas Instruments",
+   "vds_rated": 30.0,
+   "id_continuous": 120.0,
+   "rds_on": 0.00052,
+   "qg_total": 3.7e-08,
+   "coss": 3.7e-09,
+   "vgs_threshold_max": 1.8,
+   "rth_ja": 18.0,
+   "rth_jc": 1.4,
+   "tj_max": 150.0,
+   "case": "SON (5x6)",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Texas Instruments",
+       "reference": "CSD17570Q5B",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD17570Q5B",
+         "series": "NexFET",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "SON (5x6)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 30,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 120,
+         "pulsedDrainCurrent": 360,
+         "powerDissipation": 3.1,
+         "onResistance": 0.00052,
+         "onResistanceVgs": 10,
+         "onResistanceId": 100,
+         "gateThresholdVoltage": {
+          "minimum": 0.8,
+          "nominal": 1.2,
+          "maximum": 1.8
+         },
+         "inputCapacitance": 1.1e-08,
+         "outputCapacitance": 3.7e-09,
+         "reverseTransferCapacitance": 6.6e-10,
+         "capacitanceMeasurementVds": 15,
+         "totalGateCharge": 3.7e-08,
+         "gateSourceCharge": 1.28e-08,
+         "gateDrainCharge": 8.5e-09,
+         "bodyDiodeForwardVoltage": 0.75,
+         "figureOfMerit": 1.924e-11,
+         "continuousDrainCurrentAt100C": 84
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 1.4,
+         "thermalResistanceJunctionAmbient": 18,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "SON (5x6)"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API [citation verified 2026-08-01: the cited document was fetched and NAMES this part number (matched as exact). The stored VALUES were not re-derived from it; only the citation was checked.]",
+          "sourceUrl": "https://www.ti.com/lit/ds/symlink/csd17570q5b.pdf",
+          "retrievedDate": "2026-08-01"
+         }
+        ]
+       },
+       "datasheetUrl": "https://www.ti.com/lit/ds/symlink/csd17570q5b.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "3:mosfet": {
+  "ok": true,
+  "mpn": "EPC2014C",
+  "alt": 1244,
+  "margins": {
+   "vds_margin": 1.333333333,
+   "id_margin": 1.0,
+   "rds_on_headroom": 6.25,
+   "qg_headroom": 8.0
+  },
+  "chosen": {
+   "mpn": "EPC2014C",
+   "manufacturer": "EPC",
+   "vds_rated": 40.0,
+   "id_continuous": 10.0,
+   "rds_on": 0.016,
+   "qg_total": 2.5e-09,
+   "coss": 1.1e-10,
+   "vgs_threshold_max": 2.5,
+   "rth_ja": 50.0,
+   "rth_jc": 8.0,
+   "tj_max": 150.0,
+   "case": "BGA (1.35x1.35)",
+   "technology": "GaN",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "EPC",
+       "reference": "EPC2014C",
+       "status": "production",
+       "datasheetUrl": "https://epc-co.com/epc/Portals/0/epc/documents/datasheets/EPC2014C_datasheet.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "EPC2014C",
+         "series": "eGaN",
+         "technology": "GaN",
+         "subType": "nChannel",
+         "case": "BGA (1.35x1.35)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 40,
+         "gateSourceVoltageMax": 6,
+         "continuousDrainCurrent": 10,
+         "powerDissipation": 6,
+         "onResistance": 0.016,
+         "onResistanceVgs": 5,
+         "onResistanceId": 10,
+         "gateThresholdVoltage": {
+          "minimum": 0.8,
+          "nominal": 1.4,
+          "maximum": 2.5
+         },
+         "inputCapacitance": 5e-10,
+         "outputCapacitance": 1.1e-10,
+         "reverseTransferCapacitance": 1e-11,
+         "capacitanceMeasurementVds": 20,
+         "totalGateCharge": 2.5e-09,
+         "reverseRecoveryCharge": 0,
+         "pulsedDrainCurrent": 40,
+         "gateSourceCharge": 8e-10,
+         "gateDrainCharge": 6e-10,
+         "outputCharge": 4e-09,
+         "bodyDiodeForwardVoltage": 1.8,
+         "figureOfMerit": 4e-11
+        },
+        "thermal": {
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -40,
+         "thermalResistanceJunctionCase": 8,
+         "thermalResistanceJunctionAmbient": 50
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "BGA (1.35x1.35)",
+         "length": {
+          "nominal": 0.00135
+         },
+         "width": {
+          "nominal": 0.00135
+         },
+         "height": {
+          "nominal": 0.00085
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "EPC parametric/datasheet (epc-co.com)",
+          "sourceUrl": "https://epc-co.com/epc/Portals/0/epc/documents/datasheets/EPC2014C_datasheet.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "4:mosfet": {
+  "ok": true,
+  "mpn": "CSD17570Q5B",
+  "alt": 5215,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 4.0,
+   "rds_on_headroom": 192.307692308,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CSD17570Q5B",
+   "manufacturer": "Texas Instruments",
+   "vds_rated": 30.0,
+   "id_continuous": 120.0,
+   "rds_on": 0.00052,
+   "qg_total": 3.7e-08,
+   "coss": 3.7e-09,
+   "vgs_threshold_max": 1.8,
+   "rth_ja": 18.0,
+   "rth_jc": 1.4,
+   "tj_max": 150.0,
+   "case": "SON (5x6)",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Texas Instruments",
+       "reference": "CSD17570Q5B",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD17570Q5B",
+         "series": "NexFET",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "SON (5x6)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 30,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 120,
+         "pulsedDrainCurrent": 360,
+         "powerDissipation": 3.1,
+         "onResistance": 0.00052,
+         "onResistanceVgs": 10,
+         "onResistanceId": 100,
+         "gateThresholdVoltage": {
+          "minimum": 0.8,
+          "nominal": 1.2,
+          "maximum": 1.8
+         },
+         "inputCapacitance": 1.1e-08,
+         "outputCapacitance": 3.7e-09,
+         "reverseTransferCapacitance": 6.6e-10,
+         "capacitanceMeasurementVds": 15,
+         "totalGateCharge": 3.7e-08,
+         "gateSourceCharge": 1.28e-08,
+         "gateDrainCharge": 8.5e-09,
+         "bodyDiodeForwardVoltage": 0.75,
+         "figureOfMerit": 1.924e-11,
+         "continuousDrainCurrentAt100C": 84
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 1.4,
+         "thermalResistanceJunctionAmbient": 18,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "SON (5x6)"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API [citation verified 2026-08-01: the cited document was fetched and NAMES this part number (matched as exact). The stored VALUES were not re-derived from it; only the citation was checked.]",
+          "sourceUrl": "https://www.ti.com/lit/ds/symlink/csd17570q5b.pdf",
+          "retrievedDate": "2026-08-01"
+         }
+        ]
+       },
+       "datasheetUrl": "https://www.ti.com/lit/ds/symlink/csd17570q5b.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "5:mosfet": {
+  "ok": true,
+  "mpn": "CSD17507Q5A",
+  "alt": 750,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 1.933333333,
+   "rds_on_headroom": 9.259259259,
+   "qg_headroom": 7.142857143
+  },
+  "chosen": {
+   "mpn": "CSD17507Q5A",
+   "manufacturer": "Texas Instruments",
+   "vds_rated": 30.0,
+   "id_continuous": 58.0,
+   "rds_on": 0.0108,
+   "qg_total": 2.8e-09,
+   "coss": 0.0,
+   "vgs_threshold_max": 0.0,
+   "rth_ja": 62.0,
+   "rth_jc": null,
+   "tj_max": 175.0,
+   "case": "SOIC-8",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Texas Instruments",
+       "reference": "CSD17507Q5A",
+       "status": "production",
+       "datasheetUrl": "https://www.ti.com/product/CSD17507Q5A",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD17507Q5A",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "SOIC-8"
+        },
+        "electrical": {
+         "drainSourceVoltage": 30.0,
+         "continuousDrainCurrent": 58,
+         "onResistance": 0.0108,
+         "onResistanceVgs": 10,
+         "onResistanceId": 46.400000000000006,
+         "totalGateCharge": 2.8e-09,
+         "gateThresholdVoltage": {
+          "nominal": 2.1
+         },
+         "gateSourceCharge": 1.3e-09,
+         "gateDrainCharge": 7e-10
+        },
+        "thermal": {
+         "thermalResistanceJunctionAmbient": 62,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "case": "SOIC-8"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API [inferred from the record's own URL \u2014 this record was not verified against that source]",
+          "sourceUrl": "https://www.ti.com/product/CSD17507Q5A"
+         },
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API re-read column-correct (result-list destinationId=1647; QGtyp/QGStyp/QGDtyp) [ABT #512]",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "electrical.drainSourceVoltage",
+           "electrical.gateDrainCharge",
+           "electrical.gateSourceCharge",
+           "electrical.onResistance",
+           "electrical.totalGateCharge"
+          ],
+          "sourceUrl": "https://www.ti.com/product-category/power-management/mosfets/products.html"
+         }
+        ]
+       }
+      },
+      "distributorsInfo": [
+       {
+        "name": "Digi-Key",
+        "link": "https://www.digikey.com/en/products/detail/texas-instruments/CSD17507Q5A/2403767",
+        "reference": null
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "6:mosfet": {
+  "ok": true,
+  "mpn": "CSD18536KCS",
+  "alt": 4732,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 100.0,
+   "rds_on_headroom": 153.846153846,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CSD18536KCS",
+   "manufacturer": "Texas Instruments",
+   "vds_rated": 60.0,
+   "id_continuous": 200.0,
+   "rds_on": 0.00065,
+   "qg_total": 3.6e-08,
+   "coss": 3.5e-09,
+   "vgs_threshold_max": 2.0,
+   "rth_ja": 62.0,
+   "rth_jc": 1.1,
+   "tj_max": 175.0,
+   "case": "TO-220",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Texas Instruments",
+       "reference": "CSD18536KCS",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD18536KCS",
+         "series": "NexFET",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "TO-220"
+        },
+        "electrical": {
+         "drainSourceVoltage": 60,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 200,
+         "pulsedDrainCurrent": 600,
+         "powerDissipation": 136,
+         "onResistance": 0.00065,
+         "onResistanceVgs": 10,
+         "onResistanceId": 100,
+         "gateThresholdVoltage": {
+          "minimum": 0.8,
+          "nominal": 1.3,
+          "maximum": 2.0
+         },
+         "inputCapacitance": 1.1e-08,
+         "outputCapacitance": 3.5e-09,
+         "reverseTransferCapacitance": 6.5e-10,
+         "capacitanceMeasurementVds": 30,
+         "totalGateCharge": 3.6e-08,
+         "gateSourceCharge": 1.25e-08,
+         "gateDrainCharge": 8.3e-09,
+         "bodyDiodeForwardVoltage": 0.85,
+         "figureOfMerit": 2.3399999999999998e-11,
+         "continuousDrainCurrentAt100C": 140
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 1.1,
+         "thermalResistanceJunctionAmbient": 62,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-220"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API [citation verified 2026-08-01: the cited document was fetched and NAMES this part number (matched as exact). The stored VALUES were not re-derived from it; only the citation was checked.]",
+          "sourceUrl": "https://www.ti.com/lit/ds/symlink/csd18536kcs.pdf",
+          "retrievedDate": "2026-08-01"
+         }
+        ]
+       },
+       "datasheetUrl": "https://www.ti.com/lit/ds/symlink/csd18536kcs.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "7:mosfet": {
+  "ok": true,
+  "mpn": "AO4423",
+  "alt": 872,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 2.25,
+   "rds_on_headroom": 1.0,
+   "qg_headroom": 15.384615385
+  },
+  "chosen": {
+   "mpn": "AO4423",
+   "manufacturer": "Alpha and Omega",
+   "vds_rated": 60.0,
+   "id_continuous": 4.5,
+   "rds_on": 0.1,
+   "qg_total": 1.3e-09,
+   "coss": 1.15e-10,
+   "vgs_threshold_max": -2.2,
+   "rth_ja": 140.0,
+   "rth_jc": 8.0,
+   "tj_max": 150.0,
+   "case": "SOP-8",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Alpha and Omega",
+       "reference": "AO4423",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "AO4423",
+         "series": "AO",
+         "technology": "Si",
+         "subType": "pChannel",
+         "case": "SOP-8"
+        },
+        "electrical": {
+         "drainSourceVoltage": 60,
+         "gateSourceVoltageMax": -20,
+         "continuousDrainCurrent": 4.5,
+         "pulsedDrainCurrent": 18,
+         "powerDissipation": 1.4,
+         "onResistance": 0.1,
+         "onResistanceVgs": -10,
+         "onResistanceId": -3,
+         "gateThresholdVoltage": {
+          "minimum": -1.0,
+          "nominal": -1.5,
+          "maximum": -2.2
+         },
+         "inputCapacitance": 3.5e-10,
+         "outputCapacitance": 1.15e-10,
+         "reverseTransferCapacitance": 2.2e-11,
+         "capacitanceMeasurementVds": 30,
+         "totalGateCharge": 1.3e-09,
+         "gateSourceCharge": 4.5e-10,
+         "gateDrainCharge": 3e-10,
+         "bodyDiodeForwardVoltage": 0.85,
+         "figureOfMerit": 1.3000000000000002e-10,
+         "continuousDrainCurrentAt100C": -3.2
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 8.0,
+         "thermalResistanceJunctionAmbient": 140,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "SOP-8"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerDatasheet",
+          "sourceName": "Alpha & Omega datasheet (aosmd.com)",
+          "sourceUrl": "http://www.aosmd.com/pdfs/datasheet/AO4423.pdf"
+         }
+        ]
+       },
+       "datasheetUrl": "http://www.aosmd.com/pdfs/datasheet/AO4423.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "8:mosfet": {
+  "ok": true,
+  "mpn": "CSD18536KCS",
+  "alt": 4494,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 20.0,
+   "rds_on_headroom": 153.846153846,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CSD18536KCS",
+   "manufacturer": "Texas Instruments",
+   "vds_rated": 60.0,
+   "id_continuous": 200.0,
+   "rds_on": 0.00065,
+   "qg_total": 3.6e-08,
+   "coss": 3.5e-09,
+   "vgs_threshold_max": 2.0,
+   "rth_ja": 62.0,
+   "rth_jc": 1.1,
+   "tj_max": 175.0,
+   "case": "TO-220",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Texas Instruments",
+       "reference": "CSD18536KCS",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD18536KCS",
+         "series": "NexFET",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "TO-220"
+        },
+        "electrical": {
+         "drainSourceVoltage": 60,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 200,
+         "pulsedDrainCurrent": 600,
+         "powerDissipation": 136,
+         "onResistance": 0.00065,
+         "onResistanceVgs": 10,
+         "onResistanceId": 100,
+         "gateThresholdVoltage": {
+          "minimum": 0.8,
+          "nominal": 1.3,
+          "maximum": 2.0
+         },
+         "inputCapacitance": 1.1e-08,
+         "outputCapacitance": 3.5e-09,
+         "reverseTransferCapacitance": 6.5e-10,
+         "capacitanceMeasurementVds": 30,
+         "totalGateCharge": 3.6e-08,
+         "gateSourceCharge": 1.25e-08,
+         "gateDrainCharge": 8.3e-09,
+         "bodyDiodeForwardVoltage": 0.85,
+         "figureOfMerit": 2.3399999999999998e-11,
+         "continuousDrainCurrentAt100C": 140
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 1.1,
+         "thermalResistanceJunctionAmbient": 62,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-220"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API [citation verified 2026-08-01: the cited document was fetched and NAMES this part number (matched as exact). The stored VALUES were not re-derived from it; only the citation was checked.]",
+          "sourceUrl": "https://www.ti.com/lit/ds/symlink/csd18536kcs.pdf",
+          "retrievedDate": "2026-08-01"
+         }
+        ]
+       },
+       "datasheetUrl": "https://www.ti.com/lit/ds/symlink/csd18536kcs.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "9:mosfet": {
+  "ok": true,
+  "mpn": "PSMN040-100YS",
+  "alt": 757,
+  "margins": {
+   "vds_margin": 1.666666667,
+   "id_margin": 1.2,
+   "rds_on_headroom": 2.5,
+   "qg_headroom": 7.142857143
+  },
+  "chosen": {
+   "mpn": "PSMN040-100YS",
+   "manufacturer": "Nexperia",
+   "vds_rated": 100.0,
+   "id_continuous": 12.0,
+   "rds_on": 0.04,
+   "qg_total": 2.8e-09,
+   "coss": 2.15e-10,
+   "vgs_threshold_max": 3.5,
+   "rth_ja": 50.0,
+   "rth_jc": 2.0,
+   "tj_max": 175.0,
+   "case": "LFPAK56 (SOT-1023)",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Nexperia",
+       "reference": "PSMN040-100YS",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "PSMN040-100YS",
+         "series": "PSMN",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "LFPAK56 (SOT-1023)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 100,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 12,
+         "pulsedDrainCurrent": 36,
+         "powerDissipation": 3.0,
+         "onResistance": 0.04,
+         "onResistanceVgs": 10,
+         "onResistanceId": 8,
+         "gateThresholdVoltage": {
+          "minimum": 1.8,
+          "nominal": 2.5,
+          "maximum": 3.5
+         },
+         "inputCapacitance": 6.5e-10,
+         "outputCapacitance": 2.15e-10,
+         "reverseTransferCapacitance": 4.2e-11,
+         "capacitanceMeasurementVds": 50,
+         "totalGateCharge": 2.8e-09,
+         "gateSourceCharge": 1e-09,
+         "gateDrainCharge": 6.8e-10,
+         "bodyDiodeForwardVoltage": 0.95,
+         "figureOfMerit": 1.12e-10,
+         "continuousDrainCurrentAt100C": 8.5
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 2.0,
+         "thermalResistanceJunctionAmbient": 50,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "LFPAK56 (SOT-1023)"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "Nexperia parametric export (.xls) [inferred from the record's own URL \u2014 this record was not verified against that source]",
+          "sourceUrl": "https://assets.nexperia.com/documents/data-sheet/PSMN040-100YS.pdf"
+         }
+        ]
+       },
+       "datasheetUrl": "https://assets.nexperia.com/documents/data-sheet/PSMN040-100YS.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "10:mosfet": {
+  "ok": true,
+  "mpn": "CSD18536KCS",
+  "alt": 3811,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 6.666666667,
+   "rds_on_headroom": 153.846153846,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CSD18536KCS",
+   "manufacturer": "Texas Instruments",
+   "vds_rated": 60.0,
+   "id_continuous": 200.0,
+   "rds_on": 0.00065,
+   "qg_total": 3.6e-08,
+   "coss": 3.5e-09,
+   "vgs_threshold_max": 2.0,
+   "rth_ja": 62.0,
+   "rth_jc": 1.1,
+   "tj_max": 175.0,
+   "case": "TO-220",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Texas Instruments",
+       "reference": "CSD18536KCS",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD18536KCS",
+         "series": "NexFET",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "TO-220"
+        },
+        "electrical": {
+         "drainSourceVoltage": 60,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 200,
+         "pulsedDrainCurrent": 600,
+         "powerDissipation": 136,
+         "onResistance": 0.00065,
+         "onResistanceVgs": 10,
+         "onResistanceId": 100,
+         "gateThresholdVoltage": {
+          "minimum": 0.8,
+          "nominal": 1.3,
+          "maximum": 2.0
+         },
+         "inputCapacitance": 1.1e-08,
+         "outputCapacitance": 3.5e-09,
+         "reverseTransferCapacitance": 6.5e-10,
+         "capacitanceMeasurementVds": 30,
+         "totalGateCharge": 3.6e-08,
+         "gateSourceCharge": 1.25e-08,
+         "gateDrainCharge": 8.3e-09,
+         "bodyDiodeForwardVoltage": 0.85,
+         "figureOfMerit": 2.3399999999999998e-11,
+         "continuousDrainCurrentAt100C": 140
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 1.1,
+         "thermalResistanceJunctionAmbient": 62,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-220"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API [citation verified 2026-08-01: the cited document was fetched and NAMES this part number (matched as exact). The stored VALUES were not re-derived from it; only the citation was checked.]",
+          "sourceUrl": "https://www.ti.com/lit/ds/symlink/csd18536kcs.pdf",
+          "retrievedDate": "2026-08-01"
+         }
+        ]
+       },
+       "datasheetUrl": "https://www.ti.com/lit/ds/symlink/csd18536kcs.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "11:mosfet": {
+  "ok": true,
+  "mpn": "IGT60R070D1",
+  "alt": 410,
+  "margins": {
+   "vds_margin": 10.0,
+   "id_margin": 1.033333333,
+   "rds_on_headroom": 1.428571429,
+   "qg_headroom": 3.225806452
+  },
+  "chosen": {
+   "mpn": "IGT60R070D1",
+   "manufacturer": "Infineon",
+   "vds_rated": 600.0,
+   "id_continuous": 31.0,
+   "rds_on": 0.07,
+   "qg_total": 6.2e-09,
+   "coss": 4.4e-11,
+   "vgs_threshold_max": 2.5,
+   "rth_ja": 40.0,
+   "rth_jc": 1.5,
+   "tj_max": 150.0,
+   "case": "TO-247-4",
+   "technology": "GaN",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Infineon",
+       "reference": "IGT60R070D1",
+       "status": "production",
+       "datasheetUrl": "https://www.infineon.com/dgdl/Infineon-IGT60R070D1-DataSheet-v02_10-EN.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "IGT60R070D1",
+         "series": "CoolGaN 600V",
+         "technology": "GaN",
+         "subType": "nChannel",
+         "case": "TO-247-4"
+        },
+        "electrical": {
+         "drainSourceVoltage": 600,
+         "gateSourceVoltageMax": 7,
+         "continuousDrainCurrent": 31,
+         "continuousDrainCurrentAt100C": 22,
+         "pulsedDrainCurrent": 100,
+         "powerDissipation": 83,
+         "onResistance": 0.07,
+         "onResistanceVgs": 6,
+         "onResistanceId": 22,
+         "gateThresholdVoltage": {
+          "minimum": 1.0,
+          "nominal": 1.5,
+          "maximum": 2.5
+         },
+         "inputCapacitance": 1.7e-10,
+         "outputCapacitance": 4.4e-11,
+         "reverseTransferCapacitance": 2e-12,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 6.2e-09,
+         "gateSourceCharge": 2.7e-09,
+         "gateDrainCharge": 1.5e-09,
+         "outputCharge": 3.5e-08,
+         "turnOnDelay": 3e-09,
+         "riseTime": 4e-09,
+         "turnOffDelay": 7e-09,
+         "fallTime": 3e-09,
+         "reverseRecoveryCharge": 0,
+         "bodyDiodeForwardVoltage": 3.4,
+         "figureOfMerit": 4.3e-10
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 1.5,
+         "thermalResistanceJunctionAmbient": 40,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -40
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-247-4",
+         "length": {
+          "nominal": 0.021
+         },
+         "width": {
+          "nominal": 0.016
+         },
+         "height": {
+          "nominal": 0.005
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "Infineon parametric finder (xlsx export) [inferred from the record's own URL \u2014 this record was not verified against that source]",
+          "sourceUrl": "https://www.infineon.com/dgdl/Infineon-IGT60R070D1-DataSheet-v02_10-EN.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "12:mosfet": {
+  "ok": true,
+  "mpn": "CSD19536KTT",
+  "alt": 3224,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 100.0,
+   "rds_on_headroom": 105.263157895,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CSD19536KTT",
+   "manufacturer": "Texas Instruments",
+   "vds_rated": 100.0,
+   "id_continuous": 200.0,
+   "rds_on": 0.00095,
+   "qg_total": 4e-08,
+   "coss": 4e-09,
+   "vgs_threshold_max": 2.5,
+   "rth_ja": 40.0,
+   "rth_jc": 0.85,
+   "tj_max": 175.0,
+   "case": "TO-263-3 (D2PAK)",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Texas Instruments",
+       "reference": "CSD19536KTT",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD19536KTT",
+         "series": "NexFET",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "TO-263-3 (D2PAK)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 100,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 200,
+         "pulsedDrainCurrent": 600,
+         "powerDissipation": 175,
+         "onResistance": 0.00095,
+         "onResistanceVgs": 10,
+         "onResistanceId": 100,
+         "gateThresholdVoltage": {
+          "minimum": 1.2,
+          "nominal": 1.8,
+          "maximum": 2.5
+         },
+         "inputCapacitance": 1.2e-08,
+         "outputCapacitance": 4e-09,
+         "reverseTransferCapacitance": 7.2e-10,
+         "capacitanceMeasurementVds": 50,
+         "totalGateCharge": 4e-08,
+         "gateSourceCharge": 1.38e-08,
+         "gateDrainCharge": 9.2e-09,
+         "bodyDiodeForwardVoltage": 0.95,
+         "figureOfMerit": 3.8e-11,
+         "continuousDrainCurrentAt100C": 140
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 0.85,
+         "thermalResistanceJunctionAmbient": 40,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "TO-263-3 (D2PAK)"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API [citation verified 2026-08-01: the cited document was fetched and NAMES this part number (matched as exact). The stored VALUES were not re-derived from it; only the citation was checked.]",
+          "sourceUrl": "https://www.ti.com/lit/ds/symlink/csd19536ktt.pdf",
+          "retrievedDate": "2026-08-01"
+         }
+        ]
+       },
+       "datasheetUrl": "https://www.ti.com/lit/ds/symlink/csd19536ktt.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "13:mosfet": {
+  "ok": true,
+  "mpn": "EPC2212",
+  "alt": 403,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 1.75,
+   "rds_on_headroom": 3.125,
+   "qg_headroom": 10.0
+  },
+  "chosen": {
+   "mpn": "EPC2212",
+   "manufacturer": "EPC",
+   "vds_rated": 100.0,
+   "id_continuous": 3.5,
+   "rds_on": 0.032,
+   "qg_total": 2e-09,
+   "coss": 8.5e-11,
+   "vgs_threshold_max": 2.5,
+   "rth_ja": 80.0,
+   "rth_jc": 18.0,
+   "tj_max": 150.0,
+   "case": "BGA (1.0x0.8)",
+   "technology": "GaN",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "EPC",
+       "reference": "EPC2212",
+       "status": "production",
+       "datasheetUrl": "https://epc-co.com/epc/Portals/0/epc/documents/datasheets/EPC2212_datasheet.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "EPC2212",
+         "series": "eGaN",
+         "technology": "GaN",
+         "subType": "nChannel",
+         "case": "BGA (1.0x0.8)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 100,
+         "gateSourceVoltageMax": 6,
+         "continuousDrainCurrent": 3.5,
+         "pulsedDrainCurrent": 14,
+         "powerDissipation": 2.5,
+         "onResistance": 0.032,
+         "onResistanceVgs": 5,
+         "onResistanceId": 3,
+         "gateThresholdVoltage": {
+          "minimum": 0.8,
+          "nominal": 1.4,
+          "maximum": 2.5
+         },
+         "inputCapacitance": 2.8e-10,
+         "outputCapacitance": 8.5e-11,
+         "reverseTransferCapacitance": 2e-12,
+         "capacitanceMeasurementVds": 50,
+         "totalGateCharge": 2e-09,
+         "gateSourceCharge": 7e-10,
+         "gateDrainCharge": 5e-10,
+         "outputCharge": 5e-09,
+         "reverseRecoveryCharge": 0,
+         "bodyDiodeForwardVoltage": 1.8,
+         "figureOfMerit": 6.4e-11
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 18,
+         "thermalResistanceJunctionAmbient": 80,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -40
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "BGA (1.0x0.8)",
+         "length": {
+          "nominal": 0.001
+         },
+         "width": {
+          "nominal": 0.0008
+         },
+         "height": {
+          "nominal": 0.00085
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "EPC parametric/datasheet (epc-co.com)",
+          "sourceUrl": "https://epc-co.com/epc/Portals/0/epc/documents/datasheets/EPC2212_datasheet.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "14:mosfet": {
+  "ok": true,
+  "mpn": "CSD19536KTT",
+  "alt": 3068,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 20.0,
+   "rds_on_headroom": 105.263157895,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CSD19536KTT",
+   "manufacturer": "Texas Instruments",
+   "vds_rated": 100.0,
+   "id_continuous": 200.0,
+   "rds_on": 0.00095,
+   "qg_total": 4e-08,
+   "coss": 4e-09,
+   "vgs_threshold_max": 2.5,
+   "rth_ja": 40.0,
+   "rth_jc": 0.85,
+   "tj_max": 175.0,
+   "case": "TO-263-3 (D2PAK)",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Texas Instruments",
+       "reference": "CSD19536KTT",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD19536KTT",
+         "series": "NexFET",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "TO-263-3 (D2PAK)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 100,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 200,
+         "pulsedDrainCurrent": 600,
+         "powerDissipation": 175,
+         "onResistance": 0.00095,
+         "onResistanceVgs": 10,
+         "onResistanceId": 100,
+         "gateThresholdVoltage": {
+          "minimum": 1.2,
+          "nominal": 1.8,
+          "maximum": 2.5
+         },
+         "inputCapacitance": 1.2e-08,
+         "outputCapacitance": 4e-09,
+         "reverseTransferCapacitance": 7.2e-10,
+         "capacitanceMeasurementVds": 50,
+         "totalGateCharge": 4e-08,
+         "gateSourceCharge": 1.38e-08,
+         "gateDrainCharge": 9.2e-09,
+         "bodyDiodeForwardVoltage": 0.95,
+         "figureOfMerit": 3.8e-11,
+         "continuousDrainCurrentAt100C": 140
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 0.85,
+         "thermalResistanceJunctionAmbient": 40,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "TO-263-3 (D2PAK)"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API [citation verified 2026-08-01: the cited document was fetched and NAMES this part number (matched as exact). The stored VALUES were not re-derived from it; only the citation was checked.]",
+          "sourceUrl": "https://www.ti.com/lit/ds/symlink/csd19536ktt.pdf",
+          "retrievedDate": "2026-08-01"
+         }
+        ]
+       },
+       "datasheetUrl": "https://www.ti.com/lit/ds/symlink/csd19536ktt.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "15:mosfet": {
+  "ok": true,
+  "mpn": "PSMN040-100YS",
+  "alt": 356,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 1.2,
+   "rds_on_headroom": 2.5,
+   "qg_headroom": 7.142857143
+  },
+  "chosen": {
+   "mpn": "PSMN040-100YS",
+   "manufacturer": "Nexperia",
+   "vds_rated": 100.0,
+   "id_continuous": 12.0,
+   "rds_on": 0.04,
+   "qg_total": 2.8e-09,
+   "coss": 2.15e-10,
+   "vgs_threshold_max": 3.5,
+   "rth_ja": 50.0,
+   "rth_jc": 2.0,
+   "tj_max": 175.0,
+   "case": "LFPAK56 (SOT-1023)",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Nexperia",
+       "reference": "PSMN040-100YS",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "PSMN040-100YS",
+         "series": "PSMN",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "LFPAK56 (SOT-1023)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 100,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 12,
+         "pulsedDrainCurrent": 36,
+         "powerDissipation": 3.0,
+         "onResistance": 0.04,
+         "onResistanceVgs": 10,
+         "onResistanceId": 8,
+         "gateThresholdVoltage": {
+          "minimum": 1.8,
+          "nominal": 2.5,
+          "maximum": 3.5
+         },
+         "inputCapacitance": 6.5e-10,
+         "outputCapacitance": 2.15e-10,
+         "reverseTransferCapacitance": 4.2e-11,
+         "capacitanceMeasurementVds": 50,
+         "totalGateCharge": 2.8e-09,
+         "gateSourceCharge": 1e-09,
+         "gateDrainCharge": 6.8e-10,
+         "bodyDiodeForwardVoltage": 0.95,
+         "figureOfMerit": 1.12e-10,
+         "continuousDrainCurrentAt100C": 8.5
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 2.0,
+         "thermalResistanceJunctionAmbient": 50,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "LFPAK56 (SOT-1023)"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "Nexperia parametric export (.xls) [inferred from the record's own URL \u2014 this record was not verified against that source]",
+          "sourceUrl": "https://assets.nexperia.com/documents/data-sheet/PSMN040-100YS.pdf"
+         }
+        ]
+       },
+       "datasheetUrl": "https://assets.nexperia.com/documents/data-sheet/PSMN040-100YS.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "16:mosfet": {
+  "ok": true,
+  "mpn": "CSD19536KTT",
+  "alt": 2574,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 6.666666667,
+   "rds_on_headroom": 105.263157895,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CSD19536KTT",
+   "manufacturer": "Texas Instruments",
+   "vds_rated": 100.0,
+   "id_continuous": 200.0,
+   "rds_on": 0.00095,
+   "qg_total": 4e-08,
+   "coss": 4e-09,
+   "vgs_threshold_max": 2.5,
+   "rth_ja": 40.0,
+   "rth_jc": 0.85,
+   "tj_max": 175.0,
+   "case": "TO-263-3 (D2PAK)",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Texas Instruments",
+       "reference": "CSD19536KTT",
+       "status": "production",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD19536KTT",
+         "series": "NexFET",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "TO-263-3 (D2PAK)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 100,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 200,
+         "pulsedDrainCurrent": 600,
+         "powerDissipation": 175,
+         "onResistance": 0.00095,
+         "onResistanceVgs": 10,
+         "onResistanceId": 100,
+         "gateThresholdVoltage": {
+          "minimum": 1.2,
+          "nominal": 1.8,
+          "maximum": 2.5
+         },
+         "inputCapacitance": 1.2e-08,
+         "outputCapacitance": 4e-09,
+         "reverseTransferCapacitance": 7.2e-10,
+         "capacitanceMeasurementVds": 50,
+         "totalGateCharge": 4e-08,
+         "gateSourceCharge": 1.38e-08,
+         "gateDrainCharge": 9.2e-09,
+         "bodyDiodeForwardVoltage": 0.95,
+         "figureOfMerit": 3.8e-11,
+         "continuousDrainCurrentAt100C": 140
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 0.85,
+         "thermalResistanceJunctionAmbient": 40,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "TO-263-3 (D2PAK)"
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "TI selectionmodel parametric API [citation verified 2026-08-01: the cited document was fetched and NAMES this part number (matched as exact). The stored VALUES were not re-derived from it; only the citation was checked.]",
+          "sourceUrl": "https://www.ti.com/lit/ds/symlink/csd19536ktt.pdf",
+          "retrievedDate": "2026-08-01"
+         }
+        ]
+       },
+       "datasheetUrl": "https://www.ti.com/lit/ds/symlink/csd19536ktt.pdf"
+      }
+     }
+    }
+   }
+  }
+ },
+ "17:mosfet": {
+  "ok": true,
+  "mpn": "IGT60R070D1",
+  "alt": 151,
+  "margins": {
+   "vds_margin": 6.0,
+   "id_margin": 1.033333333,
+   "rds_on_headroom": 1.428571429,
+   "qg_headroom": 3.225806452
+  },
+  "chosen": {
+   "mpn": "IGT60R070D1",
+   "manufacturer": "Infineon",
+   "vds_rated": 600.0,
+   "id_continuous": 31.0,
+   "rds_on": 0.07,
+   "qg_total": 6.2e-09,
+   "coss": 4.4e-11,
+   "vgs_threshold_max": 2.5,
+   "rth_ja": 40.0,
+   "rth_jc": 1.5,
+   "tj_max": 150.0,
+   "case": "TO-247-4",
+   "technology": "GaN",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Infineon",
+       "reference": "IGT60R070D1",
+       "status": "production",
+       "datasheetUrl": "https://www.infineon.com/dgdl/Infineon-IGT60R070D1-DataSheet-v02_10-EN.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "IGT60R070D1",
+         "series": "CoolGaN 600V",
+         "technology": "GaN",
+         "subType": "nChannel",
+         "case": "TO-247-4"
+        },
+        "electrical": {
+         "drainSourceVoltage": 600,
+         "gateSourceVoltageMax": 7,
+         "continuousDrainCurrent": 31,
+         "continuousDrainCurrentAt100C": 22,
+         "pulsedDrainCurrent": 100,
+         "powerDissipation": 83,
+         "onResistance": 0.07,
+         "onResistanceVgs": 6,
+         "onResistanceId": 22,
+         "gateThresholdVoltage": {
+          "minimum": 1.0,
+          "nominal": 1.5,
+          "maximum": 2.5
+         },
+         "inputCapacitance": 1.7e-10,
+         "outputCapacitance": 4.4e-11,
+         "reverseTransferCapacitance": 2e-12,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 6.2e-09,
+         "gateSourceCharge": 2.7e-09,
+         "gateDrainCharge": 1.5e-09,
+         "outputCharge": 3.5e-08,
+         "turnOnDelay": 3e-09,
+         "riseTime": 4e-09,
+         "turnOffDelay": 7e-09,
+         "fallTime": 3e-09,
+         "reverseRecoveryCharge": 0,
+         "bodyDiodeForwardVoltage": 3.4,
+         "figureOfMerit": 4.3e-10
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 1.5,
+         "thermalResistanceJunctionAmbient": 40,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -40
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-247-4",
+         "length": {
+          "nominal": 0.021
+         },
+         "width": {
+          "nominal": 0.016
+         },
+         "height": {
+          "nominal": 0.005
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "Infineon parametric finder (xlsx export) [inferred from the record's own URL \u2014 this record was not verified against that source]",
+          "sourceUrl": "https://www.infineon.com/dgdl/Infineon-IGT60R070D1-DataSheet-v02_10-EN.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "18:mosfet": {
+  "ok": true,
+  "mpn": "SCT60006AL",
+  "alt": 1636,
+  "margins": {
+   "vds_margin": 2.6,
+   "id_margin": 60.0,
+   "rds_on_headroom": 16.0,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "SCT60006AL",
+   "manufacturer": "ROHM",
+   "vds_rated": 650.0,
+   "id_continuous": 120.0,
+   "rds_on": 0.00625,
+   "qg_total": 4.1667e-08,
+   "coss": 8.75e-10,
+   "vgs_threshold_max": 19.5,
+   "rth_ja": 18.59375,
+   "rth_jc": 0.53125,
+   "tj_max": 175.0,
+   "case": "TO-247-3pin",
+   "technology": "SiC",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "ROHM",
+       "reference": "SCT60006AL",
+       "status": "production",
+       "datasheetUrl": "https://www.rohm.com/SCT60006AL.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "SCT60006AL",
+         "series": "SCT",
+         "technology": "SiC",
+         "subType": "nChannel",
+         "case": "TO-247-3pin"
+        },
+        "electrical": {
+         "drainSourceVoltage": 650,
+         "gateSourceVoltageMax": 18,
+         "continuousDrainCurrent": 120,
+         "pulsedDrainCurrent": 480,
+         "powerDissipation": 95.0,
+         "onResistance": 0.00625,
+         "onResistanceVgs": 15,
+         "onResistanceId": 120,
+         "gateThresholdVoltage": {
+          "minimum": 9.0,
+          "nominal": 15,
+          "maximum": 19.5
+         },
+         "inputCapacitance": 2.5e-09,
+         "outputCapacitance": 8.75e-10,
+         "reverseTransferCapacitance": 1.5e-11,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 4.166666666666667e-08,
+         "gateSourceCharge": 1.0416666666666667e-08,
+         "gateDrainCharge": 9.166666666666668e-09,
+         "outputCharge": 3.7500000000000005e-08,
+         "reverseRecoveryCharge": 0,
+         "bodyDiodeForwardVoltage": 3.0,
+         "figureOfMerit": 2.6041666666666667e-10
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 0.53125,
+         "thermalResistanceJunctionAmbient": 18.59375,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -40
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-247-3pin",
+         "length": {
+          "nominal": 0.015
+         },
+         "width": {
+          "nominal": 0.01
+         },
+         "height": {
+          "nominal": 0.005
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerDatasheet",
+          "sourceName": "ROHM datasheet (rohm.com)",
+          "sourceUrl": "https://www.rohm.com/SCT60006AL.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "19:mosfet": {
+  "ok": true,
+  "mpn": "FDP22N50",
+  "alt": 66,
+  "margins": {
+   "vds_margin": 2.0,
+   "id_margin": 2.5,
+   "rds_on_headroom": 4.545454545,
+   "qg_headroom": 8.0
+  },
+  "chosen": {
+   "mpn": "FDP22N50",
+   "manufacturer": "onsemi",
+   "vds_rated": 500.0,
+   "id_continuous": 5.0,
+   "rds_on": 0.022,
+   "qg_total": 2.5e-09,
+   "coss": 1.8e-11,
+   "vgs_threshold_max": 4.5,
+   "rth_ja": 62.0,
+   "rth_jc": 5.0,
+   "tj_max": 150.0,
+   "case": "TO-220",
+   "technology": "Si",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "onsemi",
+       "reference": "FDP22N50",
+       "status": "production",
+       "datasheetUrl": "https://www.onsemi.com/pdf/datasheet/fdp22n50-d.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "FDP22N50",
+         "series": "N-channel Power MOSFET 500V",
+         "technology": "Si",
+         "subType": "nChannel",
+         "case": "TO-220"
+        },
+        "electrical": {
+         "drainSourceVoltage": 500,
+         "gateSourceVoltageMax": 20,
+         "continuousDrainCurrent": 5,
+         "pulsedDrainCurrent": 20,
+         "powerDissipation": 30,
+         "onResistance": 0.022,
+         "onResistanceVgs": 10,
+         "onResistanceId": 2.5,
+         "gateThresholdVoltage": {
+          "minimum": 2.0,
+          "nominal": 3.0,
+          "maximum": 4.5
+         },
+         "totalGateCharge": 2.5e-09,
+         "gateSourceCharge": 1e-09,
+         "gateDrainCharge": 6e-10,
+         "inputCapacitance": 2.55e-10,
+         "outputCapacitance": 1.8e-11,
+         "reverseTransferCapacitance": 3e-12,
+         "capacitanceMeasurementVds": 250,
+         "bodyDiodeForwardVoltage": 0.85,
+         "figureOfMerit": 5.5e-11
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 5.0,
+         "thermalResistanceJunctionAmbient": 62,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -55
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-220",
+         "length": {
+          "nominal": 0.0157
+         },
+         "width": {
+          "nominal": 0.0102
+         },
+         "height": {
+          "nominal": 0.0045
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "onsemi parametric export (CSV/open-search API) [inferred from the record's own URL \u2014 this record was not verified against that source]",
+          "sourceUrl": "https://www.onsemi.com/pdf/datasheet/fdp22n50-d.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "20:mosfet": {
+  "ok": true,
+  "mpn": "SCT60006AL",
+  "alt": 1576,
+  "margins": {
+   "vds_margin": 2.6,
+   "id_margin": 12.0,
+   "rds_on_headroom": 16.0,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "SCT60006AL",
+   "manufacturer": "ROHM",
+   "vds_rated": 650.0,
+   "id_continuous": 120.0,
+   "rds_on": 0.00625,
+   "qg_total": 4.1667e-08,
+   "coss": 8.75e-10,
+   "vgs_threshold_max": 19.5,
+   "rth_ja": 18.59375,
+   "rth_jc": 0.53125,
+   "tj_max": 175.0,
+   "case": "TO-247-3pin",
+   "technology": "SiC",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "ROHM",
+       "reference": "SCT60006AL",
+       "status": "production",
+       "datasheetUrl": "https://www.rohm.com/SCT60006AL.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "SCT60006AL",
+         "series": "SCT",
+         "technology": "SiC",
+         "subType": "nChannel",
+         "case": "TO-247-3pin"
+        },
+        "electrical": {
+         "drainSourceVoltage": 650,
+         "gateSourceVoltageMax": 18,
+         "continuousDrainCurrent": 120,
+         "pulsedDrainCurrent": 480,
+         "powerDissipation": 95.0,
+         "onResistance": 0.00625,
+         "onResistanceVgs": 15,
+         "onResistanceId": 120,
+         "gateThresholdVoltage": {
+          "minimum": 9.0,
+          "nominal": 15,
+          "maximum": 19.5
+         },
+         "inputCapacitance": 2.5e-09,
+         "outputCapacitance": 8.75e-10,
+         "reverseTransferCapacitance": 1.5e-11,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 4.166666666666667e-08,
+         "gateSourceCharge": 1.0416666666666667e-08,
+         "gateDrainCharge": 9.166666666666668e-09,
+         "outputCharge": 3.7500000000000005e-08,
+         "reverseRecoveryCharge": 0,
+         "bodyDiodeForwardVoltage": 3.0,
+         "figureOfMerit": 2.6041666666666667e-10
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 0.53125,
+         "thermalResistanceJunctionAmbient": 18.59375,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -40
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-247-3pin",
+         "length": {
+          "nominal": 0.015
+         },
+         "width": {
+          "nominal": 0.01
+         },
+         "height": {
+          "nominal": 0.005
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerDatasheet",
+          "sourceName": "ROHM datasheet (rohm.com)",
+          "sourceUrl": "https://www.rohm.com/SCT60006AL.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "21:mosfet": {
+  "ok": true,
+  "mpn": "NV6134",
+  "alt": 62,
+  "margins": {
+   "vds_margin": 2.6,
+   "id_margin": 1.0,
+   "rds_on_headroom": 1.0,
+   "qg_headroom": 4.761904762
+  },
+  "chosen": {
+   "mpn": "NV6134",
+   "manufacturer": "Navitas",
+   "vds_rated": 650.0,
+   "id_continuous": 10.0,
+   "rds_on": 0.1,
+   "qg_total": 4.2e-09,
+   "coss": 3.5e-11,
+   "vgs_threshold_max": 2.2,
+   "rth_ja": 40.0,
+   "rth_jc": 5.0,
+   "tj_max": 150.0,
+   "case": "QFN (6x5)",
+   "technology": "GaN",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Navitas",
+       "reference": "NV6134",
+       "status": "production",
+       "datasheetUrl": "https://www.navitassemi.com/wp-content/uploads/NV6134-datasheet.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "NV6134",
+         "series": "GaNFast",
+         "technology": "GaN",
+         "subType": "nChannel",
+         "case": "QFN (6x5)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 650,
+         "gateSourceVoltageMax": 5,
+         "continuousDrainCurrent": 10,
+         "powerDissipation": 6.5,
+         "onResistance": 0.1,
+         "onResistanceVgs": 5,
+         "onResistanceId": 7,
+         "gateThresholdVoltage": {
+          "minimum": 1.2,
+          "nominal": 1.6,
+          "maximum": 2.2
+         },
+         "inputCapacitance": 8.5e-11,
+         "outputCapacitance": 3.5e-11,
+         "reverseTransferCapacitance": 2e-12,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 4.2e-09,
+         "reverseRecoveryCharge": 0,
+         "pulsedDrainCurrent": 40,
+         "bodyDiodeForwardVoltage": 2.5,
+         "figureOfMerit": 4.2e-10
+        },
+        "thermal": {
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -40,
+         "thermalResistanceJunctionCase": 5,
+         "thermalResistanceJunctionAmbient": 40
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "QFN (6x5)",
+         "length": {
+          "nominal": 0.006
+         },
+         "width": {
+          "nominal": 0.005
+         },
+         "height": {
+          "nominal": 0.001
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerDatasheet",
+          "sourceName": "Navitas datasheet (navitassemi.com)",
+          "sourceUrl": "https://www.navitassemi.com/wp-content/uploads/NV6134-datasheet.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "22:mosfet": {
+  "ok": true,
+  "mpn": "SCT60006AL",
+  "alt": 1332,
+  "margins": {
+   "vds_margin": 2.6,
+   "id_margin": 4.0,
+   "rds_on_headroom": 16.0,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "SCT60006AL",
+   "manufacturer": "ROHM",
+   "vds_rated": 650.0,
+   "id_continuous": 120.0,
+   "rds_on": 0.00625,
+   "qg_total": 4.1667e-08,
+   "coss": 8.75e-10,
+   "vgs_threshold_max": 19.5,
+   "rth_ja": 18.59375,
+   "rth_jc": 0.53125,
+   "tj_max": 175.0,
+   "case": "TO-247-3pin",
+   "technology": "SiC",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "ROHM",
+       "reference": "SCT60006AL",
+       "status": "production",
+       "datasheetUrl": "https://www.rohm.com/SCT60006AL.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "SCT60006AL",
+         "series": "SCT",
+         "technology": "SiC",
+         "subType": "nChannel",
+         "case": "TO-247-3pin"
+        },
+        "electrical": {
+         "drainSourceVoltage": 650,
+         "gateSourceVoltageMax": 18,
+         "continuousDrainCurrent": 120,
+         "pulsedDrainCurrent": 480,
+         "powerDissipation": 95.0,
+         "onResistance": 0.00625,
+         "onResistanceVgs": 15,
+         "onResistanceId": 120,
+         "gateThresholdVoltage": {
+          "minimum": 9.0,
+          "nominal": 15,
+          "maximum": 19.5
+         },
+         "inputCapacitance": 2.5e-09,
+         "outputCapacitance": 8.75e-10,
+         "reverseTransferCapacitance": 1.5e-11,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 4.166666666666667e-08,
+         "gateSourceCharge": 1.0416666666666667e-08,
+         "gateDrainCharge": 9.166666666666668e-09,
+         "outputCharge": 3.7500000000000005e-08,
+         "reverseRecoveryCharge": 0,
+         "bodyDiodeForwardVoltage": 3.0,
+         "figureOfMerit": 2.6041666666666667e-10
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 0.53125,
+         "thermalResistanceJunctionAmbient": 18.59375,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -40
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-247-3pin",
+         "length": {
+          "nominal": 0.015
+         },
+         "width": {
+          "nominal": 0.01
+         },
+         "height": {
+          "nominal": 0.005
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerDatasheet",
+          "sourceName": "ROHM datasheet (rohm.com)",
+          "sourceUrl": "https://www.rohm.com/SCT60006AL.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "23:mosfet": {
+  "ok": true,
+  "mpn": "IGT60R070D1",
+  "alt": 20,
+  "margins": {
+   "vds_margin": 2.4,
+   "id_margin": 1.033333333,
+   "rds_on_headroom": 1.428571429,
+   "qg_headroom": 3.225806452
+  },
+  "chosen": {
+   "mpn": "IGT60R070D1",
+   "manufacturer": "Infineon",
+   "vds_rated": 600.0,
+   "id_continuous": 31.0,
+   "rds_on": 0.07,
+   "qg_total": 6.2e-09,
+   "coss": 4.4e-11,
+   "vgs_threshold_max": 2.5,
+   "rth_ja": 40.0,
+   "rth_jc": 1.5,
+   "tj_max": 150.0,
+   "case": "TO-247-4",
+   "technology": "GaN",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Infineon",
+       "reference": "IGT60R070D1",
+       "status": "production",
+       "datasheetUrl": "https://www.infineon.com/dgdl/Infineon-IGT60R070D1-DataSheet-v02_10-EN.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "IGT60R070D1",
+         "series": "CoolGaN 600V",
+         "technology": "GaN",
+         "subType": "nChannel",
+         "case": "TO-247-4"
+        },
+        "electrical": {
+         "drainSourceVoltage": 600,
+         "gateSourceVoltageMax": 7,
+         "continuousDrainCurrent": 31,
+         "continuousDrainCurrentAt100C": 22,
+         "pulsedDrainCurrent": 100,
+         "powerDissipation": 83,
+         "onResistance": 0.07,
+         "onResistanceVgs": 6,
+         "onResistanceId": 22,
+         "gateThresholdVoltage": {
+          "minimum": 1.0,
+          "nominal": 1.5,
+          "maximum": 2.5
+         },
+         "inputCapacitance": 1.7e-10,
+         "outputCapacitance": 4.4e-11,
+         "reverseTransferCapacitance": 2e-12,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 6.2e-09,
+         "gateSourceCharge": 2.7e-09,
+         "gateDrainCharge": 1.5e-09,
+         "outputCharge": 3.5e-08,
+         "turnOnDelay": 3e-09,
+         "riseTime": 4e-09,
+         "turnOffDelay": 7e-09,
+         "fallTime": 3e-09,
+         "reverseRecoveryCharge": 0,
+         "bodyDiodeForwardVoltage": 3.4,
+         "figureOfMerit": 4.3e-10
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 1.5,
+         "thermalResistanceJunctionAmbient": 40,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -40
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-247-4",
+         "length": {
+          "nominal": 0.021
+         },
+         "width": {
+          "nominal": 0.016
+         },
+         "height": {
+          "nominal": 0.005
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "Infineon parametric finder (xlsx export) [inferred from the record's own URL \u2014 this record was not verified against that source]",
+          "sourceUrl": "https://www.infineon.com/dgdl/Infineon-IGT60R070D1-DataSheet-v02_10-EN.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "24:mosfet": {
+  "ok": true,
+  "mpn": "SCT60006AL",
+  "alt": 870,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 60.0,
+   "rds_on_headroom": 16.0,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "SCT60006AL",
+   "manufacturer": "ROHM",
+   "vds_rated": 650.0,
+   "id_continuous": 120.0,
+   "rds_on": 0.00625,
+   "qg_total": 4.1667e-08,
+   "coss": 8.75e-10,
+   "vgs_threshold_max": 19.5,
+   "rth_ja": 18.59375,
+   "rth_jc": 0.53125,
+   "tj_max": 175.0,
+   "case": "TO-247-3pin",
+   "technology": "SiC",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "ROHM",
+       "reference": "SCT60006AL",
+       "status": "production",
+       "datasheetUrl": "https://www.rohm.com/SCT60006AL.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "SCT60006AL",
+         "series": "SCT",
+         "technology": "SiC",
+         "subType": "nChannel",
+         "case": "TO-247-3pin"
+        },
+        "electrical": {
+         "drainSourceVoltage": 650,
+         "gateSourceVoltageMax": 18,
+         "continuousDrainCurrent": 120,
+         "pulsedDrainCurrent": 480,
+         "powerDissipation": 95.0,
+         "onResistance": 0.00625,
+         "onResistanceVgs": 15,
+         "onResistanceId": 120,
+         "gateThresholdVoltage": {
+          "minimum": 9.0,
+          "nominal": 15,
+          "maximum": 19.5
+         },
+         "inputCapacitance": 2.5e-09,
+         "outputCapacitance": 8.75e-10,
+         "reverseTransferCapacitance": 1.5e-11,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 4.166666666666667e-08,
+         "gateSourceCharge": 1.0416666666666667e-08,
+         "gateDrainCharge": 9.166666666666668e-09,
+         "outputCharge": 3.7500000000000005e-08,
+         "reverseRecoveryCharge": 0,
+         "bodyDiodeForwardVoltage": 3.0,
+         "figureOfMerit": 2.6041666666666667e-10
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 0.53125,
+         "thermalResistanceJunctionAmbient": 18.59375,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -40
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-247-3pin",
+         "length": {
+          "nominal": 0.015
+         },
+         "width": {
+          "nominal": 0.01
+         },
+         "height": {
+          "nominal": 0.005
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerDatasheet",
+          "sourceName": "ROHM datasheet (rohm.com)",
+          "sourceUrl": "https://www.rohm.com/SCT60006AL.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "25:mosfet": {
+  "ok": true,
+  "mpn": "NV6134",
+  "alt": 52,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 5.0,
+   "rds_on_headroom": 1.0,
+   "qg_headroom": 4.761904762
+  },
+  "chosen": {
+   "mpn": "NV6134",
+   "manufacturer": "Navitas",
+   "vds_rated": 650.0,
+   "id_continuous": 10.0,
+   "rds_on": 0.1,
+   "qg_total": 4.2e-09,
+   "coss": 3.5e-11,
+   "vgs_threshold_max": 2.2,
+   "rth_ja": 40.0,
+   "rth_jc": 5.0,
+   "tj_max": 150.0,
+   "case": "QFN (6x5)",
+   "technology": "GaN",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Navitas",
+       "reference": "NV6134",
+       "status": "production",
+       "datasheetUrl": "https://www.navitassemi.com/wp-content/uploads/NV6134-datasheet.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "NV6134",
+         "series": "GaNFast",
+         "technology": "GaN",
+         "subType": "nChannel",
+         "case": "QFN (6x5)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 650,
+         "gateSourceVoltageMax": 5,
+         "continuousDrainCurrent": 10,
+         "powerDissipation": 6.5,
+         "onResistance": 0.1,
+         "onResistanceVgs": 5,
+         "onResistanceId": 7,
+         "gateThresholdVoltage": {
+          "minimum": 1.2,
+          "nominal": 1.6,
+          "maximum": 2.2
+         },
+         "inputCapacitance": 8.5e-11,
+         "outputCapacitance": 3.5e-11,
+         "reverseTransferCapacitance": 2e-12,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 4.2e-09,
+         "reverseRecoveryCharge": 0,
+         "pulsedDrainCurrent": 40,
+         "bodyDiodeForwardVoltage": 2.5,
+         "figureOfMerit": 4.2e-10
+        },
+        "thermal": {
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -40,
+         "thermalResistanceJunctionCase": 5,
+         "thermalResistanceJunctionAmbient": 40
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "QFN (6x5)",
+         "length": {
+          "nominal": 0.006
+         },
+         "width": {
+          "nominal": 0.005
+         },
+         "height": {
+          "nominal": 0.001
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerDatasheet",
+          "sourceName": "Navitas datasheet (navitassemi.com)",
+          "sourceUrl": "https://www.navitassemi.com/wp-content/uploads/NV6134-datasheet.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "26:mosfet": {
+  "ok": true,
+  "mpn": "SCT60006AL",
+  "alt": 862,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 12.0,
+   "rds_on_headroom": 16.0,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "SCT60006AL",
+   "manufacturer": "ROHM",
+   "vds_rated": 650.0,
+   "id_continuous": 120.0,
+   "rds_on": 0.00625,
+   "qg_total": 4.1667e-08,
+   "coss": 8.75e-10,
+   "vgs_threshold_max": 19.5,
+   "rth_ja": 18.59375,
+   "rth_jc": 0.53125,
+   "tj_max": 175.0,
+   "case": "TO-247-3pin",
+   "technology": "SiC",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "ROHM",
+       "reference": "SCT60006AL",
+       "status": "production",
+       "datasheetUrl": "https://www.rohm.com/SCT60006AL.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "SCT60006AL",
+         "series": "SCT",
+         "technology": "SiC",
+         "subType": "nChannel",
+         "case": "TO-247-3pin"
+        },
+        "electrical": {
+         "drainSourceVoltage": 650,
+         "gateSourceVoltageMax": 18,
+         "continuousDrainCurrent": 120,
+         "pulsedDrainCurrent": 480,
+         "powerDissipation": 95.0,
+         "onResistance": 0.00625,
+         "onResistanceVgs": 15,
+         "onResistanceId": 120,
+         "gateThresholdVoltage": {
+          "minimum": 9.0,
+          "nominal": 15,
+          "maximum": 19.5
+         },
+         "inputCapacitance": 2.5e-09,
+         "outputCapacitance": 8.75e-10,
+         "reverseTransferCapacitance": 1.5e-11,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 4.166666666666667e-08,
+         "gateSourceCharge": 1.0416666666666667e-08,
+         "gateDrainCharge": 9.166666666666668e-09,
+         "outputCharge": 3.7500000000000005e-08,
+         "reverseRecoveryCharge": 0,
+         "bodyDiodeForwardVoltage": 3.0,
+         "figureOfMerit": 2.6041666666666667e-10
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 0.53125,
+         "thermalResistanceJunctionAmbient": 18.59375,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -40
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-247-3pin",
+         "length": {
+          "nominal": 0.015
+         },
+         "width": {
+          "nominal": 0.01
+         },
+         "height": {
+          "nominal": 0.005
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerDatasheet",
+          "sourceName": "ROHM datasheet (rohm.com)",
+          "sourceUrl": "https://www.rohm.com/SCT60006AL.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "27:mosfet": {
+  "ok": true,
+  "mpn": "NV6134",
+  "alt": 49,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 1.0,
+   "rds_on_headroom": 1.0,
+   "qg_headroom": 4.761904762
+  },
+  "chosen": {
+   "mpn": "NV6134",
+   "manufacturer": "Navitas",
+   "vds_rated": 650.0,
+   "id_continuous": 10.0,
+   "rds_on": 0.1,
+   "qg_total": 4.2e-09,
+   "coss": 3.5e-11,
+   "vgs_threshold_max": 2.2,
+   "rth_ja": 40.0,
+   "rth_jc": 5.0,
+   "tj_max": 150.0,
+   "case": "QFN (6x5)",
+   "technology": "GaN",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "Navitas",
+       "reference": "NV6134",
+       "status": "production",
+       "datasheetUrl": "https://www.navitassemi.com/wp-content/uploads/NV6134-datasheet.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "NV6134",
+         "series": "GaNFast",
+         "technology": "GaN",
+         "subType": "nChannel",
+         "case": "QFN (6x5)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 650,
+         "gateSourceVoltageMax": 5,
+         "continuousDrainCurrent": 10,
+         "powerDissipation": 6.5,
+         "onResistance": 0.1,
+         "onResistanceVgs": 5,
+         "onResistanceId": 7,
+         "gateThresholdVoltage": {
+          "minimum": 1.2,
+          "nominal": 1.6,
+          "maximum": 2.2
+         },
+         "inputCapacitance": 8.5e-11,
+         "outputCapacitance": 3.5e-11,
+         "reverseTransferCapacitance": 2e-12,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 4.2e-09,
+         "reverseRecoveryCharge": 0,
+         "pulsedDrainCurrent": 40,
+         "bodyDiodeForwardVoltage": 2.5,
+         "figureOfMerit": 4.2e-10
+        },
+        "thermal": {
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -40,
+         "thermalResistanceJunctionCase": 5,
+         "thermalResistanceJunctionAmbient": 40
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "QFN (6x5)",
+         "length": {
+          "nominal": 0.006
+         },
+         "width": {
+          "nominal": 0.005
+         },
+         "height": {
+          "nominal": 0.001
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerDatasheet",
+          "sourceName": "Navitas datasheet (navitassemi.com)",
+          "sourceUrl": "https://www.navitassemi.com/wp-content/uploads/NV6134-datasheet.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "28:mosfet": {
+  "ok": true,
+  "mpn": "SCT60006AL",
+  "alt": 710,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 4.0,
+   "rds_on_headroom": 16.0,
+   "qg_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "SCT60006AL",
+   "manufacturer": "ROHM",
+   "vds_rated": 650.0,
+   "id_continuous": 120.0,
+   "rds_on": 0.00625,
+   "qg_total": 4.1667e-08,
+   "coss": 8.75e-10,
+   "vgs_threshold_max": 19.5,
+   "rth_ja": 18.59375,
+   "rth_jc": 0.53125,
+   "tj_max": 175.0,
+   "case": "TO-247-3pin",
+   "technology": "SiC",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "ROHM",
+       "reference": "SCT60006AL",
+       "status": "production",
+       "datasheetUrl": "https://www.rohm.com/SCT60006AL.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "SCT60006AL",
+         "series": "SCT",
+         "technology": "SiC",
+         "subType": "nChannel",
+         "case": "TO-247-3pin"
+        },
+        "electrical": {
+         "drainSourceVoltage": 650,
+         "gateSourceVoltageMax": 18,
+         "continuousDrainCurrent": 120,
+         "pulsedDrainCurrent": 480,
+         "powerDissipation": 95.0,
+         "onResistance": 0.00625,
+         "onResistanceVgs": 15,
+         "onResistanceId": 120,
+         "gateThresholdVoltage": {
+          "minimum": 9.0,
+          "nominal": 15,
+          "maximum": 19.5
+         },
+         "inputCapacitance": 2.5e-09,
+         "outputCapacitance": 8.75e-10,
+         "reverseTransferCapacitance": 1.5e-11,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 4.166666666666667e-08,
+         "gateSourceCharge": 1.0416666666666667e-08,
+         "gateDrainCharge": 9.166666666666668e-09,
+         "outputCharge": 3.7500000000000005e-08,
+         "reverseRecoveryCharge": 0,
+         "bodyDiodeForwardVoltage": 3.0,
+         "figureOfMerit": 2.6041666666666667e-10
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 0.53125,
+         "thermalResistanceJunctionAmbient": 18.59375,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -40
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-247-3pin",
+         "length": {
+          "nominal": 0.015
+         },
+         "width": {
+          "nominal": 0.01
+         },
+         "height": {
+          "nominal": 0.005
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerDatasheet",
+          "sourceName": "ROHM datasheet (rohm.com)",
+          "sourceUrl": "https://www.rohm.com/SCT60006AL.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "29:mosfet": {
+  "ok": true,
+  "mpn": "GS66508B",
+  "alt": 17,
+  "margins": {
+   "vds_margin": 1.0,
+   "id_margin": 1.0,
+   "rds_on_headroom": 2.0,
+   "qg_headroom": 2.272727273
+  },
+  "chosen": {
+   "mpn": "GS66508B",
+   "manufacturer": "GaN Systems",
+   "vds_rated": 650.0,
+   "id_continuous": 30.0,
+   "rds_on": 0.05,
+   "qg_total": 8.8e-09,
+   "coss": 8e-11,
+   "vgs_threshold_max": 2.5,
+   "rth_ja": 14.0,
+   "rth_jc": 1.0,
+   "tj_max": 150.0,
+   "case": "GaNPX-4 (7x8.4)",
+   "technology": "GaN",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "mosfet": {
+      "manufacturerInfo": {
+       "name": "GaN Systems",
+       "reference": "GS66508B",
+       "status": "production",
+       "datasheetUrl": "https://gansystems.com/wp-content/uploads/2020/04/GS66508B-DS-Rev-200402.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "GS66508B",
+         "series": "GS665xx",
+         "technology": "GaN",
+         "subType": "nChannel",
+         "case": "GaNPX-4 (7x8.4)"
+        },
+        "electrical": {
+         "drainSourceVoltage": 650,
+         "gateSourceVoltageMax": 7,
+         "continuousDrainCurrent": 30,
+         "continuousDrainCurrentAt100C": 21,
+         "pulsedDrainCurrent": 120,
+         "powerDissipation": 44,
+         "onResistance": 0.05,
+         "onResistanceVgs": 6,
+         "onResistanceId": 22,
+         "gateThresholdVoltage": {
+          "minimum": 1.0,
+          "nominal": 1.7,
+          "maximum": 2.5
+         },
+         "inputCapacitance": 2.08e-10,
+         "outputCapacitance": 8e-11,
+         "reverseTransferCapacitance": 6e-12,
+         "capacitanceMeasurementVds": 400,
+         "totalGateCharge": 8.8e-09,
+         "gateSourceCharge": 3.5e-09,
+         "gateDrainCharge": 2.6e-09,
+         "outputCharge": 5.7e-08,
+         "turnOnDelay": 3.5e-09,
+         "riseTime": 5e-09,
+         "turnOffDelay": 8e-09,
+         "fallTime": 4.5e-09,
+         "reverseRecoveryCharge": 0,
+         "bodyDiodeForwardVoltage": 2.4,
+         "figureOfMerit": 4.4e-10
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 1,
+         "thermalResistanceJunctionAmbient": 14,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -40
+        },
+        "mechanical": {
+         "assemblyType": "smt",
+         "case": "GaNPX-4 (7x8.4)",
+         "length": {
+          "nominal": 0.0084
+         },
+         "width": {
+          "nominal": 0.007
+         },
+         "height": {
+          "nominal": 0.00055
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerDatasheet",
+          "sourceName": "GaN Systems datasheet (gansystems.com)",
+          "sourceUrl": "https://gansystems.com/wp-content/uploads/2020/04/GS66508B-DS-Rev-200402.pdf"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "30:diode": {
+  "ok": true,
+  "mpn": "RSR012E00",
+  "alt": 4731,
+  "margins": {
+   "vrrm_margin": 5.0,
+   "if_avg_margin": 1.0,
+   "qrr_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "RSR012E00",
+   "manufacturer": "ROHM",
+   "vrrm_rated": 200.0,
+   "if_avg_rated": 1.0,
+   "vf_typ": 0.2,
+   "qrr": null,
+   "trr": null,
+   "rth_ja": 50.0,
+   "rth_jc": 2.0,
+   "tj_max": 175.0,
+   "case": "TO-220",
+   "technology": "ultrafast",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "diode": {
+      "manufacturerInfo": {
+       "name": "ROHM",
+       "reference": "RSR012E00",
+       "status": "production",
+       "datasheetUrl": "https://datasheetpdf.com/search?q=RSR012E00",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "RSR012E00",
+         "series": null,
+         "technology": "Si",
+         "subType": "ultrafast",
+         "case": "TO-220"
+        },
+        "electrical": {
+         "reverseVoltage": 200,
+         "forwardCurrent": 1,
+         "surgeCurrent": 8,
+         "forwardVoltage": 0.2,
+         "forwardVoltageAt": 0.5,
+         "reverseLeakageCurrent": 0.0002,
+         "junctionCapacitance": 5e-11,
+         "junctionCapacitanceVr": 5,
+         "powerDissipation": 2.0
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 2.0,
+         "thermalResistanceJunctionAmbient": 50,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -65
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-220",
+         "landPattern": {
+          "pattern": "singleRow",
+          "originDatum": "padCentroid",
+          "pads": [
+           {
+            "id": "1",
+            "x": -0.00254,
+            "y": 0.0,
+            "shape": "rectangle",
+            "width": 0.002,
+            "height": 0.002,
+            "drill": 0.0011,
+            "plated": true
+           },
+           {
+            "id": "2",
+            "x": 0.00254,
+            "y": 0.0,
+            "shape": "round",
+            "width": 0.002,
+            "drill": 0.0011,
+            "plated": true
+           }
+          ]
+         },
+         "pinout": [
+          {
+           "pin": "1",
+           "name": "K",
+           "function": "cathode"
+          },
+          {
+           "pin": "2",
+           "name": "A",
+           "function": "anode"
+          }
+         ]
+        },
+        "provenance": [
+         {
+          "source": "scrape",
+          "sourceName": "third-party datasheet aggregator (datasheetpdf.com)",
+          "sourceUrl": "https://datasheetpdf.com/search?q=RSR012E00"
+         },
+         {
+          "source": "derived",
+          "sourceName": "OpenConverters SAS landPattern 2026-08 (#473, TO-220-2)",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "mechanical.landPattern"
+          ],
+          "derivation": "recommended land pattern from the package 'TO-220' -> TO-220-2; KiCad kicad-footprints (Package_TO_SOT_THT.pretty); JEDEC TO-220AC 2-lead vertical mount"
+         },
+         {
+          "source": "manual",
+          "sourceName": "OpenConverters SAS pinout 2026-08 (#473, TO-220-2 diode, deterministic)",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "mechanical.pinout"
+          ],
+          "derivation": "deterministic package pinout for TO-220-2; 2-lead single-diode polarity convention: pin1 = cathode (banded terminal), pin2 = anode, per the JEDEC TO-220-2 outline."
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "31:diode": {
+  "ok": true,
+  "mpn": "STPS10045",
+  "alt": 2259,
+  "margins": {
+   "vrrm_margin": 1.125,
+   "if_avg_margin": 10.0,
+   "qrr_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "STPS10045",
+   "manufacturer": "STMicroelectronics",
+   "vrrm_rated": 45.0,
+   "if_avg_rated": 100.0,
+   "vf_typ": 0.38,
+   "qrr": null,
+   "trr": null,
+   "rth_ja": 35.0,
+   "rth_jc": 0.38,
+   "tj_max": 150.0,
+   "case": "TO-247-2",
+   "technology": "schottky",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "diode": {
+      "manufacturerInfo": {
+       "name": "STMicroelectronics",
+       "reference": "STPS10045",
+       "status": "production",
+       "datasheetUrl": "https://www.st.com/resource/en/datasheet/stps10045.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "STPS10045",
+         "series": "STPS100xx",
+         "technology": "Si",
+         "subType": "schottky",
+         "case": "TO-247-2"
+        },
+        "electrical": {
+         "reverseVoltage": 45,
+         "forwardCurrent": 100,
+         "surgeCurrent": 1500,
+         "forwardVoltage": 0.38,
+         "forwardVoltageAt": 100,
+         "reverseLeakageCurrent": 0.002,
+         "junctionCapacitance": 3.8e-09,
+         "junctionCapacitanceVr": 10
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 0.38,
+         "thermalResistanceJunctionAmbient": 35,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -65
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-247-2",
+         "length": {
+          "nominal": 0.021
+         },
+         "width": {
+          "nominal": 0.016
+         },
+         "height": {
+          "nominal": 0.0047
+         },
+         "landPattern": {
+          "pattern": "singleRow",
+          "originDatum": "padCentroid",
+          "pads": [
+           {
+            "id": "1",
+            "x": -0.00545,
+            "y": 0.0,
+            "shape": "rectangle",
+            "width": 0.0025,
+            "height": 0.0045,
+            "drill": 0.0015,
+            "plated": true
+           },
+           {
+            "id": "2",
+            "x": 0.00545,
+            "y": 0.0,
+            "shape": "oval",
+            "width": 0.0025,
+            "height": 0.0045,
+            "drill": 0.0015,
+            "plated": true
+           }
+          ]
+         },
+         "pinout": [
+          {
+           "pin": "1",
+           "name": "K",
+           "function": "cathode"
+          },
+          {
+           "pin": "2",
+           "name": "A",
+           "function": "anode"
+          }
+         ]
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "STMicroelectronics parametric export (xlsx) [inferred from the record's own URL \u2014 this record was not verified against that source]",
+          "sourceUrl": "https://www.st.com/resource/en/datasheet/stps10045.pdf"
+         },
+         {
+          "source": "derived",
+          "sourceName": "OpenConverters SAS landPattern 2026-08 (#473, TO-247-2)",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "mechanical.landPattern"
+          ],
+          "derivation": "recommended land pattern from the package 'TO-247-2' -> TO-247-2; KiCad kicad-footprints (Package_TO_SOT_THT.pretty); JEDEC TO-247 2-lead vertical mount"
+         },
+         {
+          "source": "manual",
+          "sourceName": "OpenConverters SAS pinout 2026-08 (#473, TO-247-2 diode, deterministic)",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "mechanical.pinout"
+          ],
+          "derivation": "deterministic package pinout for TO-247-2; 2-lead single-diode polarity convention: pin1 = cathode (banded terminal), pin2 = anode, per the JEDEC TO-247-2 outline."
+         }
+        ]
+       }
+      },
+      "distributorsInfo": [
+       {
+        "name": "Digi-Key",
+        "reference": "497-STPS10045-ND",
+        "cost": {
+         "value": 6.45,
+         "currency": "USD"
+        },
+        "stock": 800
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "32:diode": {
+  "ok": true,
+  "mpn": "RSR012E00",
+  "alt": 4043,
+  "margins": {
+   "vrrm_margin": 2.0,
+   "if_avg_margin": 1.0,
+   "qrr_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "RSR012E00",
+   "manufacturer": "ROHM",
+   "vrrm_rated": 200.0,
+   "if_avg_rated": 1.0,
+   "vf_typ": 0.2,
+   "qrr": null,
+   "trr": null,
+   "rth_ja": 50.0,
+   "rth_jc": 2.0,
+   "tj_max": 175.0,
+   "case": "TO-220",
+   "technology": "ultrafast",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "diode": {
+      "manufacturerInfo": {
+       "name": "ROHM",
+       "reference": "RSR012E00",
+       "status": "production",
+       "datasheetUrl": "https://datasheetpdf.com/search?q=RSR012E00",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "RSR012E00",
+         "series": null,
+         "technology": "Si",
+         "subType": "ultrafast",
+         "case": "TO-220"
+        },
+        "electrical": {
+         "reverseVoltage": 200,
+         "forwardCurrent": 1,
+         "surgeCurrent": 8,
+         "forwardVoltage": 0.2,
+         "forwardVoltageAt": 0.5,
+         "reverseLeakageCurrent": 0.0002,
+         "junctionCapacitance": 5e-11,
+         "junctionCapacitanceVr": 5,
+         "powerDissipation": 2.0
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 2.0,
+         "thermalResistanceJunctionAmbient": 50,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -65
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-220",
+         "landPattern": {
+          "pattern": "singleRow",
+          "originDatum": "padCentroid",
+          "pads": [
+           {
+            "id": "1",
+            "x": -0.00254,
+            "y": 0.0,
+            "shape": "rectangle",
+            "width": 0.002,
+            "height": 0.002,
+            "drill": 0.0011,
+            "plated": true
+           },
+           {
+            "id": "2",
+            "x": 0.00254,
+            "y": 0.0,
+            "shape": "round",
+            "width": 0.002,
+            "drill": 0.0011,
+            "plated": true
+           }
+          ]
+         },
+         "pinout": [
+          {
+           "pin": "1",
+           "name": "K",
+           "function": "cathode"
+          },
+          {
+           "pin": "2",
+           "name": "A",
+           "function": "anode"
+          }
+         ]
+        },
+        "provenance": [
+         {
+          "source": "scrape",
+          "sourceName": "third-party datasheet aggregator (datasheetpdf.com)",
+          "sourceUrl": "https://datasheetpdf.com/search?q=RSR012E00"
+         },
+         {
+          "source": "derived",
+          "sourceName": "OpenConverters SAS landPattern 2026-08 (#473, TO-220-2)",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "mechanical.landPattern"
+          ],
+          "derivation": "recommended land pattern from the package 'TO-220' -> TO-220-2; KiCad kicad-footprints (Package_TO_SOT_THT.pretty); JEDEC TO-220AC 2-lead vertical mount"
+         },
+         {
+          "source": "manual",
+          "sourceName": "OpenConverters SAS pinout 2026-08 (#473, TO-220-2 diode, deterministic)",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "mechanical.pinout"
+          ],
+          "derivation": "deterministic package pinout for TO-220-2; 2-lead single-diode polarity convention: pin1 = cathode (banded terminal), pin2 = anode, per the JEDEC TO-220-2 outline."
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "33:diode": {
+  "ok": true,
+  "mpn": "STPS30120",
+  "alt": 1977,
+  "margins": {
+   "vrrm_margin": 1.2,
+   "if_avg_margin": 3.0,
+   "qrr_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "STPS30120",
+   "manufacturer": "STMicroelectronics",
+   "vrrm_rated": 120.0,
+   "if_avg_rated": 30.0,
+   "vf_typ": 0.52,
+   "qrr": null,
+   "trr": null,
+   "rth_ja": 62.0,
+   "rth_jc": 1.0,
+   "tj_max": 150.0,
+   "case": "TO-220AB",
+   "technology": "schottky",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "diode": {
+      "manufacturerInfo": {
+       "name": "STMicroelectronics",
+       "reference": "STPS30120",
+       "status": "production",
+       "datasheetUrl": "https://www.st.com/resource/en/datasheet/stps30120.pdf",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "STPS30120",
+         "series": "STPS30xxx",
+         "technology": "Si",
+         "subType": "schottky",
+         "case": "TO-220AB"
+        },
+        "electrical": {
+         "reverseVoltage": 120,
+         "forwardCurrent": 30,
+         "surgeCurrent": 450,
+         "forwardVoltage": 0.52,
+         "forwardVoltageAt": 30,
+         "reverseLeakageCurrent": 0.0005,
+         "junctionCapacitance": 5.5e-10,
+         "junctionCapacitanceVr": 60
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 1.0,
+         "thermalResistanceJunctionAmbient": 62,
+         "junctionTemperatureMax": 150,
+         "junctionTemperatureMin": -65
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-220AB",
+         "length": {
+          "nominal": 0.0103
+         },
+         "width": {
+          "nominal": 0.0056
+         },
+         "height": {
+          "nominal": 0.0047
+         },
+         "landPattern": {
+          "pattern": "singleRow",
+          "originDatum": "padCentroid",
+          "pads": [
+           {
+            "id": "1",
+            "x": -0.00254,
+            "y": 0.0,
+            "shape": "rectangle",
+            "width": 0.001905,
+            "height": 0.002,
+            "drill": 0.0011,
+            "plated": true
+           },
+           {
+            "id": "2",
+            "x": 0.0,
+            "y": 0.0,
+            "shape": "oval",
+            "width": 0.001905,
+            "height": 0.002,
+            "drill": 0.0011,
+            "plated": true
+           },
+           {
+            "id": "3",
+            "x": 0.00254,
+            "y": 0.0,
+            "shape": "oval",
+            "width": 0.001905,
+            "height": 0.002,
+            "drill": 0.0011,
+            "plated": true
+           }
+          ]
+         }
+        },
+        "provenance": [
+         {
+          "source": "manufacturerParametric",
+          "sourceName": "STMicroelectronics parametric export (xlsx) [inferred from the record's own URL \u2014 this record was not verified against that source]",
+          "sourceUrl": "https://www.st.com/resource/en/datasheet/stps30120.pdf"
+         },
+         {
+          "source": "derived",
+          "sourceName": "OpenConverters SAS landPattern 2026-08 (#473, TO-220)",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "mechanical.landPattern"
+          ],
+          "derivation": "recommended land pattern from the package 'TO-220AB' -> TO-220; KiCad kicad-footprints (Package_TO_SOT_THT.pretty); JEDEC TO-220AB 3-lead (2.54 mm lead pitch) verti"
+         }
+        ]
+       }
+      },
+      "distributorsInfo": [
+       {
+        "name": "Digi-Key",
+        "reference": "497-STPS30120-ND",
+        "cost": {
+         "value": 2.25,
+         "currency": "USD"
+        },
+        "stock": 2500
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "34:diode": {
+  "ok": true,
+  "mpn": "CSD06060A",
+  "alt": 2629,
+  "margins": {
+   "vrrm_margin": 1.0,
+   "if_avg_margin": 60.0,
+   "qrr_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CSD06060A",
+   "manufacturer": "Wolfspeed",
+   "vrrm_rated": 600.0,
+   "if_avg_rated": 60.0,
+   "vf_typ": 0.6,
+   "qrr": null,
+   "trr": null,
+   "rth_ja": 50.0,
+   "rth_jc": 2.0,
+   "tj_max": 175.0,
+   "case": "TO-220",
+   "technology": "sicSchottky",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "diode": {
+      "manufacturerInfo": {
+       "name": "Wolfspeed",
+       "reference": "CSD06060A",
+       "status": "production",
+       "datasheetUrl": "https://datasheetpdf.com/search?q=CSD06060A",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD06060A",
+         "technology": "SiC",
+         "subType": "sicSchottky",
+         "case": "TO-220"
+        },
+        "electrical": {
+         "reverseVoltage": 600,
+         "forwardCurrent": 60,
+         "surgeCurrent": 480,
+         "forwardVoltage": 0.6,
+         "forwardVoltageAt": 30.0,
+         "reverseLeakageCurrent": 0.0006000000000000001,
+         "junctionCapacitance": 5e-11,
+         "junctionCapacitanceVr": 5,
+         "powerDissipation": 360.0
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 2.0,
+         "thermalResistanceJunctionAmbient": 50,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -65
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-220",
+         "landPattern": {
+          "pattern": "singleRow",
+          "originDatum": "padCentroid",
+          "pads": [
+           {
+            "id": "1",
+            "x": -0.00254,
+            "y": 0.0,
+            "shape": "rectangle",
+            "width": 0.002,
+            "height": 0.002,
+            "drill": 0.0011,
+            "plated": true
+           },
+           {
+            "id": "2",
+            "x": 0.00254,
+            "y": 0.0,
+            "shape": "round",
+            "width": 0.002,
+            "drill": 0.0011,
+            "plated": true
+           }
+          ]
+         },
+         "pinout": [
+          {
+           "pin": "1",
+           "name": "K",
+           "function": "cathode"
+          },
+          {
+           "pin": "2",
+           "name": "A",
+           "function": "anode"
+          }
+         ]
+        },
+        "provenance": [
+         {
+          "source": "scrape",
+          "sourceName": "third-party datasheet aggregator (datasheetpdf.com)",
+          "sourceUrl": "https://datasheetpdf.com/search?q=CSD06060A"
+         },
+         {
+          "source": "derived",
+          "sourceName": "OpenConverters SAS landPattern 2026-08 (#473, TO-220-2)",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "mechanical.landPattern"
+          ],
+          "derivation": "recommended land pattern from the package 'TO-220' -> TO-220-2; KiCad kicad-footprints (Package_TO_SOT_THT.pretty); JEDEC TO-220AC 2-lead vertical mount"
+         },
+         {
+          "source": "manual",
+          "sourceName": "OpenConverters SAS pinout 2026-08 (#473, TO-220-2 diode, deterministic)",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "mechanical.pinout"
+          ],
+          "derivation": "deterministic package pinout for TO-220-2; 2-lead single-diode polarity convention: pin1 = cathode (banded terminal), pin2 = anode, per the JEDEC TO-220-2 outline."
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "35:diode": {
+  "ok": true,
+  "mpn": "CSD06060A",
+  "alt": 1569,
+  "margins": {
+   "vrrm_margin": 1.0,
+   "if_avg_margin": 6.0,
+   "qrr_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CSD06060A",
+   "manufacturer": "Wolfspeed",
+   "vrrm_rated": 600.0,
+   "if_avg_rated": 60.0,
+   "vf_typ": 0.6,
+   "qrr": null,
+   "trr": null,
+   "rth_ja": 50.0,
+   "rth_jc": 2.0,
+   "tj_max": 175.0,
+   "case": "TO-220",
+   "technology": "sicSchottky",
+   "status": "production",
+   "raw_envelope": {
+    "semiconductor": {
+     "diode": {
+      "manufacturerInfo": {
+       "name": "Wolfspeed",
+       "reference": "CSD06060A",
+       "status": "production",
+       "datasheetUrl": "https://datasheetpdf.com/search?q=CSD06060A",
+       "datasheetInfo": {
+        "part": {
+         "partNumber": "CSD06060A",
+         "technology": "SiC",
+         "subType": "sicSchottky",
+         "case": "TO-220"
+        },
+        "electrical": {
+         "reverseVoltage": 600,
+         "forwardCurrent": 60,
+         "surgeCurrent": 480,
+         "forwardVoltage": 0.6,
+         "forwardVoltageAt": 30.0,
+         "reverseLeakageCurrent": 0.0006000000000000001,
+         "junctionCapacitance": 5e-11,
+         "junctionCapacitanceVr": 5,
+         "powerDissipation": 360.0
+        },
+        "thermal": {
+         "thermalResistanceJunctionCase": 2.0,
+         "thermalResistanceJunctionAmbient": 50,
+         "junctionTemperatureMax": 175,
+         "junctionTemperatureMin": -65
+        },
+        "mechanical": {
+         "assemblyType": "tht",
+         "case": "TO-220",
+         "landPattern": {
+          "pattern": "singleRow",
+          "originDatum": "padCentroid",
+          "pads": [
+           {
+            "id": "1",
+            "x": -0.00254,
+            "y": 0.0,
+            "shape": "rectangle",
+            "width": 0.002,
+            "height": 0.002,
+            "drill": 0.0011,
+            "plated": true
+           },
+           {
+            "id": "2",
+            "x": 0.00254,
+            "y": 0.0,
+            "shape": "round",
+            "width": 0.002,
+            "drill": 0.0011,
+            "plated": true
+           }
+          ]
+         },
+         "pinout": [
+          {
+           "pin": "1",
+           "name": "K",
+           "function": "cathode"
+          },
+          {
+           "pin": "2",
+           "name": "A",
+           "function": "anode"
+          }
+         ]
+        },
+        "provenance": [
+         {
+          "source": "scrape",
+          "sourceName": "third-party datasheet aggregator (datasheetpdf.com)",
+          "sourceUrl": "https://datasheetpdf.com/search?q=CSD06060A"
+         },
+         {
+          "source": "derived",
+          "sourceName": "OpenConverters SAS landPattern 2026-08 (#473, TO-220-2)",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "mechanical.landPattern"
+          ],
+          "derivation": "recommended land pattern from the package 'TO-220' -> TO-220-2; KiCad kicad-footprints (Package_TO_SOT_THT.pretty); JEDEC TO-220AC 2-lead vertical mount"
+         },
+         {
+          "source": "manual",
+          "sourceName": "OpenConverters SAS pinout 2026-08 (#473, TO-220-2 diode, deterministic)",
+          "retrievedDate": "2026-08-02",
+          "fields": [
+           "mechanical.pinout"
+          ],
+          "derivation": "deterministic package pinout for TO-220-2; 2-lead single-diode polarity convention: pin1 = cathode (banded terminal), pin2 = anode, per the JEDEC TO-220-2 outline."
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "36:capacitor": {
+  "ok": true,
+  "mpn": "C0603X102KCRAC3316",
+  "alt": 8721,
+  "margins": {
+   "v_margin": 10.0,
+   "capacitance_ratio": 1.0,
+   "ripple_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "C0603X102KCRAC3316",
+   "manufacturer": "KEMET",
+   "capacitance": 1e-09,
+   "v_rated": 500.0,
+   "ripple_current_rms": null,
+   "esr": 0.01,
+   "rth": null,
+   "technology": "",
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "capacitor": {
+     "manufacturerInfo": {
+      "name": "KEMET",
+      "reference": "C0603X102KCRAC3316",
+      "status": "production",
+      "datasheetUrl": "https://www.mouser.com/datasheet/3/72/1/KEM_X7R_FT_HV_VW_AUDI.pdf",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "C0603X102KCRAC3316",
+        "technology": "ceramic-class-2",
+        "series": "",
+        "case": ""
+       },
+       "electrical": {
+        "capacitance": {
+         "nominal": 1e-09
+        },
+        "ratedVoltage": 500.0,
+        "esr": 0.01,
+        "esrFrequency": 1000000.0,
+        "dissipationFactor": 0.025,
+        "dissipationFactorFrequency": 1000.0,
+        "voltageRatedDcMax": 500.0
+       },
+       "thermal": {
+        "temperature": {
+         "minimum": -55,
+         "maximum": 125
+        }
+       },
+       "mechanical": {
+        "dimensions": {},
+        "shape": {
+         "assembly": "SMT",
+         "shapeType": "SMD Chip"
+        }
+       },
+       "provenance": [
+        {
+         "source": "distributor",
+         "sourceName": "datasheet via Mouser listing",
+         "sourceUrl": "https://www.mouser.com/datasheet/3/72/1/KEM_X7R_FT_HV_VW_AUDI.pdf"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "37:capacitor": {
+  "ok": true,
+  "mpn": "CKC33C103JWGACAUTO",
+  "alt": 32072,
+  "margins": {
+   "v_margin": 13.0,
+   "capacitance_ratio": 12.5,
+   "ripple_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CKC33C103JWGACAUTO",
+   "manufacturer": "KEMET",
+   "capacitance": 1e-08,
+   "v_rated": 650.0,
+   "ripple_current_rms": null,
+   "esr": 0.009937696,
+   "rth": null,
+   "technology": "",
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "capacitor": {
+     "manufacturerInfo": {
+      "name": "KEMET",
+      "reference": "CKC33C103JWGACAUTO",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/KEM_C1039_KC-LINK_C0G",
+      "family": "KC-LINK Auto C0G",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "CKC33C103JWGACAUTO",
+        "technology": "ceramic-class-1",
+        "dielectricCode": "C0G"
+       },
+       "electrical": {
+        "capacitance": {
+         "nominal": 1e-08
+        },
+        "ratedVoltage": 650.0,
+        "esrPoints": {
+         "xData": [
+          100.0,
+          125.89252,
+          158.48933,
+          199.52621,
+          251.1887,
+          316.22775,
+          398.1071,
+          501.1873,
+          630.9573,
+          794.3284,
+          1000.0,
+          1258.9252,
+          1584.8933,
+          1995.2621,
+          2511.887,
+          3162.2776,
+          3981.0708,
+          5011.873,
+          6309.5728,
+          7943.284,
+          10000.0,
+          12589.251,
+          15848.925,
+          19952.633,
+          25118.87,
+          31622.777,
+          39810.707,
+          50118.703,
+          63095.76,
+          79432.84,
+          100000.0,
+          125892.516,
+          158489.25,
+          199526.31,
+          251188.7,
+          316227.78,
+          398107.1,
+          501187.0,
+          630957.6,
+          794328.44,
+          1000000.0,
+          1258925.1,
+          1584892.5,
+          1995263.2,
+          2511887.0,
+          3162277.8,
+          3981070.8,
+          5011870.0,
+          6309576.0,
+          7943284.0,
+          10000000.0,
+          12589251.0,
+          15848925.0,
+          19952632.0,
+          25118870.0,
+          31622776.0,
+          39810708.0,
+          50118700.0,
+          63095764.0,
+          79432840.0,
+          100000000.0,
+          125892650.0,
+          158489250.0,
+          199526320.0,
+          251188420.0,
+          316227780.0,
+          398107520.0,
+          501187000.0,
+          630957630.0,
+          794327550.0,
+          1000000000.0
+         ],
+         "yData": [
+          8.169021,
+          6.458749,
+          5.0944576,
+          4.0371647,
+          3.1917288,
+          2.5292823,
+          2.0043156,
+          1.5920839,
+          1.2616311,
+          1.0021487,
+          0.79603535,
+          0.6326297,
+          0.50276697,
+          0.39956206,
+          0.31678557,
+          0.2523593,
+          0.20055667,
+          0.1597675,
+          0.1275753,
+          0.1016274,
+          0.081147395,
+          0.06494464,
+          0.051974546,
+          0.041688368,
+          0.033511184,
+          0.02705538,
+          0.021885956,
+          0.017813314,
+          0.014581472,
+          0.011998193,
+          0.009937696,
+          0.0083241565,
+          0.007026912,
+          0.0059980405,
+          0.0051795496,
+          0.0045354483,
+          0.004019574,
+          0.0036125807,
+          0.0032855615,
+          0.0030277139,
+          0.0028237868,
+          0.0026614703,
+          0.0025315774,
+          0.002429281,
+          0.0023581858,
+          0.0024416738,
+          0.0025477745,
+          0.002681425,
+          0.002849654,
+          0.0030610242,
+          0.0033273916,
+          0.0036628912,
+          0.004085118,
+          0.00461676,
+          0.0052860114,
+          0.0061286828,
+          0.007189717,
+          0.005639867,
+          0.0065746983,
+          0.0077521964,
+          0.009235803,
+          0.011106015,
+          0.013465478,
+          0.016446127,
+          0.020220488,
+          0.025021581,
+          0.031180255,
+          0.039215878,
+          0.050067794,
+          0.06575699,
+          0.09139
+         ]
+        },
+        "esr": 0.009937696,
+        "esrFrequency": 100000.0
+       },
+       "mechanical": {
+        "shape": {
+         "assembly": "SMT",
+         "shapeType": "SMD Chip"
+        },
+        "dimensions": {
+         "length": {
+          "nominal": 0.0093
+         },
+         "thickness": {
+          "nominal": 0.002
+         }
+        }
+       },
+       "thermal": {
+        "temperature": {
+         "minimum": -55.0,
+         "maximum": 150.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/KEM_C1039_KC-LINK_C0G",
+         "retrievedDate": "2026-08-01"
+        },
+        {
+         "source": "manufacturerParametric",
+         "sourceName": "KEMET K-SIM 3 simulation, Impedance & ESR chart (plotType Imp,ESR, 100 Hz to 1000000000 Hz)",
+         "sourceUrl": "https://ksim3.kemet.com/api/csv/",
+         "retrievedDate": "2026-07-31"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "38:capacitor": {
+  "ok": true,
+  "mpn": "CKC33C194KEGLC7810",
+  "alt": 11162,
+  "margins": {
+   "v_margin": 24.0,
+   "capacitance_ratio": 1.9,
+   "ripple_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "CKC33C194KEGLC7810",
+   "manufacturer": "KEMET",
+   "capacitance": 1.9e-07,
+   "v_rated": 1200.0,
+   "ripple_current_rms": null,
+   "esr": 0.00085796614,
+   "rth": null,
+   "technology": "",
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "capacitor": {
+     "manufacturerInfo": {
+      "name": "KEMET",
+      "reference": "CKC33C194KEGLC7810",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/KEM_C1105_KONNEKT_KC-Link_C0G",
+      "family": "KONNEKT KC-LINK Comm C0G",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "CKC33C194KEGLC7810",
+        "technology": "ceramic-class-1",
+        "dielectricCode": "C0G"
+       },
+       "electrical": {
+        "capacitance": {
+         "nominal": 1.9e-07
+        },
+        "ratedVoltage": 1200.0,
+        "esrPoints": {
+         "xData": [
+          100.0,
+          125.89252,
+          158.48933,
+          199.52621,
+          251.1887,
+          316.22775,
+          398.1071,
+          501.1873,
+          630.9573,
+          794.3284,
+          1000.0,
+          1258.9252,
+          1584.8933,
+          1995.2621,
+          2511.887,
+          3162.2776,
+          3981.0708,
+          5011.873,
+          6309.5728,
+          7943.284,
+          10000.0,
+          12589.251,
+          15848.925,
+          19952.633,
+          25118.87,
+          31622.777,
+          39810.707,
+          50118.703,
+          57544.023,
+          63095.76,
+          79432.84,
+          100000.0,
+          125892.516,
+          158489.25,
+          199526.31,
+          251188.7,
+          316227.78,
+          398107.1,
+          501187.0,
+          630957.6,
+          794328.44,
+          1000000.0,
+          1258925.1,
+          1584892.5,
+          1995263.2,
+          2511887.0,
+          3162277.8,
+          3981070.8,
+          5011870.0,
+          6309576.0,
+          7943284.0,
+          10000000.0,
+          12589251.0,
+          15848925.0,
+          19952632.0,
+          25118870.0,
+          31622776.0,
+          39810708.0,
+          50118700.0,
+          63095764.0,
+          79432840.0,
+          100000000.0,
+          125892650.0,
+          158489250.0,
+          199526320.0,
+          251188420.0,
+          316227780.0,
+          398107520.0,
+          501187000.0,
+          630957630.0,
+          794327550.0,
+          1000000000.0
+         ],
+         "yData": [
+          0.055553425,
+          0.04254128,
+          0.03190158,
+          0.025340332,
+          0.019333461,
+          0.015041346,
+          0.011947769,
+          0.009689686,
+          0.007696793,
+          0.006239489,
+          0.0049562035,
+          0.0040975395,
+          0.0034456244,
+          0.0028886932,
+          0.0024152193,
+          0.0020460647,
+          0.0017770119,
+          0.0015521959,
+          0.0013924696,
+          0.001245541,
+          0.0011404029,
+          0.0010578487,
+          0.0009864883,
+          0.0009351109,
+          0.0008912835,
+          0.00085786224,
+          0.00083094795,
+          0.00080907677,
+          0.0008011754,
+          0.0008090784,
+          0.00083082827,
+          0.00085796614,
+          0.0008918501,
+          0.0009348997,
+          0.000988988,
+          0.0010574696,
+          0.0011433655,
+          0.0012514287,
+          0.0013876191,
+          0.0015590601,
+          0.0017747312,
+          0.002046309,
+          0.0023882652,
+          0.0028187598,
+          0.0033607297,
+          0.004042986,
+          0.0049018906,
+          0.0059832237,
+          0.0073444974,
+          0.009058278,
+          0.011215778,
+          0.013931919,
+          0.01735135,
+          0.012353749,
+          0.015364575,
+          0.019154992,
+          0.023926897,
+          0.029934479,
+          0.037497792,
+          0.047019932,
+          0.059008446,
+          0.074102916,
+          0.0931096,
+          0.117045,
+          0.14719382,
+          0.18518096,
+          0.23307158,
+          0.2935047,
+          0.3698919,
+          0.46674043,
+          0.5902285,
+          0.74938947
+         ]
+        },
+        "esr": 0.0008579661400000005,
+        "esrFrequency": 100000.0
+       },
+       "mechanical": {
+        "shape": {
+         "assembly": "SMT",
+         "shapeType": "KONNEKT"
+        },
+        "dimensions": {
+         "length": {
+          "nominal": 0.0093
+         },
+         "thickness": {
+          "nominal": 0.0102
+         }
+        }
+       },
+       "thermal": {
+        "temperature": {
+         "minimum": -55.0,
+         "maximum": 150.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/KEM_C1105_KONNEKT_KC-Link_C0G",
+         "retrievedDate": "2026-08-01"
+        },
+        {
+         "source": "manufacturerParametric",
+         "sourceName": "KEMET K-SIM 3 simulation, Impedance & ESR chart (plotType Imp,ESR, 100 Hz to 1000000000 Hz)",
+         "sourceUrl": "https://ksim3.kemet.com/api/csv/",
+         "retrievedDate": "2026-07-31"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "39:capacitor": {
+  "ok": true,
+  "mpn": "EFDKA1CJ105D032LH",
+  "alt": 37013,
+  "margins": {
+   "v_margin": 24.0,
+   "capacitance_ratio": 12.5,
+   "ripple_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "EFDKA1CJ105D032LH",
+   "manufacturer": "Eaton",
+   "capacitance": 1e-06,
+   "v_rated": 1200.0,
+   "ripple_current_rms": 3.5,
+   "esr": 0.035,
+   "rth": 35.0,
+   "technology": "DC-link",
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "capacitor": {
+     "manufacturerInfo": {
+      "name": "Eaton",
+      "reference": "EFDKA1CJ105D032LH",
+      "status": "production",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "EFDKA1CJ105D032LH",
+        "technology": "film-polypropylene",
+        "series": "DC-link"
+       },
+       "electrical": {
+        "capacitance": {
+         "nominal": 1e-06,
+         "minimum": 9.499999999999999e-07,
+         "maximum": 1.05e-06
+        },
+        "ratedVoltage": 1200.0,
+        "voltageRatedDcMax": 1200.0,
+        "esr": 0.035,
+        "rippleCurrent": 3.5,
+        "thermalResistance": 35.0
+       },
+       "mechanical": {
+        "shape": {
+         "assembly": "THT",
+         "shapeType": "D03"
+        }
+       },
+       "provenance": [
+        {
+         "source": "librarianEnrichment",
+         "sourceName": "Librarian datasheet extraction (haiku-datasheet:haiku)",
+         "fields": [
+          "mechanical.shape.assembly",
+          "mechanical.shape.shapeType"
+         ],
+         "sourceUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf",
+         "retrievedDate": "2026-07-03"
+        },
+        {
+         "source": "manufacturerDatasheet",
+         "sourceUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf",
+         "sourceName": "Eaton"
+        }
+       ]
+      },
+      "datasheetUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf"
+     }
+    }
+   }
+  }
+ },
+ "40:capacitor": {
+  "ok": true,
+  "mpn": "EFDKA1CJ205D072LH",
+  "alt": 10078,
+  "margins": {
+   "v_margin": 24.0,
+   "capacitance_ratio": 2.0,
+   "ripple_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "EFDKA1CJ205D072LH",
+   "manufacturer": "Eaton",
+   "capacitance": 2e-06,
+   "v_rated": 1200.0,
+   "ripple_current_rms": 5.0,
+   "esr": 0.024,
+   "rth": 25.0,
+   "technology": "DC-link",
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "capacitor": {
+     "manufacturerInfo": {
+      "name": "Eaton",
+      "reference": "EFDKA1CJ205D072LH",
+      "status": "production",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "EFDKA1CJ205D072LH",
+        "technology": "film-polypropylene",
+        "series": "DC-link"
+       },
+       "electrical": {
+        "capacitance": {
+         "nominal": 2e-06,
+         "minimum": 1.8999999999999998e-06,
+         "maximum": 2.1e-06
+        },
+        "ratedVoltage": 1200.0,
+        "voltageRatedDcMax": 1200.0,
+        "esr": 0.024,
+        "rippleCurrent": 5.0,
+        "thermalResistance": 25.0
+       },
+       "mechanical": {
+        "shape": {
+         "assembly": "THT",
+         "shapeType": "Rectangular"
+        }
+       },
+       "provenance": [
+        {
+         "source": "librarianEnrichment",
+         "sourceName": "Librarian datasheet extraction (haiku-datasheet:haiku)",
+         "fields": [
+          "mechanical.shape.assembly",
+          "mechanical.shape.shapeType"
+         ],
+         "sourceUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf",
+         "retrievedDate": "2026-07-03"
+        },
+        {
+         "source": "manufacturerDatasheet",
+         "sourceUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf",
+         "sourceName": "Eaton"
+        }
+       ]
+      },
+      "datasheetUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf"
+     }
+    }
+   }
+  }
+ },
+ "41:capacitor": {
+  "ok": true,
+  "mpn": "EFDKA90J106D134BH",
+  "alt": 27857,
+  "margins": {
+   "v_margin": 18.0,
+   "capacitance_ratio": 12.5,
+   "ripple_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "EFDKA90J106D134BH",
+   "manufacturer": "Eaton",
+   "capacitance": 1e-05,
+   "v_rated": 900.0,
+   "ripple_current_rms": 15.5,
+   "esr": 0.0072,
+   "rth": 8.7,
+   "technology": "DC-link",
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "capacitor": {
+     "manufacturerInfo": {
+      "name": "Eaton",
+      "reference": "EFDKA90J106D134BH",
+      "status": "production",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "EFDKA90J106D134BH",
+        "technology": "film-polypropylene",
+        "series": "DC-link"
+       },
+       "electrical": {
+        "capacitance": {
+         "nominal": 9.999999999999999e-06,
+         "minimum": 9.499999999999999e-06,
+         "maximum": 1.05e-05
+        },
+        "ratedVoltage": 900.0,
+        "voltageRatedDcMax": 900.0,
+        "esr": 0.007200000000000001,
+        "rippleCurrent": 15.5,
+        "thermalResistance": 8.7
+       },
+       "mechanical": {
+        "shape": {
+         "assembly": "THT",
+         "shapeType": "D13"
+        }
+       },
+       "provenance": [
+        {
+         "source": "librarianEnrichment",
+         "sourceName": "Librarian datasheet extraction (haiku-datasheet:haiku)",
+         "fields": [
+          "mechanical.shape.assembly",
+          "mechanical.shape.shapeType"
+         ],
+         "sourceUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf",
+         "retrievedDate": "2026-07-03"
+        },
+        {
+         "source": "manufacturerDatasheet",
+         "sourceUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf",
+         "sourceName": "Eaton"
+        }
+       ]
+      },
+      "datasheetUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf"
+     }
+    }
+   }
+  }
+ },
+ "42:capacitor": {
+  "ok": true,
+  "mpn": "EFDKA1CJ206E184DH",
+  "alt": 3886,
+  "margins": {
+   "v_margin": 24.0,
+   "capacitance_ratio": 2.0,
+   "ripple_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "EFDKA1CJ206E184DH",
+   "manufacturer": "Eaton",
+   "capacitance": 2e-05,
+   "v_rated": 1200.0,
+   "ripple_current_rms": 20.0,
+   "esr": 0.0055,
+   "rth": 6.8,
+   "technology": "DC-link",
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "capacitor": {
+     "manufacturerInfo": {
+      "name": "Eaton",
+      "reference": "EFDKA1CJ206E184DH",
+      "status": "production",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "EFDKA1CJ206E184DH",
+        "technology": "film-polypropylene",
+        "series": "DC-link"
+       },
+       "electrical": {
+        "capacitance": {
+         "nominal": 1.9999999999999998e-05,
+         "minimum": 1.8999999999999998e-05,
+         "maximum": 2.1e-05
+        },
+        "ratedVoltage": 1200.0,
+        "voltageRatedDcMax": 1200.0,
+        "esr": 0.0055,
+        "rippleCurrent": 20.0,
+        "thermalResistance": 6.8
+       },
+       "mechanical": {
+        "shape": {
+         "assembly": "THT",
+         "shapeType": "Rectangular"
+        }
+       },
+       "provenance": [
+        {
+         "source": "librarianEnrichment",
+         "sourceName": "Librarian datasheet extraction (haiku-datasheet:haiku)",
+         "fields": [
+          "mechanical.shape.assembly",
+          "mechanical.shape.shapeType"
+         ],
+         "sourceUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf",
+         "retrievedDate": "2026-07-03"
+        },
+        {
+         "source": "manufacturerDatasheet",
+         "sourceUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf",
+         "sourceName": "Eaton"
+        }
+       ]
+      },
+      "datasheetUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf"
+     }
+    }
+   }
+  }
+ },
+ "43:capacitor": {
+  "ok": true,
+  "mpn": "EFDKA60J856E194DH",
+  "alt": 14362,
+  "margins": {
+   "v_margin": 12.0,
+   "capacitance_ratio": 10.625,
+   "ripple_headroom": Infinity
+  },
+  "chosen": {
+   "mpn": "EFDKA60J856E194DH",
+   "manufacturer": "Eaton",
+   "capacitance": 8.5e-05,
+   "v_rated": 600.0,
+   "ripple_current_rms": 34.0,
+   "esr": 0.0025,
+   "rth": 5.2,
+   "technology": "DC-link",
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "capacitor": {
+     "manufacturerInfo": {
+      "name": "Eaton",
+      "reference": "EFDKA60J856E194DH",
+      "status": "production",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "EFDKA60J856E194DH",
+        "technology": "film-polypropylene",
+        "series": "DC-link"
+       },
+       "electrical": {
+        "capacitance": {
+         "nominal": 8.499999999999999e-05,
+         "minimum": 8.074999999999998e-05,
+         "maximum": 8.925e-05
+        },
+        "ratedVoltage": 600.0,
+        "voltageRatedDcMax": 600.0,
+        "esr": 0.0025,
+        "rippleCurrent": 34.0,
+        "thermalResistance": 5.2
+       },
+       "mechanical": {
+        "shape": {
+         "assembly": "THT",
+         "shapeType": "Radial cylindrical can"
+        }
+       },
+       "provenance": [
+        {
+         "source": "librarianEnrichment",
+         "sourceName": "Librarian datasheet extraction (haiku-datasheet:haiku)",
+         "fields": [
+          "mechanical.shape.assembly",
+          "mechanical.shape.shapeType"
+         ],
+         "sourceUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf",
+         "retrievedDate": "2026-07-03"
+        },
+        {
+         "source": "manufacturerDatasheet",
+         "sourceUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf",
+         "sourceName": "Eaton"
+        }
+       ]
+      },
+      "datasheetUrl": "https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-efdka-automotive-film-capacitor-dc-link-data-sheet-elx1264-en.pdf"
+     }
+    }
+   }
+  }
+ },
+ "44:resistor": {
+  "ok": true,
+  "mpn": "RT0603BRD071RL",
+  "alt": 285,
+  "margins": {},
+  "chosen": {
+   "mpn": "RT0603BRD071RL",
+   "manufacturer": "YAGEO",
+   "resistance": 1.0,
+   "tolerance": 0.001,
+   "power_rating": 0.1,
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "resistor": {
+     "manufacturerInfo": {
+      "name": "YAGEO",
+      "reference": "RT0603BRD071RL",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+      "family": "RT",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "RT0603BRD071RL",
+        "technology": "thinFilm"
+       },
+       "electrical": {
+        "resistance": {
+         "nominal": 1.0
+        },
+        "tolerance": 0.001,
+        "powerRating": 0.1
+       },
+       "mechanical": {
+        "length": {
+         "nominal": 0.0016
+        },
+        "height": {
+         "nominal": 0.00045
+        }
+       },
+       "thermal": {
+        "operatingTemperature": {
+         "minimum": -55.0,
+         "maximum": 155.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+         "retrievedDate": "2026-08-01"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "45:resistor": {
+  "ok": true,
+  "mpn": "RT0603BRD071RL",
+  "alt": 938,
+  "margins": {},
+  "chosen": {
+   "mpn": "RT0603BRD071RL",
+   "manufacturer": "YAGEO",
+   "resistance": 1.0,
+   "tolerance": 0.001,
+   "power_rating": 0.1,
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "resistor": {
+     "manufacturerInfo": {
+      "name": "YAGEO",
+      "reference": "RT0603BRD071RL",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+      "family": "RT",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "RT0603BRD071RL",
+        "technology": "thinFilm"
+       },
+       "electrical": {
+        "resistance": {
+         "nominal": 1.0
+        },
+        "tolerance": 0.001,
+        "powerRating": 0.1
+       },
+       "mechanical": {
+        "length": {
+         "nominal": 0.0016
+        },
+        "height": {
+         "nominal": 0.00045
+        }
+       },
+       "thermal": {
+        "operatingTemperature": {
+         "minimum": -55.0,
+         "maximum": 155.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+         "retrievedDate": "2026-08-01"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "46:resistor": {
+  "ok": true,
+  "mpn": "RT0603WRE07100RL",
+  "alt": 945,
+  "margins": {},
+  "chosen": {
+   "mpn": "RT0603WRE07100RL",
+   "manufacturer": "YAGEO",
+   "resistance": 100.0,
+   "tolerance": 0.0005,
+   "power_rating": 0.1,
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "resistor": {
+     "manufacturerInfo": {
+      "name": "YAGEO",
+      "reference": "RT0603WRE07100RL",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+      "family": "RT",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "RT0603WRE07100RL",
+        "technology": "thinFilm"
+       },
+       "electrical": {
+        "resistance": {
+         "nominal": 100.0
+        },
+        "tolerance": 0.0005,
+        "powerRating": 0.1
+       },
+       "mechanical": {
+        "length": {
+         "nominal": 0.0016
+        },
+        "height": {
+         "nominal": 0.00045
+        }
+       },
+       "thermal": {
+        "operatingTemperature": {
+         "minimum": -55.0,
+         "maximum": 155.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+         "retrievedDate": "2026-08-01"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "47:resistor": {
+  "ok": true,
+  "mpn": "RT0603WRE07100RL",
+  "alt": 3150,
+  "margins": {},
+  "chosen": {
+   "mpn": "RT0603WRE07100RL",
+   "manufacturer": "YAGEO",
+   "resistance": 100.0,
+   "tolerance": 0.0005,
+   "power_rating": 0.1,
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "resistor": {
+     "manufacturerInfo": {
+      "name": "YAGEO",
+      "reference": "RT0603WRE07100RL",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+      "family": "RT",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "RT0603WRE07100RL",
+        "technology": "thinFilm"
+       },
+       "electrical": {
+        "resistance": {
+         "nominal": 100.0
+        },
+        "tolerance": 0.0005,
+        "powerRating": 0.1
+       },
+       "mechanical": {
+        "length": {
+         "nominal": 0.0016
+        },
+        "height": {
+         "nominal": 0.00045
+        }
+       },
+       "thermal": {
+        "operatingTemperature": {
+         "minimum": -55.0,
+         "maximum": 155.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+         "retrievedDate": "2026-08-01"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "48:resistor": {
+  "ok": true,
+  "mpn": "RT0603WRE071KL",
+  "alt": 1178,
+  "margins": {},
+  "chosen": {
+   "mpn": "RT0603WRE071KL",
+   "manufacturer": "YAGEO",
+   "resistance": 1000.0,
+   "tolerance": 0.0005,
+   "power_rating": 0.1,
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "resistor": {
+     "manufacturerInfo": {
+      "name": "YAGEO",
+      "reference": "RT0603WRE071KL",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+      "family": "RT",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "RT0603WRE071KL",
+        "technology": "thinFilm"
+       },
+       "electrical": {
+        "resistance": {
+         "nominal": 1000.0
+        },
+        "tolerance": 0.0005,
+        "powerRating": 0.1
+       },
+       "mechanical": {
+        "length": {
+         "nominal": 0.0016
+        },
+        "height": {
+         "nominal": 0.00045
+        }
+       },
+       "thermal": {
+        "operatingTemperature": {
+         "minimum": -55.0,
+         "maximum": 155.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+         "retrievedDate": "2026-08-01"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "49:resistor": {
+  "ok": true,
+  "mpn": "RT0603LRC071K15L",
+  "alt": 4107,
+  "margins": {},
+  "chosen": {
+   "mpn": "RT0603LRC071K15L",
+   "manufacturer": "YAGEO",
+   "resistance": 1150.0,
+   "tolerance": 0.0001,
+   "power_rating": 0.1,
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "resistor": {
+     "manufacturerInfo": {
+      "name": "YAGEO",
+      "reference": "RT0603LRC071K15L",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+      "family": "RT",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "RT0603LRC071K15L",
+        "technology": "thinFilm"
+       },
+       "electrical": {
+        "resistance": {
+         "nominal": 1150.0
+        },
+        "tolerance": 0.0001,
+        "powerRating": 0.1
+       },
+       "mechanical": {
+        "length": {
+         "nominal": 0.0016
+        },
+        "height": {
+         "nominal": 0.00045
+        }
+       },
+       "thermal": {
+        "operatingTemperature": {
+         "minimum": -55.0,
+         "maximum": 155.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+         "retrievedDate": "2026-08-01"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "50:resistor": {
+  "ok": true,
+  "mpn": "RT0201WRD0710KL",
+  "alt": 1357,
+  "margins": {},
+  "chosen": {
+   "mpn": "RT0201WRD0710KL",
+   "manufacturer": "YAGEO",
+   "resistance": 10000.0,
+   "tolerance": 0.0005,
+   "power_rating": 0.05,
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "resistor": {
+     "manufacturerInfo": {
+      "name": "YAGEO",
+      "reference": "RT0201WRD0710KL",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+      "family": "RT",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "RT0201WRD0710KL",
+        "technology": "thinFilm"
+       },
+       "electrical": {
+        "resistance": {
+         "nominal": 10000.0
+        },
+        "tolerance": 0.0005,
+        "powerRating": 0.05
+       },
+       "mechanical": {
+        "length": {
+         "nominal": 0.0006
+        },
+        "height": {
+         "nominal": 0.00023
+        }
+       },
+       "thermal": {
+        "operatingTemperature": {
+         "minimum": -55.0,
+         "maximum": 125.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+         "retrievedDate": "2026-08-01"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "51:resistor": {
+  "ok": true,
+  "mpn": "RT0603LRD078K98L",
+  "alt": 4609,
+  "margins": {},
+  "chosen": {
+   "mpn": "RT0603LRD078K98L",
+   "manufacturer": "YAGEO",
+   "resistance": 8980.0,
+   "tolerance": 0.0001,
+   "power_rating": 0.1,
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "resistor": {
+     "manufacturerInfo": {
+      "name": "YAGEO",
+      "reference": "RT0603LRD078K98L",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+      "family": "RT",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "RT0603LRD078K98L",
+        "technology": "thinFilm"
+       },
+       "electrical": {
+        "resistance": {
+         "nominal": 8980.0
+        },
+        "tolerance": 0.0001,
+        "powerRating": 0.1
+       },
+       "mechanical": {
+        "length": {
+         "nominal": 0.0016
+        },
+        "height": {
+         "nominal": 0.00045
+        }
+       },
+       "thermal": {
+        "operatingTemperature": {
+         "minimum": -55.0,
+         "maximum": 155.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+         "retrievedDate": "2026-08-01"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "52:resistor": {
+  "ok": true,
+  "mpn": "RT0603LRC07100KL",
+  "alt": 1130,
+  "margins": {},
+  "chosen": {
+   "mpn": "RT0603LRC07100KL",
+   "manufacturer": "YAGEO",
+   "resistance": 100000.0,
+   "tolerance": 0.0001,
+   "power_rating": 0.1,
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "resistor": {
+     "manufacturerInfo": {
+      "name": "YAGEO",
+      "reference": "RT0603LRC07100KL",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+      "family": "RT",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "RT0603LRC07100KL",
+        "technology": "thinFilm"
+       },
+       "electrical": {
+        "resistance": {
+         "nominal": 100000.0
+        },
+        "tolerance": 0.0001,
+        "powerRating": 0.1
+       },
+       "mechanical": {
+        "length": {
+         "nominal": 0.0016
+        },
+        "height": {
+         "nominal": 0.00045
+        }
+       },
+       "thermal": {
+        "operatingTemperature": {
+         "minimum": -55.0,
+         "maximum": 155.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+         "retrievedDate": "2026-08-01"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "53:resistor": {
+  "ok": true,
+  "mpn": "RT0603LRC07100KL",
+  "alt": 3927,
+  "margins": {},
+  "chosen": {
+   "mpn": "RT0603LRC07100KL",
+   "manufacturer": "YAGEO",
+   "resistance": 100000.0,
+   "tolerance": 0.0001,
+   "power_rating": 0.1,
+   "case": "",
+   "status": "production",
+   "raw_envelope": {
+    "resistor": {
+     "manufacturerInfo": {
+      "name": "YAGEO",
+      "reference": "RT0603LRC07100KL",
+      "status": "production",
+      "datasheetUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+      "family": "RT",
+      "datasheetInfo": {
+       "part": {
+        "partNumber": "RT0603LRC07100KL",
+        "technology": "thinFilm"
+       },
+       "electrical": {
+        "resistance": {
+         "nominal": 100000.0
+        },
+        "tolerance": 0.0001,
+        "powerRating": 0.1
+       },
+       "mechanical": {
+        "length": {
+         "nominal": 0.0016
+        },
+        "height": {
+         "nominal": 0.00045
+        }
+       },
+       "thermal": {
+        "operatingTemperature": {
+         "minimum": -55.0,
+         "maximum": 155.0
+        }
+       },
+       "provenance": [
+        {
+         "source": "scrape",
+         "sourceName": "Yageo Group base-part API (yageogroup.com) [citation verified 2026-08-01: the cited document was fetched and covers this part's SERIES (matched as family), but does not print this individual order code. The stored VALUES were not re-derived from it; only the citation was checked.]",
+         "sourceUrl": "https://yageogroup.com/content/datasheet/asset/file/PYU-RT_1-TO-0-01_ROHS_L",
+         "retrievedDate": "2026-08-01"
+        }
+       ]
+      }
+     }
+    }
+   }
+  }
+ }
+}
