@@ -6317,6 +6317,16 @@ def run_crossref_pipeline(
     # that fall outside the allowed margin. Runs before match_detail so its
     # verdicts are rendered, and after the review loop so it sees final picks.
     _stage_param_check(state)
+    # The value gate above DEMOTES an off-value LLM pick to no_substitute, but it
+    # runs AFTER the deterministic in-kind rescue (stage 6.5) — which only touches
+    # rows already marked no_substitute. So when the gate rejects the LLM's
+    # wrong-value pick, a correct in-catalogue exact-value part the LLM passed over
+    # was never promoted (a 10 kΩ original → the LLM's 11.1 kΩ rejected →
+    # no_substitute, even though YAGEO's exact 10 kΩ 0603 was prefetched and
+    # top-ranked). Rescue anything the gate just demoted, then re-check so the
+    # rescued picks are themselves value-validated and verdicted.
+    _stage6_5_deterministic_rescue(state)
+    _stage_param_check(state)
     # Deterministic per-parameter rationale (why exact/recommended/partial) for
     # every row, computed from the original-vs-substitute fields already present.
     _annotate_match_detail(state)
