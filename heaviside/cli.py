@@ -327,24 +327,38 @@ def auto_design(
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind address."),
-    port: int = typer.Option(8000, help="Bind port."),
+    port: int | None = typer.Option(
+        None, help="Bind port (default: 8000 for the REST API, 8405 for MCP over HTTP)."
+    ),
     reload: bool = typer.Option(False, help="Auto-reload on code changes."),
-    mcp: bool = typer.Option(False, "--mcp", help="Start MCP server (stdio) instead of REST API."),
+    mcp: bool = typer.Option(False, "--mcp", help="Start MCP server instead of REST API."),
+    http: bool = typer.Option(
+        False, "--http", help="Serve MCP over streamable HTTP instead of stdio (needs --mcp)."
+    ),
 ) -> None:
-    """Start Heaviside as a server (REST API or MCP)."""
+    """Start Heaviside as a server (REST API, or MCP over stdio / HTTP)."""
+    if http and not mcp:
+        typer.echo("--http applies to the MCP server; pass --mcp too.", err=True)
+        raise typer.Exit(code=2)
     if mcp:
-        import asyncio
+        if http:
+            # The transport Moebius registers by URL and health-checks (ABT #667).
+            from heaviside.mcp_server import DEFAULT_HTTP_PORT, serve_http
 
-        from heaviside.mcp_server import main as mcp_main
+            serve_http(host=host, port=port or DEFAULT_HTTP_PORT)
+        else:
+            import asyncio
 
-        asyncio.run(mcp_main())
+            from heaviside.mcp_server import main as mcp_main
+
+            asyncio.run(mcp_main())
     else:
         import uvicorn
 
         uvicorn.run(
             "heaviside.api:app",
             host=host,
-            port=port,
+            port=port or 8000,
             reload=reload,
         )
 
