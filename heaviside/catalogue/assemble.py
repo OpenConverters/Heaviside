@@ -277,25 +277,122 @@ def _stamp_capacitor(
     }
 
 
-def _is_placeholder(comp: Mapping[str, Any], substring: str) -> bool:
+# The families a TAS component's ``data`` object can be keyed by. Same tuple
+# (and same reading rule) as ``kirchhoff_fill._FAMILIES`` — the two BOM paths
+# walk the identical TAS and must agree about what a component IS.
+_TAS_FAMILIES = ("semiconductor", "magnetic", "capacitor", "resistor", "analog", "controller")
+
+
+def _family_and_kind(comp: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    """The ``(family, kind)`` of a Kirchhoff-shaped TAS component.
+
+    Kirchhoff emits each component's ``data`` as an object keyed by family,
+    with the excitation alongside it::
+
+        Q1   -> {"semiconductor": {"mosfet": {...}}, "inputs": {...}}
+        Cout -> {"capacitor": {},                    "inputs": {...}}
+
+    so the family is the single non-``inputs`` key and the kind (where the
+    family has one) is the single key of the family slot. Returns
+    ``(None, None)`` for anything that is not that shape.
+    """
     data = comp.get("data")
-    return isinstance(data, str) and substring in data
+    if not isinstance(data, dict):
+        return None, None
+    family = next((f for f in _TAS_FAMILIES if f in data), None)
+    if family is None:
+        return None, None
+    slot = data.get(family)
+    kind = next(iter(slot), None) if isinstance(slot, dict) and slot else None
+    return family, kind
+
+
+def _is_placeholder(
+    comp: Mapping[str, Any],
+    substring: str,
+    *,
+    family: str,
+    kind: str | None = None,
+) -> bool:
+    """True if ``comp`` is an unsourced slot for this kind of part.
+
+    Two TAS shapes are recognised:
+
+    * **Kirchhoff** (the only live TAS producer since the della-Pollock
+      cutover, ABT #48/#30) — ``data`` is an object keyed by family; see
+      :func:`_family_and_kind`.
+    * the **pre-cutover MKF stencil** — ``data`` was a catalogue filename
+      string (``"TAS/data/mosfets.ndjson?placeholder=Q1"``). Still emitted by
+      this module's own auxiliary-component synthesis, so it stays supported.
+
+    Only the string form was recognised until ABT #681, which meant
+    ``isinstance(data, str)`` was False for every component of every
+    Kirchhoff TAS: the selection loop matched nothing and a design in which
+    Q1/D1/Cout were never even looked at reported exactly like one that
+    needed no parts.
+
+    A component carrying ``selection_provenance`` has already been sourced —
+    its ``data`` is now the chosen part's envelope, which has the same family
+    shape as the seed it replaced — so it is no longer a placeholder.
+    """
+    if isinstance(comp.get("selection_provenance"), dict):
+        return False
+    data = comp.get("data")
+    if isinstance(data, str):
+        return substring in data
+    comp_family, comp_kind = _family_and_kind(comp)
+    if comp_family != family:
+        return False
+    # A family that distinguishes kinds (semiconductor: mosfet vs diode) is a
+    # placeholder only for its own kind. A seed whose family slot is empty is
+    # NOT guessed at: an unidentifiable semiconductor is left unsourced (and
+    # so reads as deferred) rather than sourced as whichever kind asked first.
+    return kind is None or comp_kind == kind
+
+
+def _seed_role(comp: Mapping[str, Any]) -> str | None:
+    """The role Kirchhoff tags a component seed with (``outputFilter``,
+    ``snubber``, ``bodyDiode``, …), or None for a seed that carries none."""
+    data = comp.get("data")
+    if not isinstance(data, dict):
+        return None
+    inputs = data.get("inputs")
+    req = inputs.get("designRequirements") if isinstance(inputs, Mapping) else None
+    role = req.get("role") if isinstance(req, Mapping) else None
+    return role if isinstance(role, str) and role else None
+
+
+# The capacitor constraints this module derives are the OUTPUT filter cap's —
+# ``_buck_target_capacitance`` sizes for 1 % output-voltage ripple — so they may
+# only be applied to a capacitor that IS the output filter. Every other role
+# (input filter, clamp/snubber, resonant tank) has its own, wildly different
+# sizing: a flyback's 129 pF clamp cap sourced against the output budget comes
+# back as an 85 mF supercap. Those seeds stay unsourced, which is honest — no
+# stress for them was derived here, so nobody looked.
+_SOURCEABLE_CAP_ROLES = frozenset({"outputFilter"})
 
 
 def _is_mosfet_placeholder(comp: Mapping[str, Any]) -> bool:
-    return _is_placeholder(comp, "mosfets.ndjson")
+    return _is_placeholder(comp, "mosfets.ndjson", family="semiconductor", kind="mosfet")
 
 
 def _is_diode_placeholder(comp: Mapping[str, Any]) -> bool:
-    return _is_placeholder(comp, "diodes.ndjson")
+    # A body diode is part of the MOSFET that owns it; it is never a BOM line of
+    # its own. (Same rule as ``kirchhoff_fill``, which defers these.)
+    if _seed_role(comp) == "bodyDiode":
+        return False
+    return _is_placeholder(comp, "diodes.ndjson", family="semiconductor", kind="diode")
 
 
 def _is_capacitor_placeholder(comp: Mapping[str, Any]) -> bool:
-    return _is_placeholder(comp, "capacitors.ndjson")
+    if not _is_placeholder(comp, "capacitors.ndjson", family="capacitor"):
+        return False
+    role = _seed_role(comp)
+    return role is None or role in _SOURCEABLE_CAP_ROLES
 
 
 def _is_controller_placeholder(comp: Mapping[str, Any]) -> bool:
-    return _is_placeholder(comp, "controllers.ndjson")
+    return _is_placeholder(comp, "controllers.ndjson", family="controller")
 
 
 def _stamp_controller(comp: dict[str, Any], sel: ControllerSelection) -> None:
