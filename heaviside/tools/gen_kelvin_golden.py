@@ -3,8 +3,15 @@
 The golden pins, per (constraints, tiebreaker) case, the MPN the HS `select_*` chose, its
 margins, and (on failure) the full rejection histogram — over a COMMITTED fixture extract of
 real TAS rows (Kelvin/tests/fixtures/*.ndjson). Kelvin's Catch2 [parity] suite replays it and
-asserts candidates[0] == chosen, histograms equal, margins equal. While the Python selector is
-canonical, this is the contract Kelvin must reproduce byte-for-decision.
+asserts candidates[0] == chosen, histograms equal, margins equal.
+
+NO LONGER AN ORACLE, and this generator refuses to run because of it. Every select_* in
+heaviside.catalogue.selector now delegates to PyKelvin, so regenerating asks Kelvin what
+Kelvin does and pins the answer — parity could never fail again, and a regression in Kelvin
+would be baked in by the refresh rather than caught by it. The golden remains valuable as a
+CHANGE DETECTOR (it is what caught the ABT #694 controller category gate) and should be
+updated by hand, per case, each new value checked against the fixture. See the refusal in
+_refuse_if_self_referential below. (ABT #697.)
 
 Run:  python -m heaviside.tools.gen_kelvin_golden \
           --fixtures ../Kelvin/tests/fixtures --out ../Kelvin/tests/golden
@@ -281,7 +288,56 @@ def gen_controller(fixtures: Path) -> list[dict]:
     return cases
 
 
+def _refuse_if_self_referential() -> None:
+    """Stop this from re-recording Kelvin's own output as the thing Kelvin must reproduce.
+
+    The docstring above says the Python selector is canonical and this is the contract
+    Kelvin must reproduce byte-for-decision. That was true when written and is now false
+    for every family: `select_mosfet`, `select_diode`, `select_capacitor`,
+    `select_resistor` and `select_controller` all delegate straight to PyKelvin through
+    kelvin_adapter. Running the generator therefore asks Kelvin what Kelvin does and pins
+    the answer — the suite can never fail on parity again, and a regression introduced in
+    Kelvin would be BAKED IN by the next regeneration rather than caught by it.
+
+    The [parity] suite still earns its keep as a change detector: it is what caught the
+    ABT #694 controller category gate. That is worth keeping. What is not safe is silently
+    refreshing it, so the refresh is what stops. (ABT #697.)
+    """
+    import inspect
+
+    from heaviside.catalogue import selector as _sel
+
+    delegating = []
+    for name in ("select_mosfet", "select_diode", "select_capacitor",
+                 "select_resistor", "select_controller"):
+        fn = getattr(_sel, name, None)
+        if fn is None:
+            continue
+        try:
+            if "kelvin_adapter" in inspect.getsource(fn):
+                delegating.append(name)
+        except OSError:  # source unavailable (zipimport, exec'd) — cannot conclude
+            return
+    if not delegating:
+        return
+    raise SystemExit(
+        "REFUSING to regenerate the parity golden: "
+        + ", ".join(delegating)
+        + " delegate to PyKelvin, so this would record Kelvin's own output as the contract "
+        "Kelvin must reproduce, and a regression in Kelvin would be pinned as correct "
+        "rather than caught (ABT #697). The existing golden still works as a CHANGE "
+        "DETECTOR and should be updated by hand, per case, with each new value checked "
+        "against the fixture — which is how the twelve controller cases moved for ABT "
+        "#694. Set HEAVISIDE_REGEN_PARITY_GOLDEN=1 only if you have restored an "
+        "independent oracle."
+    )
+
+
 def main() -> None:
+    import os
+
+    if not os.environ.get("HEAVISIDE_REGEN_PARITY_GOLDEN"):
+        _refuse_if_self_referential()
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixtures", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
