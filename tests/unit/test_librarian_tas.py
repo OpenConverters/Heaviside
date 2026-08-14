@@ -549,3 +549,73 @@ class TestExtractMpn:
 
     def test_unknown_when_nothing_present(self):
         assert tas._extract_mpn({"unrelated": 42}) == "UNKNOWN"
+
+
+# ── publication guard (ABT #733) ─────────────────────────────────────────────
+class TestSchemaPublicationGuard:
+    """Validating against an unpublished schema commit must refuse, loudly.
+
+    The failure it prevents (ABT #704) surfaced as four families of TAS data failing
+    validation, read as a data problem, and was unfixable by any local action in this
+    repo: the definitions the records used lived in commits that had never been pushed.
+    A fresh clone could not be made to pass. The check has to be here, at the point of
+    use, because the repo holding the unpublished copy is not the one that reports it.
+    """
+
+    def _repo(self, tmp_path, published: bool):
+        import subprocess
+
+        remote = tmp_path / "remote.git"
+        work = tmp_path / "work"
+        subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
+        subprocess.run(["git", "init", "--quiet", "-b", "main", str(work)], check=True)
+        schema = work / "schemas"
+        schema.mkdir()
+        (schema / "thing.json").write_text("{}")
+        g = ["git", "-C", str(work)]
+        subprocess.run(g + ["config", "user.email", "t@t"], check=True)
+        subprocess.run(g + ["config", "user.name", "t"], check=True)
+        subprocess.run(g + ["add", "-A"], check=True)
+        subprocess.run(g + ["commit", "--quiet", "-m", "schemas"], check=True)
+        subprocess.run(g + ["remote", "add", "origin", str(remote)], check=True)
+        if published:
+            subprocess.run(g + ["push", "--quiet", "origin", "main"], check=True)
+            subprocess.run(g + ["fetch", "--quiet", "origin"], check=True)
+        return schema / "thing.json"
+
+    def test_published_commit_passes(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("HEAVISIDE_ALLOW_UNPUBLISHED_SCHEMAS", raising=False)
+        tas._publication_checked.clear()
+        tas.assert_schema_published(self._repo(tmp_path, published=True))
+
+    def test_unpublished_commit_refused_and_names_the_repo(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("HEAVISIDE_ALLOW_UNPUBLISHED_SCHEMAS", raising=False)
+        tas._publication_checked.clear()
+        path = self._repo(tmp_path, published=False)
+        with pytest.raises(tas.UnpublishedSchemaError) as excinfo:
+            tas.assert_schema_published(path)
+        # The message has to say WHICH repo and WHY, or it is another opaque failure.
+        assert "work" in str(excinfo.value)
+        assert "REJECTED by every consumer" in str(excinfo.value)
+
+    def test_opt_out_is_honoured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HEAVISIDE_ALLOW_UNPUBLISHED_SCHEMAS", "1")
+        tas._publication_checked.clear()
+        tas.assert_schema_published(self._repo(tmp_path, published=False))
+
+    def test_a_checkout_with_no_remote_is_not_a_finding(self, tmp_path, monkeypatch):
+        """A vendored copy or a tarball has nothing to be behind; stay quiet."""
+        import subprocess
+
+        monkeypatch.delenv("HEAVISIDE_ALLOW_UNPUBLISHED_SCHEMAS", raising=False)
+        tas._publication_checked.clear()
+        work = tmp_path / "noremote"
+        (work / "schemas").mkdir(parents=True)
+        (work / "schemas" / "thing.json").write_text("{}")
+        g = ["git", "-C", str(work)]
+        subprocess.run(["git", "init", "--quiet", "-b", "main", str(work)], check=True)
+        subprocess.run(g + ["config", "user.email", "t@t"], check=True)
+        subprocess.run(g + ["config", "user.name", "t"], check=True)
+        subprocess.run(g + ["add", "-A"], check=True)
+        subprocess.run(g + ["commit", "--quiet", "-m", "x"], check=True)
+        tas.assert_schema_published(work / "schemas" / "thing.json")

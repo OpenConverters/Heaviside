@@ -100,6 +100,21 @@ class SchemaNotFoundError(LibrarianError):
     """Raised when a category has no schema registered in :data:`SCHEMA_MAP`."""
 
 
+class UnpublishedSchemaError(LibrarianError):
+    """Raised when a schema is loaded from a checkout whose HEAD is not on its remote.
+
+    The failure this catches has bitten repeatedly (ABT #704, #733) and never announces
+    itself as what it is. A generator runs against a working checkout, produces records
+    that depend on a definition only present there, and every consumer resolving that
+    schema from its published remote rejects them. The symptom surfaces in a different
+    repo from the cause, reads as bad data, and cannot be fixed by any local action in
+    the consuming repo — a fresh clone cannot be made to pass.
+
+    Checking at the point of USE is the only thing that has worked, because the thing
+    holding the unpublished copy is never the thing that reports the error.
+    """
+
+
 class ValidationError(LibrarianError):
     """Raised when a component fails JSON-schema validation.
 
@@ -309,6 +324,71 @@ def _build_registry(schema_path: Path) -> Registry:
     return registry
 
 
+# ---------------------------------------------------------------------------
+# Publication guard
+# ---------------------------------------------------------------------------
+
+_publication_checked: set[Path] = set()
+
+
+def _schema_repo_of(schema_path: Path) -> Path | None:
+    """The git checkout a schema file belongs to, or None if it is not in one."""
+    for parent in schema_path.resolve().parents:
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
+def assert_schema_published(schema_path: Path) -> None:
+    """Refuse a schema whose commit exists only in a local checkout.
+
+    Validating against an unpublished schema is worse than validating against an old one:
+    the records produced are unreproducible anywhere else, and the error appears wherever
+    the schema IS published, which is somewhere the author is not looking. Memoised per
+    repo — this shells out to git, and validation is hot.
+
+    Set ``HEAVISIDE_ALLOW_UNPUBLISHED_SCHEMAS=1`` when that is genuinely intended (working
+    on a schema change before it lands). Absent git, or absent a remote, the check cannot
+    conclude anything and stays quiet rather than inventing a verdict.
+    """
+    import os
+    import subprocess
+
+    if os.environ.get("HEAVISIDE_ALLOW_UNPUBLISHED_SCHEMAS"):
+        return
+    repo = _schema_repo_of(schema_path)
+    if repo is None or repo in _publication_checked:
+        return
+    _publication_checked.add(repo)
+
+    def git(*args: str) -> str | None:
+        try:
+            out = subprocess.run(("git", "-C", str(repo)) + args, capture_output=True,
+                                 text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return out.stdout.strip() if out.returncode == 0 else None
+
+    head = git("rev-parse", "HEAD")
+    if head is None:
+        return  # not a git checkout we can reason about; say nothing rather than guess
+    # Which remote-tracking branches contain HEAD? Empty means this commit has never left
+    # the machine. No remotes at all (a vendored copy, a tarball) is not a finding.
+    if not git("remote"):
+        return
+    contained = git("branch", "-r", "--contains", head)
+    if contained is None or contained.strip():
+        return
+    subject = git("log", "-1", "--format=%h %s") or head[:8]
+    raise UnpublishedSchemaError(
+        f"{repo.name} is validating against an UNPUBLISHED commit: {subject}. That commit "
+        f"exists only in {repo}, so any record accepted here will be REJECTED by every "
+        f"consumer resolving {repo.name} from its remote, and a fresh clone cannot "
+        f"reproduce this result. Push it, or set HEAVISIDE_ALLOW_UNPUBLISHED_SCHEMAS=1 if "
+        f"you are deliberately working ahead of the published contract."
+    )
+
+
 def load_validator(category: str) -> Draft202012Validator:
     """Return a memoised :class:`Draft202012Validator` for ``category``.
 
@@ -334,6 +414,12 @@ def load_validator(category: str) -> Draft202012Validator:
             f"schema for {category!r} not found at {schema_path}.  "
             "Did the submodule fail to initialise?"
         )
+    # Before the schema is trusted: is it a contract anyone else can resolve? Checked here
+    # rather than at import so a caller that never validates never pays for it, and here
+    # rather than in the registry because PEAS is hydrated for every category and this is
+    # about the MODULE the caller actually asked for.
+    assert_schema_published(schema_path)
+    assert_schema_published(_REPO_ROOT / "PEAS" / "schemas" / "utils.json")
 
     with _VALIDATOR_LOCK:
         cached = _VALIDATOR_CACHE.get(category)
