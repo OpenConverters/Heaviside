@@ -3296,7 +3296,11 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
         # just yields no challenges for its items.
         challenges: list[dict[str, Any]] = []
         raws: list[str] = []
+        batches = 0
+        failed = 0
+        unchallenged: list[str] = []
         for batch in _batch_for_llm(trimmed):
+            batches += 1
             otto_tokens = min(8192 + len(batch) * 256, 16384)
             try:
                 raw = call_agent(
@@ -3313,12 +3317,41 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
                 raws.append(raw)
                 challenges.extend(extract_json_block(raw).get("challenges", []))
             except Exception as exc:
+                failed += 1
+                # Name the items nobody challenged. "Otto failed" is not
+                # actionable; "Q1 and D1 went out unchallenged" is.
+                unchallenged.extend(str(item.get("ref_des", "?")) for item in batch)
                 state.diagnostics.append(f"otto challenge batch failed: {exc}")
 
+        # Otto is an ADVERSARIAL check: his job is to refuse a no_substitute
+        # unless the evidence supports it. That makes his silence a verdict in
+        # one direction — every missing challenge resolves to "the
+        # no_substitute stands" — so a stage that did not run must never be
+        # indistinguishable from a stage that ran and agreed.
+        #
+        # It used to be exactly that. An empty `challenges` list produced an
+        # empty `overturned` list, and the code below logged "Otto confirmed
+        # all N no_substitute items" whether he had examined them or never been
+        # reached at all. Both meanings printed the same line, character for
+        # character, and the only trace of the difference was a diagnostics
+        # entry nothing prompted a reader to look for.
+        # `batches == 0` is checked FIRST and deliberately: with no batches
+        # attempted, `failed == 0` is true and a naive ordering would report
+        # "ran". Zero work done is the one thing this field exists to
+        # distinguish, so it must not fall through to the success case.
+        status = ("did_not_run" if batches == 0 or failed == batches
+                  else "ran" if failed == 0
+                  else "partial")
         state.otto_log = {
             "raw_response": "\n---\n".join(raws),
             "challenges": challenges,
             "summary": {},
+            # Consumers branch on this rather than on `bool(otto_log)`, which
+            # was true even when every batch failed.
+            "status": status,
+            "batches": batches,
+            "batches_failed": failed,
+            "unchallenged_refs": unchallenged,
         }
 
         # Collect Otto's diagnoses as hints for the cross-referencer
@@ -3329,8 +3362,27 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
             {"ref_des": c["ref_des"], "diagnosis": c.get("diagnosis", "")} for c in confirmed
         ]
 
+        if status == "did_not_run":
+            # Not "confirmed": nothing was examined. WARNING rather than INFO
+            # because the rows leave here carrying an unchallenged
+            # no_substitute, and the report has to be able to say so.
+            logger.warning(
+                "CR stage 6: Otto DID NOT RUN — all %d batch(es) failed; "
+                "%d no_substitute item(s) go out UNCHALLENGED (%s)",
+                batches, len(no_subs), ", ".join(unchallenged) or "?",
+            )
+            return state
         if not overturned:
-            logger.info("CR stage 6: Otto confirmed all %d no_substitute items", len(no_subs))
+            if status == "partial":
+                logger.warning(
+                    "CR stage 6: Otto overturned nothing, but %d of %d batch(es) "
+                    "failed — %d item(s) were never challenged (%s)",
+                    failed, batches, len(unchallenged), ", ".join(unchallenged),
+                )
+            else:
+                logger.info(
+                    "CR stage 6: Otto confirmed all %d no_substitute items", len(no_subs)
+                )
             return state
 
         # Build hints from Otto's diagnoses and feed back to cross-referencer

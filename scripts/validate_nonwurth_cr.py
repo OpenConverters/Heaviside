@@ -35,7 +35,10 @@ from collections import Counter
 
 status_counts = Counter(c.status.value for c in outcome.components)
 g0_fires = [f for f in outcome.guardrail_log if str(f.get("guardrail_id")) == "0"]
-otto_ran = bool(outcome.otto_log)
+# bool(otto_log) was true even when every batch failed — the dict is always
+# built. Branch on the status the stage now records instead.
+otto_status = (outcome.otto_log or {}).get("status", "did_not_run" if not outcome.otto_log else "unknown")
+otto_ran = otto_status in ("ran", "partial")
 usage = get_token_usage()
 cost = (usage["input"] * 0.002 + usage["output"] * 0.01) / 1000
 
@@ -44,7 +47,10 @@ print(f"G0 (already-target→exact) fires: {len(g0_fires)}", flush=True)
 for f in g0_fires[:5]:
     print(f"   {f.get('ref_des')}: {f.get('reason')}", flush=True)
 print(
-    f"Otto ran (non-Würth target): {otto_ran}; challenges={len(outcome.otto_log.get('challenges', [])) if otto_ran else 0}",
+    f"Otto (non-Würth target): {otto_status}; "
+    f"challenges={len(outcome.otto_log.get('challenges', [])) if otto_ran else 0}"
+    + (f"; UNCHALLENGED={outcome.otto_log.get('unchallenged_refs')}"
+       if otto_status in ("partial", "did_not_run") else ""),
     flush=True,
 )
 print(f"time={elapsed:.0f}s cost=${cost:.2f} llm_calls={usage['calls']}", flush=True)

@@ -62,6 +62,11 @@ tr.total-row td { border-top: 1.5px solid #111; border-bottom: 1.5px solid #111;
 .conf-muted  { color: #666; }
 /* Recommendations */
 .rec-list { margin: 0.5em 0; padding-left: 1.5em; }
+/* Otto-did-not-run notice. Deliberately NOT inside .no-print: a reader of the
+   printed report is exactly who must not mistake an unchallenged
+   'no substitute' for a checked one. */
+.warn-block { border-left: 4px solid #b45309; background: rgba(180,83,9,.08);
+              padding: 0.75em 1em; margin: 1em 0; }
 .rec-list li { margin-bottom: 0.4em; }
 .rec-label { font-weight: bold; }
 /* Coverage callout */
@@ -434,11 +439,38 @@ def render_crossref_html(
         parts.append(f'<ul class="rec-list">{"".join(recs)}</ul>')
         parts.append('<hr class="sep">')
 
-    # ── Appendix: Guardrails / Otto / Reviewer (collapsed for print) ─────────
     guardrails = outcome.get("guardrail_log", [])
     otto = outcome.get("otto_log", {})
     verdicts = outcome.get("review_verdicts", [])
     diags = outcome.get("diagnostics", [])
+
+    # ── Otto did not run: say so IN THE REPORT, and in the printed one ───────
+    #
+    # The appendix below renders Otto only when he produced challenges, so a
+    # run where his calls all failed showed no Otto section at all — and a
+    # missing section reads as "nothing to report", not "the check did not
+    # happen". Otto challenges every no_substitute; when he is absent, every
+    # one of those rows is an unchallenged claim that no Würth part fits. That
+    # belongs on the page a person actually reads, not in an appendix marked
+    # no-print.
+    otto_status = otto.get("status")
+    if otto_status in ("did_not_run", "partial"):
+        refs = otto.get("unchallenged_refs") or []
+        parts.append(
+            '<div class="warn-block">'
+            f"<strong>Otto {'did not run' if otto_status == 'did_not_run' else 'ran only partially'}"
+            f" — {len(refs)} no-substitute line(s) were never challenged.</strong> "
+            f"{_e(', '.join(refs))}"
+            "<br>Otto's job is to refuse a &lsquo;no substitute&rsquo; unless the "
+            "catalogue evidence supports it. Where he did not run, a "
+            "&lsquo;no substitute&rsquo; on this report means <em>nobody checked</em>, "
+            "not that nothing fits."
+            f" ({otto.get('batches_failed', '?')} of {otto.get('batches', '?')} batch(es) failed.)"
+            "</div>"
+        )
+        parts.append('<hr class="sep">')
+
+    # ── Appendix: Guardrails / Otto / Reviewer (collapsed for print) ─────────
 
     if guardrails or otto.get("challenges") or verdicts or diags:
         parts.append('<div class="no-print">')
