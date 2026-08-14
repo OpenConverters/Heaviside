@@ -94,7 +94,51 @@ def _run(fam, c, kw):
         return {"ok": False, "rej": dict(e.rejection_counts), "total": e.total_rows_considered}
 
 
+_CORPUS = Path(__file__).parent / "data" / "selector_kelvin_golden.corpus.json"
+
+
+def _assert_frozen_corpus() -> None:
+    """A golden only means something against the corpus it was frozen on.
+
+    This gate asserts "the selector still picks what it used to". Run it over a different
+    catalogue and it asserts nothing of the sort: it compares a choice made from one
+    universe of parts against a choice made from another, and the mosfet case alone moves
+    from 6,486 candidates to 872 between the full TAS DB and the public extract, picking
+    CSD17507Q5A in one and AO4423 in the other. Neither answer is a regression and neither
+    is a pass; the question was malformed.
+
+    So the dataset is pinned and a mismatch REFUSES rather than skips. Skipping is how a
+    gate quietly stops existing — and the failure this separates is the expensive one:
+    "the selector broke" and "the data underneath moved" produce the same red without it.
+    (ABT #695.)
+    """
+    frozen = json.loads(_CORPUS.read_text())
+    drift = []
+    for family, want in sorted(frozen.items()):
+        path = _DATA / want["file"]
+        if not path.exists():
+            drift.append(f"{family}: {path} missing")
+            continue
+        size = path.stat().st_size
+        if size != want["bytes"]:
+            rows = sum(1 for _ in open(path, "rb"))
+            drift.append(
+                f"{family}: {rows:,} rows / {size:,} B, golden frozen against "
+                f"{want['rows']:,} rows / {want['bytes']:,} B")
+    if drift:
+        raise AssertionError(
+            "REFUSING to judge the selector against a different catalogue than the golden "
+            "was frozen on — a pass or a fail here would both be meaningless.\n  "
+            + "\n  ".join(drift)
+            + f"\n\nHEAVISIDE_TAS_DATA_DIR is {_DATA}. Point it at the frozen corpus, or "
+              "regenerate the golden AND this corpus fingerprint together if the catalogue "
+              "has legitimately moved — which is itself a decision, since it re-baselines "
+              "every case in the gate."
+        )
+
+
 def test_selectors_match_frozen_golden():
+    _assert_frozen_corpus()
     gold = json.loads(_GOLDEN.read_text())
     diffs = []
     for i, (fam, c, kw) in enumerate(_cases()):

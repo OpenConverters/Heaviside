@@ -1,0 +1,22 @@
+{
+ "capacitor": {
+  "bytes": 703249643,
+  "file": "capacitors.ndjson",
+  "rows": 253830
+ },
+ "diode": {
+  "bytes": 20570512,
+  "file": "diodes.ndjson",
+  "rows": 17917
+ },
+ "mosfet": {
+  "bytes": 10480779,
+  "file": "mosfets.ndjson",
+  "rows": 9814
+ },
+ "resistor": {
+  "bytes": 221960578,
+  "file": "resistors.ndjson",
+  "rows": 149255
+ }
+}
