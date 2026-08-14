@@ -29,6 +29,7 @@ leaves a widget nothing to render.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -148,6 +149,32 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     return value
+
+
+def _lesson_text(lesson: Any) -> str:
+    """A lesson as readable text, whatever shape its `detail` is in.
+
+    `Lesson.detail` is DECLARED `str` and is a dict on 6,440 of the 7,436
+    records in the store — the crossref_objection lessons carry
+    {ref_des, issue, details}. Nothing caught it because every existing reader
+    interpolates it into an f-string, which stringifies anything; the first
+    code to do `detail + "..."` was this one, and it raised.
+
+    Rendered field by field rather than as `str(dict)`: a passage is meant to
+    be read, and a Python repr with quotes and braces is not reading material.
+    The type inconsistency itself is reported separately — this function copes
+    with it, it does not excuse it.
+    """
+    detail = lesson.detail
+    if isinstance(detail, dict):
+        body = "\n".join(f"{k}: {v}" for k, v in detail.items() if v not in (None, ""))
+    elif isinstance(detail, (list, tuple)):
+        body = "\n".join(f"- {item}" for item in detail)
+    else:
+        body = str(detail)
+    if lesson.suggestion:
+        body += f"\n\nSuggestion: {lesson.suggestion}"
+    return body
 
 
 class BomLine(BaseModel):
@@ -283,7 +310,12 @@ def list_topologies() -> CallToolResult:
         by_family.setdefault(e["family"], []).append(e["name"])
     lines = [f"  {family}: {', '.join(sorted(names))}" for family, names in sorted(by_family.items())]
     return _result(f"{len(entries)} topologies:\n" + "\n".join(lines),
-                   {"topologies": entries, "count": len(entries)})
+                   # `catalogue` (Moebius contract, ABT #741): what this
+                   # pipeline can answer about. `families` is the contract's
+                   # name for that set — here they are topologies, not
+                   # component families, but the question is the same one.
+                   {"mode": "catalogue", "families": entries,
+                    "units": f"{len(entries)} topologies this build can design"})
 
 
 @mcp.tool(
@@ -325,7 +357,22 @@ def design_magnetic(topology: str, spec: dict, max_results: int = 3,
         f"{len(candidates)} magnetic candidate(s) for a {topology}, in the engine's own "
         f"order:\n" + "\n".join(lines)
         + ("\n(the full MAS of each is in the structured output)" if include_mas else ""),
-        {"mode": "magnetics", "topology": topology, "candidates": candidates})
+        # `design` (ABT #741), NOT `recommend`. These are magnetics the engine
+        # SIZED from a spec; none of them has an MPN because none of them is a
+        # part you can order. The contract's `candidate` requires one precisely
+        # so that "here is a component you can buy" and "here is a thing you
+        # would have to have made" cannot be confused.
+        {"mode": "design", "kind": "magnetic", "topology": topology,
+         "tiebreaker": "the engine's own scoring",
+         "designs": [
+             {"rank": c["rank"],
+              "label": f"{c.get('core_shape')} / {c.get('core_material')}",
+              "score": c.get("scoring"),
+              "document": c.get("mas"),
+              "properties": {k: v for k, v in c.items()
+                             if k not in ("rank", "scoring", "mas")}}
+             for c in candidates
+         ]})
 
 
 @mcp.tool(
@@ -382,8 +429,31 @@ def design_bom(topology: str, spec: dict, tas: dict) -> CallToolResult:
            f"'nothing fits': a component the selector does not recognise as a placeholder is "
            f"never looked at, and reports the same way."
            if unfilled else ""),
-        {"mode": "bom", "topology": topology, "candidates": bom,
-         "lineCount": len(bom), "filledCount": len(filled)})
+        # `bom` (ABT #741). `unsourced`, not `no_substitute`: a placeholder the
+        # selector does not recognise is never LOOKED at, and reporting that as
+        # "nothing fits" asserts a negative result nobody established. That
+        # distinction is the entire point of the digest sentence above it.
+        {"mode": "bom", "topology": topology,
+         "total": len(bom), "sourced": len(filled),
+         # Optional fields are OMITTED when absent, never sent as null or "".
+         # A component whose category could not be determined has no `kind`;
+         # saying `kind: null` claims the category is known to be nothing.
+         "lines": [
+             {k: v for k, v in {
+                 "ref": l.get("ref_des") or "?",
+                 "kind": l.get("category"),
+                 "status": "recommended" if l["filled"] else "unsourced",
+                 "mpn": (l.get("mpn") or l.get("part_number")) if l["filled"] else None,
+                 "manufacturer": l.get("manufacturer") if l["filled"] else None,
+                 "notes": ("magnetics are designed by design_magnetic, not sourced "
+                           "from the catalogue"
+                           if not l["filled"] and l.get("category") == "magnetic" else ""),
+             }.items() if k == "mpn" or (v is not None and v != "")}
+             for l in bom
+         ],
+         "diagnostics": ([f"{len(unfilled)} line(s) were not sourced; a component the "
+                          f"selector does not recognise as a placeholder is never "
+                          f"looked at and reports the same way"] if unfilled else [])})
 
 
 @mcp.tool(
@@ -429,8 +499,20 @@ def cross_reference(source_bom: list[BomLine], target_manufacturer: str,
         f"({'passed' if outcome.passed else 'did not pass'}):\n" + "\n".join(lines)
         + ("\n" + "\n".join(f"  ! {d}" for d in list(outcome.diagnostics)[:10])
            if outcome.diagnostics else ""),
-        {"mode": "crossref", "target_manufacturer": target_manufacturer,
-         "passed": outcome.passed, "candidates": components,
+        # `bom`, NOT `crossref` (ABT #741). The crossref branch carries ONE
+        # `original` — it is built for kelvin__cross_reference, which answers
+        # "substitutes for this part". This tool answers N questions with one
+        # answer each, and every line has its own original. Flattening it into
+        # `candidates` would lose which line each part belongs to.
+        {"mode": "bom", "targetManufacturer": target_manufacturer,
+         "passed": outcome.passed,
+         "total": len(components), "sourced": matched,
+         "lines": [
+             {"ref": c["ref_des"], "originalMpn": c["original_mpn"],
+              "mpn": c["mpn"], "manufacturer": c["manufacturer"] if c["mpn"] else None,
+              "status": c["status"]}
+             for c in components
+         ],
          "diagnostics": list(outcome.diagnostics)})
 
 
@@ -447,19 +529,39 @@ def reverse_engineer(reference: str, pdf_path: str | None = None) -> CallToolRes
     from heaviside.pipeline.re_pipeline import run_re_pipeline
 
     outcome = run_re_pipeline(reference, pdf_path=Path(pdf_path) if pdf_path else None)
+    # `verdict` (Moebius contract, ABT #741): this tool judges Heaviside's own
+    # design against a named reference, which is a pass/fail against a
+    # criterion rather than a list of anything.
+    #
+    # `provisional` is REQUIRED and true: the comparison is against a spec and
+    # BOM EXTRACTED from documentation, not against a measured board. A reader
+    # must not take "passed" as "this design beats that product on the bench".
     payload = {
-        "reference": outcome.reference,
-        "passed": outcome.passed,
-        "ref_spec": outcome.ref_spec.__dict__ if outcome.ref_spec else None,
-        "bom_count": len(outcome.ref_bom),
-        "diagnostics": list(outcome.diagnostics),
+        "mode": "verdict",
+        "verdict": "pass" if outcome.passed else "fail",
+        "criterion": f"reference design {outcome.reference}",
+        "provisional": True,
+        "measurements": {
+            "bomLines": {"value": len(outcome.ref_bom),
+                         "label": "BOM lines extracted from the reference"},
+        },
+        "caveat": ("Compared against a spec and BOM extracted from documentation, "
+                   "not against measured hardware."
+                   + (" " + "; ".join(list(outcome.diagnostics)[:5])
+                      if outcome.diagnostics else "")),
     }
+    # Kept OUT of the payload: the contract has no home for a free-form spec
+    # dump, and inventing a key on a closed envelope is the thing the contract
+    # exists to prevent. It stays in the digest, where a reader can see it and
+    # no consumer can mistake it for a typed field.
+    _ref_spec = outcome.ref_spec.__dict__ if outcome.ref_spec else None
     return _result(
         f"{outcome.reference}: {'passed' if outcome.passed else 'did not pass'}, "
-        f"{payload['bom_count']} BOM line(s) extracted"
-        + (f", {len(payload['diagnostics'])} diagnostic(s):\n"
-           + "\n".join(f"  {d}" for d in payload["diagnostics"][:10])
-           if payload["diagnostics"] else "."),
+        f"{len(outcome.ref_bom)} BOM line(s) extracted"
+        + (f"\nspec: {_ref_spec}" if _ref_spec else "")
+        + (f", {len(outcome.diagnostics)} diagnostic(s):\n"
+           + "\n".join(f"  {d}" for d in list(outcome.diagnostics)[:10])
+           if outcome.diagnostics else "."),
         payload)
 
 
@@ -480,18 +582,76 @@ def query_lessons(topology: str | None = None, severity: str | None = None,
     """
     from heaviside.pipeline.teacher import load_lessons, summarize_lessons
 
+    from heaviside.pipeline.teacher import _DEFAULT_LESSON_PATH
+
     lessons = load_lessons(topology=topology, severity=severity, max_age_days=max_age_days)
     entries = [
         {"topology": l.topology, "category": l.category, "severity": l.severity,
          "detail": l.detail, "suggestion": l.suggestion}
         for l in lessons
     ]
+
+    # Where each lesson physically is, so a claim built on one can be checked.
+    # The store is append-only NDJSON — one record per line — so the line number
+    # is a real, stable citation rather than a number invented to satisfy a
+    # schema. Built by id because load_lessons filters and re-orders, so a
+    # position in ITS output says nothing about a position in the file.
+    line_of: dict[str, int] = {}
+    try:
+        for n, raw in enumerate(
+                _DEFAULT_LESSON_PATH.read_text(encoding="utf-8").splitlines(), start=1):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                lid = json.loads(raw).get("id")
+            except json.JSONDecodeError:
+                continue
+            if lid:
+                line_of[lid] = n
+    except OSError:
+        # No store, or unreadable. Lessons without a locatable source are
+        # dropped below rather than cited to a line that does not exist —
+        # a fabricated citation is worse than a missing lesson.
+        line_of = {}
     lines = [f"  [{e['severity']}] {e['topology']}/{e['category']}: {e['detail']}"
              for e in entries[:20]]
     return _result(
         f"{len(entries)} lesson(s). {summarize_lessons(lessons)}\n" + "\n".join(lines)
         + (f"\n(+{len(entries) - 20} more in the structured output)" if len(entries) > 20 else ""),
-        {"count": len(entries), "summary": summarize_lessons(lessons), "lessons": entries})
+        # `passages` (Moebius contract, ABT #741): retrieved records, each cited
+        # to where it lives. A lesson is evidence from one run on one date, and
+        # quoted without its source it is indistinguishable from a design rule —
+        # which is exactly the confusion the tier/citation fields prevent.
+        {"mode": "passages",
+         "query": " ".join(filter(None, [topology, severity])) or "all lessons",
+         "total": len(entries),
+         "shown": sum(1 for l in lessons if l.id in line_of),
+         "searched": len(line_of),
+         "ranking": "store order, newest last (no relevance ranking is applied)",
+         "filters": {"topology": topology, "severity": severity,
+                     "max_age_days": max_age_days},
+         "passages": [
+             {"id": l.id,
+              # Relative to the repo root — an absolute path on this machine
+              # is not a citation anyone else can follow.
+              "source": str(_DEFAULT_LESSON_PATH.relative_to(
+                  Path(__file__).resolve().parent.parent)),
+              "line": line_of[l.id],
+              # 'lesson' is the honest tier: true of one run on one date,
+              # never an established rule.
+              "tier": "lesson",
+              "title": f"{l.topology}/{l.category}",
+              "breadcrumb": [l.topology, l.category, l.severity],
+              "domain": l.category,
+              "excerpt": _lesson_text(l),
+              "truncated": False}
+             for l in lessons if l.id in line_of
+         ],
+         "caveat": (summarize_lessons(lessons)
+                    + (f" {len(entries) - sum(1 for l in lessons if l.id in line_of)} "
+                       f"lesson(s) omitted: no locatable record in the store."
+                       if any(l.id not in line_of for l in lessons) else ""))})
 
 
 # --- the MCP Apps UI resource -----------------------------------------------
