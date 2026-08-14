@@ -111,6 +111,26 @@ def test_a_finished_job_survives_a_restart(tmp_path) -> None:
     assert recovered.state == "done" and recovered.result["mode"] == "catalogue"
 
 
+def test_a_job_from_an_older_build_is_reported_as_stale(tmp_path) -> None:
+    """A persisted result outlives the code that produced it. Without a format
+    stamp, a file written before a shape change replays a payload that no longer
+    conforms — and it surfaces at the consumer as a contract violation, which
+    reads exactly like a live bug in the current build. Observed for real: a job
+    persisted before the ABT #741 reshaping came back as
+    {target_manufacturer, components} and Moebius rejected it."""
+    import json as _json
+
+    (tmp_path / "old1.json").write_text(_json.dumps({
+        "id": "old1", "label": "before the reshape", "state": "done",
+        "submitted_at": "", "finished_at": "", "error": None,
+        "result": {"target_manufacturer": "Wurth", "components": []},
+    }))
+    reg = JobRegistry(root=tmp_path)
+    with pytest.raises(KeyError, match="older build"):
+        reg.get("old1")
+    assert (tmp_path / "old1.json").exists(), "the file is kept, not deleted"
+
+
 def test_an_unknown_job_says_what_to_do(tmp_path) -> None:
     reg = JobRegistry(root=tmp_path)
     with pytest.raises(KeyError) as exc:

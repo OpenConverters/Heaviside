@@ -627,6 +627,12 @@ def job_status(job: str) -> CallToolResult:
         "The finished outcome of a job. Fails if the job is not done yet — it does "
         "not wait, because waiting is what the job pattern exists to avoid."
     ),
+    # The widget belongs HERE, not only on the blocking tool. job_result is the
+    # path a caller is told to use, so hanging the UI off cross_reference alone
+    # meant the recommended route rendered nothing while the discouraged one
+    # rendered fine. The widget unwraps the job envelope and shows the nested
+    # result, so it needs no knowledge of jobs beyond that.
+    meta=UI_RESULTS_META,
     structured_output=False,
 )
 def job_result(job: str) -> CallToolResult:

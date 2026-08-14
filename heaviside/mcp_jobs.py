@@ -43,6 +43,11 @@ logger = logging.getLogger(__name__)
 
 STATES = ("queued", "running", "done", "failed", "cancelled")
 
+#: Stamped into every persisted job. Bump it whenever the shape of a stored
+#: `result` changes, so a file written by an older build is reported as stale
+#: rather than replayed into a consumer that will reject it.
+FORMAT = "2026-08-14/contract-741"
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
@@ -113,6 +118,22 @@ class JobRegistry:
         path = self._root / f"{job_id}.json"
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
+            # A persisted result outlives the code that produced it. When the
+            # result shape changes, an old file replays a payload that no
+            # longer conforms — and the failure surfaces at the CONSUMER as a
+            # contract violation, which reads exactly like a live bug in the
+            # current build. Say what it actually is instead.
+            #
+            # (Observed: a job persisted before the ABT #741 reshaping came back
+            # with {target_manufacturer, components} and Moebius rejected it.)
+            if data.get("format") != FORMAT:
+                raise KeyError(
+                    f"job {job_id} was recorded by an older build "
+                    f"(format {data.get('format', 'unversioned')!r}, this build "
+                    f"writes {FORMAT!r}); its stored result no longer matches the "
+                    f"current shape. Resubmit the work — the file is kept, not "
+                    f"deleted, so nothing is lost if you want to look at it."
+                )
             job = Job(id=data["id"], label=data.get("label", ""),
                       state=data.get("state", "done"), phase=data.get("phase", ""),
                       submitted_at=data.get("submitted_at", ""),
@@ -202,7 +223,8 @@ class JobRegistry:
         tmp = path.with_suffix(".json.tmp")
         try:
             tmp.write_text(
-                json.dumps({"id": job.id, "label": job.label, "state": state,
+                json.dumps({"format": FORMAT,
+                            "id": job.id, "label": job.label, "state": state,
                             "submitted_at": job.submitted_at,
                             "finished_at": finished_at,
                             "error": error, "result": result}),

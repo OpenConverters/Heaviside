@@ -67,54 +67,63 @@ const trim = (x) => String(Number(x.toPrecision(4)));
 const plain = (v) => (v === null || v === undefined || v === "" ? "—" : String(v));
 
 /** The identity a row is known by — what "use this" reports and what expands. */
-const keyOf = (row, i) => row.ref_des ?? row.mpn ?? `row_${i}`;
+const keyOf = (row, i) => row.ref ?? row.mpn ?? row.label ?? `row_${i}`;
 
 /**
  * Column set per mode. Each column is {label, get}: `get` returns a string, so a
  * missing datum becomes an em dash here rather than "undefined" in the table.
  */
+// Column sets keyed by the CONTRACT's modes (ABT #741). `magnetics` and
+// `crossref` are gone from this server: a sized magnetic is a `design` (it has
+// no MPN, so it is not a candidate), and a whole-BOM re-source is a `bom` (it
+// has one original PER LINE, so it is not a crossref).
+//
+// `design` reads through `properties`, which is where the contract puts a
+// design's own quantities — what describes a magnetic does not describe a
+// filter, so the branch does not pretend one vocabulary fits both.
 const COLUMNS = {
-  magnetics: [
+  design: [
     { label: "#", get: (r) => plain(r.rank) },
-    { label: "Core", get: (r) => plain(r.core_shape) },
-    { label: "Material", get: (r) => plain(r.core_material) },
-    { label: "Turns", get: (r) => (r.turns ?? []).filter((t) => t != null).join(" + ") || "—" },
-    { label: "Core loss", get: (r) => eng(r.core_losses_W, "W") },
-    { label: "Winding loss", get: (r) => eng(r.winding_losses_W, "W") },
-    { label: "Score", get: (r) => plain(typeof r.scoring === "number" ? trim(r.scoring) : null) },
+    { label: "Design", get: (r) => plain(r.label) },
+    { label: "Turns", get: (r) =>
+        ((r.properties ?? {}).turns ?? []).filter((t) => t != null).join(" + ") || "—" },
+    { label: "Core loss", get: (r) => eng((r.properties ?? {}).core_losses_W, "W") },
+    { label: "Winding loss", get: (r) => eng((r.properties ?? {}).winding_losses_W, "W") },
+    { label: "Score", get: (r) => plain(typeof r.score === "number" ? trim(r.score) : null) },
   ],
   bom: [
-    { label: "Ref", get: (r) => plain(r.ref_des) },
-    { label: "Part", get: (r) => plain(r.mpn ?? r.part_number) },
+    { label: "Ref", get: (r) => plain(r.ref) },
+    // Present only when re-sourcing; an em dash on a freshly sourced BOM is
+    // correct — there was no previous part.
+    { label: "Original", get: (r) => plain(r.originalMpn) },
+    { label: "Part", get: (r) => plain(r.mpn) },
     { label: "Manufacturer", get: (r) => plain(r.manufacturer) },
-    { label: "Category", get: (r) => plain(r.category ?? r.family) },
-  ],
-  crossref: [
-    { label: "Ref", get: (r) => plain(r.ref_des) },
-    { label: "Original", get: (r) => plain(r.original_mpn) },
-    { label: "Substitute", get: (r) => plain(r.mpn) },
+    { label: "Category", get: (r) => plain(r.kind) },
   ],
 };
 
 const TITLE = {
-  magnetics: "Magnetic candidates",
-  bom: "Sourced BOM",
-  crossref: "Cross-referenced BOM",
+  design: "Designs",
+  bom: "Bill of materials",
 };
 
 /** Fields already shown as columns or carried for the pipeline, not detail rows. */
 const SHOWN = new Set([
-  "rank", "core_shape", "core_material", "turns", "core_losses_W", "winding_losses_W",
-  "scoring", "ref_des", "mpn", "part_number", "manufacturer", "category", "family",
-  "original_mpn", "status", "mas", "windings",
+  "rank", "label", "score", "properties", "document", "notes",
+  "ref", "kind", "mpn", "manufacturer", "originalMpn", "status", "value", "unit",
 ]);
 
+// The contract's closed set: exact | recommended | partial | no_substitute |
+// unsourced. `unsourced` is amber rather than red on purpose — it does NOT mean
+// "nothing fits", it means this line was never looked at, and colouring it like
+// a failure would assert a negative result nobody established.
+const STATUS_CLASS = {
+  exact: "pass", recommended: "pass",
+  partial: "warn", unsourced: "warn",
+  no_substitute: "fail",
+};
 function statusClass(status) {
-  const s = String(status ?? "").toLowerCase();
-  if (s.includes("no_sub") || s.includes("fail")) return "fail";
-  if (s.includes("partial") || s.includes("warn") || s.includes("review")) return "warn";
-  if (s) return "pass";
-  return "";
+  return STATUS_CLASS[String(status ?? "")] ?? "";
 }
 
 function detailPanel(row) {
@@ -167,7 +176,10 @@ function render() {
 
   const head = el("tr", {},
     cols.map((c) => el("th", {}, c.label)),
-    state.mode === "magnetics" || state.mode === "crossref" ? el("th", {}, "Status") : null,
+    // Every BOM line has a status and it is the most important thing on the
+    // row; a design has none — the engine produced it, so there is no verdict
+    // to report and an empty column would invite one to be invented.
+    state.mode === "bom" ? el("th", {}, "Status") : null,
     el("th", { class: "act" }, ""));
 
   const body = [];
@@ -176,9 +188,8 @@ function render() {
     const chosen = state.selected === key;
     body.push(el("tr", { class: `row${chosen ? " chosen" : ""}`, onclick: () => toggle(key) },
       cols.map((c) => el("td", {}, c.get(row))),
-      state.mode === "magnetics" || state.mode === "crossref"
-        ? el("td", { class: `status ${statusClass(row.status)}` },
-            plain(row.status ?? (state.mode === "magnetics" ? "designed" : null)))
+      state.mode === "bom"
+        ? el("td", { class: `status ${statusClass(row.status)}` }, plain(row.status))
         : null,
       el("td", { class: "act" },
         el("button", {
@@ -217,24 +228,28 @@ function toggle(key) {
 async function choose(row, key) {
   state.selected = key;
   render();
-  const what = {
-    magnetics: `magnetic design for the ${state.topology || "converter"}`,
-    bom: `part for ${row.ref_des ?? "this line"}`,
-    crossref: `substitute for ${row.original_mpn ?? row.ref_des ?? "this line"}`,
-  }[state.mode] ?? "result";
-  const label = state.mode === "magnetics"
-    ? `${plain(row.core_shape)} / ${plain(row.core_material)}`
-    : plain(row.mpn ?? row.part_number ?? row.ref_des);
+  const what = state.mode === "design"
+    ? `design for the ${state.topology || "converter"}`
+    : row.originalMpn
+      // A re-sourced line and a freshly sourced one are different decisions,
+      // and the model needs to know which it is being told about.
+      ? `substitute for ${row.originalMpn} on ${row.ref ?? "this line"}`
+      : `part for ${row.ref ?? "this line"}`;
+  const label = state.mode === "design"
+    ? plain(row.label)
+    : plain(row.mpn ?? row.ref);
   const lines = [`[user selected] ${label} as the ${what}.`];
   const cols = COLUMNS[state.mode] ?? COLUMNS.bom;
   lines.push("[detail] " + cols.map((c) => `${c.label} ${c.get(row)}`).join(", "));
   if (row.status) lines.push(`[status] ${row.status}`);
   await app.updateModelContext({
     content: [{ type: "text", text: lines.join("\n") }],
-    // The MAS is deliberately NOT sent back: it is megabytes, and the model can ask
-    // for it by rank. What travels is the identity of the choice.
+    // The full engineering document is deliberately NOT sent back: it is
+    // megabytes, and the model can ask for it by rank. What travels is the
+    // identity of the choice. (`document` is the contract's name for it; it
+    // was `mas` before, which named one engine's format for a general idea.)
     structuredContent: JSON.parse(JSON.stringify({
-      selected: { ...row, mas: undefined },
+      selected: { ...row, document: undefined },
       context: { mode: state.mode, topology: state.topology, target: state.target },
     })),
   });
@@ -249,10 +264,19 @@ async function choose(row, key) {
  */
 function ingest(sc) {
   state.error = "";
+  // A finished job carries its real result nested (contract `mode: "job"`), so
+  // unwrap it: the widget should render the outcome, not the envelope that
+  // delivered it. submit_crossref -> job_result is now the normal path.
+  if (sc.mode === "job" && sc.result) sc = sc.result;
+  state.error = "";
   state.mode = sc.mode ?? "";
   state.topology = sc.topology ?? "";
-  state.rows = [sc.candidates, sc.rows, sc.bom].find(Array.isArray) ?? [];
-  state.target = sc.target_manufacturer ?? null;
+  // ONE name per shape, no aliases (ABT #741). `designs` and `lines` are what
+  // the contract calls them; accepting `candidates`/`rows`/`bom` here would
+  // hide exactly the drift the contract exists to catch.
+  state.rows = (sc.mode === "design" ? sc.designs : sc.lines) ?? [];
+  if (!Array.isArray(state.rows)) state.rows = [];
+  state.target = sc.targetManufacturer ?? null;
   state.passed = sc.passed ?? null;
   state.diagnostics = Array.isArray(sc.diagnostics) ? sc.diagnostics : [];
   state.selected = null;
