@@ -456,11 +456,76 @@ def design_bom(topology: str, spec: dict, tas: dict) -> CallToolResult:
                           f"looked at and reports the same way"] if unfilled else [])})
 
 
+def _run_crossref(source_bom: list[BomLine], target_manufacturer: str,
+                  circuit_context: str | None,
+                  progress=None) -> tuple[str, dict]:
+    """The cross-reference, as (digest, payload).
+
+    Factored out so the blocking tool and the job share ONE code path. Two
+    copies of this mapping would drift, and the version a user reached would
+    depend on which tool they happened to call.
+    """
+    from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
+
+    # The pipeline works in plain dicts and normalises them itself; the typed
+    # model exists for the INTERFACE, so it is unwrapped here rather than
+    # threaded through. exclude_none so an omitted component_type stays absent
+    # and gets inferred, instead of arriving as an explicit null that reads as
+    # "the caller says there is no type".
+    kwargs = {}
+    if progress is not None:
+        # The pipeline calls progress(message, pct) before each stage. Only the
+        # message is kept: "CR stage 6: Otto" tells an engineer whether to wait,
+        # and a percentage does not.
+        kwargs["progress"] = lambda message, pct=None: progress(str(message))
+    outcome = run_crossref_pipeline(
+        [line.model_dump(exclude_none=True) for line in source_bom],
+        target_manufacturer, circuit_context=circuit_context, **kwargs)
+    components = [
+        {"ref_des": c.ref_des, "original_mpn": c.original_mpn, "mpn": c.substitute_mpn,
+         "manufacturer": target_manufacturer, "status": c.status.value}
+        for c in outcome.components
+    ]
+    matched = sum(1 for c in components if c["mpn"])
+    lines = [
+        f"  {c['ref_des']}: {c['original_mpn']} -> {c['mpn'] or 'NO SUBSTITUTE'} ({c['status']})"
+        for c in components
+    ]
+    digest = (
+        f"{matched}/{len(components)} line(s) re-sourced to {target_manufacturer} "
+        f"({'passed' if outcome.passed else 'did not pass'}):\n" + "\n".join(lines)
+        + ("\n" + "\n".join(f"  ! {d}" for d in list(outcome.diagnostics)[:10])
+           if outcome.diagnostics else "")
+    )
+    # `bom`, NOT `crossref` (ABT #741). The crossref branch carries ONE
+    # `original` — it is built for kelvin__cross_reference, which answers
+    # "substitutes for this part". This tool answers N questions with one
+    # answer each, and every line has its own original. Flattening it into
+    # `candidates` would lose which line each part belongs to.
+    payload = {
+        "mode": "bom", "targetManufacturer": target_manufacturer,
+        "passed": outcome.passed,
+        "total": len(components), "sourced": matched,
+        "lines": [
+            {"ref": c["ref_des"], "originalMpn": c["original_mpn"],
+             "mpn": c["mpn"], "manufacturer": c["manufacturer"] if c["mpn"] else None,
+             "status": c["status"]}
+            for c in components
+        ],
+        "diagnostics": list(outcome.diagnostics),
+    }
+    return digest, payload
+
+
 @mcp.tool(
-    title="Cross-reference a BOM",
+    title="Cross-reference a BOM (blocking)",
     description=(
         "Re-source a whole BOM to a target manufacturer: a substitute per line with its "
-        "status, plus the diagnostics behind any line that could not be matched."
+        "status, plus the diagnostics behind any line that could not be matched. "
+        "BLOCKS UNTIL DONE, and this pipeline takes MINUTES — 234 s for a single line, "
+        "about fifteen minutes for two. Most callers time out long before it returns. "
+        "Use submit_crossref instead unless you control the timeout and know it is "
+        "longer than the run."
     ),
     meta=UI_RESULTS_META,
     structured_output=False,
@@ -474,46 +539,144 @@ def cross_reference(source_bom: list[BomLine], target_manufacturer: str,
         target_manufacturer: the vendor to source into.
         circuit_context: what the board does, when it helps judge a substitution.
     """
-    from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
+    digest, payload = _run_crossref(source_bom, target_manufacturer, circuit_context)
+    return _result(digest, payload)
 
-    # The pipeline works in plain dicts and normalises them itself; the typed
-    # model exists for the INTERFACE, so it is unwrapped here rather than
-    # threaded through. exclude_none so an omitted component_type stays absent
-    # and gets inferred, instead of arriving as an explicit null that reads as
-    # "the caller says there is no type".
-    outcome = run_crossref_pipeline(
-        [line.model_dump(exclude_none=True) for line in source_bom],
-        target_manufacturer, circuit_context=circuit_context)
-    components = [
-        {"ref_des": c.ref_des, "original_mpn": c.original_mpn, "mpn": c.substitute_mpn,
-         "manufacturer": target_manufacturer, "status": c.status.value}
-        for c in outcome.components
-    ]
-    matched = sum(1 for c in components if c["mpn"])
-    lines = [
-        f"  {c['ref_des']}: {c['original_mpn']} -> {c['mpn'] or 'NO SUBSTITUTE'} ({c['status']})"
-        for c in components
-    ]
+
+
+# --- the asynchronous surface (ABT #758) ------------------------------------
+#
+# cross_reference takes MINUTES — 234 s measured for one BOM line, ~15 for two —
+# and every consumer in front of it has a shorter timeout. A blocking tool that
+# outlives its callers is unreachable, not slow: the user sees a turn hang and
+# fail, and the work may well have completed after they stopped listening.
+#
+# Same shape OMFEM uses for FEA, on purpose: two long-running pipelines with two
+# different job envelopes would make every consumer learn both.
+
+
+def _job_result(job, *, with_result: bool = False) -> CallToolResult:
+    from heaviside.mcp_jobs import STATES  # noqa: F401  (documents the closed set)
+
+    bits = [f"job {job.id}: {job.state}"]
+    if job.label:
+        bits.append(f"({job.label})")
+    if job.state == "running" and job.phase:
+        bits.append(f"— {job.phase}")
+    if job.error:
+        bits.append(f"— {job.error}")
+    return _result(" ".join(bits), job.envelope(with_result=with_result))
+
+
+@mcp.tool(
+    title="Submit a BOM cross-reference",
+    description=(
+        "Start a whole-BOM re-source and return a job id immediately. Poll with "
+        "job_status and fetch with job_result. This is the tool to use: the "
+        "blocking cross_reference takes minutes and most callers time out. "
+        "job_status reports the pipeline's current stage by name, so progress "
+        "can be shown rather than guessed at."
+    ),
+    structured_output=False,
+)
+def submit_crossref(source_bom: list[BomLine], target_manufacturer: str,
+                    circuit_context: str | None = None) -> CallToolResult:
+    """Queue a cross-reference. Returns a job id, not a result.
+
+    Args:
+        source_bom: the BOM to re-source, one entry per component.
+        target_manufacturer: the vendor to source into.
+        circuit_context: what the board does, when it helps judge a substitution.
+    """
+    from heaviside.mcp_jobs import registry
+
+    label = f"{len(source_bom)} line(s) -> {target_manufacturer}"
+
+    def work(progress):
+        _digest, payload = _run_crossref(source_bom, target_manufacturer,
+                                         circuit_context, progress=progress)
+        return payload
+
+    job = registry().submit(label, work)
     return _result(
-        f"{matched}/{len(components)} line(s) re-sourced to {target_manufacturer} "
-        f"({'passed' if outcome.passed else 'did not pass'}):\n" + "\n".join(lines)
-        + ("\n" + "\n".join(f"  ! {d}" for d in list(outcome.diagnostics)[:10])
-           if outcome.diagnostics else ""),
-        # `bom`, NOT `crossref` (ABT #741). The crossref branch carries ONE
-        # `original` — it is built for kelvin__cross_reference, which answers
-        # "substitutes for this part". This tool answers N questions with one
-        # answer each, and every line has its own original. Flattening it into
-        # `candidates` would lose which line each part belongs to.
-        {"mode": "bom", "targetManufacturer": target_manufacturer,
-         "passed": outcome.passed,
-         "total": len(components), "sourced": matched,
-         "lines": [
-             {"ref": c["ref_des"], "originalMpn": c["original_mpn"],
-              "mpn": c["mpn"], "manufacturer": c["manufacturer"] if c["mpn"] else None,
-              "status": c["status"]}
-             for c in components
-         ],
-         "diagnostics": list(outcome.diagnostics)})
+        f"job {job.id} queued: {label}. Poll job_status({job.id!r}); the result "
+        f"is ready when its state is 'done'. This typically takes minutes.",
+        job.envelope())
+
+
+@mcp.tool(
+    title="Job status",
+    description=(
+        "queued | running | done | failed | cancelled, with the pipeline's current "
+        "stage. NOTE that 'failed' can mean this server restarted: the queue lives "
+        "in its process, so a restart fails running jobs. Read the error before "
+        "resubmitting — minutes of work is not a free retry."
+    ),
+    structured_output=False,
+)
+def job_status(job: str) -> CallToolResult:
+    """Where a submitted job has got to."""
+    from heaviside.mcp_jobs import registry
+
+    return _job_result(registry().get(job))
+
+
+@mcp.tool(
+    title="Job result",
+    description=(
+        "The finished outcome of a job. Fails if the job is not done yet — it does "
+        "not wait, because waiting is what the job pattern exists to avoid."
+    ),
+    structured_output=False,
+)
+def job_result(job: str) -> CallToolResult:
+    """The result of a finished job."""
+    from heaviside.mcp_jobs import registry
+
+    handle = registry().get(job)
+    if handle.state != "done":
+        raise ValueError(
+            f"job {job} is {handle.state}, not done"
+            + (f" — {handle.error}" if handle.error else "")
+            + ". Poll job_status until it reports 'done'."
+        )
+    return _job_result(handle, with_result=True)
+
+
+@mcp.tool(
+    title="Cancel a job",
+    description=(
+        "Cancel a QUEUED job. A running one cannot be cancelled — the pipeline has "
+        "no safe interruption point — and this refuses rather than pretending."
+    ),
+    structured_output=False,
+)
+def cancel_job(job: str) -> CallToolResult:
+    """Cancel a job that has not started."""
+    from heaviside.mcp_jobs import registry
+
+    return _job_result(registry().cancel(job))
+
+
+@mcp.tool(
+    title="List jobs",
+    description="Every job this server knows about, newest first.",
+    structured_output=False,
+)
+def list_jobs() -> CallToolResult:
+    """What this server has been asked to do."""
+    from heaviside.mcp_jobs import registry
+
+    jobs = registry().list()
+    lines = [f"  {j.id}: {j.state}" + (f" — {j.label}" if j.label else "") for j in jobs]
+    return _result(
+        f"{len(jobs)} job(s):\n" + "\n".join(lines) if jobs else "No jobs.",
+        # A listing is a job-shaped answer about the SERVER rather than about one
+        # job, so it carries a synthetic handle and its own state.
+        {"mode": "job", "job": "listing", "state": "done",
+         "jobs": [j.summary() for j in jobs],
+         "caveat": ("The queue lives in this process: a restart loses queued jobs "
+                    "and fails running ones. Finished results survive on disk.")})
 
 
 @mcp.tool(
