@@ -35,6 +35,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent
@@ -146,6 +148,40 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     return value
+
+
+class BomLine(BaseModel):
+    """One line of a BOM to re-source.
+
+    Typed at the MCP boundary on purpose. `source_bom: list[dict]` published an
+    input schema of "array of object, any keys", which tells a caller nothing
+    about what a line must contain — and a tool whose input cannot be
+    constructed is a tool that never gets called. Measured, not guessed: asked
+    to re-source a three-line BOM, an assistant with this tool available
+    ignored it and made fourteen single-part cross_reference calls to another
+    pipeline instead, losing the per-line status and diagnostics that are the
+    whole point of this one.
+
+    The internal normaliser (_normalize_bom) stays as tolerant as it is — it
+    accepts `mpn`/`part`, `type`/`category`, `location`/`designator`, because a
+    real BOM export is messy and that leniency is correct for a FILE. It is not
+    correct for an interface: here there is one name per concept, and a caller
+    who has to guess between four spellings has no contract at all.
+    """
+    ref_des: str = Field(description="Reference designator, e.g. 'Q1', 'C12'. "
+                                     "Must be unique within the BOM.")
+    original_mpn: str = Field(description="The manufacturer part number to replace.")
+    component_type: str | None = Field(
+        default=None,
+        description="Category: mosfet, diode, capacitor, resistor, inductor, "
+                    "connector, ic. Inferred from the description when omitted; "
+                    "a line whose category cannot be determined is reported "
+                    "unmatched rather than guessed at.")
+    description: str | None = Field(
+        default=None,
+        description="Free text from the BOM row. Used to infer component_type "
+                    "and to judge whether a substitution is sensible.")
+    quantity: int | None = Field(default=None, description="Placements on the board.")
 
 
 def _result(summary: str, payload: dict) -> CallToolResult:
@@ -359,7 +395,7 @@ def design_bom(topology: str, spec: dict, tas: dict) -> CallToolResult:
     meta=UI_RESULTS_META,
     structured_output=False,
 )
-def cross_reference(source_bom: list[dict], target_manufacturer: str,
+def cross_reference(source_bom: list[BomLine], target_manufacturer: str,
                     circuit_context: str | None = None) -> CallToolResult:
     """Substitutes for a whole BOM.
 
@@ -370,8 +406,14 @@ def cross_reference(source_bom: list[dict], target_manufacturer: str,
     """
     from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
 
-    outcome = run_crossref_pipeline(source_bom, target_manufacturer,
-                                    circuit_context=circuit_context)
+    # The pipeline works in plain dicts and normalises them itself; the typed
+    # model exists for the INTERFACE, so it is unwrapped here rather than
+    # threaded through. exclude_none so an omitted component_type stays absent
+    # and gets inferred, instead of arriving as an explicit null that reads as
+    # "the caller says there is no type".
+    outcome = run_crossref_pipeline(
+        [line.model_dump(exclude_none=True) for line in source_bom],
+        target_manufacturer, circuit_context=circuit_context)
     components = [
         {"ref_des": c.ref_des, "original_mpn": c.original_mpn, "mpn": c.substitute_mpn,
          "manufacturer": target_manufacturer, "status": c.status.value}
