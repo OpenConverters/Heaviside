@@ -466,9 +466,22 @@ def compare_param(spec: ParamSpec, orig: Any, sub: Any) -> dict[str, Any]:
     }
 
 
-def _render_param(spec: ParamSpec, orig: Any, sub: Any, verdict: str) -> dict[str, Any]:
+def _render_param(
+    spec: ParamSpec,
+    orig: Any,
+    sub: Any,
+    verdict: str,
+    missing_required_sub: bool = False,
+) -> dict[str, Any]:
     """Build the render-ready dict for one parameter. The VERDICT is Kelvin's
-    decision; the display strings + note are Python glue."""
+    decision; the display strings + note are Python glue.
+
+    ``missing_required_sub`` is Kelvin's separate answer to a separate question. On an
+    ``exclude`` spec, a substitute whose record carries no value at all is UNVERIFIED —
+    nothing was compared, so no verdict may claim otherwise — but it is *also*
+    disqualifying. The two facts travel apart because only one of them is a comparison;
+    a caller that reads the verdict and stops sees a benign gap where Kelvin recorded a
+    reason not to ship the part."""
     if spec.direction == CLASS_MATCH:
         o_disp = str(orig) if orig is not None else ""
         s_disp = str(sub) if sub is not None else ""
@@ -503,6 +516,7 @@ def _render_param(spec: ParamSpec, orig: Any, sub: Any, verdict: str) -> dict[st
         "verdict": verdict,
         "note": note,
         "critical": spec.unverified_demotes,
+        "missing_required_sub": missing_required_sub,
     }
 
 
@@ -522,13 +536,20 @@ def evaluate_params(
 
     orig_params = orig_params or {}
     sub_params = sub_params or {}
-    verdicts = {r["name"]: r["verdict"] for r in _kv(category, orig_params, sub_params)}
+    reports = {r["name"]: r for r in _kv(category, orig_params, sub_params)}
     results: list[dict[str, Any]] = []
     for spec in PARAM_SPECS.get(category, []):
-        if spec.key not in verdicts:  # Kelvin only reports params with data (same filter)
+        if spec.key not in reports:  # Kelvin only reports params with data (same filter)
             continue
+        report = reports[spec.key]
         results.append(
-            _render_param(spec, orig_params.get(spec.key), sub_params.get(spec.key), verdicts[spec.key])
+            _render_param(
+                spec,
+                orig_params.get(spec.key),
+                sub_params.get(spec.key),
+                report["verdict"],
+                bool(report.get("missing_required_sub")),
+            )
         )
     return results
 

@@ -42,10 +42,29 @@ def test_cap_dielectric_downgrade_fails():
 
 
 def test_missing_substitute_esr_excluded():
-    # "if a DB object is missing ESR, don't use it" → FAIL (cannot verify)
+    # "if a DB object is missing ESR, don't use it". The VERDICT is UNVERIFIED, not
+    # FAIL: the substitute's record carries no ESR at all, so there was no comparison
+    # to lose — a FAIL would assert one. The exclusion rides on missing_required_sub,
+    # which is the half that must not be dropped (a bare UNVERIFIED reads as benign).
     r = evaluate_params("capacitor", {"esr": 0.1}, {"esr": None})
-    assert r[0]["verdict"] == FAIL
+    assert r[0]["verdict"] == UNVERIFIED
+    assert r[0]["missing_required_sub"] is True
     assert "no ESR data" in r[0]["note"]
+
+
+def test_missing_original_esr_is_a_gap_not_a_disqualification():
+    # Mirror image: nothing on the original side to fall short of, so the substitute
+    # is not being let through unchecked and must NOT carry the exclusion flag.
+    r = evaluate_params("capacitor", {"esr": None}, {"esr": 0.05})
+    assert r[0]["verdict"] == UNVERIFIED
+    assert r[0]["missing_required_sub"] is False
+
+
+def test_real_esr_comparison_never_sets_the_exclusion_flag():
+    for sub, expected in ((0.1, PASS), (0.14, WARN), (0.30, FAIL)):
+        r = evaluate_params("capacitor", {"esr": 0.1}, {"esr": sub})
+        assert r[0]["verdict"] == expected
+        assert r[0]["missing_required_sub"] is False
 
 
 def test_missing_original_esr_unverified_minimize():

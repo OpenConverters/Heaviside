@@ -5412,8 +5412,17 @@ def _stage_param_check(state: CrossRefState) -> None:
         # Identity parameters (connector positions/gender/family/pitch, analog
         # function/channels) that could NOT be verified also block a clean
         # 'recommended' — a senior engineer never ships an unverified mate.
+        # `missing_required_sub` is the third case and reads like neither: the
+        # original states a parameter whose absence disqualifies (ESR on a
+        # capacitor, impedance on a bead) and the substitute's record carries no
+        # value at all. Kelvin reports UNVERIFIED because nothing was compared,
+        # and rejects/demotes the candidate off this flag instead — so a stage
+        # that only counted FAILs let exactly the parts the policy excludes
+        # through as 'recommended'.
         unverified_critical = [
-            r for r in results if r["verdict"] == UNVERIFIED and r.get("critical")
+            r
+            for r in results
+            if r["verdict"] == UNVERIFIED and (r.get("critical") or r.get("missing_required_sub"))
         ]
         # Only demote an actively-recommended substitute; 'exact' (identical
         # part) and 'partial'/'no_substitute' don't move. This keeps the

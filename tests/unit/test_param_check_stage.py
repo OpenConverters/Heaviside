@@ -136,8 +136,12 @@ def test_stage_mlcc_bias_skipped_without_stress(tmp_path, monkeypatch):
     assert row["status"] == "recommended"
 
 
-def test_stage_missing_substitute_esr_fails(tmp_path, monkeypatch):
-    # Substitute has no ESR field → "don't use it" → fail (cannot verify).
+def test_stage_missing_substitute_esr_demotes(tmp_path, monkeypatch):
+    # Substitute has no ESR field → "don't use it". The verdict is UNVERIFIED (nothing
+    # was compared); what must survive is the CONSEQUENCE — the row drops off
+    # 'recommended' and says why. Asserting the verdict string alone once hid a
+    # regression where the exclusion stopped happening but the string still looked
+    # plausible (ABT #776).
     sub = _cap_env("SUBS3", esr=None, ripple=1.0, tech="X7R")
     del sub["capacitor"]["manufacturerInfo"]["datasheetInfo"]["electrical"]["esr"]
     _write_caps(tmp_path, [_cap_env("ORIG3", esr=0.1, ripple=1.0, tech="X7R"), sub])
@@ -152,9 +156,13 @@ def test_stage_missing_substitute_esr_fails(tmp_path, monkeypatch):
     }]
     cp._stage_param_check(state)
     row = state.crossref_result[0]
-    verdicts = {r["name"]: r["verdict"] for r in row["_param_results"]}
-    assert verdicts["esr"] == "fail"
+    esr = next(r for r in row["_param_results"] if r["name"] == "esr")
+    assert esr["verdict"] == "unverified"
+    assert esr["missing_required_sub"] is True
+    # The consequence, which is the point of the spec:
     assert row["status"] == "partial"
+    assert "no ESR data" in (row.get("notes") or "")
+    assert "PARAM:esr:unverified" in row.get("guardrail_fires", [])
 
 
 def _mag_env(mpn, *, ind=1e-6, dcr=0.05, isat=5.0):
