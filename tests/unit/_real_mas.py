@@ -160,3 +160,24 @@ def isat_of(magnetic: dict[str, Any], temperature_c: float = 100.0) -> float:
     return float(
         pyom.calculate_saturation_current(dict(magnetic), float(temperature_c))
     )
+
+
+def assert_choke_has_saturation_margin(report: Any, *, min_ratio: float = 1.2) -> None:
+    """Fail with the NUMBERS when an end-to-end realism fixture loses its Isat margin.
+
+    A ``test_end_to_end_realism_passes`` that only asserts ``verdict is PASS`` reports an
+    engine shift as ``FAIL is not PASS`` — thirteen checks deep, with no clue which one
+    moved or by how much. These fixtures' chokes are sized so ``inductor_isat_margin``
+    clears with room (see each ``_lout_mas`` docstring for the gap and the arithmetic);
+    Isat itself comes from MKF, so the day MKF's gap model moves, this says so directly
+    instead of leaving someone to re-derive it (ABT #773).
+    """
+    margin = next((c for c in report.checks if c.name == "inductor_isat_margin"), None)
+    if margin is None:
+        return  # the fixture has no choke to check — not this helper's business
+    assert margin.status.value != "fail", (
+        f"output choke lost its saturation margin: Isat/Ipeak_worst = {margin.value} "
+        f"against a {margin.limit} limit ({margin.extra}). The fixture is sized for "
+        f">= {min_ratio} with headroom, so a ratio this low means MKF's saturation or "
+        "gap-reluctance answer has moved — check that before re-sizing the fixture."
+    )

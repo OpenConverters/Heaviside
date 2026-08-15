@@ -24,7 +24,11 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
-from tests.unit._real_mas import isat_of, real_magnetic
+from tests.unit._real_mas import (
+    assert_choke_has_saturation_margin,
+    isat_of,
+    real_magnetic,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -43,11 +47,20 @@ def _lout_mas(N: int = 18, *, L: float = 4.7e-6) -> dict:
     ``inputs.designRequirements.magnetizingInductance.nominal``); both are
     provided here so the fixture survives either harvest path.  A gapped
     ETD 49/25/16 keeps the choke Isat high enough to clear the realism gate.
+
+    The gap is 2.0 mm, not the 1.0 mm this started with.  Isat here is MKF's answer
+    for the wound geometry, and the realism gate wants Isat >= 1.2 x Ipeak_worst =
+    14.34 A for this design (Iout 10 A + 1.95 A of ripple).  At 1.0 mm MKF now says
+    10.60 A -- ratio 0.89, i.e. the fixture failed a gate it was written to pass.  At
+    2.0 mm it says 18.25 A, ratio 1.53, which survives a sizeable shift in the gap
+    model rather than sitting on the knife edge.  Whether MKF's number is *right* is a
+    separate question and a separate ticket (ABT #773/#777); what this fixture exists
+    to exercise is the extractor and the gate end to end, not the fringing constant.
     """
     mas = real_magnetic(
         shape="ETD 49/25/16",
         material="3C95",
-        gap_mm=1.0,
+        gap_mm=2.0,
         windings=[
             {"name": "Primary", "turns": N, "side": "primary"},
         ],
@@ -260,6 +273,8 @@ class TestForwardMath:
     def test_end_to_end_realism_passes(self, topology, tas_factory):
         enriched = enrich_tas_for_realism(tas_factory(), topology=topology, spec=_forward_spec())
         r = evaluate_tas(enriched, topology=topology, spec=_forward_spec())
+        # Before the blanket verdict, so an engine shift names itself (ABT #773).
+        assert_choke_has_saturation_margin(r)
         assert r.verdict is RealismVerdict.PASS
         passed = {c.name for c in r.checks if c.status is CheckStatus.PASS}
         assert {"duty_cycle_bounds", "inductor_isat_margin"}.issubset(passed)

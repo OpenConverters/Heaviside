@@ -22,7 +22,11 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
-from tests.unit._real_mas import isat_of, real_magnetic
+from tests.unit._real_mas import (
+    assert_choke_has_saturation_margin,
+    isat_of,
+    real_magnetic,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures (AHB stencil: T1 has pri+sec0 only; L_out0 in
@@ -41,12 +45,17 @@ def _lout_mas(N: int = 14, *, L: float = 10e-6) -> dict:
     .magnetizingInductance.nominal`` (and would also accept
     ``inputs.designRequirements.magnetizingInductance.nominal``); both are
     provided here so the fixture survives either harvest path.  The choke
-    is gapped (~1 mm) as a real output inductor must be.
+    is gapped (2 mm) as a real output inductor must be.
+
+    The gap was 1.0 mm and gave MKF Isat 12.93 A against the 16.15 A the realism gate
+    wants for this design (ratio 0.96) -- the fixture failed a gate it was written to
+    pass.  2.0 mm gives 21.92 A, ratio 1.63, clear of any plausible movement in the gap
+    model.  Same story as the forward fixtures; see ABT #773/#777.
     """
     mas = real_magnetic(
         shape="ETD 29/16/10",
         material="3C95",
-        gap_mm=1.0,
+        gap_mm=2.0,
         windings=[
             {"name": "Primary", "turns": N, "side": "primary"},
         ],
@@ -290,6 +299,8 @@ class TestAHBMath:
             spec=spec,
         )
         r = evaluate_tas(enriched, topology="asymmetric_half_bridge", spec=spec)
+        # Before the blanket verdict, so an engine shift names itself (ABT #773).
+        assert_choke_has_saturation_margin(r)
         assert r.verdict is RealismVerdict.PASS
         passed = {c.name for c in r.checks if c.status is CheckStatus.PASS}
         assert {"duty_cycle_bounds", "inductor_isat_margin"}.issubset(passed)

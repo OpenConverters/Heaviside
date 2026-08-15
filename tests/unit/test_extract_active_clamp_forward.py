@@ -24,7 +24,11 @@ import pytest
 from heaviside.pipeline import evaluate_tas
 from heaviside.pipeline.extract import EnrichmentError, enrich_tas_for_realism
 from heaviside.pipeline.realism import CheckStatus, RealismVerdict
-from tests.unit._real_mas import isat_of, real_magnetic
+from tests.unit._real_mas import (
+    assert_choke_has_saturation_margin,
+    isat_of,
+    real_magnetic,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures (ACF stencil: T1 has pri+sec0 only — no demag winding, since
@@ -44,11 +48,16 @@ def _lout_mas(N: int = 18, *, L: float = 4.7e-6) -> dict:
     ``inputs.designRequirements.magnetizingInductance.nominal``); both are
     provided here so the fixture survives either harvest path.  A gapped
     ETD 49/25/16 keeps the choke Isat high enough to clear the realism gate.
+
+    Gap 2.0 mm, for the reason spelled out in test_extract_forward's _lout_mas: at
+    1.0 mm MKF's Isat for this geometry is 10.60 A against the 14.34 A the gate wants,
+    so the fixture failed a gate it was written to pass.  2.0 mm gives 18.25 A
+    (ratio 1.53) and does not sit on the knife edge of the gap model (ABT #773/#777).
     """
     mas = real_magnetic(
         shape="ETD 49/25/16",
         material="3C95",
-        gap_mm=1.0,
+        gap_mm=2.0,
         windings=[
             {"name": "Primary", "turns": N, "side": "primary"},
         ],
@@ -255,6 +264,8 @@ class TestACFMath:
             spec=spec,
         )
         r = evaluate_tas(enriched, topology="active_clamp_forward", spec=spec)
+        # Before the blanket verdict, so an engine shift names itself (ABT #773).
+        assert_choke_has_saturation_margin(r)
         assert r.verdict is RealismVerdict.PASS
         passed = {c.name for c in r.checks if c.status is CheckStatus.PASS}
         assert {"duty_cycle_bounds", "inductor_isat_margin"}.issubset(passed)
