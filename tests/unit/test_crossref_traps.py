@@ -29,7 +29,16 @@ from heaviside.pipeline.crossref_pipeline import (
 )
 from heaviside.stages.component_match import find_candidates
 
-PART_330NH = "744383560R33"  # 330 nH — the wrong-value trap
+# Both are the SAME WE-MAPI size code (7443835-6-0), so the only thing separating them
+# is the value — which is the whole point of the trap. The 330 nH part's Isat is 7.95 A,
+# comfortably above the 3 A these tests ask for, so a refusal here is the VALUE gate
+# doing its job and not the current gate answering for it.
+#
+# This slot used to hold "744383560R33", which TAS quarantined on 2026-07-31 as
+# fabricated: absent from all 13,182 REDEXPERT order codes and a 404 on its datasheet
+# endpoint (GEN_NOT_AT_MANUFACTURER). It reads like a transcription of the real part
+# below — same size code, the value written "R33" instead of "0033" (ABT #775).
+PART_330NH = "744383560033"  # 330 nH — the wrong-value trap
 PART_1P5UH = "74438356015"  # 1.5 µH — the correct in-kind match
 
 
