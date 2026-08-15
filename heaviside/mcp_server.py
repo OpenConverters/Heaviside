@@ -177,6 +177,67 @@ def _lesson_text(lesson: Any) -> str:
     return body
 
 
+class DimensionWithTolerance(BaseModel):
+    """The {nominal, minimum, maximum} shape used across PEAS/MAS/MKF.
+
+    All three are optional individually, but a block with none of them carries
+    no value at all — which the engine rejects rather than defaulting.
+    """
+    nominal: float | None = None
+    minimum: float | None = None
+    maximum: float | None = None
+
+
+class OperatingPoint(BaseModel):
+    """One operating point of the converter.
+
+    `outputVoltages` and `outputCurrents` are parallel LISTS, one entry per
+    output rail, and that is not a stylistic choice — a flyback with three
+    secondaries has three of each, and a scalar would silently describe only
+    the first.
+    """
+    switchingFrequency: float = Field(description="Hz.")
+    outputVoltages: list[float] = Field(
+        description="V, one per output rail. A single-output converter is a "
+                    "list of one — [12], not 12.")
+    outputCurrents: list[float] = Field(
+        description="A, one per rail, same order and length as outputVoltages.")
+    ambientTemperature: float | None = Field(
+        default=None, description="degC. Ambient the magnetic must survive.")
+
+
+class ConverterSpec(BaseModel):
+    """What a magnetic has to be designed against.
+
+    TYPED BECAUSE AN UNTYPED ONE COSTS TWO MINUTES A QUESTION. `spec: dict`
+    published an input schema of "object, any keys". Watched live, an assistant
+    asked a routine design question spent 147 seconds and EIGHT calls on this
+    tool, guessing its way through the shape — input_voltage, then
+    inputVoltage:{nominal}, then operatingPoints:[{outputVoltage}] — and in the
+    middle of it searched the KNOWLEDGE CORPUS for this tool's own schema,
+    because the tool would not say. Six of those eight calls were wasted, and
+    each one mounted a widget the reader had to scroll past.
+
+    An input schema is documentation the caller cannot fail to read. This is
+    the same defect, and the same fix, as BomLine above.
+    """
+    inputVoltage: DimensionWithTolerance = Field(
+        description="V. A {nominal, minimum, maximum} block — a converter is "
+                    "designed across its input range, not at one point.")
+    efficiency: float = Field(
+        description="Target efficiency as a fraction, e.g. 0.95. Required: it "
+                    "sets the input power the magnetic is sized for.")
+    operatingPoints: list[OperatingPoint] = Field(
+        min_length=1,
+        description="At least one. The magnetic is designed against all of them.")
+    currentRippleRatio: float | None = Field(
+        default=None,
+        description="Inductor ripple as a fraction of DC current, e.g. 0.3. "
+                    "Left out, the engine's own default applies.")
+    diodeVoltageDrop: float | None = Field(
+        default=None, description="V, for a non-synchronous rectifier.")
+
+
 class BomLine(BaseModel):
     """One line of a BOM to re-source.
 
@@ -328,7 +389,7 @@ def list_topologies() -> CallToolResult:
     meta=UI_RESULTS_META,
     structured_output=False,
 )
-def design_magnetic(topology: str, spec: dict, max_results: int = 3,
+def design_magnetic(topology: str, spec: ConverterSpec, max_results: int = 3,
                     include_mas: bool = False) -> CallToolResult:
     """Ranked magnetic designs.
 
@@ -341,7 +402,11 @@ def design_magnetic(topology: str, spec: dict, max_results: int = 3,
     """
     from heaviside.bridge import design_magnetics_fast
 
-    designs = design_magnetics_fast(topology, spec, max_results=max(1, int(max_results)))
+    # The engine works in plain dicts; the model exists for the INTERFACE.
+    # exclude_none so an omitted optional stays absent and the engine's own
+    # default applies, rather than arriving as an explicit null.
+    designs = design_magnetics_fast(topology, spec.model_dump(exclude_none=True),
+                                    max_results=max(1, int(max_results)))
     candidates = [_magnetic_summary(d, i + 1) for i, d in enumerate(designs)]
     if include_mas:
         for candidate, design in zip(candidates, designs):
