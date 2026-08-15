@@ -142,7 +142,16 @@ def test_design_bom_distinguishes_unsourced_from_no_substitute(monkeypatch) -> N
     monkeypatch.setattr("heaviside.catalogue.assemble_bom_from_tas",
                         lambda tas, topology=None, spec=None: result)
 
-    payload = _structured(ms.design_bom(topology="buck", spec={}, tas={}))
+    # A real ConverterSpec, not {}: the tool declares the shape now, so the
+    # test has to build one — which is the point of typing it. `spec={}` used
+    # to be accepted silently and told a caller nothing about what was needed.
+    spec = ms.ConverterSpec(
+        inputVoltage=ms.DimensionWithTolerance(nominal=48.0),
+        efficiency=0.95,
+        operatingPoints=[ms.OperatingPoint(
+            switchingFrequency=300_000, outputVoltages=[12.0], outputCurrents=[5.0])],
+    )
+    payload = _structured(ms.design_bom(topology="buck", spec=spec, tas={}))
 
     assert payload["mode"] == "bom"
     _validate(payload)
