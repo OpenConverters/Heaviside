@@ -82,7 +82,10 @@ REPO_MAP: dict[str, Path] = {
     "ctas": ROOT / "CTAS" / "schemas",
     "aas": ROOT / "AAS" / "schemas",
     "conas": ROOT / "CONAS" / "schemas",
-    "tbas": ROOT / "TBAS" / "schemas",
+    # TBAS was renamed TDAS upstream; the submodule directory moved with it, so
+    # the old key resolved to a path that no longer exists and PEAS's
+    # `psma.com/tdas/` $ref had no entry at all.
+    "tdas": ROOT / "TDAS" / "schemas",
     "tas": ROOT / "TAS" / "schemas",
     "cias": ROOT / "CIAS" / "schemas",
 }
