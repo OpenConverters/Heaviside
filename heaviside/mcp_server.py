@@ -450,16 +450,30 @@ def design_magnetic(topology: str, spec: ConverterSpec, max_results: int = 3,
     meta=UI_RESULTS_META,
     structured_output=False,
 )
-def design_bom(topology: str, spec: dict, tas: dict) -> CallToolResult:
+def design_bom(topology: str, spec: ConverterSpec, tas: dict) -> CallToolResult:
     """A sourced BOM.
 
     Args:
-        tas: the topology document to fill (from Kirchhoff's design_converter, or
-            Heaviside's own pipeline).
+        topology: one of list_topologies() -- 'buck', 'flyback', ...
+        spec: the converter spec, same shape design_magnetic takes. It sets the
+            electrical stresses each line is selected against, so a part chosen
+            without it would be chosen against nothing.
+        tas: the TAS document to fill -- a whole converter design, as returned
+            by kirchhoff__design_converter or by Heaviside's own pipeline. Pass
+            it through UNCHANGED; do not attempt to compose one by hand.
+
+            Deliberately left as an object rather than declared field by field.
+            TAS is an external schema with its own repo and its own governance,
+            and re-declaring its shape here would create a second definition
+            that drifts from the first. A caller never authors this value, it
+            only forwards one, so an inline schema would be documentation for
+            something nobody types.
     """
     from heaviside.catalogue import assemble_bom_from_tas
 
-    result = assemble_bom_from_tas(tas, topology=topology, spec=spec)
+    # The catalogue works in plain dicts; the model is for the INTERFACE.
+    result = assemble_bom_from_tas(tas, topology=topology,
+                                   spec=spec.model_dump(exclude_none=True))
     # EVERY component in the design gets a line, filled or not. Returning only the
     # sourced ones makes a BOM that sourced 1 of 6 read like a complete 1-line BOM —
     # "nothing else needed a part" and "nothing else got one" must not look the same.
