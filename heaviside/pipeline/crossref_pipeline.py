@@ -1273,7 +1273,14 @@ def _extract_value(env: dict[str, Any], category: str) -> float | None:
 
 
 def _extract_package(env: dict[str, Any], category: str) -> str:
-    """Extract package/case string from a TAS envelope."""
+    """Extract package/case string from a TAS envelope.
+
+    Falls back to the part's measured body when it states no case code. A record
+    can carry a full mechanical drawing and no `case` field — every Murata chip
+    bead does — and reporting the package as unknown for a part whose exact
+    2.0 x 1.2 mm body we hold is a field we never read, not something we do not
+    know.
+    """
     try:
         record = _category_record(env, category)
         if record is None:
@@ -1283,9 +1290,15 @@ def _extract_package(env: dict[str, Any], category: str) -> str:
         # chip passives under `case` (EIA "0402"…), analog ICs under `package`
         # (SOIC/TSSOP…). Accept any so the package signal isn't silently empty
         # for one family.
-        return part.get("case") or part.get("caseCode") or part.get("package") or ""
+        stated = part.get("case") or part.get("caseCode") or part.get("package") or ""
+        if stated:
+            return stated
     except (KeyError, TypeError):
         return ""
+    # Read the mechanical drawing DIRECTLY, not via _extract_dimensions: that
+    # function falls back to resolving the case code, which is what called us,
+    # and the pair would recurse until the stack ran out.
+    return _eia_case_from_dims(_mechanical_dimensions(env, category))
 
 
 # Category → path to the manufacturerInfo block inside a TAS envelope.
@@ -1366,6 +1379,69 @@ def _eia_dims_from_case(case: str | None) -> tuple[float, float] | None:
     return None
 
 
+# How far a measured body may sit from the standard footprint and still BE that
+# case. EIA sizes are ~1.6x apart in each dimension, so 12% cannot reach the
+# neighbouring code; it is comfortably wider than the spread between vendors'
+# drawings for one size (a 0805 body is quoted 2.00-2.05 x 1.25-1.30 mm).
+_EIA_DIM_TOLERANCE = 0.12
+
+
+def _eia_case_from_dims(dims: tuple[float, float, float | None] | None) -> str:
+    """The EIA case code a measured body corresponds to, or "".
+
+    Many catalogue records state a full mechanical drawing and no case code —
+    every Murata chip bead, for one, carries length/width/height and a `part`
+    block of just partNumber/family/description. Reporting "package: unknown"
+    for a part whose exact 2.0 x 1.2 mm body we hold is not honest ignorance, it
+    is a field we never looked at (user report). Derived from the measurement,
+    never guessed: a body that matches no standard size returns "".
+    """
+    if not dims:
+        return ""
+    length, width = dims[0], dims[1]
+    if not length or not width:
+        return ""
+    long_side, short_side = max(length, width), min(length, width)
+    for code, (std_l, std_w) in _EIA_CHIP_DIMENSIONS_M.items():
+        if (
+            abs(long_side - std_l) <= std_l * _EIA_DIM_TOLERANCE
+            and abs(short_side - std_w) <= std_w * _EIA_DIM_TOLERANCE
+        ):
+            return code
+    return ""
+
+
+def _mechanical_dimensions(
+    env: dict[str, Any], category: str
+) -> tuple[float, float, float | None] | None:
+    """The part's MEASURED body from its mechanical drawing, or None.
+
+    Split out from :func:`_extract_dimensions` so the package fallback can read a
+    drawing without going through the case-code resolution that calls it back.
+    """
+    try:
+        record = _category_record(env, category)
+        mech = (record or {})["manufacturerInfo"]["datasheetInfo"].get("mechanical") or {}
+    except (KeyError, TypeError):
+        return None
+    if not isinstance(mech, dict):
+        return None
+    length = _dim_value(mech.get("length"))
+    width = _dim_value(mech.get("width"))
+    height = _dim_value(mech.get("height"))
+    nested = mech.get("dimensions")
+    if isinstance(nested, dict):
+        if length is None:
+            length = _dim_value(nested.get("length"))
+        if width is None:
+            width = _dim_value(nested.get("width"))
+        if height is None:
+            height = _dim_value(nested.get("height"))
+    if length is None or width is None:
+        return None
+    return (length, width, height)
+
+
 def _extract_dimensions(
     env: dict[str, Any], category: str
 ) -> tuple[float, float, float | None] | None:
@@ -1377,26 +1453,9 @@ def _extract_dimensions(
     may be None when only a footprint is known. Returns None when nothing is
     available — no fabrication (CLAUDE.md: surface the gap, don't guess).
     """
-    length = width = height = None
-    try:
-        record = _category_record(env, category)
-        mech = (record or {})["manufacturerInfo"]["datasheetInfo"].get("mechanical") or {}
-    except (KeyError, TypeError):
-        mech = {}
-    if isinstance(mech, dict):
-        length = _dim_value(mech.get("length"))
-        width = _dim_value(mech.get("width"))
-        height = _dim_value(mech.get("height"))
-        nested = mech.get("dimensions")
-        if isinstance(nested, dict):
-            if length is None:
-                length = _dim_value(nested.get("length"))
-            if width is None:
-                width = _dim_value(nested.get("width"))
-            if height is None:
-                height = _dim_value(nested.get("height"))
-    if length is not None and width is not None:
-        return (length, width, height)
+    measured = _mechanical_dimensions(env, category)
+    if measured is not None:
+        return measured
     # No mechanical drawing — resolve the case code to a footprint. The
     # category-aware resolver handles chip EIA (imperial+metric), molded
     # tantalum, "DxL" cans, SOT/SOD/TO/DPAK/SOIC packages, and molded power
@@ -3255,7 +3314,10 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
                 "srf": elec.get("selfResonantFrequency"),
                 "dcr": dcr_val,
                 "rated_current": rated_val,
-                "package": part.get("case", ""),
+                # Beads state a mechanical drawing and no case code, so read the
+                # package the same way everything else does rather than the one
+                # field these records happen not to carry.
+                "package": _extract_package(env, "chipBead"),
                 # Qualification grade: substituting a general-grade bead for an
                 # AEC-Q200 one is a silent downgrade of the board's
                 # qualification, and every electrical parameter looks identical
@@ -4822,8 +4884,13 @@ def _fields_from_catalogue(
     if isinstance(volts, (int, float)):
         out["voltage"] = f"{volts:g}V"
     pkg = rec.get("package")
-    if isinstance(pkg, str):
+    if isinstance(pkg, str) and pkg.strip():
         out["package"] = pkg.strip()
+    else:
+        # No case code on the record, but a measured body we can name.
+        env = rec.get("raw_envelope")
+        if isinstance(env, dict):
+            out["package"] = _eia_case_from_dims(_extract_dimensions(env, cat))
     return out
 
 

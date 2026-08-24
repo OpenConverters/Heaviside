@@ -165,6 +165,10 @@ class PrimaryValueSpec:
     # HIGHER/LOWER thresholds (multipliers) for the impedance case
     warn_factor: float = 0.9
     gate_factor: float = 0.8
+    # Directional modes only: the shortfall that still PASSes (1.0 = none).
+    # Without it ANY deficit warned, so a 600 Ω bead offered for a 618 Ω one —
+    # the same 600 Ω-class part — read as "deviates on value".
+    pass_factor: float = 1.0
 
 
 # Defaults are documented engineering windows (manufacturer cross guides;
@@ -188,17 +192,22 @@ PRIMARY_VALUE_SPECS: dict[str, PrimaryValueSpec] = {
         "capacitor", "Capacitance", "F", Mode.RANGE,
         tight_lo=0.90, tight_hi=1.50, accept_lo=0.80, accept_hi=4.00,
     ),
-    # Inductors/transformers: L within ±10 % is a clean match; accept 0.8–1.25×
+    # Inductors/transformers: L within ±15 % is a clean match — inductor
+    # tolerance is typically ±20 %, so a few percent is well inside the band
+    # the board was designed around; accept 0.8–1.25×
     # (Bourns' 10 % + headroom); fail outside — this is the band that turns the
     # 330 nH-for-1.5 µH pick (0.22×) into a hard no_substitute.
     "magnetic": PrimaryValueSpec(
         "magnetic", "Inductance", "H", Mode.RANGE,
-        tight_lo=0.90, tight_hi=1.10, accept_lo=0.80, accept_hi=1.25,
+        tight_lo=0.85, tight_hi=1.15, accept_lo=0.80, accept_hi=1.25,
     ),
-    # Chip beads: impedance @ 100 MHz — more is acceptable, less is not.
+    # Chip beads: impedance @ 100 MHz — more is acceptable, and a shortfall
+    # inside 15 % is still the same part (bead impedance is a ±25 % parameter,
+    # and the two sides are not even measured the same way — a sampled curve
+    # point against a datasheet nominal).
     "chipBead": PrimaryValueSpec(
         "chipBead", "Z@100MHz", "Ω", Mode.HIGHER_BETTER,
-        warn_factor=0.8, gate_factor=0.7,
+        warn_factor=0.8, gate_factor=0.7, pass_factor=0.85,
     ),
 }
 

@@ -264,3 +264,43 @@ class TestRescueGateTraps:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# ── primary-value tolerance: a few percent is not a deviation (ABT #893) ─────
+
+
+class TestPrimaryValueTolerance:
+    """A 600 Ω bead offered for a 618 Ω one is the same 600 Ω-class part. The
+    gate warned on ANY shortfall, so a 3 % difference — much of it an artefact of
+    storing one side as a sampled curve point and the other as a datasheet
+    nominal — read as "deviates on value" and dragged the row to `partial`.
+    A shortfall inside 15 % now passes. The traps must still fire."""
+
+    def _score(self, cat, orig, sub):
+        from heaviside.pipeline._kelvin_primitives import score_primary_value
+
+        return score_primary_value(cat, orig, sub)["verdict"]
+
+    def test_a_small_bead_shortfall_is_a_match(self):
+        assert self._score("chipBead", 618.3, 600.0) == "pass"
+        assert self._score("chipBead", 618.3, 550.0) == "pass"  # -11 %
+
+    def test_a_bead_shortfall_past_the_band_still_warns(self):
+        assert self._score("chipBead", 618.3, 525.0) == "warn"  # -15.1 %
+
+    def test_a_large_bead_shortfall_still_fails(self):
+        assert self._score("chipBead", 618.3, 400.0) == "fail"  # -35 %
+
+    def test_more_impedance_still_passes(self):
+        assert self._score("chipBead", 600.0, 1000.0) == "pass"
+
+    def test_inductance_within_fifteen_percent_is_a_match(self):
+        assert self._score("magnetic", 1.5e-6, 1.30e-6) == "pass"  # -13 %
+
+    def test_the_330nH_for_1uH5_trap_still_fails(self):
+        """The value-gate's founding case must not be softened by the band."""
+        assert self._score("magnetic", 1.5e-6, 330e-9) == "fail"
+
+    def test_resistors_are_untouched(self):
+        """15 % is an inductance/impedance rule. A 47 Ω is not a 39 Ω."""
+        assert self._score("resistor", 47.0, 39.0) == "fail"

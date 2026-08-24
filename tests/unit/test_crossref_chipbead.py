@@ -171,3 +171,47 @@ def test_a_bead_with_a_taping_code_resolves_its_own_dimensions():
         state.candidates_by_ref["FB1"], "chipBead", dims, limit=4
     )
     assert summaries and all(s.get("fits_original") is True for s in summaries)
+
+
+# --- package from the measured body (user report) ---------------------------
+
+
+def test_a_bead_reports_its_package_from_its_own_drawing():
+    """Murata bead records carry a full mechanical drawing and a `part` block of
+    just partNumber/family/description — no case code. The report showed
+    "package: —" for a part whose exact 2.0 x 1.2 mm body we hold, which is a
+    field we never read, not something we do not know."""
+    from heaviside.pipeline.crossref_pipeline import _extract_package
+    from heaviside.pipeline.guardrails import lookup_part_fields
+
+    env = lookup_part_fields("BLM21AG601SN1", "chipBead")["raw_envelope"]
+    assert _extract_package(env, "chipBead") == "0805"
+
+
+def test_the_derived_package_reaches_the_bom_row_and_the_summary():
+    from heaviside.pipeline.crossref_pipeline import _fields_from_catalogue, _summarize_candidate
+    from heaviside.pipeline.guardrails import lookup_part_fields
+
+    assert _fields_from_catalogue("BLM21AG601SN1", "chipBead")["package"] == "0805"
+    env = lookup_part_fields("74279220601", "chipBead")["raw_envelope"]
+    assert _summarize_candidate(env, "chipBead")["package"] == "0805"
+
+
+def test_a_body_matching_no_standard_size_is_left_unknown():
+    """Derived from the measurement, never guessed."""
+    from heaviside.pipeline.crossref_pipeline import _eia_case_from_dims
+
+    assert _eia_case_from_dims((0.0071, 0.0043, None)) == ""
+    assert _eia_case_from_dims(None) == ""
+    assert _eia_case_from_dims((0.002, 0.00125, None)) == "0805"
+
+
+def test_deriving_the_package_does_not_recurse():
+    """_extract_dimensions falls back to resolving the case code, and the case
+    code now falls back to the drawing — the two must not call each other."""
+    from heaviside.pipeline.crossref_pipeline import _extract_dimensions, _extract_package
+    from heaviside.pipeline.guardrails import lookup_part_fields
+
+    env = lookup_part_fields("BLM21AG601SN1", "chipBead")["raw_envelope"]
+    assert _extract_package(env, "chipBead") == "0805"
+    assert _extract_dimensions(env, "chipBead") is not None
