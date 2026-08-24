@@ -49,6 +49,7 @@ from heaviside.report.model import _resolve as resolve_dimensional_value
 from heaviside.pipeline.crossref import (
     CrossRefOutcome,
     CrossRefState,
+    SubstitutionStatus,
 )
 from heaviside.pipeline.scoring import over_dimensioning_penalty
 
@@ -2782,6 +2783,53 @@ def _build_bom_for_llm(state: CrossRefState) -> list[dict[str, Any]]:
     return bom_for_llm
 
 
+def _restore_valid_statuses(state: CrossRefState) -> None:
+    """The LLM must not invent a verdict either — status is a closed contract.
+
+    ``SubstitutionStatus.coerce`` rightly refuses an unknown value, but it runs
+    when the OUTCOME is assembled, at the very end. So a row the cross-referencer
+    marked ``informational`` survived every stage and killed the whole run after
+    all the work was done — with the UI still showing the last stage it had
+    announced, which made it read as a failure in the learn step.
+
+    An invented status is demoted to ``no_substitute``. That is the conservative
+    reading, and — the reason to prefer it over guessing a grade — the
+    RECOVERABLE one: the deterministic rescue and the param check reconsider
+    exactly the rows in that state, so a substitute that genuinely checks out is
+    still promoted, on evidence rather than on the LLM's invented word.
+    """
+    canonical = {m.value for m in SubstitutionStatus}
+    invented: list[str] = []
+    for row in state.crossref_result:
+        raw = row.get("status")
+        try:
+            row["status"] = SubstitutionStatus.coerce(raw).value
+        except ValueError:
+            ref = str(row.get("ref_des") or "?")
+            invented.append(f"{ref}={raw!r}")
+            row["status"] = SubstitutionStatus.NO_SUBSTITUTE.value
+            note = str(row.get("notes") or "").strip()
+            row["notes"] = (
+                f"{note} " if note else ""
+            ) + f"(cross-referencer returned an unrecognised status {raw!r})"
+    if invented:
+        shown = ", ".join(invented[:6])
+        more = f" (+{len(invented) - 6} more)" if len(invented) > 6 else ""
+        logger.warning(
+            "CR: cross-referencer returned %d row(s) with a status outside %s: %s%s "
+            "— demoted to no_substitute",
+            len(invented),
+            sorted(canonical),
+            shown,
+            more,
+        )
+        state.diagnostics.append(
+            f"{len(invented)} row(s) came back with a status the engine does not "
+            f"define ({shown}{more}); demoted to no_substitute so they are graded "
+            f"on evidence instead"
+        )
+
+
 def _restore_component_types(state: CrossRefState, bom_for_llm: list[dict[str, Any]]) -> None:
     """The LLM must not relabel parts: component_type in its output is an echo.
 
@@ -2828,6 +2876,7 @@ def _stage3_crossref(state: CrossRefState) -> CrossRefState:
     _reconcile_crossref_coverage(state, bom_for_llm)
 
     _restore_component_types(state, bom_for_llm)
+    _restore_valid_statuses(state)
 
     logger.info("CR stage 3: crossref produced %d rows", len(state.crossref_result))
     return state
@@ -4591,6 +4640,10 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
                 row["notes"] = fix.get("notes", row.get("notes", ""))
                 corrected_refs.add(ref)
                 break
+
+    # The correction LLM writes a status too, so it gets the same closed-contract
+    # check the first pass gets — an invented verdict must not reach assembly.
+    _restore_valid_statuses(state)
 
     logger.info(
         "CR stage 3b: corrected %d / %d objected components", len(corrected_refs), len(cited_refs)
@@ -6823,6 +6876,12 @@ def run_crossref_pipeline(
     # Deterministic per-parameter rationale (why exact/recommended/partial) for
     # every row, computed from the original-vs-substitute fields already present.
     _annotate_match_detail(state)
+    # Last word on the closed status contract, wherever the value came from —
+    # the first cross-reference, the correction loop, or Otto's re-search, which
+    # each write a status the LLM supplied. Assembly coerces and RAISES on an
+    # unknown one, so without this a single invented verdict discards a complete
+    # run at the final step; here it costs one row a demotion and a diagnostic.
+    _restore_valid_statuses(state)
     _gate_on_evaluability(state)
     outcome = CrossRefOutcome.from_state(state)
     logger.info(

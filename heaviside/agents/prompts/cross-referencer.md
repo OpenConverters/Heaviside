@@ -445,6 +445,13 @@ Use EXACTLY one of these four — no other value is valid:
 - `partial` — meets critical constraints, minor gap flagged
 - `no_substitute` — no candidate found in the internal catalogue
 
+There is no fifth value. If a row is one you want to remark on rather than
+substitute — not populated, out of scope, a note for the engineer — the status is
+`no_substitute` and the remark goes in `notes`. Do not invent a status such as
+`informational`, `n/a` or `review`: the engine's status vocabulary is closed, and
+a row carrying an unrecognised one is demoted to `no_substitute` anyway, losing
+whatever you meant by it.
+
 ## Simulation Stress Data
 
 When `_sim_stress` is provided for a component, it contains the actual
