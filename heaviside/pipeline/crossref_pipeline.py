@@ -43,6 +43,9 @@ from heaviside.agents.llm_call import (
 )
 from heaviside.pipeline import mpn_packaging
 from heaviside.pipeline.case_dimensions import resolve_dimensions
+# The one dimensionWithTolerance resolver, mirroring PEAS::resolve_dimensional_values
+# — never hand-read nominal/minimum/maximum (CLAUDE.md).
+from heaviside.report.model import _resolve as resolve_dimensional_value
 from heaviside.pipeline.crossref import (
     CrossRefOutcome,
     CrossRefState,
@@ -3150,17 +3153,28 @@ def _summarize_candidate(env: dict[str, Any], category: str) -> dict[str, Any]:
             m = env["magnetic"]
             mi = m["manufacturerInfo"]
             elec = (mi["datasheetInfo"]["electrical"] or [{}])[0]
-            dcr = elec.get("dcResistance")
-            dcr_val = dcr.get("nominal") if isinstance(dcr, dict) else dcr
+            # dcResistance is a dimensionWithTolerance and 2 771 of the 3 058
+            # catalogued beads (91 %) carry ONLY `maximum` — reading `nominal`
+            # by hand returned None for all of them, so the DCR check silently
+            # went UNVERIFIED for almost every bead. Use the one resolver
+            # (CLAUDE.md), and prefer the datasheet max, which is what a bead
+            # datasheet actually guarantees.
+            dcr_val = resolve_dimensional_value(elec.get("dcResistance"), prefer="maximum")
             rated = elec.get("ratedCurrents")
             rated_val = rated[0] if isinstance(rated, list) and rated else rated
+            part = mi.get("datasheetInfo", {}).get("part", {}) or {}
             summary = {
                 "mpn": mi.get("reference", "?"),
                 "impedance_100mhz": _chip_bead_impedance_at_100mhz(env),
                 "srf": elec.get("selfResonantFrequency"),
                 "dcr": dcr_val,
                 "rated_current": rated_val,
-                "package": mi.get("datasheetInfo", {}).get("part", {}).get("case", ""),
+                "package": part.get("case", ""),
+                # Qualification grade: substituting a general-grade bead for an
+                # AEC-Q200 one is a silent downgrade of the board's
+                # qualification, and every electrical parameter looks identical
+                # (ABT #884).
+                "automotive": part.get("automotive"),
             }
         except (KeyError, TypeError):
             pass

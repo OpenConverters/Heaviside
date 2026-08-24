@@ -210,6 +210,22 @@ PARAM_SPECS: dict[str, list[ParamSpec]] = {
         ParamSpec("srf", "SRF", "Hz", HIGHER_BETTER, 0.8),
         ParamSpec("dcr", "DCR", "Ω", LOWER_BETTER, 1.3),
         ParamSpec("rated_current", "Irms", "A", HIGHER_BETTER, 0.9),
+        # Qualification grade (ABT #884). Two beads can agree on every
+        # electrical parameter above and still not be interchangeable: an
+        # AEC-Q200 part and a general-grade one differ in qualification, not in
+        # physics, and grade is often the whole reason a specific part is on the
+        # BOM. A downgrade FAILs; an unknown grade on the substitute demotes to
+        # `partial` rather than passing silently, because "we could not check
+        # the board's qualification" is not a drop-in.
+        ParamSpec(
+            "automotive",
+            "Automotive (AEC-Q200)",
+            "",
+            CLASS_MATCH,
+            0.0,
+            class_rank={"true": 1, "false": 0},
+            unverified_demotes=True,
+        ),
     ],
     # Connectors: substitution is dominated by IDENTITY parameters, not
     # ratings — a connector either mates/fits or it does not. Family, contact

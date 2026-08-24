@@ -137,3 +137,47 @@ def test_worst_verdict_ordering():
     assert worst_verdict([{"verdict": PASS}, {"verdict": WARN}, {"verdict": FAIL}]) == FAIL
     assert worst_verdict([{"verdict": PASS}, {"verdict": UNVERIFIED}]) == UNVERIFIED
     assert worst_verdict([{"verdict": PASS}]) == PASS
+
+
+# ── qualification grade (ABT #884) ───────────────────────────────────────────
+
+
+def _bead(**over):
+    base = {"mpn": "X", "impedance_100mhz": 600.0, "dcr": 0.2, "rated_current": 0.7}
+    base.update(over)
+    return base
+
+
+def _automotive_verdict(orig, sub):
+    from heaviside.pipeline.param_check import evaluate_params
+
+    got = [r for r in evaluate_params("chipBead", orig, sub) if r["name"] == "automotive"]
+    return got[0] if got else None
+
+
+def test_an_aec_qualified_bead_may_not_be_replaced_by_a_general_grade_one():
+    """The two parts agree on every electrical parameter — impedance, DCR and
+    current are identical — and differ only in qualification. Before ABT #884
+    the field was null for all 3 058 catalogued beads, so this swap passed
+    silently and quietly downgraded the board's qualification."""
+    got = _automotive_verdict(_bead(automotive=True), _bead(automotive=False))
+    assert got is not None and got["verdict"] == "fail"
+
+
+def test_an_equally_qualified_substitute_passes():
+    got = _automotive_verdict(_bead(automotive=True), _bead(automotive=True))
+    assert got["verdict"] == "pass"
+
+
+def test_an_upgrade_to_an_aec_part_is_not_penalised():
+    """A general-grade original replaced by a qualified part is fine."""
+    got = _automotive_verdict(_bead(automotive=False), _bead(automotive=True))
+    assert got["verdict"] == "pass"
+
+
+def test_an_unknown_grade_demotes_rather_than_passing():
+    """"We could not check the board's qualification" is not a drop-in, so the
+    parameter is marked critical and the row demotes instead of going quiet."""
+    got = _automotive_verdict(_bead(automotive=True), _bead())
+    assert got["verdict"] == "unverified"
+    assert got["critical"] is True
