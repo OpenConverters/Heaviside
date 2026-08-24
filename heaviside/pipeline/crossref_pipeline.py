@@ -4148,11 +4148,7 @@ def _infer_component_type(row: dict[str, Any]) -> str:
     # Read ALL free-text columns (any "desc"-named column, plus jedec/value), so
     # the type signal isn't missed when it lives in a secondary column the main
     # description doesn't carry (e.g. LumiQuote's "Description (IPN)").
-    text = " ".join(
-        str(v)
-        for k, v in row.items()
-        if v and ("desc" in k.lower() or k in ("jedec_type", "value"))
-    ).upper()
+    text = _row_free_text(row, extra=("value",)).upper()
     # Does the part declare an inductance (henries)? Used to disambiguate a
     # ferrite *bead* (rated in ohms at 100 MHz) from a ferrite-core *inductor*.
     _has_inductance = any(
@@ -4304,6 +4300,28 @@ def _package_from_description(desc: str) -> str | None:
     return m.group(1) if m else None
 
 
+# Columns whose contents are free text describing the part, beyond the ones
+# whose NAME contains "desc". `series` earned its place the hard way: the BOM
+# behind ABT #872 carried a "Series" column reading "CAP CER 1UF 16V X5R 0402" —
+# the category, value, voltage, dielectric and package, all of it — and the
+# engine ignored every word because the column was not called "description",
+# then reported no_substitute for a part the file had fully specified.
+_FREE_TEXT_COLUMNS = ("notes", "jedec_type", "series", "comment", "remarks")
+
+
+def _row_free_text(row: dict[str, Any], extra: tuple[str, ...] = ()) -> str:
+    """Every free-text column of a BOM row, joined.
+
+    Any column whose name contains "desc" counts (LumiQuote ships both
+    "Description (Part)" and "Description (IPN)", and the type or value signal
+    can be in either), plus the named ones above.
+    """
+    keys = _FREE_TEXT_COLUMNS + extra
+    return " ".join(
+        str(v) for k, v in row.items() if v and ("desc" in k.lower() or k in keys)
+    )
+
+
 def _resolve_row_category(row: dict[str, Any]) -> str:
     """The CR category for a BOM row: its type column normalised through the
     alias table, else inferred from its description, else asked of the
@@ -4403,11 +4421,7 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # "Description (IPN)" carries "50H 100MHZ" when the main "Description
         # (Part)" only says "Ferrite Chip, 3A, 2 Pin"). Any column whose name
         # contains "desc" (plus notes) contributes.
-        desc_text = " ".join(
-            str(v)
-            for k, v in row.items()
-            if v and ("desc" in k.lower() or k in ("notes", "jedec_type"))
-        )
+        desc_text = _row_free_text(row)
         # No value column — recover the part's declared value from its
         # description so ranking can value-filter candidates (else the LLM
         # sees the first 50 unranked parts and matches nothing). This runs
@@ -4450,10 +4464,11 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
             pkg = _package_from_description(desc_text)
             if pkg:
                 row["package"] = pkg
-        # Extract rated_voltage from notes if not explicitly set
+        # Rated voltage, from any free-text column rather than `notes` alone —
+        # a BOM that writes "CAP CER 1UF 16V X5R 0402" has stated it, and the
+        # voltage gate should not have to go to the catalogue to learn it.
         if not row.get("rated_voltage") and not row.get("voltage"):
-            notes = str(row.get("notes", ""))
-            v_match = _re.search(r"(\d+\.?\d*)\s*V\b", notes)
+            v_match = _re.search(r"(\d+\.?\d*)\s*V\b", desc_text)
             if v_match:
                 row["rated_voltage"] = v_match.group(0)
         out.append(row)

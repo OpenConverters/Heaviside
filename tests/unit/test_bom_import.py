@@ -205,3 +205,57 @@ def test_canon_header_preserves_punctuation_aliases():
     assert _canon_header("mfr part #") == "original_mpn"
     assert _canon_header("Offered MPN*") == "original_mpn"
     assert _canon_header("Supplier Manufacturer Part Number") == "original_mpn"
+
+
+# ── free-text columns that are not called "description" (ABT #872) ───────────
+
+
+def test_a_series_column_describing_the_part_is_read():
+    """The BOM behind the 0/7 report carried a "Series" column reading
+    "CAP CER 1UF 16V X5R 0402" — category, value, voltage, dielectric and
+    package, all stated — and the engine ignored every word because the column
+    was not named "description", then reported no_substitute for a part the file
+    had fully specified."""
+    from heaviside.pipeline.crossref_pipeline import _normalize_bom
+
+    row = _normalize_bom(
+        [{"original_mpn": "NOT-IN-ANY-CATALOGUE", "series": "CAP CER 10UF 25V X7R 0805"}]
+    )[0]
+    assert row["component_type"] == "capacitor"
+    assert row["value"] == "10uF"
+    assert row["package"] == "0805"
+    assert row["rated_voltage"] == "25V"
+
+
+def test_free_text_classification_works_across_categories():
+    from heaviside.pipeline.crossref_pipeline import _normalize_bom
+
+    cases = {
+        "FERRITE BEAD 600 OHM 100MHZ 0805": "chipBead",
+        "RES 10K 1% 0603": "resistor",
+        "IND 4.7UH SHIELDED": "magnetic",
+    }
+    for text, expected in cases.items():
+        row = _normalize_bom([{"original_mpn": "NOT-IN-ANY-CATALOGUE", "series": text}])[0]
+        assert row.get("component_type") == expected, text
+
+
+def test_a_series_column_that_describes_nothing_is_harmless():
+    """Most BOMs put a bare family code in Series. It must not invent a type."""
+    from heaviside.pipeline.crossref_pipeline import _normalize_bom
+
+    row = _normalize_bom([{"original_mpn": "NOT-IN-ANY-CATALOGUE", "series": "GRM"}])[0]
+    assert not row.get("component_type")
+    assert not row.get("value")
+
+
+def test_the_bom_s_own_words_outrank_the_catalogue():
+    """A description-derived value is the engineer's stated requirement and is
+    kept exactly as written, not overwritten by our record of the part."""
+    from heaviside.pipeline.crossref_pipeline import _normalize_bom
+
+    row = _normalize_bom(
+        [{"original_mpn": "BLM21AG601SN1", "series": "FERRITE BEAD 600 OHM 100MHZ"}]
+    )[0]
+    assert row["component_type"] == "chipBead"
+    assert row["value"] == "600"  # not the catalogue's curve-sampled 618.3Ω

@@ -74,13 +74,13 @@ def main() -> int:
     if args.list or not (args.job or args.name):
         cur.execute(
             """
-            SELECT id, created_at, input_file_name,
+            SELECT job_id, submitted_at, input_file_name,
                    octet_length(input_file_data),
                    CASE WHEN input_bom IS NULL THEN NULL
                         ELSE jsonb_array_length(input_bom) END
             FROM heaviside_telemetry.events
             WHERE input_file_name IS NOT NULL
-            ORDER BY created_at DESC LIMIT %s
+            ORDER BY submitted_at DESC LIMIT %s
             """,
             (args.limit,),
         )
@@ -93,16 +93,16 @@ def main() -> int:
         return 0
 
     if args.job:
-        where, param = "CAST(id AS TEXT) LIKE %s", f"{args.job}%"
+        where, param = "CAST(job_id AS TEXT) LIKE %s", f"{args.job}%"
     else:
         where, param = "input_file_name ILIKE %s", f"%{args.name}%"
 
     cur.execute(
         f"""
-        SELECT id, created_at, input_file_name, input_file_data
+        SELECT job_id, submitted_at, input_file_name, input_file_data
         FROM heaviside_telemetry.events
         WHERE {where} AND input_file_data IS NOT NULL
-        ORDER BY created_at DESC LIMIT 1
+        ORDER BY submitted_at DESC LIMIT 1
         """,
         (param,),
     )
