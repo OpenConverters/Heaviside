@@ -31,6 +31,7 @@ Adapted to use ``heaviside.catalogue._reader`` and
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -114,7 +115,12 @@ def lookup_part_fields(
     return _lookup_tas_part(part_number, component_kind, tas_data_dir=tas_data_dir)
 
 
-def lookup_mpn_category(part_number: str, *, tas_data_dir: Path | None = None) -> str | None:
+def lookup_mpn_category(
+    part_number: str,
+    *,
+    tas_data_dir: Path | None = None,
+    only_kinds: set[str] | None = None,
+) -> str | None:
     """Authoritative CR category for an MPN, from the internal catalogue.
 
     Returns the canonical category of the catalogue file the MPN is indexed
@@ -126,24 +132,24 @@ def lookup_mpn_category(part_number: str, *, tas_data_dir: Path | None = None) -
     file alone is not the answer for it: a bead reported as ``magnetic`` gets
     cross-referenced against power inductors (ABT #874). The record's electrical
     subtype refines it.
+
+    ``only_kinds`` restricts the search to those categories. An MPN that resolves
+    NOWHERE indexes every catalogue file looking for it — several GB of
+    envelopes, enough to OOM the prod box — so a caller that already knows which
+    files could possibly have gained the part (the librarian just wrote one)
+    must say so instead of sweeping the whole catalogue again.
     """
     if not part_number or not part_number.strip():
         return None
     root = tas_data_dir or _TAS_DATA_DEFAULT
     mpn_l = part_number.strip().lower()
     for fname, kind in _TAS_FILE_TO_KIND.items():
+        if only_kinds is not None and kind not in only_kinds:
+            continue
         path = root / fname
         if not path.is_file():
             continue
-        # Exact first, and only pay for the derived indexes on a miss — building
-        # them for every file on every lookup would index the whole catalogue to
-        # answer a question the exact index already answered.
-        index = _tas_file_index(path)
-        record = index.get(mpn_l)
-        if record is None:
-            record = mpn_packaging.resolve(
-                mpn_l, index, _tas_base_index(path), _tas_squashed_index(path)
-            )
+        record = _resolve_with_variants(mpn_l, path, _tas_file_index(path))
         if record is None:
             continue
         if kind == "magnetic" and record.get("subtype") == "chipBead":
@@ -152,8 +158,10 @@ def lookup_mpn_category(part_number: str, *, tas_data_dir: Path | None = None) -
     return None
 
 
-def catalogue_records_with_prefix(stem: str, *, limit: int = 8) -> list[dict]:
-    """Catalogue records whose MPN begins with ``stem`` (separator-insensitive).
+def catalogue_records_with_prefix(
+    stem: str, *, limit: int = 8, tas_data_dir: Path | None = None
+) -> list[dict]:
+    """Catalogue records whose MPN begins with ``stem``.
 
     Answers "is this a truncated part number?" for a row that resolved to
     nothing — ``BLM21AG601S`` is a real stem shared by BLM21AG601SH1 / SN1 /
@@ -161,24 +169,78 @@ def catalogue_records_with_prefix(stem: str, *, limit: int = 8) -> list[dict]:
     not just MPNs, so the caller can also say what actually DIFFERS between the
     completions.
 
-    Scans only indexes ALREADY built and cached. An MPN that failed to resolve
-    has, by then, been looked for in every catalogue file, so they are all
-    cached — and a diagnostic must never be the thing that pays to index a
-    600 MB file.
+    STREAMS the catalogue rather than indexing it. The index-based version of
+    this OOM-killed prod: an unresolvable stem is by definition not in any file,
+    so populating the indexes to search them meant building a full MPN index for
+    every catalogue file — including a 486 MB connectors table — to phrase a
+    diagnostic. Reading line by line is O(1) memory, and the cheap substring
+    pre-filter means only candidate lines are ever parsed.
     """
     key = mpn_packaging.squashed(stem).lower()
     if not key or len(key) < 4:
         return []
+    root = tas_data_dir or _TAS_DATA_DEFAULT
+    needle = key.encode()
     found: dict[str, dict] = {}
-    for index in list(_TAS_INDEX_CACHE.values()):
-        for mpn, record in index.items():
-            if mpn == key or mpn in found:
-                continue
-            if mpn_packaging.squashed(mpn).lower().startswith(key):
-                found[mpn] = record
-                if len(found) > limit:
-                    return [found[k] for k in sorted(found)]
+    for fname in _TAS_FILE_TO_KIND:
+        path = root / fname
+        if not path.is_file():
+            continue
+        try:
+            with open(path, "rb") as fh:
+                for raw in fh:
+                    # Pre-filter on the raw bytes: the overwhelming majority of
+                    # lines cannot match, and json.loads is what costs.
+                    if needle not in raw.lower():
+                        continue
+                    try:
+                        env = json.loads(raw.decode("utf-8", "replace"))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    for record in _flat_records_in(env):
+                        mpn = str(record.get("mpn") or "")
+                        low = mpn_packaging.squashed(mpn).lower()
+                        if low == key or low in found or not low.startswith(key):
+                            continue
+                        found[low] = record
+                        if len(found) > limit:
+                            return [found[k] for k in sorted(found)]
+        except OSError:
+            continue
     return [found[k] for k in sorted(found)]
+
+
+def _flat_records_in(env: dict):
+    """Every (mpn-carrying) flat record in one catalogue envelope."""
+    for top_key in (
+        "capacitor",
+        "semiconductor",
+        "resistor",
+        "magnetics",
+        "magnetic",
+        "connector",
+        "analog",
+        "timeBase",
+    ):
+        sub = env.get(top_key)
+        if not isinstance(sub, dict):
+            continue
+        inner_keys = (
+            tuple(sub.keys()) if top_key in ("analog", "timeBase") else (None, "mosfet", "diode", "igbt")
+        )
+        for inner_key in inner_keys:
+            record = sub if inner_key is None else sub.get(inner_key)
+            if not isinstance(record, dict):
+                continue
+            mi = record.get("manufacturerInfo")
+            if not isinstance(mi, dict):
+                continue
+            part = (mi.get("datasheetInfo") or {}).get("part") or {}
+            ref = mi.get("reference") or part.get("partNumber")
+            if isinstance(ref, str) and ref.strip():
+                flat = _flat_record_from_env(env, mi)
+                flat["mpn"] = ref.strip()
+                yield flat
 
 
 def _flat_record_from_env(env: dict, mi: dict) -> dict:
@@ -298,6 +360,34 @@ def _tas_base_index(path: Path) -> dict[str, dict]:
     return cached
 
 
+def _has_variant_spelling(mpn: str) -> bool:
+    """Whether an MPN could match a catalogue entry under a DIFFERENT spelling.
+
+    The derived (packaging-base / separator-squashed) indexes hold an entry per
+    catalogue MPN, so building them costs real memory on a 600 MB file — and for
+    an MPN with no packaging code and no punctuation there is nothing they could
+    resolve that the exact index did not. Prod is memory-tight enough to OOM on a
+    catalogue-wide sweep, so the pathological case (a bare unresolvable stem
+    consulting every file) must not pay for indexes that cannot help it."""
+    key = str(mpn or "").strip().lower()
+    if not key:
+        return False
+    return mpn_packaging.packaging_base(key) is not None or mpn_packaging.squashed(key).lower() != key
+
+
+def _resolve_with_variants(mpn: str, path: Path, index: dict[str, dict]) -> dict | None:
+    """Exact hit, else a packaging/separator variant — building the derived
+    indexes only when one could actually match."""
+    hit = index.get(mpn)
+    if hit is not None:
+        return hit
+    if not _has_variant_spelling(mpn):
+        # The catalogue could still hold a punctuated spelling of a bare query,
+        # which only the squashed index sees; that is one derived index, not two.
+        return _tas_squashed_index(path).get(mpn)
+    return mpn_packaging.resolve(mpn, index, _tas_base_index(path), _tas_squashed_index(path))
+
+
 def _tas_squashed_index(path: Path) -> dict[str, dict]:
     """Separator-squashed MPN → record index for a catalogue file (ABT #878),
     cached alongside the exact index it is derived from."""
@@ -342,12 +432,7 @@ def _lookup_tas_part(
         # Packaging-suffix aware (ABT #137): the BOM lists the base orderable
         # MPN while the catalogue stores the reeled variant (XGL5050-153ME vs
         # -153MEC). Exact hits still win, so no MPN that resolves today moves.
-        index = _tas_file_index(path)
-        hit = index.get(mpn_l)
-        if hit is None:
-            hit = mpn_packaging.resolve(
-                mpn_l, index, _tas_base_index(path), _tas_squashed_index(path)
-            )
+        hit = _resolve_with_variants(mpn_l, path, _tas_file_index(path))
         if hit is not None:
             result = hit
             break

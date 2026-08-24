@@ -133,9 +133,10 @@ class CrossRefState:
     # prefetch (the librarian classifies a bare MPN from the distributor's
     # taxonomy). They carry no candidates until they are prefetched again.
     late_classified_refs: set[str] = field(default_factory=set)
-    # True once the librarian has persisted a newly-sourced original into the
-    # catalogue: rows that did not resolve before may resolve now.
-    catalogue_updated: bool = False
+    # CR categories the librarian has persisted a newly-sourced original into.
+    # Rows that did not resolve before may resolve now — but ONLY in these
+    # categories, and re-asking the whole catalogue costs GB of index.
+    catalogue_updated_kinds: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True, slots=True)

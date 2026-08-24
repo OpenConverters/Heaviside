@@ -759,13 +759,17 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
             add_component(db_cat_or_reason, env)
             fetched += 1
             touched_files = True
+            # Record WHICH category gained a part. Stage 1.7 re-asks the
+            # catalogue about still-unresolved rows, and asking it about
+            # everything indexes every file — GB of envelopes.
+            state.catalogue_updated_kinds.add(cat)
             logger.info("CR stage 1.6: fetched + persisted original %s (%s)", mpn, cat)
         except DuplicateComponentError:
             touched_files = True  # already there now — still refresh caches
+            state.catalogue_updated_kinds.add(cat)
         except Exception as exc:
             logger.warning("CR stage 1.6: persist of original %s failed: %s", mpn, exc)
 
-    state.catalogue_updated = state.catalogue_updated or touched_files
     if touched_files:
         # The newly-appended originals must be visible to the param-check /
         # guardrail lookups this run: drop the stale per-file indexes so they
@@ -813,17 +817,21 @@ def _stage1_7_reprefetch_late(state: CrossRefState) -> CrossRefState:
     # Stage 1.6 may have persisted originals the catalogue did not have when
     # _normalize_bom asked it. Ask again for every still-uncategorised row: the
     # part just persisted also answers for a differently-punctuated spelling of
-    # itself (EMK105BJ105KVF once EMK105BJ105KV-F is in). Gated on something
-    # actually having been written — re-asking otherwise would rebuild every
-    # catalogue index for rows that are still going to resolve to nothing.
-    if state.catalogue_updated:
+    # itself (EMK105BJ105KVF once EMK105BJ105KV-F is in).
+    #
+    # Scoped to the categories that actually GAINED a part. An MPN that resolves
+    # nowhere indexes every catalogue file looking for it, and a second such
+    # sweep in one process OOM-killed the prod box (7.9 GB) on this very BOM:
+    # the only file that could have changed was capacitors, and re-asking about
+    # connectors and resistors bought nothing but memory.
+    if state.catalogue_updated_kinds:
         for comp in state.source_bom:
             if comp.get("component_type"):
                 continue
             mpn = str(comp.get("original_mpn") or comp.get("part") or "").strip()
             if not mpn:
                 continue
-            cat = lookup_mpn_category(mpn)
+            cat = lookup_mpn_category(mpn, only_kinds=state.catalogue_updated_kinds)
             if not cat:
                 continue
             comp["component_type"] = cat
@@ -921,7 +929,7 @@ def _stage1_8_explain_unresolved(state: CrossRefState) -> CrossRefState:
     different parts. Guessing one would be fabricating the engineer's intent, so
     the ambiguity is reported instead (ABT #878).
     """
-    from heaviside.pipeline.guardrails import catalogue_records_with_prefix, lookup_mpn_category
+    from heaviside.pipeline.guardrails import catalogue_records_with_prefix
 
     seen: set[str] = set()
     for comp in state.source_bom:
@@ -931,11 +939,6 @@ def _stage1_8_explain_unresolved(state: CrossRefState) -> CrossRefState:
         if not mpn or mpn.lower() in seen or mpn.lower() in ("nc", "dnp", "n/a"):
             continue
         seen.add(mpn.lower())
-        # Populate the MPN indexes the prefix scan reads. They may have been
-        # dropped since _normalize_bom asked (stage 1.6 clears them after
-        # persisting an original), and the prefix scan deliberately refuses to
-        # build a 600 MB index just to phrase a diagnostic.
-        lookup_mpn_category(mpn)
         records = catalogue_records_with_prefix(mpn)
         if len(records) < 2:
             continue
