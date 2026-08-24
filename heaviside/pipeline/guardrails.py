@@ -645,8 +645,18 @@ def _mpn_exists_in_tas(
 ) -> bool:
     """Return True if *mpn* appears in any TAS NDJSON file.
 
-    Checks all component kinds (capacitor, resistor, magnetics, etc.)
-    via cheap substring search before falling back to structured lookup.
+    Checks all component kinds (capacitor, resistor, magnetics, etc.), so a
+    valid substitute of a kind without its own lookup table — an IGBT, a
+    thermistor — is not mistaken for a hallucination.
+
+    Reads the LIGHT index. This is a boolean question, and answering it from the
+    record index meant loading the full envelope of every part in every file the
+    glob reaches — which includes circuits.ndjson at 1.2 GB and
+    quarantine.ndjson, neither of them a part catalogue. The result exceeded the
+    index memory budget, so the guard evicted and the next check rebuilt it, and
+    G5 runs once per substitute: three correction rounds of that turned a review
+    into 59 minutes of thrash on prod (ABT #886). Same files, same answer, a
+    fraction of the memory.
     """
     root = tas_data_dir or _TAS_DATA_DEFAULT
     if not root.is_dir():
@@ -654,10 +664,8 @@ def _mpn_exists_in_tas(
     if not mpn or not mpn.strip():
         return False
 
-    # Use the per-file MPN index (built once, cached) so checking N substitutes
-    # is O(total catalogue) rather than re-reading every NDJSON file per MPN.
     mpn_l = mpn.strip().lower()
-    return any(mpn_l in _tas_file_index(ndjson_file) for ndjson_file in root.glob("*.ndjson"))
+    return any(mpn_l in _tas_kind_index(f) for f in sorted(root.glob("*.ndjson")))
 
 
 # ---------------------------------------------------------------------------

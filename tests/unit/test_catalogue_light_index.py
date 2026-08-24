@@ -182,3 +182,43 @@ def test_an_mpn_the_catalogue_lacks_is_simply_absent(catalogue):
 def test_empty_request_is_a_no_op(catalogue):
     assert g.lookup_part_fields_bulk({}) == {}
     assert g.lookup_part_fields_bulk({"chipBead": set()}) == {}
+
+
+# ── G5's existence check (ABT #886, the 59-minute review) ────────────────────
+
+
+def test_the_hallucination_check_uses_the_light_index(catalogue):
+    """G5 asks "does this MPN exist anywhere in TAS?" once per substitute. It
+    answered from the RECORD index, which meant loading the full envelope of
+    every part in every file the glob reaches — including circuits.ndjson at
+    1.2 GB, which contains no parts at all. That exceeded the memory budget, so
+    the guard evicted and the next check rebuilt: three correction rounds turned
+    a review into 59 minutes of thrash."""
+    assert g._mpn_exists_in_tas("742792040", tas_data_dir=catalogue) is True
+    assert g._mpn_exists_in_tas("EMK105BJ105KV-F", tas_data_dir=catalogue) is True
+    assert g._mpn_exists_in_tas("NOSUCHPART-9999", tas_data_dir=catalogue) is False
+    assert not g._TAS_INDEX_CACHE, "an existence check must not index whole envelopes"
+
+
+def test_the_existence_check_still_spans_every_kind(catalogue, tmp_path):
+    """It globs every NDJSON on purpose: a valid substitute of a kind with no
+    lookup table of its own must not read as a hallucination."""
+    import json as _json
+
+    (catalogue / "igbts.ndjson").write_text(
+        _json.dumps(
+            {
+                "semiconductor": {
+                    "igbt": {
+                        "manufacturerInfo": {
+                            "name": "Infineon",
+                            "reference": "IKW40N120H3",
+                            "datasheetInfo": {"part": {"partNumber": "IKW40N120H3"}},
+                        }
+                    }
+                }
+            }
+        )
+    )
+    g._TAS_KIND_INDEX_CACHE.clear()
+    assert g._mpn_exists_in_tas("IKW40N120H3", tas_data_dir=catalogue) is True
