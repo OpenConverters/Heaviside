@@ -695,6 +695,18 @@ def _extract_digikey_params(source: str, mpn: str, product: dict[str, Any]) -> d
         value = entry.get("Value")
         if isinstance(name, str) and isinstance(value, str):
             params[name] = value
+    # Digi-Key publishes Category/Family/Series as TOP-LEVEL objects, not as
+    # entries in Parameters — while the converters look them up by name in
+    # params. Without this every capacitor original failed to source with
+    # "distributor payload lacks Family/Series parameter" (the chemistry enum
+    # is resolved from Family). Surfaced under their own names, and only when a
+    # real Parameters entry has not already claimed the name.
+    for key in ("Category", "Family", "Series"):
+        if key in params:
+            continue
+        value = (product.get(key) or {}).get("Value") if isinstance(product.get(key), dict) else None
+        if isinstance(value, str) and value.strip():
+            params[key] = value
     return params
 
 
@@ -1721,6 +1733,149 @@ DIGIKEY_MAGNETIC_PARAM_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ("Self-Resonant Frequency", "Hz"),
     ),
 }
+
+
+# A chip bead is NOT an inductor: it has no inductance, and its defining spec is
+# the impedance magnitude at a stated frequency. Sourcing one through the
+# inductor converter therefore always failed on a required 'electrical.inductance'
+# that no bead datasheet publishes (ABT #876), so it gets its own parameter map.
+DIGIKEY_CHIP_BEAD_PARAM_MAP: dict[str, tuple[tuple[str, str], ...]] = {
+    "impedance": (("Impedance @ Frequency", "Ω"),),
+    "dcResistance": (
+        ("DC Resistance (DCR) (Max)", "Ω"),
+        ("DC Resistance (DCR)", "Ω"),
+        ("DCR (Max)", "Ω"),
+    ),
+    "ratedCurrent": (
+        ("Current Rating (Max)", "A"),
+        ("Current Rating (Amps)", "A"),
+        ("Current Rating", "A"),
+    ),
+}
+
+
+def _parse_impedance_at_frequency(source: str, mpn: str, raw: str) -> tuple[float, float]:
+    """Split a distributor "600 Ohms @ 100 MHz" into ``(ohms, hertz)``.
+
+    Both halves must be present: a bead's impedance is meaningless without the
+    frequency it was measured at, so a value with no ``@`` raises rather than
+    defaulting the frequency to 100 MHz (which would silently mis-rank every
+    bead specified at 10 MHz or 1 GHz)."""
+    left, sep, right = raw.partition("@")
+    if not sep or not right.strip():
+        raise IncompleteSourceError(
+            source,
+            mpn,
+            "electrical.impedancePoints",
+            detail=(
+                f"impedance {raw!r} carries no '@ frequency' — a bead impedance "
+                f"without its measurement frequency cannot be compared"
+            ),
+        )
+    try:
+        return parse_si_value(left), parse_si_value(right)
+    except ValueError as exc:
+        raise IncompleteSourceError(
+            source,
+            mpn,
+            "electrical.impedancePoints",
+            detail=f"unparseable impedance/frequency {raw!r}: {exc}",
+        ) from exc
+
+
+def convert_digikey_to_tas_chip_bead(
+    product: dict[str, Any],
+    *,
+    distributor: str = "Digi-Key",
+) -> dict[str, Any]:
+    """Convert a Digi-Key ferrite-bead payload into a TAS ``{"magnetic": {...}}``
+    envelope carrying a ``chipBead`` electrical entry.
+
+    Required parameters: impedance @ frequency, dcResistance.
+    Optional: ratedCurrent.
+    """
+    source = "digikey"
+    mpn = _mpn_or_raise(source, product)
+    manufacturer = _digikey_manufacturer(source, mpn, product)
+    params = _extract_digikey_params(source, mpn, product)
+    status = _digikey_lifecycle_status(product)
+
+    looked = _lookup_param(params, DIGIKEY_CHIP_BEAD_PARAM_MAP["impedance"])
+    if looked is None:
+        raise IncompleteSourceError(
+            source,
+            mpn,
+            "electrical.impedancePoints",
+            detail=(
+                "no Digi-Key parameter matched any of: "
+                + ", ".join(repr(n) for n, _ in DIGIKEY_CHIP_BEAD_PARAM_MAP["impedance"])
+            ),
+        )
+    impedance_ohm, impedance_hz = _parse_impedance_at_frequency(source, mpn, looked[0])
+
+    dcr = _extract_required_numeric(
+        source=source,
+        mpn=mpn,
+        params=params,
+        field="dcResistance",
+        candidates=DIGIKEY_CHIP_BEAD_PARAM_MAP["dcResistance"],
+    )
+    rated_current = _extract_optional_numeric(
+        params=params,
+        candidates=DIGIKEY_CHIP_BEAD_PARAM_MAP["ratedCurrent"],
+    )
+
+    # A bead ARRAY (4 lines in one package) is a different part from a single
+    # bead — one impedance/DCR pair cannot describe it, and silently modelling it
+    # as a single bead would let it substitute for one. Refuse it instead.
+    lines_raw = params.get("Number of Lines", "1")
+    try:
+        lines = int(float(lines_raw))
+    except (TypeError, ValueError):
+        lines = 1
+    if lines > 1:
+        raise IncompleteSourceError(
+            source,
+            mpn,
+            "electrical",
+            detail=(
+                f"bead array with {lines} lines — a per-element impedance/DCR "
+                f"table is needed and Digi-Key publishes only aggregate values"
+            ),
+        )
+
+    electrical_item: dict[str, Any] = {
+        "subtype": "chipBead",
+        "dcResistance": {"maximum": dcr},
+        "impedancePoints": [
+            {"frequency": impedance_hz, "impedance": {"magnitude": impedance_ohm}}
+        ],
+    }
+    if rated_current is not None:
+        electrical_item["ratedCurrents"] = [rated_current]
+
+    case = params.get("Package / Case") or params.get("Supplier Device Package")
+    return {
+        "magnetic": {
+            "manufacturerInfo": {
+                "name": manufacturer,
+                "reference": mpn,
+                **({"status": status} if status is not None else {}),
+                "datasheetUrl": product.get("PrimaryDatasheet") or "",
+                "datasheetInfo": {
+                    "part": {
+                        "partNumber": mpn,
+                        "description": _digikey_description(product),
+                        **({"caseCode": case} if case else {}),
+                    },
+                    "electrical": [electrical_item],
+                },
+            },
+            "distributorsInfo": [
+                _digikey_distributor_block(source, mpn, product, distributor)
+            ],
+        },
+    }
 
 
 def _build_magnetic_envelope(

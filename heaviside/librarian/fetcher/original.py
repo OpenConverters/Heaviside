@@ -71,6 +71,9 @@ _CATEGORY_TO_DB: dict[str, str] = {
     "mosfet": "mosfets",
     "igbt": "igbts",
     "magnetic": "magnetics",
+    # Chip beads share the magnetics catalogue file with inductors and
+    # transformers; they are told apart by their electrical subtype.
+    "chipBead": "magnetics",
     "connector": "connectors",
     "timeBase": "timing_devices",
 }
@@ -121,7 +124,10 @@ _DK_CATEGORY_RULES: list[tuple[str, str]] = [
     ("resonator", "timeBase"),
     ("capacitor", "capacitor"),
     ("resistor", "resistor"),
-    ("ferrite bead", "magnetic"),
+    # Beads before inductors: Digi-Key's bead family reads "Ferrite Beads and
+    # Chips", and a bead filed as a generic magnetic gets cross-referenced
+    # against power inductors (ABT #874).
+    ("ferrite bead", "chipBead"),
     ("inductor", "magnetic"),
     ("choke", "magnetic"),
     ("transformer", "magnetic"),
@@ -338,6 +344,7 @@ def _converter_for(category: str) -> Callable[[dict[str, Any]], dict[str, Any] |
         "mosfet": C.convert_digikey_to_tas_mosfet,
         "igbt": C.convert_digikey_to_tas_igbt,
         "magnetic": C.convert_digikey_to_tas_magnetic,
+        "chipBead": C.convert_digikey_to_tas_chip_bead,
     }
     if category in simple:
         return simple[category]

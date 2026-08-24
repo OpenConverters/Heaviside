@@ -129,6 +129,13 @@ class CrossRefState:
     passed: bool = False
     stress_by_ref: dict[str, SimDerivedStress] = field(default_factory=dict)
     diagnostics: list[str] = field(default_factory=list)
+    # Refs whose component_type was resolved AFTER the stage-1 candidate
+    # prefetch (the librarian classifies a bare MPN from the distributor's
+    # taxonomy). They carry no candidates until they are prefetched again.
+    late_classified_refs: set[str] = field(default_factory=set)
+    # True once the librarian has persisted a newly-sourced original into the
+    # catalogue: rows that did not resolve before may resolve now.
+    catalogue_updated: bool = False
 
 
 @dataclass(frozen=True, slots=True)

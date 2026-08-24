@@ -1,4 +1,4 @@
-"""Packaging-suffix aware MPN resolution (ABT #137).
+"""Packaging-suffix and separator aware MPN resolution (ABT #137, #878).
 
 A customer BOM lists the base orderable part number (Coilcraft
 ``XGL5050-153ME``) while the catalogue stores the reeled variant
@@ -18,9 +18,22 @@ Two safety properties, both tested:
   every MPN that resolves today keeps resolving to the same record.
 * **Ambiguity poisons.** If two distinct catalogue MPNs reduce to the same base
   and their records are not the same part, the base is dropped rather than
-  guessed. (Measured over the shipped catalogue — 84 642 magnetics + 257 460
-  capacitors — the rules below produce 3 725 bases and zero such collisions;
-  the guard is insurance against future data, not a live workaround.)
+  guessed. (Re-measured over the shipped catalogue — 82 507 magnetics + 253 830
+  capacitors — the rules below produce 563 bases and zero such collisions; the
+  guard is insurance against future data, not a live workaround. Squashing over
+  the same corpus drops 249 of ~336 000 keys as ambiguous, i.e. 0.07 % refused
+  rather than guessed.)
+
+The same two properties extend to SEPARATORS. Engineers retype and re-wrap part
+numbers, so one BOM carried the same Murata bead as ``BLM21AG601SN1D``,
+``BLM-21A-G601SN1D``, ``BLM21/AG6/01SN1D`` and ``BLM21-AG601/SN1D`` — four
+spellings of one part, none of which matched the catalogue. Punctuation in an
+MPN is presentational (``EMK105BJ105KV-F`` and ``EMK105BJ105KVF`` are the same
+orderable part), so a squashed form is tried after the exact and packaging
+forms. Squashing NEVER removes an alphanumeric character, and a squashed key
+reached by two catalogue records that are not the same part is dropped — the
+identical poisoning rule. This is deliberately deterministic: the catalogue
+answers, rather than an LLM being asked to guess what the engineer meant.
 """
 
 from __future__ import annotations
@@ -47,6 +60,16 @@ _PACKAGING_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "murata",
         re.compile(r"^(?:GRM|GCM|GRT|GCJ|GCG|GJ8|KRM|KCM)[0-9A-Z]{6,}[DLWKJEN]$"),
     ),
+    # Murata EMI-suppression chip beads (BLM/BLE/BLA): the BOM carries the
+    # orderable number BLM21AG601SN1D, the catalogue the base BLM21AG601SN1 —
+    # the trailing letter is the taping code. The character before it must be a
+    # DIGIT: every base in these families ends in the internal-code digit
+    # (…SN1 / …SZ1 / …SH1 / …SN4), so requiring a digit keeps families whose
+    # base genuinely ends in a letter (BLF02GD162GNE) out of reach.
+    (
+        "murata-chip-bead",
+        re.compile(r"^(?:BLM|BLE|BLA)[0-9A-Z]{6,}[0-9][DLWKJEN]$"),
+    ),
 )
 
 
@@ -63,6 +86,21 @@ def packaging_base(mpn: str) -> str | None:
         if pattern.match(upper):
             return upper[:-1]
     return None
+
+
+# Punctuation an engineer's transcription can introduce or drop without naming a
+# different part. Alphanumerics are never removed.
+_SEPARATORS = re.compile(r"[-/\\.,_ |()\[\]]+")
+
+
+def squashed(mpn: str) -> str:
+    """The MPN with presentational punctuation removed, upper-cased.
+
+    ``BLM-21A-G601SN1D`` and ``BLM21/AG6/01SN1D`` both squash to
+    ``BLM21AG601SN1D``. Returns "" when nothing alphanumeric is left."""
+    if not mpn:
+        return ""
+    return _SEPARATORS.sub("", str(mpn).strip().upper())
 
 
 def _same_part(a: Any, b: Any) -> bool:
@@ -101,11 +139,37 @@ def build_base_index(exact_index: dict[str, Any]) -> dict[str, Any]:
     return base_index
 
 
-def resolve(mpn: str, exact_index: dict[str, Any], base_index: dict[str, Any]) -> Any | None:
-    """Look an MPN up allowing a packaging-suffix difference in EITHER direction.
+def build_squashed_index(exact_index: dict[str, Any]) -> dict[str, Any]:
+    """Map separator-squashed MPN → record, for every catalogue entry whose MPN
+    changes shape when punctuation is removed OR that could be reached by a
+    differently-punctuated BOM spelling. Keys reached by two records that are
+    not the same part are dropped (never guessed)."""
+    squashed_index: dict[str, Any] = {}
+    poisoned: set[str] = set()
+    for mpn, record in exact_index.items():
+        key = squashed(mpn).lower()
+        if not key or key in poisoned:
+            continue
+        seen = squashed_index.get(key)
+        if seen is None:
+            squashed_index[key] = record
+        elif not _same_part(seen, record):
+            del squashed_index[key]
+            poisoned.add(key)
+    return squashed_index
 
-    Order is deliberate: an exact hit always wins, so this can only ever add
-    resolutions, never change an existing one."""
+
+def resolve(
+    mpn: str,
+    exact_index: dict[str, Any],
+    base_index: dict[str, Any],
+    squashed_index: dict[str, Any] | None = None,
+) -> Any | None:
+    """Look an MPN up allowing a packaging-suffix or separator difference.
+
+    Order is deliberate: an exact hit always wins, then a packaging-suffix one,
+    and a squashed (punctuation-insensitive) match is the last resort — so this
+    can only ever add resolutions, never change an existing one."""
     if not mpn:
         return None
     key = str(mpn).strip().lower()
@@ -119,7 +183,26 @@ def resolve(mpn: str, exact_index: dict[str, Any], base_index: dict[str, Any]) -
         if hit is not None:
             return hit
     # BOM carries the base, catalogue stores the reeled variant.
-    return base_index.get(key)
+    hit = base_index.get(key)
+    if hit is not None:
+        return hit
+    if squashed_index is None:
+        return None
+    # Punctuation differs (BLM-21A-G601SN1D vs BLM21AG601SN1D). Try the squashed
+    # spelling, then the squashed spelling minus its packaging code.
+    squashed_key = squashed(key).lower()
+    if squashed_key and squashed_key != key:
+        hit = exact_index.get(squashed_key) or squashed_index.get(squashed_key)
+        if hit is not None:
+            return hit
+    else:
+        hit = squashed_index.get(squashed_key)
+        if hit is not None:
+            return hit
+    squashed_base = packaging_base(squashed_key)
+    if squashed_base is not None:
+        return exact_index.get(squashed_base.lower()) or squashed_index.get(squashed_base.lower())
+    return None
 
 
 def expand_wanted(mpns: Iterable[str]) -> dict[str, str]:

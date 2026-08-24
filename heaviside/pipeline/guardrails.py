@@ -59,14 +59,16 @@ _TAS_LOOKUP_CACHE: dict[tuple[str, str, str], dict | None] = {}
 # each previously scanning the whole 50 MB magnetics.ndjson) take ~20 min.
 _TAS_INDEX_CACHE: dict[str, dict[str, dict]] = {}
 _TAS_BASE_INDEX_CACHE: dict[str, dict[str, dict]] = {}
+_TAS_SQUASHED_INDEX_CACHE: dict[str, dict[str, dict]] = {}
 
-# Register both caches with the shared memory guard so a large crossref can't
+# Register every cache with the shared memory guard so a large crossref can't
 # grow them past the RSS budget and OOM a shared host (index_budget).
 try:
     from heaviside.pipeline.index_budget import register_cache as _register_cache
 
     _register_cache(_TAS_INDEX_CACHE)
     _register_cache(_TAS_BASE_INDEX_CACHE)
+    _register_cache(_TAS_SQUASHED_INDEX_CACHE)
     _register_cache(_TAS_LOOKUP_CACHE)
 except Exception:  # pragma: no cover - guard is best-effort
     pass
@@ -119,6 +121,11 @@ def lookup_mpn_category(part_number: str, *, tas_data_dir: Path | None = None) -
     in, or ``None`` when the part is not catalogued. Used to classify BOM rows
     that carry only a part number — the catalogue answers instead of an LLM
     guessing from the MPN's shape.
+
+    The magnetics file holds inductors, transformers AND chip beads, so the
+    file alone is not the answer for it: a bead reported as ``magnetic`` gets
+    cross-referenced against power inductors (ABT #874). The record's electrical
+    subtype refines it.
     """
     if not part_number or not part_number.strip():
         return None
@@ -128,9 +135,48 @@ def lookup_mpn_category(part_number: str, *, tas_data_dir: Path | None = None) -
         path = root / fname
         if not path.is_file():
             continue
-        if _tas_file_index(path).get(mpn_l) is not None:
-            return kind
+        # Exact first, and only pay for the derived indexes on a miss — building
+        # them for every file on every lookup would index the whole catalogue to
+        # answer a question the exact index already answered.
+        index = _tas_file_index(path)
+        record = index.get(mpn_l)
+        if record is None:
+            record = mpn_packaging.resolve(
+                mpn_l, index, _tas_base_index(path), _tas_squashed_index(path)
+            )
+        if record is None:
+            continue
+        if kind == "magnetic" and record.get("subtype") == "chipBead":
+            return "chipBead"
+        return kind
     return None
+
+
+def catalogue_mpns_with_prefix(stem: str, *, limit: int = 8) -> list[str]:
+    """Catalogue MPNs that begin with ``stem`` (separator-insensitive).
+
+    Answers "is this a truncated part number?" for a row that resolved to
+    nothing — ``BLM21AG601S`` is a real stem shared by BLM21AG601SH1 / SN1 /
+    SZ1, and saying so beats an unexplained no_substitute (ABT #878).
+
+    Scans only indexes ALREADY built and cached. An MPN that failed to resolve
+    has, by then, been looked for in every catalogue file, so they are all
+    cached — and a diagnostic must never be the thing that pays to index a
+    600 MB file.
+    """
+    key = mpn_packaging.squashed(stem).lower()
+    if not key or len(key) < 4:
+        return []
+    found: set[str] = set()
+    for index in list(_TAS_INDEX_CACHE.values()):
+        for mpn, record in index.items():
+            if mpn == key:
+                continue
+            if mpn_packaging.squashed(mpn).lower().startswith(key):
+                found.add(record.get("mpn") or mpn)
+                if len(found) > limit:
+                    return sorted(found)
+    return sorted(found)
 
 
 def _flat_record_from_env(env: dict, mi: dict) -> dict:
@@ -157,6 +203,9 @@ def _flat_record_from_env(env: dict, mi: dict) -> dict:
         "voltage": elec.get("ratedVoltage"),
         "resistance_Ohm": res_val,
         "inductance": ind_val,
+        # Magnetics share one catalogue file across inductors, transformers,
+        # chip beads and cable cores; the subtype is what tells them apart.
+        "subtype": elec.get("subtype"),
         "package": part_info.get("caseCode") or part_info.get("case") or part_info.get("package"),
         "manufacturer": mi.get("name"),
         "family": mi.get("family") or part_info.get("series"),
@@ -223,7 +272,14 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
                 part = (mi.get("datasheetInfo") or {}).get("part") or {}
                 for ref in (mi.get("reference"), part.get("partNumber")):
                     if isinstance(ref, str) and ref.strip():
-                        index.setdefault(ref.strip().lower(), _flat_record_from_env(env, mi))
+                        key = ref.strip().lower()
+                        if key not in index:
+                            flat = _flat_record_from_env(env, mi)
+                            # The catalogue's own spelling of this MPN. The key is
+                            # lower-cased for matching, so anything that shows an
+                            # MPN to a user must read it from here instead.
+                            flat["mpn"] = ref.strip()
+                            index[key] = flat
     # Only reached after the FULL scan succeeds — never cache a partial index.
     _TAS_INDEX_CACHE[str(path)] = index
     return index
@@ -237,6 +293,17 @@ def _tas_base_index(path: Path) -> dict[str, dict]:
     if cached is None:
         cached = mpn_packaging.build_base_index(exact)
         _TAS_BASE_INDEX_CACHE[str(path)] = cached
+    return cached
+
+
+def _tas_squashed_index(path: Path) -> dict[str, dict]:
+    """Separator-squashed MPN → record index for a catalogue file (ABT #878),
+    cached alongside the exact index it is derived from."""
+    exact = _tas_file_index(path)   # first: an eviction here must not be masked
+    cached = _TAS_SQUASHED_INDEX_CACHE.get(str(path))
+    if cached is None:
+        cached = mpn_packaging.build_squashed_index(exact)
+        _TAS_SQUASHED_INDEX_CACHE[str(path)] = cached
     return cached
 
 
@@ -274,7 +341,11 @@ def _lookup_tas_part(
         # MPN while the catalogue stores the reeled variant (XGL5050-153ME vs
         # -153MEC). Exact hits still win, so no MPN that resolves today moves.
         index = _tas_file_index(path)
-        hit = mpn_packaging.resolve(mpn_l, index, _tas_base_index(path))
+        hit = index.get(mpn_l)
+        if hit is None:
+            hit = mpn_packaging.resolve(
+                mpn_l, index, _tas_base_index(path), _tas_squashed_index(path)
+            )
         if hit is not None:
             result = hit
             break

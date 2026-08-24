@@ -85,14 +85,28 @@ class CrossRefPipelineError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
+def _stage1_prefetch(state: CrossRefState, only_refs: set[str] | None = None) -> CrossRefState:
     """For each BOM row, query TAS for candidates from the target manufacturer.
 
     Scans each NDJSON file at most once, building a per-category
     manufacturer cache. This avoids the O(n_components × n_rows)
     trap when multiple BOM rows share a category.
+
+    ``only_refs`` restricts the work to those refs, leaving every other row's
+    candidates untouched. Used to prefetch rows the librarian categorised after
+    this stage first ran — without it they keep the empty candidate list the
+    first pass gave them and reach the cross-referencer with nothing to pick
+    from (ABT #872).
     """
     from heaviside.catalogue._reader import CatalogueReadError, iter_envelopes
+
+    target_rows = [
+        c
+        for c in state.source_bom
+        if only_refs is None or c.get("ref_des", c.get("name", "?")) in only_refs
+    ]
+    if not target_rows:
+        return state
 
     tas_dir = Path(
         os.environ.get(
@@ -118,7 +132,7 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
 
     # Which categories does the BOM actually need?
     needed_cats: set[str] = set()
-    for comp in state.source_bom:
+    for comp in target_rows:
         cat = comp.get("component_type", comp.get("category", ""))
         if cat in category_files:
             needed_cats.add(cat)
@@ -127,7 +141,7 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
     # manufacturer), so the footprint-fit ranking knows the board space the
     # substitute must fit into. Keyed (cat, normalized-mpn).
     source_mpn_by_cat: dict[str, set[str]] = {}
-    for comp in state.source_bom:
+    for comp in target_rows:
         cat = comp.get("component_type", comp.get("category", ""))
         mpn = str(comp.get("original_mpn", "")).strip().lower()
         if cat in category_files and mpn:
@@ -168,7 +182,7 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
     # envelope's mechanical drawing, fall back to the BOM-declared case code.
     # When nothing is known, surface it (CLAUDE.md: no silent fallback) — the
     # fit ranking simply can't be enforced for that row.
-    for comp in state.source_bom:
+    for comp in target_rows:
         cat = comp.get("component_type", comp.get("category", ""))
         mpn = str(comp.get("original_mpn", "")).strip().lower()
         dims = None
@@ -192,7 +206,7 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
     # exclude them from the diagnostic (they were flooding it with crystals).
     no_dims = [
         c.get("original_mpn") or c.get("ref_des", "?")
-        for c in state.source_bom
+        for c in target_rows
         if c.get("component_type")
         and c.get("component_type") not in _IDENTITY_MATCHED_CATEGORIES
         and c.get("_source_dims_m") is None
@@ -206,7 +220,7 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
         )
 
     # Assign candidates per BOM row, ranked by relevance
-    for comp in state.source_bom:
+    for comp in target_rows:
         ref = comp.get("ref_des", comp.get("name", "?"))
         cat = comp.get("component_type", comp.get("category", ""))
         all_candidates = mfr_cache.get(cat, [])
@@ -221,7 +235,8 @@ def _stage1_prefetch(state: CrossRefState) -> CrossRefState:
 
     total = sum(len(v) for v in state.candidates_by_ref.values())
     logger.info(
-        "CR stage 1: prefetched %d candidates across %d components",
+        "CR stage 1%s: prefetched %d candidates across %d components",
+        " (re-prefetch)" if only_refs is not None else "",
         total,
         len(state.candidates_by_ref),
     )
@@ -623,6 +638,26 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
         state.diagnostics.append(f"original fetch skipped (Digi-Key not configured): {exc}")
         return state
 
+    # Prove the distributor is actually usable BEFORE looping over parts. A dead
+    # refresh token surfaced only as a per-part "could not classify bare MPN X"
+    # at INFO level — seven of those on prod, and nothing anywhere told the user
+    # the librarian was offline for the whole run (ABT #875). One credential
+    # probe turns that into one honest, visible diagnostic.
+    try:
+        dk.get_access_token()
+    except Exception as exc:
+        logger.error(
+            "CR stage 1.6: Digi-Key authentication failed (%s) — the librarian "
+            "cannot classify or source ANY original this run",
+            exc,
+        )
+        state.diagnostics.append(
+            f"Digi-Key is unusable this run ({type(exc).__name__}: {str(exc)[:200]}) — "
+            f"no unknown original could be sourced or classified from the distributor. "
+            f"Rows the internal DB does not already know will report no_substitute."
+        )
+        return state
+
     # Products fetched here, keyed by mpn_lower, so the classify pass and the
     # source pass don't hit Digi-Key twice for the same part.
     product_cache: dict[str, dict[str, Any] | None] = {}
@@ -657,10 +692,14 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
             if not cat:
                 logger.info("CR stage 1.6: could not classify bare MPN %s from Digi-Key", mpn)
                 continue
-            # Stamp the category on every row that shares this MPN.
+            # Stamp the category on every row that shares this MPN, and record
+            # it: stage 1 already ran, so these rows still hold the empty
+            # candidate list it gave an uncategorised row and must be
+            # prefetched again before the cross-referencer sees them (#872).
             for c in state.source_bom:
                 if _row_mpn(c).lower() == mpn.lower() and not c.get("component_type"):
                     c["component_type"] = cat
+                    state.late_classified_refs.add(c.get("ref_des", c.get("name", "?")))
             # Not already in the internal DB (uncategorised → definitionally not
             # resolvable), so queue for sourcing.
             wanted[(cat, mpn.lower())] = mpn
@@ -694,6 +733,7 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
         except Exception as exc:
             logger.warning("CR stage 1.6: persist of original %s failed: %s", mpn, exc)
 
+    state.catalogue_updated = state.catalogue_updated or touched_files
     if touched_files:
         # The newly-appended originals must be visible to the param-check /
         # guardrail lookups this run: drop the stale per-file indexes so they
@@ -706,6 +746,7 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
             # the base index is DERIVED from the exact one — clearing one
             # without the other would resolve against an evicted catalogue
             _g._TAS_BASE_INDEX_CACHE.clear()
+            _g._TAS_SQUASHED_INDEX_CACHE.clear()
             _g._TAS_LOOKUP_CACHE.clear()
             _ms._MPN_ENV_INDEX_CACHE.clear()
         except Exception:
@@ -714,6 +755,168 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
     if wanted:
         logger.info(
             "CR stage 1.6: sourced %d/%d unknown originals from Digi-Key", fetched, len(wanted)
+        )
+    return state
+
+
+def _stage1_7_reprefetch_late(state: CrossRefState) -> CrossRefState:
+    """Prefetch candidates for rows the librarian categorised after stage 1.
+
+    Stage 1 keys the candidate prefetch off ``component_type``; a row that
+    arrives uncategorised gets an empty list. Stage 1.6 then resolves the
+    category from the distributor's taxonomy — but nothing re-ran the prefetch,
+    so those rows reached the cross-referencer with no candidates at all and
+    came back ``no_substitute`` with "no candidate list provided". That is
+    ABT #872: a whole BOM could report 0 % coverage while the catalogue held
+    hundreds of valid parts.
+
+    Also backfills each such row's value/package from the catalogue (stage 1.6
+    may have just persisted its original), so the candidates come back RANKED
+    by value instead of in arbitrary catalogue order.
+    """
+    from heaviside.pipeline.guardrails import lookup_mpn_category
+
+    refs = {r for r in state.late_classified_refs if r}
+
+    # Stage 1.6 may have persisted originals the catalogue did not have when
+    # _normalize_bom asked it. Ask again for every still-uncategorised row: the
+    # part just persisted also answers for a differently-punctuated spelling of
+    # itself (EMK105BJ105KVF once EMK105BJ105KV-F is in). Gated on something
+    # actually having been written — re-asking otherwise would rebuild every
+    # catalogue index for rows that are still going to resolve to nothing.
+    if state.catalogue_updated:
+        for comp in state.source_bom:
+            if comp.get("component_type"):
+                continue
+            mpn = str(comp.get("original_mpn") or comp.get("part") or "").strip()
+            if not mpn:
+                continue
+            cat = lookup_mpn_category(mpn)
+            if not cat:
+                continue
+            comp["component_type"] = cat
+            ref = comp.get("ref_des", comp.get("name", "?"))
+            refs.add(ref)
+            logger.info(
+                "CR stage 1.7: %s (%s) resolved from the catalogue after the "
+                "librarian persisted a new original",
+                ref,
+                mpn,
+            )
+
+    if not refs:
+        return state
+
+    for comp in state.source_bom:
+        ref = comp.get("ref_des", comp.get("name", "?"))
+        if ref not in refs:
+            continue
+        cat = comp.get("component_type", "")
+        mpn = str(comp.get("original_mpn") or "")
+        if not cat or not mpn:
+            continue
+        db = _fields_from_catalogue(mpn, cat)
+        if db is None:
+            continue
+        if not comp.get("value") and db["value"]:
+            comp["value"] = db["value"]  # already display-formatted
+        if not comp.get("package") and db["package"]:
+            comp["package"] = db["package"]
+        if not comp.get("rated_voltage") and db["voltage"]:
+            comp["rated_voltage"] = db["voltage"]
+
+    logger.info(
+        "CR stage 1.7: re-prefetching candidates for %d late-classified row(s): %s",
+        len(refs),
+        ", ".join(sorted(refs)[:8]),
+    )
+    state = _stage1_prefetch(state, only_refs=refs)
+
+    still_empty = sorted(r for r in refs if not state.candidates_by_ref.get(r))
+    if still_empty:
+        state.diagnostics.append(
+            f"{len(still_empty)} row(s) categorised by the librarian still have no "
+            f"{state.target_manufacturer} candidates in the internal DB: "
+            + ", ".join(still_empty[:8])
+        )
+    return state
+
+
+def _gate_on_evaluability(state: CrossRefState) -> None:
+    """A cross-reference that never EVALUATED a row cannot report PASS.
+
+    Job 1b73eec81dbd shipped "PASS → Würth Elektronik" at 0/7 coverage: every
+    row came back ``no_substitute`` because the cross-referencer had been handed
+    an empty candidate list, so the engine made no engineering judgement about
+    any part and said so nowhere the user could see (ABT #879). PASS has to mean
+    "we looked and this is the answer", not "we could not look".
+
+    A row with NO candidates and NO pick is the signal. A row that was judged
+    against a real candidate list — including one honestly judged
+    unsubstitutable — is a legitimate answer, as is a part kept as-is (its
+    substitute equals its original), and neither fails the run.
+    """
+    considered = [row for row in state.crossref_result if row.get("ref_des")]
+    if not considered:
+        return
+    blind = [
+        row
+        for row in considered
+        if not state.candidates_by_ref.get(row.get("ref_des", ""))
+        and not row.get("substitute_pn")
+    ]
+    if len(blind) < len(considered):
+        return
+
+    refs = ", ".join(str(r.get("ref_des")) for r in blind[:8])
+    more = f" (+{len(blind) - 8} more)" if len(blind) > 8 else ""
+    reason = (
+        f"no candidates were available for any of the {len(blind)} substitutable "
+        f"row(s) ({refs}{more}), so no substitution was actually evaluated — "
+        f"reporting this as a failure rather than a pass"
+    )
+    logger.warning("CR evaluability gate: %s", reason)
+    state.diagnostics.append(reason)
+    state.passed = False
+
+
+def _stage1_8_explain_unresolved(state: CrossRefState) -> CrossRefState:
+    """Say WHY a row could not be identified, instead of letting it fall through
+    to an unexplained ``no_substitute``.
+
+    The commonest cause is a truncated part number: a BOM carrying
+    ``BLM21AG601S`` names a stem shared by BLM21AG601SH1 / SN1 / SZ1, which are
+    different parts. Guessing one would be fabricating the engineer's intent, so
+    the ambiguity is reported instead (ABT #878).
+    """
+    from heaviside.pipeline.guardrails import catalogue_mpns_with_prefix, lookup_mpn_category
+
+    seen: set[str] = set()
+    for comp in state.source_bom:
+        if comp.get("component_type"):
+            continue
+        mpn = str(comp.get("original_mpn") or comp.get("part") or "").strip()
+        if not mpn or mpn.lower() in seen or mpn.lower() in ("nc", "dnp", "n/a"):
+            continue
+        seen.add(mpn.lower())
+        # Populate the MPN indexes the prefix scan reads. They may have been
+        # dropped since _normalize_bom asked (stage 1.6 clears them after
+        # persisting an original), and the prefix scan deliberately refuses to
+        # build a 600 MB index just to phrase a diagnostic.
+        lookup_mpn_category(mpn)
+        matches = catalogue_mpns_with_prefix(mpn)
+        if len(matches) < 2:
+            continue
+        shown = ", ".join(matches[:4])
+        more = f" (+{len(matches) - 4} more)" if len(matches) > 4 else ""
+        state.diagnostics.append(
+            f"{mpn!r} did not resolve, but is the leading part of "
+            f"{len(matches)} catalogue part numbers ({shown}{more}) — it looks "
+            f"truncated. The full part number is needed to cross-reference it."
+        )
+        comp["_unresolved_reason"] = (
+            f"truncated/ambiguous part number: matches {len(matches)} catalogue "
+            f"parts ({shown}{more})"
         )
     return state
 
@@ -893,14 +1096,29 @@ def _extract_manufacturer(env: dict[str, Any], category: str) -> str | None:
 
 
 def _envelope_reference(env: dict[str, Any], category: str) -> str | None:
-    """Extract the part reference (MPN) from a TAS envelope."""
+    """Extract the part reference (MPN) from a TAS envelope.
+
+    Reads ``manufacturerInfo.reference`` first, then ``datasheetInfo.part.
+    partNumber``. Both are needed: 39 657 shipped records (35 966 capacitors,
+    3 243 resistors, 448 magnetics — TDK, Taiyo Yuden, Samsung, KEMET, YAGEO,
+    Murata) carry their MPN ONLY in ``part.partNumber`` and leave ``reference``
+    empty. The guardrail index has always keyed on both; reading only
+    ``reference`` here made those parts anonymous to the crossref pipeline, so
+    the two paths disagreed about what a part's MPN is (ABT #877)."""
     record = _category_record(env, category)
     if record is None:
         return None
     mi = record.get("manufacturerInfo")
-    if isinstance(mi, dict):
-        ref = mi.get("reference")
-        return ref if isinstance(ref, str) else None
+    if not isinstance(mi, dict):
+        return None
+    ref = mi.get("reference")
+    if isinstance(ref, str) and ref.strip():
+        return ref
+    part = (mi.get("datasheetInfo") or {}).get("part")
+    if isinstance(part, dict):
+        pn = part.get("partNumber")
+        if isinstance(pn, str) and pn.strip():
+            return pn
     return None
 
 
@@ -3624,8 +3842,16 @@ def _latest_ray_verdict(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
 
 _CATEGORY_ALIASES = {
     "inductor": "magnetic",
-    "ferrite_bead": "magnetic",
     "transformer": "magnetic",
+    # A ferrite bead is a chipBead, not a generic magnetic — routing it to
+    # "magnetic" offered power inductors as substitutes (ABT #874).
+    "ferrite_bead": "chipBead",
+    "ferrite bead": "chipBead",
+    "ferritebead": "chipBead",
+    "bead": "chipBead",
+    "chip_bead": "chipBead",
+    "chip bead": "chipBead",
+    "chipbead": "chipBead",
     "opamp": "analog",
     "op_amp": "analog",
     "op-amp": "analog",
@@ -3945,6 +4171,29 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
             row["component_type"] = cat
         else:
             row.pop("component_type", None)  # drop a bogus package-code value
+        # All free-text columns combined, so value/package recovery doesn't miss
+        # data that lives in a secondary description column (e.g. LumiQuote's
+        # "Description (IPN)" carries "50H 100MHZ" when the main "Description
+        # (Part)" only says "Ferrite Chip, 3A, 2 Pin"). Any column whose name
+        # contains "desc" (plus notes) contributes.
+        desc_text = " ".join(
+            str(v)
+            for k, v in row.items()
+            if v and ("desc" in k.lower() or k in ("notes", "jedec_type"))
+        )
+        # No value column — recover the part's declared value from its
+        # description so ranking can value-filter candidates (else the LLM
+        # sees the first 50 unranked parts and matches nothing). This runs
+        # BEFORE the catalogue backfill below: the BOM's own description is the
+        # engineer's stated requirement and outranks our record of the part
+        # (which, for a bead, is a sampled point off an impedance curve — 53.1 Ω
+        # where the engineer wrote 50 Ω).
+        value_from_desc = False
+        if cat and not row.get("value"):
+            ev = _value_from_description(desc_text, cat)
+            if ev:
+                row["value"] = ev
+                value_from_desc = True
         # Backfill missing value/package/voltage from the catalogue record of
         # the original MPN. A bare-MPN row otherwise reaches candidate ranking
         # with no value — the value filter can't run, the LLM picks from
@@ -3959,27 +4208,12 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     row["package"] = db["package"]
                 if not row.get("rated_voltage") and db["voltage"]:
                     row["rated_voltage"] = db["voltage"]
-        # All free-text columns combined, so value/package recovery doesn't miss
-        # data that lives in a secondary description column (e.g. LumiQuote's
-        # "Description (IPN)" carries "50H 100MHZ" when the main "Description
-        # (Part)" only says "Ferrite Chip, 3A, 2 Pin"). Any column whose name
-        # contains "desc" (plus notes) contributes.
-        desc_text = " ".join(
-            str(v)
-            for k, v in row.items()
-            if v and ("desc" in k.lower() or k in ("notes", "jedec_type"))
-        )
-        # Convert raw SI values to human-readable for the LLM
+        # Convert raw SI values to human-readable for the LLM. A
+        # description-derived value is already in the engineer's own units and
+        # is left exactly as written.
         val = row.get("value", "")
-        if val and cat:
+        if val and cat and not value_from_desc:
             row["value"] = _humanize_value(val, cat)
-        elif not val and cat:
-            # No value column — recover the part's declared value from its
-            # description so ranking can value-filter candidates (else the LLM
-            # sees the first 50 unranked parts and matches nothing).
-            ev = _value_from_description(desc_text, cat)
-            if ev:
-                row["value"] = ev
         # No package column — recover a chip case code from the description so
         # footprint-fit has a source size (and stops warning on every row).
         if not row.get("package"):
@@ -4269,7 +4503,11 @@ _VALUE_FIELD_BY_CAT = {
     "resistor": "resistance_Ohm",
     "magnetic": "inductance",
     "inductor": "inductance",
-    "chipBead": "inductance",
+    # NOT "inductance": a chip bead has none, and asking for one left every bead
+    # row with a blank value — so ranking fell back to arbitrary catalogue order.
+    # Its defining value is the impedance magnitude at 100 MHz, in ohms, which is
+    # read off the impedance curve rather than a flat field (see below).
+    "chipBead": None,
 }
 
 
@@ -4283,8 +4521,12 @@ def _fields_from_catalogue(mpn: str, cat: str) -> dict[str, str] | None:
     if not rec:
         return None
     out = {"value": "", "voltage": "", "package": ""}
-    value_field = _VALUE_FIELD_BY_CAT.get(cat)
-    raw = rec.get(value_field) if value_field else None
+    if cat == "chipBead":
+        env = rec.get("raw_envelope")
+        raw = _chip_bead_impedance_at_100mhz(env) if isinstance(env, dict) else None
+    else:
+        value_field = _VALUE_FIELD_BY_CAT.get(cat)
+        raw = rec.get(value_field) if value_field else None
     if isinstance(raw, (int, float)):
         out["value"] = _humanize_value(str(raw), cat)
     volts = rec.get("voltage")
@@ -6313,6 +6555,9 @@ def run_crossref_pipeline(
     state = _stage1_5_librarian(state)
     _say("Librarian: fetching unknown originals from Digi-Key", 22)
     state = _stage1_6_fetch_originals(state)
+    _say("Prefetching candidates for newly categorised components", 26)
+    state = _stage1_7_reprefetch_late(state)
+    state = _stage1_8_explain_unresolved(state)
     _say("Pre-classifying each component by category", 28)
     state = _stage2_preclassify(state)
     _say(f"Cross-referencing to {target_manufacturer} (LLM picks equivalents)", 38)
@@ -6391,6 +6636,7 @@ def run_crossref_pipeline(
     # Deterministic per-parameter rationale (why exact/recommended/partial) for
     # every row, computed from the original-vs-substitute fields already present.
     _annotate_match_detail(state)
+    _gate_on_evaluability(state)
     outcome = CrossRefOutcome.from_state(state)
     logger.info(
         "CR pipeline %s: %d components, %s → %s",

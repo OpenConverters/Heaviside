@@ -13,11 +13,12 @@ from __future__ import annotations
 
 from heaviside.pipeline.mpn_packaging import (
     build_base_index,
+    build_squashed_index,
     expand_wanted,
     packaging_base,
     resolve,
+    squashed,
 )
-
 
 # ── what a packaging suffix is (and is not) ──────────────────────────────────
 
@@ -105,3 +106,88 @@ def test_a_miss_stays_a_miss():
 
 def test_expand_wanted_maps_record_bases_back_to_the_wanted_mpn():
     assert expand_wanted({"xgl5050-153mec", "7440320015"}) == {"xgl5050-153me": "xgl5050-153mec"}
+
+
+# ── Murata chip beads (ABT #873) ─────────────────────────────────────────────
+
+def test_murata_chip_bead_taping_letter_is_a_packaging_suffix():
+    """The customer BOM carries the orderable BLM21AG601SN1D; the catalogue
+    stores the base BLM21AG601SN1. Verified against Digi-Key, which lists the
+    ...D and has no ...SN1 — the trailing letter is the taping code."""
+    assert packaging_base("BLM21AG601SN1D") == "BLM21AG601SN1"
+    assert packaging_base("BLM31KN601SZ1K") == "BLM31KN601SZ1"
+    assert packaging_base("BLM41PG102SN1L") == "BLM41PG102SN1"
+    assert packaging_base("BLE18PK100SN1D") == "BLE18PK100SN1"
+    assert packaging_base("BLA31AG601SN4D") == "BLA31AG601SN4"
+
+
+def test_a_bead_base_ending_in_a_letter_is_left_alone():
+    """BLF02GD162GNE's trailing E is part of the part number, not a taping code
+    — the character before a taping letter is always the internal-code DIGIT."""
+    assert packaging_base("BLF02GD162GNE") is None
+    assert packaging_base("BLM21AG601SN1") is None   # already the base
+
+
+def test_bom_bead_with_taping_code_resolves_to_the_catalogued_base():
+    index = {"blm21ag601sn1": {"manufacturer": "Murata", "value": "600"}}
+    assert resolve("BLM21AG601SN1D", index, build_base_index(index))["value"] == "600"
+
+
+# ── separator-insensitive resolution (ABT #878) ──────────────────────────────
+
+def test_squashing_removes_only_punctuation():
+    assert squashed("BLM-21A-G601SN1D") == "BLM21AG601SN1D"
+    assert squashed("BLM21/AG6/01SN1D") == "BLM21AG601SN1D"
+    assert squashed("EMK105BJ105KV-F") == "EMK105BJ105KVF"
+    assert squashed("") == ""
+
+
+def test_a_mangled_bom_spelling_resolves_to_the_catalogue_part():
+    """One BOM carried the same Murata bead four ways. All must find one part."""
+    index = {"blm21ag601sn1": {"manufacturer": "Murata", "value": "600"}}
+    base, sq = build_base_index(index), build_squashed_index(index)
+    for spelling in (
+        "BLM21AG601SN1D",
+        "BLM-21A-G601SN1D",
+        "BLM21/AG6/01SN1D",
+        "BLM21-AG601/SN1D",
+    ):
+        hit = resolve(spelling, index, base, sq)
+        assert hit is not None and hit["value"] == "600", spelling
+
+
+def test_squashed_resolution_works_without_a_packaging_rule():
+    """EMK105BJ105KVF ↔ EMK105BJ105KV-F: no vendor packaging rule applies, the
+    two spellings differ only in punctuation."""
+    index = {"emk105bj105kv-f": {"value": "1uF"}}
+    sq = build_squashed_index(index)
+    assert resolve("EMK105BJ105KVF", index, build_base_index(index), sq)["value"] == "1uF"
+
+
+def test_an_ambiguous_squashed_key_is_dropped_never_guessed():
+    index = {
+        "abc-123": {"value": "1uF", "manufacturer": "X"},
+        "abc123": {"value": "10uF", "manufacturer": "X"},   # not the same part
+    }
+    assert build_squashed_index(index) == {}
+
+
+def test_an_exact_hit_still_wins_over_a_squashed_one():
+    """Squashing is the LAST resort, so it can only add resolutions."""
+    index = {"abc-123": {"which": "punctuated"}, "abc123": {"which": "plain"}}
+    sq = build_squashed_index(index)
+    assert resolve("ABC-123", index, {}, sq)["which"] == "punctuated"
+    assert resolve("ABC123", index, {}, sq)["which"] == "plain"
+
+
+def test_squashing_never_bridges_two_different_parts():
+    """A trailing digit still changes the part, punctuation or not."""
+    index = {"74403200150": {"value": "15uH"}}
+    sq = build_squashed_index(index)
+    assert resolve("7440320015", index, build_base_index(index), sq) is None
+
+
+def test_resolve_without_a_squashed_index_is_unchanged():
+    """The 3-argument call sites keep their exact previous behaviour."""
+    index = {"emk105bj105kv-f": {"value": "1uF"}}
+    assert resolve("EMK105BJ105KVF", index, build_base_index(index)) is None
