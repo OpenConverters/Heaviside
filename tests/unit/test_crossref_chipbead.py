@@ -215,3 +215,100 @@ def test_deriving_the_package_does_not_recurse():
     env = lookup_part_fields("BLM21AG601SN1", "chipBead")["raw_envelope"]
     assert _extract_package(env, "chipBead") == "0805"
     assert _extract_dimensions(env, "chipBead") is not None
+
+
+# --- the report shows the measured body, not just a case code (user report) ---
+
+
+def test_the_report_shows_a_size_row_with_real_dimensions():
+    """Package CODES are the problem: vendors spell one size several ways
+    ("0805", "0805 (2012 Metric)", "2012"), some records carry none, and the
+    codes are what produce a false "differs" between identically-sized parts.
+    The measured body does not have that problem, so it gets its own row."""
+    from heaviside.pipeline.crossref_pipeline import build_match_detail
+
+    row = {
+        "component_type": "chipBead",
+        "status": "recommended",
+        "_original_dims_mm": {"length": 2.0, "width": 1.2, "height": 1.05},
+        "_substitute_dims_mm": {"length": 2.0, "width": 1.2, "height": 0.9},
+    }
+    size = next(p for p in build_match_detail(row)["params"] if p["name"] == "size")
+    assert size["original"] == "2 × 1.2 × 1.05 mm"
+    assert size["substitute"] == "2 × 1.2 × 0.9 mm"
+    assert size["verdict"] == "same"
+
+
+def test_two_spellings_of_one_size_no_longer_read_as_a_difference():
+    """0805 and "0805 (2012 Metric)" are one size. With the bodies measured the
+    same, calling the package "differs" is the code disagreeing with itself."""
+    from heaviside.pipeline.crossref_pipeline import build_match_detail
+
+    row = {
+        "component_type": "chipBead",
+        "status": "recommended",
+        "original_package": "0805",
+        "substitute_package": "0805 (2012 Metric)",
+        "_original_dims_mm": {"length": 2.0, "width": 1.2, "height": 1.05},
+        "_substitute_dims_mm": {"length": 2.0, "width": 1.2, "height": 0.9},
+    }
+    pkg = next(p for p in build_match_detail(row)["params"] if p["name"] == "package")
+    assert pkg["verdict"] == "same"
+
+
+def test_a_genuinely_bigger_part_is_still_called_out():
+    from heaviside.pipeline.crossref_pipeline import build_match_detail
+
+    row = {
+        "component_type": "chipBead",
+        "status": "partial",
+        "_original_dims_mm": {"length": 2.0, "width": 1.2, "height": 1.0},
+        "_substitute_dims_mm": {"length": 3.2, "width": 1.6, "height": 1.1},
+    }
+    size = next(p for p in build_match_detail(row)["params"] if p["name"] == "size")
+    assert size["verdict"] == "larger"
+
+
+def test_a_taller_part_is_called_out_even_when_the_footprint_fits():
+    """Under a shield or a heatsink it is height that stops the board closing."""
+    from heaviside.pipeline.crossref_pipeline import build_match_detail
+
+    row = {
+        "component_type": "chipBead",
+        "status": "partial",
+        "_original_dims_mm": {"length": 2.0, "width": 1.2, "height": 0.9},
+        "_substitute_dims_mm": {"length": 2.0, "width": 1.2, "height": 1.4},
+    }
+    size = next(p for p in build_match_detail(row)["params"] if p["name"] == "size")
+    assert size["verdict"] == "taller"
+
+
+def test_a_bead_within_fifteen_percent_no_longer_deviates_on_value():
+    """The table must not contradict the gate: 600 Ω against 618 Ω is the same
+    600 Ω-class part, so the why line says matches, not deviates."""
+    from heaviside.pipeline.crossref_pipeline import build_match_detail
+
+    row = {
+        "component_type": "chipBead",
+        "status": "recommended",
+        "original_value": "618.3Ω",
+        "substitute_value": "600Ω",
+    }
+    md = build_match_detail(row)
+    value = next(p for p in md["params"] if p["name"] == "value")
+    assert value["verdict"] == "exact"
+    assert "deviates" not in (md.get("why") or "")
+
+
+def test_a_resistor_keeps_the_tight_value_band():
+    """15 % is an inductance/impedance rule; a 47 Ω is not a 39 Ω."""
+    from heaviside.pipeline.crossref_pipeline import build_match_detail
+
+    row = {
+        "component_type": "resistor",
+        "status": "partial",
+        "original_value": "47Ω",
+        "substitute_value": "43Ω",
+    }
+    value = next(p for p in build_match_detail(row)["params"] if p["name"] == "value")
+    assert value["verdict"] != "exact"

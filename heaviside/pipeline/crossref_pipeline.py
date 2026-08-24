@@ -4805,6 +4805,7 @@ def _param_verdict(
     *,
     higher_is_ok: bool,
     higher_ok_within: float | None = None,
+    same_within: float = 0.02,
 ) -> str:
     """Compare two numeric parameters → exact / exceeds / lower / differs / n-a.
 
@@ -4817,10 +4818,17 @@ def _param_verdict(
     a +22% comp/timing cap is NOT better, and a green '✓ exceeds' there
     contradicts the tool's own "verify pole/zero" caveat. Past the band the
     verdict is 'differs' (amber caveat), never a pass. A rating (voltage) has
-    no such ceiling and leaves this None."""
+    no such ceiling and leaves this None.
+
+    ``same_within`` is how close counts as the SAME value. The 2% default suits a
+    part whose value is a catalogue constant; an inductance or a bead impedance
+    is not that — it is a ±20–25% parameter, often read off a curve — so those
+    pass their own band (``_PRIMARY_TOLERANCE_BY_CAT``). Reporting "deviates on
+    value" for a 600 Ω bead against a 618 Ω one contradicted the primary-value
+    gate, which had already been told the two are the same part."""
     if orig is None or sub is None:
         return "n/a"
-    if abs(sub - orig) <= 0.02 * abs(orig) if orig else sub == orig:
+    if (abs(sub - orig) <= same_within * abs(orig)) if orig else (sub == orig):
         return "exact"
     if sub > orig:
         if not higher_is_ok:
@@ -4840,6 +4848,13 @@ def _param_verdict(
 # rescue prose quotes); beyond it the substitute is off-value and gets an amber
 # caveat instead of a green tick (ABT #136 item 1).
 _VALUE_HIGHER_OK_BAND = 0.20
+
+# How close the report calls the SAME value, per category. Mirrors the
+# primary-value gate in scoring.py so the table cannot contradict the verdict:
+# inductance and bead impedance are wide, curve-read parameters (±20-25% parts),
+# while a resistor or capacitor value is a catalogue constant and keeps the
+# tight default.
+_PRIMARY_TOLERANCE_BY_CAT = {"magnetic": 0.15, "chipBead": 0.15}
 
 
 # Which flat-record field is a category's "value" (for the report's value row).
@@ -4962,6 +4977,50 @@ def _normalize_package_code(pkg: str) -> str:
     return digits or p
 
 
+def _fmt_dims_mm(dims: tuple[float, float, float | None] | None) -> str:
+    """"2.0 × 1.2 × 1.05 mm", or "" when the body is unknown."""
+    if not dims:
+        return ""
+    length, width, height = dims
+    body = f"{length:g} × {width:g}"
+    if height:
+        body += f" × {height:g}"
+    return f"{body} mm"
+
+
+# Two drawings of the same nominal size differ by a couple of percent between
+# vendors, so "same" needs a little slack; anything past it is a real change in
+# the board space the part occupies.
+_SIZE_SAME_TOLERANCE = 0.05
+
+
+def _size_verdict(
+    original: tuple[float, float, float | None],
+    substitute: tuple[float, float, float | None],
+) -> str:
+    """How the substitute's body compares with the original's.
+
+    Orientation-agnostic on the footprint (a rotated part occupies the same
+    board space). Height is reported only when the substitute is TALLER — a
+    shorter part is never a fit problem, and under a heatsink or a shield it is
+    the taller one that stops the board closing.
+    """
+    o_long, o_short = max(original[0], original[1]), min(original[0], original[1])
+    s_long, s_short = max(substitute[0], substitute[1]), min(substitute[0], substitute[1])
+    if s_long > o_long * (1 + _SIZE_SAME_TOLERANCE) or s_short > o_short * (
+        1 + _SIZE_SAME_TOLERANCE
+    ):
+        return "larger"
+    o_h, s_h = original[2], substitute[2]
+    if o_h and s_h and s_h > o_h * (1 + _SIZE_SAME_TOLERANCE):
+        return "taller"
+    if s_long >= o_long * (1 - _SIZE_SAME_TOLERANCE) and s_short >= o_short * (
+        1 - _SIZE_SAME_TOLERANCE
+    ):
+        return "same"
+    return "smaller"
+
+
 def build_match_detail(row: dict[str, Any]) -> dict[str, Any]:
     """Deterministic per-parameter rationale for ONE cross-reference row.
 
@@ -4984,6 +5043,7 @@ def build_match_detail(row: dict[str, Any]) -> dict[str, Any]:
             # ...but only inside the ±20% tolerance band: past it the part is
             # off-value (a comp/timing cap is not "better" at +22%) — ABT #136.
             higher_ok_within=_VALUE_HIGHER_OK_BAND,
+            same_within=_PRIMARY_TOLERANCE_BY_CAT.get(cat, 0.02),
         )
         params.append(
             {"name": "value", "original": str(o_val), "substitute": str(s_val), "verdict": v}
@@ -5004,11 +5064,36 @@ def build_match_detail(row: dict[str, Any]) -> dict[str, Any]:
     # package — equality on a NORMALIZED code so a metric case size matches its
     # imperial equivalent (1608 metric == 0603 imperial, 1005 == 0402, …) instead
     # of a false 'differs' (FAE round-4 finding).
+    # SIZE first, because it is the fact and the package code is only a name for
+    # it. Vendors spell one size several ways ("0805", "0805 (2012 Metric)",
+    # "2012"), plenty of records carry no code at all, and the codes are what
+    # produce false "differs" between two identically-sized parts. Measured
+    # bodies do not have that problem.
+    o_dims = _dims_tuple_mm(row.get("_original_dims_mm"))
+    s_dims = _dims_tuple_mm(row.get("_substitute_dims_mm"))
+    size_verdict = "n/a"
+    if o_dims and s_dims:
+        size_verdict = _size_verdict(o_dims, s_dims)
+    if o_dims or s_dims:
+        params.append(
+            {
+                "name": "size",
+                "original": _fmt_dims_mm(o_dims),
+                "substitute": _fmt_dims_mm(s_dims),
+                "verdict": size_verdict,
+            }
+        )
+
     o_p = str(row.get("original_package", "")).strip().lower()
     s_p = str(row.get("substitute_package", "")).strip().lower()
     if o_p or s_p:
         _on, _sn = _normalize_package_code(o_p), _normalize_package_code(s_p)
         verdict = "same" if (_on and _on == _sn) else ("differs" if (_on and _sn) else "n/a")
+        # Two parts measured the same size ARE the same size, whatever their
+        # codes are called. Reporting "differs" then is the code disagreeing
+        # with itself, not the parts disagreeing.
+        if verdict == "differs" and size_verdict == "same":
+            verdict = "same"
         params.append(
             {
                 "name": "package",
@@ -6001,6 +6086,16 @@ def _stage_param_check(state: CrossRefState) -> None:
             mate = connector_mating_check(orig_params, sub_params)
             if mate is not None:
                 results.append(mate)
+
+        # The measured bodies, for the report's size row. A package CODE is a
+        # poor stand-in — vendors spell one size several ways ("0805",
+        # "0805 (2012 Metric)", "2012"), some records carry none at all, and a
+        # false "differs" between two identically-sized parts is exactly the
+        # noise this replaces. Dimensions are unambiguous.
+        for _key, _params in (("_original_dims_mm", orig_params), ("_substitute_dims_mm", sub_params)):
+            _dims = (_params or {}).get("dimensions_mm")
+            if _dims:
+                row[_key] = _dims
 
         if not results:
             continue
