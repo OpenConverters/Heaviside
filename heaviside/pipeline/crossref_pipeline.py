@@ -2211,7 +2211,10 @@ def _rank_candidates(
         # below (orientation-aware, dimension-based). Keep these small so they
         # never override a value difference.
         cand_pkg = _extract_package(cand, category).lower()
-        if package and package in cand_pkg:
+        src_code = _eia_case_code(package)
+        if src_code and src_code == _eia_case_code(cand_pkg):
+            pkg_penalty = 0.0
+        elif package and package in cand_pkg:
             pkg_penalty = 0.0
         elif _is_one_size_up(package, cand_pkg):
             pkg_penalty = 0.05
@@ -2402,6 +2405,24 @@ def _rank_candidates(
 
 
 _PKG_ORDER = ["0201", "0402", "0603", "0805", "1206", "1210", "1812", "2010", "2220"]
+
+
+def _eia_case_code(package: str) -> str:
+    """The imperial EIA case code inside a package string, or "".
+
+    Package strings reach us in several spellings for the same size: a BOM
+    column says "0402", the catalogue says "0402", and a distributor-sourced
+    original says "0402 (1005 Metric)". A plain containment test between two of
+    those fails in one direction, which cost the exact-size candidate its
+    tie-break and let a 0201 outrank the 0402 that matches the board.
+
+    Scanned in ascending size order, which is also what disambiguates a string
+    naming both spellings: "0201 (0603 Metric)" is a 0201, and 0201 is found
+    first."""
+    if not package:
+        return ""
+    lowered = package.lower()
+    return next((p for p in _PKG_ORDER if p in lowered), "")
 
 
 def _is_one_size_up(original: str, candidate: str) -> bool:

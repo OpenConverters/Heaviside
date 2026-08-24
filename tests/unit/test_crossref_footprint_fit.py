@@ -215,3 +215,33 @@ def test_resistor_value_dominates_footprint_smaller_is_better():
     order = [_envelope_reference(c, "resistor") for c in ranked]
     assert order[0] == "EXACT-47-0402"  # exact value, smallest fitting
     assert order[-1] == "WRONG-33-0402"  # wrong value ranks last
+
+
+# ── case codes spelled differently are the same size (ABT #880) ──────────────
+
+
+def test_a_distributor_case_string_matches_a_bare_catalogue_case_code():
+    """A librarian-sourced original records its case as Digi-Key spells it,
+    "0402 (1005 Metric)", while the catalogue says "0402". The old containment
+    test only worked in one direction, so the exact-size candidate lost its
+    tie-break to a smaller part."""
+    from heaviside.pipeline.crossref_pipeline import _eia_case_code
+
+    assert _eia_case_code("0402 (1005 Metric)") == "0402"
+    assert _eia_case_code("0402") == "0402"
+    assert _eia_case_code("0805 (2012 Metric)") == "0805"
+
+
+def test_a_string_naming_both_spellings_resolves_to_the_imperial_one():
+    """"0201 (0603 Metric)" contains two codes from the size table; the part is
+    a 0201, and ascending-order scanning is what guarantees that."""
+    from heaviside.pipeline.crossref_pipeline import _eia_case_code
+
+    assert _eia_case_code("0201 (0603 Metric)") == "0201"
+
+
+def test_a_package_with_no_eia_code_yields_nothing():
+    from heaviside.pipeline.crossref_pipeline import _eia_case_code
+
+    assert _eia_case_code("SOIC-8") == ""
+    assert _eia_case_code("") == ""
