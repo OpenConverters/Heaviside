@@ -23,14 +23,16 @@ import pytest
 import heaviside.pipeline.guardrails as g
 
 
-def _magnetic(mpn: str, subtype: str, *, inductance: float | None = None) -> dict:
+def _magnetic(
+    mpn: str, subtype: str, *, inductance: float | None = None, maker: str = "Würth Elektronik"
+) -> dict:
     electrical: dict = {"subtype": subtype}
     if inductance is not None:
         electrical["inductance"] = {"nominal": inductance}
     return {
         "magnetic": {
             "manufacturerInfo": {
-                "name": "Würth Elektronik",
+                "name": maker,
                 "reference": mpn,
                 "datasheetInfo": {
                     "part": {"partNumber": mpn, "case": "0805"},
@@ -67,8 +69,11 @@ def catalogue(tmp_path, monkeypatch):
             json.dumps(e)
             for e in (
                 _magnetic("742792040", "chipBead"),
-                _magnetic("BLM21AG601SN1", "chipBead"),
+                _magnetic("BLM21AG601SN1", "chipBead", maker="Murata"),
                 _magnetic("74438356010", "inductor", inductance=1e-6),
+                # A non-Würth inductor, so a row whose ORIGINAL is this one
+                # is not short-circuited to "exact" by G0.
+                _magnetic("XAL1010-102ME", "inductor", inductance=1e-6, maker="Coilcraft"),
             )
         )
     )
@@ -222,3 +227,53 @@ def test_the_existence_check_still_spans_every_kind(catalogue, tmp_path):
     )
     g._TAS_KIND_INDEX_CACHE.clear()
     assert g._mpn_exists_in_tas("IKW40N120H3", tas_data_dir=catalogue) is True
+
+
+# ── G5c's category check must speak the same vocabulary (ABT #890) ───────────
+
+
+def test_a_bead_for_a_bead_is_not_a_category_mismatch(catalogue):
+    """G5c compares the row's type against lookup_mpn_category's answer. The
+    row-type table mapped chipBead -> "magnetic", because beads live in the
+    magnetics FILE, and that was right until lookup_mpn_category learned to tell
+    a bead from an inductor by subtype (ABT #874). After that a correct
+    bead-for-bead substitution read as row=magnetic vs substitute=chipBead, and
+    G5c demoted it — every round, on every correction loop, surfacing as a
+    "hallucinated MPN" that stage 4b then recovered by picking the same part."""
+    from heaviside.pipeline.guardrails import apply_guardrails
+
+    bom = [{"ref_des": "FB1", "component_type": "chipBead", "original_mpn": "BLM21AG601SN1"}]
+    rows = [
+        {"ref_des": "FB1", "component_type": "chipBead", "original_pn": "BLM21AG601SN1",
+         "substitute_pn": "742792040", "status": "recommended", "notes": ""}
+    ]
+    corrected, fires = apply_guardrails({"crossref": rows}, bom, "Würth Elektronik")
+    assert [f for f in fires if f["guardrail_id"] == "5c"] == []
+    assert corrected["crossref"][0]["status"] == "recommended"
+
+
+def test_an_inductor_offered_for_a_bead_row_still_fires(catalogue):
+    """The guard must not go blind: this is exactly the swap ABT #874 was about,
+    a 1 uH power inductor offered as a substitute for a 600 ohm bead."""
+    from heaviside.pipeline.guardrails import apply_guardrails
+
+    bom = [{"ref_des": "FB1", "component_type": "chipBead", "original_mpn": "BLM21AG601SN1"}]
+    rows = [
+        {"ref_des": "FB1", "component_type": "chipBead", "original_pn": "BLM21AG601SN1",
+         "substitute_pn": "74438356010", "status": "recommended", "notes": ""}
+    ]
+    corrected, fires = apply_guardrails({"crossref": rows}, bom, "Würth Elektronik")
+    assert [f for f in fires if f["guardrail_id"] == "5c"], "a bead row must reject an inductor"
+    assert corrected["crossref"][0]["status"] == "no_substitute"
+
+
+def test_a_bead_offered_for_an_inductor_row_still_fires(catalogue):
+    from heaviside.pipeline.guardrails import apply_guardrails
+
+    bom = [{"ref_des": "L1", "component_type": "magnetic", "original_mpn": "XAL1010-102ME"}]
+    rows = [
+        {"ref_des": "L1", "component_type": "magnetic", "original_pn": "XAL1010-102ME",
+         "substitute_pn": "742792040", "status": "recommended", "notes": ""}
+    ]
+    _, fires = apply_guardrails({"crossref": rows}, bom, "Würth Elektronik")
+    assert [f for f in fires if f["guardrail_id"] == "5c"], "an inductor row must reject a bead"

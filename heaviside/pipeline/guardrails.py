@@ -1074,12 +1074,20 @@ def _g4_inductor_footprint_overrejection(
 # Row component_type → catalogue file-kind, for the G5c category check.
 # Types with no single catalogue file (semiconductor, controller, varistor)
 # are not checkable and are skipped.
-_ROW_TYPE_TO_FILE_KIND = {
+# A row's component_type, in the SAME vocabulary lookup_mpn_category returns.
+# These two must agree or G5c compares apples to oranges: chipBead used to map
+# to "magnetic" here, because beads live in the magnetics FILE, and that was
+# right until lookup_mpn_category learned to distinguish a bead from an inductor
+# by subtype (ABT #874). After that a correct bead-for-bead substitution read as
+# row=magnetic vs substitute=chipBead and G5c demoted it — every round, on every
+# correction loop, reported as a hallucinated MPN that stage 4b then "recovered"
+# by picking the very same part again.
+_ROW_TYPE_TO_CATEGORY = {
     "capacitor": "capacitor",
     "resistor": "resistor",
     "magnetic": "magnetic",
     "inductor": "magnetic",
-    "chipBead": "magnetic",
+    "chipBead": "chipBead",
     "mosfet": "mosfet",
     "diode": "diode",
     "connector": "connector",
@@ -1163,7 +1171,7 @@ def _g5_substitute_existence(
         # 5c: Category check — the substitute must be the same KIND of part.
         # A real-but-wrong-category MPN (a connector offered for a capacitor
         # row) passes the existence check yet is never a valid substitute.
-        row_kind = _ROW_TYPE_TO_FILE_KIND.get(str(comp.get("component_type") or ""))
+        row_kind = _ROW_TYPE_TO_CATEGORY.get(str(comp.get("component_type") or ""))
         if row_kind:
             sub_kind = lookup_mpn_category(pn, tas_data_dir=tas_data_dir)
             if sub_kind is not None and sub_kind != row_kind:
