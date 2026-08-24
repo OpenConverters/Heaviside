@@ -1040,6 +1040,16 @@ def _needs_part_resolution(row: dict[str, Any]) -> bool:
     mfr = str(row.get("manufacturer") or "").strip()
     if mfr and len(mfr) >= 3 and mfr.split()[0].lower() in mpn.lower():
         return True
+    # An MPN broken up with INTERNAL separators — BLM-21A-G601SN1D,
+    # BLM21/AG6/01SN1D — but only when the catalogue could not already identify
+    # it. Most hyphens in a part number are real (XGL5050-153ME,
+    # EMK105BJ105KV-F), so flagging every one would send half of every BOM to
+    # the LLM; and a row that _normalize_bom resolved needs no cleaning, since
+    # it has already been rewritten to the catalogue's own spelling. What is
+    # left is the genuinely mangled and genuinely unknown, which is exactly the
+    # case an LLM (with a web search) can settle and a lookup cannot.
+    if not row.get("component_type") and re.search(r"[-/\\.,_|]", mpn):
+        return True
     return False
 
 
@@ -4380,6 +4390,24 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         _records = lookup_part_fields_bulk(_wanted)
 
+    # CANONICALISE the part number here, once, to the spelling the catalogue
+    # uses. Four rows of one BOM named the same Murata bead four ways
+    # (BLM21AG601SN1D, BLM-21A-G601SN1D, BLM21/AG6/01SN1D, BLM21-AG601/SN1D) and
+    # got four different answers: the first resolved its original fully, the
+    # other three came back ORIGINAL_UNVERIFIED with every parameter blank. Not
+    # because the part differs — it does not — but because each stage matched
+    # MPNs its own way, and the param check knows only exact + packaging-base,
+    # not separators. Rewriting the MPN once means no later stage can disagree
+    # about what part this is; the BOM's own spelling is kept alongside so the
+    # report can still show what the engineer wrote.
+    _canonical: dict[str, str] = {}
+    for row, cat in zip(_rows, _cats, strict=True):
+        mpn = str(row.get("original_mpn") or "").strip()
+        rec = _records.get((cat, mpn.lower())) if (cat and mpn) else None
+        catalogued = str((rec or {}).get("mpn") or "").strip()
+        if catalogued and catalogued.lower() != mpn.lower():
+            _canonical[mpn] = catalogued
+
     out: list[dict[str, Any]] = []
     _seen_refs: set[str] = set()
     for idx, comp in enumerate(bom):
@@ -4387,6 +4415,12 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for old_key, new_key in _FIELD_MAP.items():
             if old_key in row and new_key not in row:
                 row[new_key] = row[old_key]
+
+        _as_written = str(row.get("original_mpn") or "").strip()
+        _catalogued = _canonical.get(_as_written)
+        if _catalogued:
+            row["original_mpn"] = _catalogued
+            row["original_mpn_as_written"] = _as_written
 
         # ref_des: a missing/blank designator must NOT default to a shared "?"
         # key — that collapses every such row onto one identity and makes the
