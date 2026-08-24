@@ -94,11 +94,18 @@ def test_oversize_part_heavily_penalised() -> None:
     assert big > _OVERSIZE_BASE
 
 
-def test_smaller_is_better_among_fitting_parts() -> None:
+def test_the_same_size_is_the_best_fit_not_the_smallest() -> None:
+    """Was "smaller is better" until ABT #883. A cross-reference replaces a part
+    on an EXISTING board, so the substitute has to land on the original's pads —
+    an undersized part's terminations do not reach them. The closest size wins,
+    and an undersized one is penalised in proportion to the board it fails to
+    cover. Both still rank below any oversize part."""
     src = (0.00493, 0.00493, 0.0030)
     same = _footprint_penalty(src, (0.00493, 0.00493, 0.0030))
     smaller = _footprint_penalty(src, (0.004, 0.004, 0.0025))
-    assert 0.0 < smaller < same < _OVERSIZE_BASE
+    much_smaller = _footprint_penalty(src, (0.002, 0.002, 0.001))
+    assert same == 0.0
+    assert same < smaller < much_smaller < _OVERSIZE_BASE
 
 
 def test_unknown_candidate_dims_penalised_between_fit_and_oversize() -> None:
@@ -195,14 +202,19 @@ def test_exact_value_resistor_outranks_near_value_same_package():
     assert _envelope_reference(ranked[0], "resistor") == "EXACT-47-0603"
 
 
-def test_resistor_value_dominates_footprint_smaller_is_better():
-    """Among EXACT-value parts, smaller fitting footprint wins; a wrong-value
-    tiny part still loses to the exact-value parts."""
+def test_resistor_value_dominates_footprint_then_closest_size_wins():
+    """Among EXACT-value parts the CLOSEST fitting footprint wins (ABT #883 —
+    was "smallest"); a wrong-value tiny part still loses to the exact-value ones.
+
+    For a 1206 original, 0603 is one case size down and 0402 is two. Neither is a
+    true drop-in, but the 0603 is the one an assembler has any chance of landing
+    on 1206 pads, so it must be offered first — the old rule put the 0402 on top
+    precisely because it was smaller."""
     exact_0402 = _res("EXACT-47-0402", 47.0, "0402")
     exact_0603 = _res("EXACT-47-0603", 47.0, "0603")
     wrong_0402 = _res("WRONG-33-0402", 33.0, "0402")
     # 1206 source footprint (set by stage 1 from the package) enables the
-    # smaller-is-better tie-break between the two exact-value parts.
+    # closest-size tie-break between the two exact-value parts.
     comp = {
         "value": "47",
         "component_type": "resistor",
@@ -213,8 +225,23 @@ def test_resistor_value_dominates_footprint_smaller_is_better():
         comp, "resistor", [wrong_0402, exact_0603, exact_0402], max_results=10
     )
     order = [_envelope_reference(c, "resistor") for c in ranked]
-    assert order[0] == "EXACT-47-0402"  # exact value, smallest fitting
+    assert order[0] == "EXACT-47-0603"  # exact value, closest fitting size
     assert order[-1] == "WRONG-33-0402"  # wrong value ranks last
+
+
+def test_an_exact_same_size_part_beats_a_smaller_one():
+    """The case the user's BOM hit: a 1 µF 0402 original was offered a 0201
+    ahead of the exact 0402, because the 0201 covered less area."""
+    exact_same = _res("SAME-47-1206", 47.0, "1206")
+    exact_tiny = _res("TINY-47-0402", 47.0, "0402")
+    comp = {
+        "value": "47",
+        "component_type": "resistor",
+        "package": "1206",
+        "_source_dims_m": (0.0032, 0.0016, None),
+    }
+    ranked = _rank_candidates(comp, "resistor", [exact_tiny, exact_same], max_results=10)
+    assert _envelope_reference(ranked[0], "resistor") == "SAME-47-1206"
 
 
 # ── case codes spelled differently are the same size (ABT #880) ──────────────

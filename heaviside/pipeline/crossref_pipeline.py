@@ -140,12 +140,38 @@ def _stage1_prefetch(state: CrossRefState, only_refs: set[str] | None = None) ->
     # Source MPNs whose physical dimensions we want to resolve (any
     # manufacturer), so the footprint-fit ranking knows the board space the
     # substitute must fit into. Keyed (cat, normalized-mpn).
-    source_mpn_by_cat: dict[str, set[str]] = {}
+    #
+    # Matched the same packaging- and separator-tolerant way the catalogue
+    # lookups are (ABT #873/#878), not by exact string. The BOM's orderable
+    # BLM21AG601SN1D is catalogued as BLM21AG601SN1, so an exact match found
+    # nothing and every bead row reported "footprint-fit not enforced" — the
+    # rows those tickets had just made resolvable were still ranked blind.
+    def _dim_keys(mpn: str) -> set[str]:
+        """Every spelling of an MPN that should be treated as the same part."""
+        key = mpn.strip().lower()
+        if not key:
+            return set()
+        keys = {key}
+        squashed = mpn_packaging.squashed(key).lower()
+        if squashed:
+            keys.add(squashed)
+        for form in (key, squashed):
+            base = mpn_packaging.packaging_base(form) if form else None
+            if base:
+                keys.add(base.lower())
+        return keys
+
+    # key -> every BOM MPN that reduces to it. A set, not a single value: one BOM
+    # can spell the same part several ways (BLM21AG601SN1D, BLM-21A-G601SN1D,
+    # BLM21/AG6/01SN1D …) and they all reduce to one key, so mapping to a single
+    # MPN gave the original's dimensions to exactly one of those rows.
+    source_mpn_by_cat: dict[str, dict[str, set[str]]] = {}
     for comp in target_rows:
         cat = comp.get("component_type", comp.get("category", ""))
         mpn = str(comp.get("original_mpn", "")).strip().lower()
         if cat in category_files and mpn:
-            source_mpn_by_cat.setdefault(cat, set()).add(mpn)
+            for key in _dim_keys(mpn):
+                source_mpn_by_cat.setdefault(cat, {}).setdefault(key, set()).add(mpn)
     source_env_by_key: dict[tuple[str, str], dict[str, Any]] = {}
 
     # Scan each needed NDJSON file ONCE, collect all target-mfr rows
@@ -157,17 +183,20 @@ def _stage1_prefetch(state: CrossRefState, only_refs: set[str] | None = None) ->
             mfr_cache[cat] = []
             continue
         rows: list[dict[str, Any]] = []
-        want_source = source_mpn_by_cat.get(cat, set())
+        want_source = source_mpn_by_cat.get(cat, {})
         try:
             for _lineno, env in iter_envelopes(path):
                 if cat == "chipBead" and not _is_chip_bead_env(env):
                     continue
                 # Capture the source part's own envelope (for its dimensions),
-                # regardless of manufacturer.
+                # regardless of manufacturer. An exact hit wins; a packaging- or
+                # punctuation-variant spelling resolves to the same BOM row.
                 if want_source:
                     ref = str(_envelope_reference(env, cat) or "").strip().lower()
-                    if ref and ref in want_source:
-                        source_env_by_key[(cat, ref)] = env
+                    if ref:
+                        for key in _dim_keys(ref):
+                            for bom_mpn in want_source.get(key, ()):
+                                source_env_by_key.setdefault((cat, bom_mpn), env)
                 mfr_name = _extract_manufacturer(env, cat)
                 if mfr_name and target_mfr_lower in _normalize_manufacturer(mfr_name):
                     rows.append(env)
@@ -1335,12 +1364,20 @@ def _extract_dimensions(
 
 
 # Footprint-fit penalty weights. A substitute must fit the board space the
-# original occupies; smaller is better, oversize is heavily penalised but still
-# selectable when nothing else exists (per product spec). val_dist/pkg/stress
-# terms sit in the 0–5 range, so OVERSIZE_BASE dominates them: any candidate
-# that fits always outranks any candidate that doesn't, yet an oversize part
-# stays finite-scored so it can win when it's the only option.
-_FIT_AREA_WEIGHT = 0.5  # fitting parts: penalty = weight × area ratio
+# original occupies; oversize is heavily penalised but still selectable when
+# nothing else exists (per product spec). val_dist/pkg/stress terms sit in the
+# 0–5 range, so OVERSIZE_BASE dominates them: any candidate that fits always
+# outranks any candidate that doesn't, yet an oversize part stays finite-scored
+# so it can win when it's the only option.
+#
+# Among parts that FIT, the best one is the one closest to the original's size —
+# not the smallest (ABT #883). A cross-reference replaces a part on an EXISTING
+# board, so the substitute has to land on the original's pads: a 0201 does not
+# solder to an 0805 land pattern, its terminations do not reach. Rewarding area
+# reduction monotonically made that three-sizes-down part the TOP pick for an
+# 0805 original (0.15 + 0.036 = 0.186, against 0.500 for the exact 0805), which
+# is the right answer only if you are laying the board out afresh.
+_FIT_AREA_WEIGHT = 0.5  # fitting parts: penalty = weight × (1 − area ratio)
 _OVERSIZE_BASE = 10.0  # flat floor applied to any part that overflows
 _OVERSIZE_SCALE = 8.0  # extra penalty per unit of worst linear overflow
 _UNKNOWN_DIM_PENALTY = 2.0  # candidate size unknown → can't confirm it fits
@@ -1374,9 +1411,10 @@ def _footprint_penalty(
 
     Orientation-agnostic on the footprint (a rotated part that still fits is not
     penalised). Returns 0.0 when the source size is unknown (cannot enforce —
-    surfaced separately as a diagnostic), a small area-proportional penalty when
-    the candidate fits (smaller → lower), and a large finite penalty when it
-    overflows in any dimension.
+    surfaced separately as a diagnostic), a small penalty when the candidate fits
+    (closer to the original's area → lower, because the substitute must land on
+    the original's pads), and a large finite penalty when it overflows in any
+    dimension.
     """
     if not source_dims:
         return 0.0
@@ -1394,8 +1432,12 @@ def _footprint_penalty(
     if s_h is not None and c_h is not None:
         fits = fits and c_h <= s_h * _DIM_TOLERANCE
     if fits:
+        # Distance from the original's footprint, not raw smallness: a same-size
+        # part scores ~0 and an undersized one is penalised in proportion to how
+        # much board it fails to cover. Bounded by _FIT_AREA_WEIGHT, so every
+        # fitting part still outranks every oversize one.
         area_ratio = (c_long * c_short) / (s_long * s_short)
-        return _FIT_AREA_WEIGHT * area_ratio
+        return _FIT_AREA_WEIGHT * max(0.0, 1.0 - area_ratio)
     overflow = (
         max(
             c_long / s_long,

@@ -17,6 +17,7 @@ from __future__ import annotations
 from heaviside.pipeline.bom_import import parse_bom_file
 from heaviside.pipeline.crossref import CrossRefState
 from heaviside.pipeline.crossref_pipeline import (
+    _candidate_summaries_for_llm,
     _chip_bead_impedance_at_100mhz,
     _infer_component_type,
     _normalize_bom,
@@ -148,3 +149,25 @@ def test_a_ferrite_bead_type_column_is_not_routed_to_magnetic():
     for spelling in ("ferrite_bead", "Ferrite Bead", "chip bead", "BEAD"):
         row = _normalize_bom([{"ref_des": "FB1", "type": spelling, "part": "X"}])[0]
         assert row["component_type"] == "chipBead", spelling
+
+
+def test_a_bead_with_a_taping_code_resolves_its_own_dimensions():
+    """Stage 1 captured the ORIGINAL's envelope by exact MPN, so the BOM's
+    orderable BLM21AG601SN1D never matched the catalogued BLM21AG601SN1 and every
+    bead row reported "footprint-fit not enforced" — ranked blind against parts
+    of any size. The source lookup is now packaging- and separator-tolerant, the
+    same way the catalogue lookups are (ABT #883)."""
+    nb = _normalize_bom([{"ref_des": "FB1", "part": "BLM21AG601SN1D"}])
+    state = _stage1_prefetch(
+        CrossRefState(source_bom=nb, target_manufacturer="Würth Elektronik")
+    )
+    dims = nb[0].get("_source_dims_m")
+    assert dims is not None, "the original's own body size must resolve"
+    length, width, _height = dims
+    assert abs(length - 0.002) < 1e-4 and abs(width - 0.0012) < 2e-4  # a 0805 body
+    assert not any("footprint-fit not enforced" in d for d in state.diagnostics)
+    # And the candidates are now judged against it.
+    summaries = _candidate_summaries_for_llm(
+        state.candidates_by_ref["FB1"], "chipBead", dims, limit=4
+    )
+    assert summaries and all(s.get("fits_original") is True for s in summaries)
