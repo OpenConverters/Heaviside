@@ -225,3 +225,61 @@ def test_an_envelope_with_no_mpn_at_all_is_none():
     from heaviside.pipeline.crossref_pipeline import _envelope_reference
 
     assert _envelope_reference({"capacitor": {"manufacturerInfo": {}}}, "capacitor") is None
+
+
+# ── saying WHAT an ambiguous stem is ambiguous about (ABT #878) ──────────────
+
+
+def _bead_record(mpn: str, grade: str, ohms: float = 618.0) -> dict:
+    """The flat shape the catalogue index hands back."""
+    return {
+        "mpn": mpn,
+        "capacitance": None,
+        "resistance_Ohm": None,
+        "inductance": None,
+        "subtype": "chipBead",
+        "voltage": None,
+        "package": "0805",
+        "family": "BLM21AG",
+        "raw_envelope": {
+            "magnetic": {"manufacturerInfo": {"description": grade, "reference": mpn}}
+        },
+    }
+
+
+def test_identical_parts_are_reported_as_differing_only_in_grade():
+    """All three completions of BLM21AG601S are the same 618 Ω/0805 bead; the
+    suffix picks Murata's qualification grade. Substituting a general-grade part
+    for an automotive-safety-qualified one is a silent downgrade, so the run has
+    to say that rather than pick one."""
+    from heaviside.pipeline.crossref_pipeline import _describe_stem_ambiguity
+
+    said = _describe_stem_ambiguity(
+        [
+            _bead_record("BLM21AG601SN1", "General"),
+            _bead_record("BLM21AG601SH1", "Powertrain/Safety"),
+            _bead_record("BLM21AG601SZ1", "Infotainment"),
+        ]
+    )
+    assert "electrically identical" in said
+    assert "General" in said and "Powertrain/Safety" in said and "Infotainment" in said
+    assert "must not guess" in said
+
+
+def test_electrically_different_completions_say_so_instead():
+    from heaviside.pipeline.crossref_pipeline import _describe_stem_ambiguity
+
+    a = _bead_record("BLM21AG601SN1", "General")
+    b = _bead_record("BLM21AG101SN1", "General")
+    b["package"] = "0603"
+    assert "differ electrically" in _describe_stem_ambiguity([a, b])
+
+
+def test_identical_parts_with_no_grade_text_do_not_invent_one():
+    from heaviside.pipeline.crossref_pipeline import _describe_stem_ambiguity
+
+    said = _describe_stem_ambiguity(
+        [_bead_record("BLM21AG601SN1", ""), _bead_record("BLM21AG601SH1", "")]
+    )
+    assert "electrically identical" in said
+    assert "grade" not in said

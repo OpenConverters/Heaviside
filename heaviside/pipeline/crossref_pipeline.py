@@ -889,7 +889,7 @@ def _stage1_8_explain_unresolved(state: CrossRefState) -> CrossRefState:
     different parts. Guessing one would be fabricating the engineer's intent, so
     the ambiguity is reported instead (ABT #878).
     """
-    from heaviside.pipeline.guardrails import catalogue_mpns_with_prefix, lookup_mpn_category
+    from heaviside.pipeline.guardrails import catalogue_records_with_prefix, lookup_mpn_category
 
     seen: set[str] = set()
     for comp in state.source_bom:
@@ -904,21 +904,62 @@ def _stage1_8_explain_unresolved(state: CrossRefState) -> CrossRefState:
         # persisting an original), and the prefix scan deliberately refuses to
         # build a 600 MB index just to phrase a diagnostic.
         lookup_mpn_category(mpn)
-        matches = catalogue_mpns_with_prefix(mpn)
-        if len(matches) < 2:
+        records = catalogue_records_with_prefix(mpn)
+        if len(records) < 2:
             continue
-        shown = ", ".join(matches[:4])
-        more = f" (+{len(matches) - 4} more)" if len(matches) > 4 else ""
+        names = [str(r.get("mpn") or "?") for r in records]
+        shown = ", ".join(names[:4])
+        more = f" (+{len(names) - 4} more)" if len(names) > 4 else ""
+        detail = _describe_stem_ambiguity(records)
         state.diagnostics.append(
             f"{mpn!r} did not resolve, but is the leading part of "
-            f"{len(matches)} catalogue part numbers ({shown}{more}) — it looks "
-            f"truncated. The full part number is needed to cross-reference it."
+            f"{len(names)} catalogue part numbers ({shown}{more}) — it looks "
+            f"truncated. {detail} The full part number is needed to "
+            f"cross-reference it."
         )
         comp["_unresolved_reason"] = (
-            f"truncated/ambiguous part number: matches {len(matches)} catalogue "
-            f"parts ({shown}{more})"
+            f"truncated/ambiguous part number: matches {len(names)} catalogue "
+            f"parts ({shown}{more}). {detail}"
         )
     return state
+
+
+def _describe_stem_ambiguity(records: list[dict[str, Any]]) -> str:
+    """One sentence on what actually separates the completions of a stem.
+
+    A truncated MPN is not always an electrical question. All three completions
+    of ``BLM21AG601S`` are the same 618 Ω/100 MHz, 0.2 Ω, 0.7 A bead in the same
+    0805 body; the suffix picks Murata's qualification grade — General,
+    Powertrain/Safety or Infotainment. Which one the board needs is exactly the
+    thing we must not guess: substituting a general-grade part for an
+    automotive-safety-qualified one is a silent downgrade. Reading the
+    catalogue's own description field keeps this manufacturer-agnostic — no
+    part-number decoding, no vendor table.
+    """
+    keys = ("capacitance", "resistance_Ohm", "inductance", "subtype", "voltage", "package")
+    specs = {tuple(r.get(k) for k in keys) for r in records}
+    labels = sorted({str(r.get("family") or "") for r in records if r.get("family")})
+    grades: set[str] = set()
+    for record in records:
+        env = record.get("raw_envelope") or {}
+        for top in ("magnetic", "capacitor", "resistor", "connector", "varistor"):
+            block = env.get(top)
+            if not isinstance(block, dict):
+                continue
+            described = (block.get("manufacturerInfo") or {}).get("description")
+            if isinstance(described, str) and described.strip():
+                grades.add(described.strip())
+    graded = sorted(grades)
+    if len(specs) > 1:
+        return "They differ electrically, so the right one cannot be inferred."
+    if len(graded) > 1:
+        return (
+            "They are electrically identical in the catalogue and differ only in "
+            f"product grade ({', '.join(graded)}), which a substitution must not guess."
+        )
+    if labels:
+        return f"They are electrically identical in the catalogue (family {', '.join(labels)})."
+    return "They are electrically identical in the catalogue."
 
 
 _RESOLVE_PARTS_CAP = 200  # bound LLM cost on huge BOMs
@@ -2212,9 +2253,8 @@ def _rank_candidates(
         # never override a value difference.
         cand_pkg = _extract_package(cand, category).lower()
         src_code = _eia_case_code(package)
-        if src_code and src_code == _eia_case_code(cand_pkg):
-            pkg_penalty = 0.0
-        elif package and package in cand_pkg:
+        same_case = bool(src_code) and src_code == _eia_case_code(cand_pkg)
+        if same_case or (package and package in cand_pkg):
             pkg_penalty = 0.0
         elif _is_one_size_up(package, cand_pkg):
             pkg_penalty = 0.05

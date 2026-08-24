@@ -152,12 +152,14 @@ def lookup_mpn_category(part_number: str, *, tas_data_dir: Path | None = None) -
     return None
 
 
-def catalogue_mpns_with_prefix(stem: str, *, limit: int = 8) -> list[str]:
-    """Catalogue MPNs that begin with ``stem`` (separator-insensitive).
+def catalogue_records_with_prefix(stem: str, *, limit: int = 8) -> list[dict]:
+    """Catalogue records whose MPN begins with ``stem`` (separator-insensitive).
 
     Answers "is this a truncated part number?" for a row that resolved to
     nothing — ``BLM21AG601S`` is a real stem shared by BLM21AG601SH1 / SN1 /
-    SZ1, and saying so beats an unexplained no_substitute (ABT #878).
+    SZ1, and saying so beats an unexplained no_substitute (ABT #878). Records,
+    not just MPNs, so the caller can also say what actually DIFFERS between the
+    completions.
 
     Scans only indexes ALREADY built and cached. An MPN that failed to resolve
     has, by then, been looked for in every catalogue file, so they are all
@@ -167,16 +169,16 @@ def catalogue_mpns_with_prefix(stem: str, *, limit: int = 8) -> list[str]:
     key = mpn_packaging.squashed(stem).lower()
     if not key or len(key) < 4:
         return []
-    found: set[str] = set()
+    found: dict[str, dict] = {}
     for index in list(_TAS_INDEX_CACHE.values()):
         for mpn, record in index.items():
-            if mpn == key:
+            if mpn == key or mpn in found:
                 continue
             if mpn_packaging.squashed(mpn).lower().startswith(key):
-                found.add(record.get("mpn") or mpn)
+                found[mpn] = record
                 if len(found) > limit:
-                    return sorted(found)
-    return sorted(found)
+                    return [found[k] for k in sorted(found)]
+    return [found[k] for k in sorted(found)]
 
 
 def _flat_record_from_env(env: dict, mi: dict) -> dict:
