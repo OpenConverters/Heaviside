@@ -61,6 +61,16 @@ _TAS_LOOKUP_CACHE: dict[tuple[str, str, str], dict | None] = {}
 _TAS_INDEX_CACHE: dict[str, dict[str, dict]] = {}
 _TAS_BASE_INDEX_CACHE: dict[str, dict[str, dict]] = {}
 _TAS_SQUASHED_INDEX_CACHE: dict[str, dict[str, dict]] = {}
+# LIGHT category index: mpn_lower -> electrical subtype ("" when the record has
+# none). Answers "which category is this MPN, and is it a chip bead?" without
+# retaining a single envelope. The heavy index above costs GB — a part number
+# that resolves NOWHERE used to index the entire catalogue looking for it, which
+# OOM-killed prod (ABT #886). Measured over the shipped catalogue: magnetics
+# 82 479 keys in 2 s, capacitors 253 844 in 4 s, connectors 391 073 in 3 s, all
+# three under 85 MB together.
+_TAS_KIND_INDEX_CACHE: dict[str, dict[str, str]] = {}
+_TAS_KIND_BASE_CACHE: dict[str, dict[str, str]] = {}
+_TAS_KIND_SQUASHED_CACHE: dict[str, dict[str, str]] = {}
 
 # Register every cache with the shared memory guard so a large crossref can't
 # grow them past the RSS budget and OOM a shared host (index_budget).
@@ -70,6 +80,9 @@ try:
     _register_cache(_TAS_INDEX_CACHE)
     _register_cache(_TAS_BASE_INDEX_CACHE)
     _register_cache(_TAS_SQUASHED_INDEX_CACHE)
+    _register_cache(_TAS_KIND_INDEX_CACHE)
+    _register_cache(_TAS_KIND_BASE_CACHE)
+    _register_cache(_TAS_KIND_SQUASHED_CACHE)
     _register_cache(_TAS_LOOKUP_CACHE)
 except Exception:  # pragma: no cover - guard is best-effort
     pass
@@ -115,6 +128,91 @@ def lookup_part_fields(
     return _lookup_tas_part(part_number, component_kind, tas_data_dir=tas_data_dir)
 
 
+def lookup_part_fields_bulk(
+    wanted: dict[str, set[str]],
+    *,
+    tas_data_dir: Path | None = None,
+) -> dict[tuple[str, str], dict]:
+    """Flat records for a SMALL set of MPNs, without indexing whole files.
+
+    ``wanted`` maps a component kind to the MPNs needed from it; the result is
+    keyed ``(kind, mpn_lower)`` using the MPN the caller asked for, whichever
+    spelling the catalogue actually stores.
+
+    The per-file index is the right shape for validating hundreds of substitutes
+    later in a run, and the wrong shape for the handful of rows a BOM starts
+    with: building it to answer seven questions costs GB and, on prod, an
+    eviction storm (ABT #886). This streams instead — one pass per needed file,
+    memory proportional to the HITS.
+    """
+    from heaviside.catalogue._reader import iter_envelopes
+
+    root = tas_data_dir or _TAS_DATA_DEFAULT
+    out: dict[tuple[str, str], dict] = {}
+    for kind, mpns in wanted.items():
+        # variant spelling -> every asked MPN that reduces to it. A SET, not one
+        # value: a BOM can spell the same part several ways (BLM21AG601SN1D,
+        # BLM-21A-G601SN1D, …) and they all reduce to one catalogue key, so
+        # mapping to a single MPN let one row claim the record and starved the
+        # rest — which then fell back to building the whole-file index.
+        keys: dict[str, set[str]] = {}
+        for mpn in mpns:
+            asked = str(mpn or "").strip().lower()
+            if not asked:
+                continue
+            for variant in _mpn_match_keys(asked):
+                keys.setdefault(variant, set()).add(asked)
+        if not keys:
+            continue
+        # Counted down rather than re-tested per line: an `all(...)` over the
+        # wanted MPNs would be O(rows) on every one of a quarter-million lines.
+        remaining = {str(m or "").strip().lower() for m in mpns} - {""}
+        for fname in _TAS_KIND_TO_FILES.get(kind, []):
+            if not remaining:
+                break
+            path = root / fname
+            if not path.is_file():
+                continue
+            for _lineno, env in iter_envelopes(path):
+                for mi in _iter_part_records(env):
+                    part = (mi.get("datasheetInfo") or {}).get("part") or {}
+                    for ref in (mi.get("reference"), part.get("partNumber")):
+                        if not isinstance(ref, str) or not ref.strip():
+                            continue
+                        matched = {
+                            asked
+                            for variant in _mpn_match_keys(ref.strip().lower())
+                            for asked in keys.get(variant, ())
+                        } & remaining
+                        if not matched:
+                            continue
+                        flat = _flat_record_from_env(env, mi)
+                        flat["mpn"] = ref.strip()
+                        for asked in matched:
+                            out[(kind, asked)] = flat
+                        remaining -= matched
+                        break
+                if not remaining:
+                    break  # every MPN this kind wanted is accounted for
+    return out
+
+
+def _mpn_match_keys(mpn: str) -> set[str]:
+    """Every spelling under which an MPN should be considered the same part."""
+    key = mpn.strip().lower()
+    if not key:
+        return set()
+    keys = {key}
+    squashed = mpn_packaging.squashed(key).lower()
+    if squashed:
+        keys.add(squashed)
+    for form in (key, squashed):
+        base = mpn_packaging.packaging_base(form) if form else None
+        if base:
+            keys.add(base.lower())
+    return keys
+
+
 def lookup_mpn_category(
     part_number: str,
     *,
@@ -133,11 +231,14 @@ def lookup_mpn_category(
     cross-referenced against power inductors (ABT #874). The record's electrical
     subtype refines it.
 
-    ``only_kinds`` restricts the search to those categories. An MPN that resolves
-    NOWHERE indexes every catalogue file looking for it — several GB of
-    envelopes, enough to OOM the prod box — so a caller that already knows which
-    files could possibly have gained the part (the librarian just wrote one)
-    must say so instead of sweeping the whole catalogue again.
+    Reads the LIGHT index, not the record index: this question needs a category
+    and a subtype, and an MPN that resolves NOWHERE consults every catalogue file
+    before it can answer ``None``. Doing that over whole envelopes cost ~10 GB
+    and OOM-killed the prod box (ABT #886); over the light index the same sweep
+    is seconds and tens of MB.
+
+    ``only_kinds`` narrows it further, for a caller that already knows which
+    files could possibly have gained the part (the librarian just wrote one).
     """
     if not part_number or not part_number.strip():
         return None
@@ -149,10 +250,18 @@ def lookup_mpn_category(
         path = root / fname
         if not path.is_file():
             continue
-        record = _resolve_with_variants(mpn_l, path, _tas_file_index(path))
-        if record is None:
+        exact = _tas_kind_index(path)
+        # "" is a real value here (a record with no subtype), so test for None.
+        subtype = exact.get(mpn_l)
+        if subtype is None:
+            base, squashed = _tas_kind_variant_indexes(path)
+            if _has_variant_spelling(mpn_l):
+                subtype = mpn_packaging.resolve(mpn_l, exact, base, squashed)
+            else:
+                subtype = squashed.get(mpn_l)
+        if subtype is None:
             continue
-        if kind == "magnetic" and record.get("subtype") == "chipBead":
+        if kind == "magnetic" and subtype == "chipBead":
             return "chipBead"
         return kind
     return None
@@ -212,16 +321,7 @@ def catalogue_records_with_prefix(
 
 def _flat_records_in(env: dict):
     """Every (mpn-carrying) flat record in one catalogue envelope."""
-    for top_key in (
-        "capacitor",
-        "semiconductor",
-        "resistor",
-        "magnetics",
-        "magnetic",
-        "connector",
-        "analog",
-        "timeBase",
-    ):
+    for top_key in _ENVELOPE_TOP_KEYS:
         sub = env.get(top_key)
         if not isinstance(sub, dict):
             continue
@@ -358,6 +458,103 @@ def _tas_base_index(path: Path) -> dict[str, dict]:
         cached = mpn_packaging.build_base_index(exact)
         _TAS_BASE_INDEX_CACHE[str(path)] = cached
     return cached
+
+
+# The top-level keys a catalogue envelope can carry, and how to descend to the
+# per-part records inside them. Shared by the heavy and light index builders so
+# the two can never disagree about what counts as a part.
+_ENVELOPE_TOP_KEYS = (
+    "capacitor",
+    "semiconductor",
+    "resistor",
+    "magnetics",
+    "magnetic",
+    "connector",
+    "analog",
+    "timeBase",
+)
+
+
+def _iter_part_records(env: dict):
+    """Yield each ``manufacturerInfo`` an envelope carries for a PART.
+
+    Deliberately not a regex over the raw line: that is 3× faster but wrong.
+    Measured against this traversal it over-collects 14 729 MPNs in magnetics
+    alone — distributor SKUs such as ``994-XFL2010-472MEC`` sitting in
+    ``distributorsInfo`` — which would index a Mouser order code as though it
+    were the manufacturer's part number.
+    """
+    for top_key in _ENVELOPE_TOP_KEYS:
+        sub = env.get(top_key)
+        if not isinstance(sub, dict):
+            continue
+        inner_keys = (
+            tuple(sub.keys())
+            if top_key in ("analog", "timeBase")
+            else (None, "mosfet", "diode", "igbt")
+        )
+        for inner_key in inner_keys:
+            record = sub if inner_key is None else sub.get(inner_key)
+            if not isinstance(record, dict):
+                continue
+            mi = record.get("manufacturerInfo")
+            if isinstance(mi, dict):
+                yield mi
+
+
+def _electrical_subtype(mi: dict) -> str:
+    """The record's electrical subtype ("inductor" / "chipBead" / …), or ""."""
+    electrical = (mi.get("datasheetInfo") or {}).get("electrical")
+    if isinstance(electrical, list):
+        first = next((x for x in electrical if isinstance(x, dict)), {})
+    elif isinstance(electrical, dict):
+        first = electrical
+    else:
+        return ""
+    subtype = first.get("subtype")
+    return subtype if isinstance(subtype, str) else ""
+
+
+def _tas_kind_index(path: Path) -> dict[str, str]:
+    """``mpn_lower -> electrical subtype`` for a catalogue file, no envelopes.
+
+    Same traversal and same keys as :func:`_tas_file_index` — so an MPN resolves
+    identically through both — but it keeps a short string per part instead of
+    the whole record.
+    """
+    cached = _TAS_KIND_INDEX_CACHE.get(str(path))
+    if cached is not None:
+        return cached
+
+    from heaviside.catalogue._reader import iter_envelopes
+
+    index: dict[str, str] = {}
+    for _lineno, env in iter_envelopes(path):
+        for mi in _iter_part_records(env):
+            part = (mi.get("datasheetInfo") or {}).get("part") or {}
+            subtype = _electrical_subtype(mi)
+            for ref in (mi.get("reference"), part.get("partNumber")):
+                if isinstance(ref, str) and ref.strip():
+                    index.setdefault(ref.strip().lower(), subtype)
+    # Only after a COMPLETE scan — a partial index silently shrinks the
+    # catalogue and would misreport parts as uncatalogued.
+    _TAS_KIND_INDEX_CACHE[str(path)] = index
+    return index
+
+
+def _tas_kind_variant_indexes(path: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """(packaging-base, separator-squashed) views of the light index."""
+    exact = _tas_kind_index(path)
+    key = str(path)
+    base = _TAS_KIND_BASE_CACHE.get(key)
+    if base is None:
+        base = mpn_packaging.build_base_index(exact)
+        _TAS_KIND_BASE_CACHE[key] = base
+    squashed = _TAS_KIND_SQUASHED_CACHE.get(key)
+    if squashed is None:
+        squashed = mpn_packaging.build_squashed_index(exact)
+        _TAS_KIND_SQUASHED_CACHE[key] = squashed
+    return base, squashed
 
 
 def _has_variant_spelling(mpn: str) -> bool:

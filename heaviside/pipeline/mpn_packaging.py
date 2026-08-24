@@ -106,11 +106,16 @@ def squashed(mpn: str) -> str:
 def _same_part(a: Any, b: Any) -> bool:
     """True when two catalogue records describe the same part in different
     packaging. Compared on identity-bearing fields only; anything unequal (or
-    uncomparable) counts as DIFFERENT, so the caller poisons the base."""
+    uncomparable) counts as DIFFERENT, so the caller poisons the base.
+
+    A non-dict "record" is compared by equality. The indexes here hold whole
+    records, but the lightweight category index holds only a subtype string per
+    MPN — treating two equal strings as different would poison every base it
+    builds and quietly undo the resolution these functions exist to provide."""
     if a is b:
         return True
     if not isinstance(a, dict) or not isinstance(b, dict):
-        return False
+        return type(a) is type(b) and a == b
     for field in ("value", "voltage", "package", "case", "manufacturer", "technology"):
         if a.get(field) != b.get(field):
             return False

@@ -614,7 +614,7 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
     taxonomy: the librarian looks the MPN up, sets the row's ``component_type``,
     and then sources the original. Otherwise such rows would be skipped and the
     LLM would guess the category too late for the original to ever be fetched."""
-    from heaviside.pipeline.guardrails import lookup_part_fields
+    from heaviside.pipeline.guardrails import lookup_part_fields_bulk
 
     try:
         from heaviside.librarian.fetcher import DigiKeyClient, load_credentials
@@ -642,22 +642,30 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
         and _row_mpn(comp).lower() not in _SKIP
         for comp in state.source_bom
     )
-    # Build the categorised "wanted" set up front (cheap DB lookups only).
-    wanted: dict[tuple[str, str], str] = {}  # (cat, mpn_lower) -> original mpn
+    # Build the categorised "wanted" set up front. "Is this already in the DB?"
+    # is asked once per row, in ONE streaming pass — asking it row by row builds
+    # a whole-file index per category, gigabytes of envelopes to answer a
+    # handful of yes/no questions (ABT #886).
+    candidates: dict[tuple[str, str], str] = {}
+    by_kind: dict[str, set[str]] = {}
     for comp in state.source_bom:
         cat = comp.get("component_type", comp.get("category", ""))
         mpn = _row_mpn(comp)
         if not cat or not mpn or mpn.lower() in _SKIP:
             continue
-        key = (cat, mpn.lower())
-        if key in wanted:
-            continue
+        candidates.setdefault((cat, mpn.lower()), mpn)
+        by_kind.setdefault(cat, set()).add(mpn.lower())
+
+    already: dict[tuple[str, str], dict[str, Any]] = {}
+    if by_kind:
         try:
-            if lookup_part_fields(mpn, cat) is not None:
-                continue  # already resolvable — nothing to fetch
-        except Exception:
-            pass
-        wanted[key] = mpn
+            already = lookup_part_fields_bulk(by_kind)
+        except Exception:  # a lookup failure must not stop the librarian
+            already = {}
+
+    wanted: dict[tuple[str, str], str] = {  # (cat, mpn_lower) -> original mpn
+        key: mpn for key, mpn in candidates.items() if key not in already
+    }
 
     if not wanted and not has_uncategorised:
         return state
@@ -783,6 +791,12 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
             # without the other would resolve against an evicted catalogue
             _g._TAS_BASE_INDEX_CACHE.clear()
             _g._TAS_SQUASHED_INDEX_CACHE.clear()
+            # The light category index is derived from the same files, so it is
+            # just as stale — leaving it would report the part we just persisted
+            # as still uncatalogued.
+            _g._TAS_KIND_INDEX_CACHE.clear()
+            _g._TAS_KIND_BASE_CACHE.clear()
+            _g._TAS_KIND_SQUASHED_CACHE.clear()
             _g._TAS_LOOKUP_CACHE.clear()
             _ms._MPN_ENV_INDEX_CACHE.clear()
         except Exception:
@@ -810,7 +824,7 @@ def _stage1_7_reprefetch_late(state: CrossRefState) -> CrossRefState:
     may have just persisted its original), so the candidates come back RANKED
     by value instead of in arbitrary catalogue order.
     """
-    from heaviside.pipeline.guardrails import lookup_mpn_category
+    from heaviside.pipeline.guardrails import lookup_mpn_category, lookup_part_fields_bulk
 
     refs = {r for r in state.late_classified_refs if r}
 
@@ -847,15 +861,25 @@ def _stage1_7_reprefetch_late(state: CrossRefState) -> CrossRefState:
     if not refs:
         return state
 
-    for comp in state.source_bom:
-        ref = comp.get("ref_des", comp.get("name", "?"))
-        if ref not in refs:
-            continue
+    # One streaming pass for every late row's record, rather than a whole-file
+    # index per category to answer a handful of lookups (ABT #886).
+    late_rows = [
+        c for c in state.source_bom if c.get("ref_des", c.get("name", "?")) in refs
+    ]
+    by_kind: dict[str, set[str]] = {}
+    for comp in late_rows:
+        cat = comp.get("component_type", "")
+        mpn = str(comp.get("original_mpn") or "").strip().lower()
+        if cat and mpn:
+            by_kind.setdefault(cat, set()).add(mpn)
+    records = lookup_part_fields_bulk(by_kind) if by_kind else {}
+
+    for comp in late_rows:
         cat = comp.get("component_type", "")
         mpn = str(comp.get("original_mpn") or "")
         if not cat or not mpn:
             continue
-        db = _fields_from_catalogue(mpn, cat)
+        db = _fields_from_catalogue(mpn, cat, rec=records.get((cat, mpn.strip().lower())))
         if db is None:
             continue
         if not comp.get("value") and db["value"]:
@@ -4231,6 +4255,31 @@ def _package_from_description(desc: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _resolve_row_category(row: dict[str, Any]) -> str:
+    """The CR category for a BOM row: its type column normalised through the
+    alias table, else inferred from its description, else asked of the
+    catalogue.
+
+    A type column that isn't a recognised category — absent, OR a JEDEC/package
+    code that got mapped into it ("C0402H32", "SOT23_6-2") — is treated as
+    unknown rather than trusted. A non-passive (IC/connector/diode) with no
+    catalogue entry resolves to "" and is left unclassified.
+    """
+    raw_ct = str(row.get("component_type", "")).strip().lower()
+    cat = _CATEGORY_ALIASES.get(raw_ct) or (raw_ct if raw_ct in _CR_CANONICAL_CATEGORIES else "")
+    if cat:
+        return cat
+    cat = _infer_component_type(row)
+    if cat:
+        return cat
+    # No type column and no description signal (e.g. a pasted bare part
+    # number) — ask the internal catalogue, which is authoritative, instead of
+    # leaving the row for the LLM to guess a category from the MPN's shape.
+    from heaviside.pipeline.guardrails import lookup_mpn_category
+
+    return lookup_mpn_category(str(row.get("original_mpn") or "")) or ""
+
+
 def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Canonicalise BOM field names so the pipeline works with both
     Heaviside-native and Proteus-style BOMs."""
@@ -4241,6 +4290,28 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "mpn": "original_mpn",
     }
     import re as _re
+
+    # The catalogue backfill below needs one record per row. Fetching them one
+    # at a time builds a whole-file index per category — GB of envelopes to
+    # answer a handful of questions, and the reason "Resolve part numbers" sat
+    # for minutes on a 7-row BOM (ABT #886). Classify first (cheap: the light
+    # index), then fetch every row's record in ONE streaming pass.
+    _rows = [dict(comp) for comp in bom]
+    for row in _rows:
+        for old_key, new_key in _FIELD_MAP.items():
+            if old_key in row and new_key not in row:
+                row[new_key] = row[old_key]
+    _cats = [_resolve_row_category(row) for row in _rows]
+    _wanted: dict[str, set[str]] = {}
+    for row, cat in zip(_rows, _cats, strict=True):
+        mpn = str(row.get("original_mpn") or "").strip()
+        if cat and mpn:
+            _wanted.setdefault(cat, set()).add(mpn.lower())
+    _records: dict[tuple[str, str], dict[str, Any]] = {}
+    if _wanted:
+        from heaviside.pipeline.guardrails import lookup_part_fields_bulk
+
+        _records = lookup_part_fields_bulk(_wanted)
 
     out: list[dict[str, Any]] = []
     _seen_refs: set[str] = set()
@@ -4273,20 +4344,7 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # infer it from the description so passive rows still reach the
         # cross-referencer (and prefetch can find candidates by category). A
         # non-passive (IC/connector/diode) infers to "" and is left unclassified.
-        raw_ct = str(row.get("component_type", "")).strip().lower()
-        cat = _CATEGORY_ALIASES.get(raw_ct) or (
-            raw_ct if raw_ct in _CR_CANONICAL_CATEGORIES else ""
-        )
-        if not cat:
-            cat = _infer_component_type(row)
-        if not cat:
-            # No type column and no description signal (e.g. a pasted bare
-            # part number) — ask the internal catalogue, which is authoritative,
-            # instead of leaving the row for the LLM to guess a category from
-            # the MPN's shape.
-            from heaviside.pipeline.guardrails import lookup_mpn_category
-
-            cat = lookup_mpn_category(str(row.get("original_mpn") or "")) or ""
+        cat = _cats[idx]
         if cat:
             row["component_type"] = cat
         else:
@@ -4320,7 +4378,10 @@ def _normalize_bom(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # unranked parts, and the G1/G2 value guardrails have nothing to check
         # against (a 10 Ω part once shipped as "partial" for a 10 kΩ original).
         if cat and not (row.get("value") and row.get("package")):
-            db = _fields_from_catalogue(str(row.get("original_mpn") or ""), cat)
+            _mpn = str(row.get("original_mpn") or "")
+            db = _fields_from_catalogue(
+                _mpn, cat, rec=_records.get((cat, _mpn.strip().lower()))
+            )
             if db is not None:
                 if not row.get("value") and db["value"]:
                     row["value"] = db["value"]
@@ -4631,13 +4692,19 @@ _VALUE_FIELD_BY_CAT = {
 }
 
 
-def _fields_from_catalogue(mpn: str, cat: str) -> dict[str, str] | None:
+def _fields_from_catalogue(
+    mpn: str, cat: str, rec: dict[str, Any] | None = None
+) -> dict[str, str] | None:
     """value/voltage/package display strings for an MPN from the internal DB,
     or ``None`` when the part is not catalogued. A field the catalogue lacks
-    comes back as "" (honest unknown)."""
-    from heaviside.pipeline.guardrails import lookup_part_fields
+    comes back as "" (honest unknown).
 
-    rec = lookup_part_fields(mpn, cat)
+    Pass ``rec`` when the caller already has the flat record (a bulk streaming
+    fetch), to skip the per-file index this would otherwise build."""
+    if rec is None:
+        from heaviside.pipeline.guardrails import lookup_part_fields
+
+        rec = lookup_part_fields(mpn, cat)
     if not rec:
         return None
     out = {"value": "", "voltage": "", "package": ""}
