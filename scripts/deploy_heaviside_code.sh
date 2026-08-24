@@ -95,10 +95,23 @@ R "git bundle verify $BUNDLE_REMOTE" | tail -2
 
 say "3. Stash TRACKED modifications only (-u would delete .venv and sibling checkouts)"
 if [ "$MODIFIED" != "0" ]; then
-  R "git stash push -m 'prod local state before $STAMP deploy'" | tail -1
+  # EXCLUDE .venv explicitly. Avoiding -u is not sufficient: .gitignore said
+  # ".venv/", which matches a directory, and prod's .venv is a SYMLINK — so it
+  # was never ignored, someone git-added it, and `git stash push` then carried
+  # prod's interpreter off as a "tracked modification". That took prod down on
+  # 2026-08-24 (health 000, ".venv MISSING") until the stash was popped back.
+  R "git stash push -m 'prod local state before $STAMP deploy' -- . ':(exclude).venv'" | tail -1
   echo "recover with: git stash list / git stash show -p stash@{0}"
 else
   echo "nothing to stash"
+fi
+
+# Whatever the index claimed, the interpreter must still be here. Checking now
+# means a mistake costs one aborted deploy, not a restart into a missing venv.
+if [ "$(R 'test -x .venv/bin/python && echo ok || echo MISSING')" != "ok" ]; then
+  echo "ABORT: .venv/bin/python is gone after the stash — prod would not restart." >&2
+  echo "Restore it with: git stash pop   (run as alf, in $PROD_DIR)" >&2
+  exit 1
 fi
 
 say "4. Pull from the bundle"

@@ -10,10 +10,13 @@ dist/
 .eggs/
 .installed.cfg
 
-# Virtualenvs
-.venv/
-.venv-web/
-venv/
+# Virtualenvs. NO trailing slash: on prod .venv is a SYMLINK to
+# /cache/heaviside-offload/venv, and ".venv/" matches only a directory — so the
+# symlink was never ignored, someone git-added it, and a deploy's `git stash`
+# then carried prod's interpreter away with it. Match both shapes.
+.venv
+.venv-web
+venv
 env/
 ENV/
 
