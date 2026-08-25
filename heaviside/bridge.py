@@ -43,6 +43,7 @@ Scope (Phase 2):
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
@@ -53,6 +54,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from heaviside.topologies.registry import TopologyEntry, get
+
+logger = logging.getLogger(__name__)
 
 ExtraComponentsMode = Literal["IDEAL", "REAL"]
 
@@ -230,7 +233,37 @@ def _import_pyom() -> Any:
     if not _pyom_settings_applied:
         _apply_pyom_settings(_ext)
         _pyom_settings_applied = True
+        path, digest = pyom_engine_identity()
+        logger.info("PyOpenMagnetics engine: %s sha256=%s", path, digest[:16])
     return _ext
+
+
+def pyom_engine_identity() -> tuple[str, str]:
+    """Return ``(path, sha256)`` of the PyOpenMagnetics extension actually loaded.
+
+    Which magnetics engine a process gets is decided by interpreter and sys.path,
+    not by anything this repo states, and two different builds answer the same
+    question differently without either one erroring. That is not hypothetical:
+    ``python3`` resolved a user-site build while ``.venv/bin/python`` resolved the
+    venv's, three weeks apart, and the same test file passed under one and failed
+    under the other — one token of difference in the command (ABT #903). So the
+    engine has to be able to say which build it is, and say it out loud.
+    """
+    import glob
+    import hashlib
+
+    import PyOpenMagnetics as _pkg
+
+    pkg_dir = Path(next(iter(_pkg.__path__))).resolve()
+    matches = sorted(glob.glob(str(pkg_dir / "PyOpenMagnetics*.so")))
+    if not matches:
+        raise BridgeError(
+            f"pyom_engine_identity: no PyOpenMagnetics*.so in {pkg_dir} — "
+            "the installation looks broken."
+        )
+    so = matches[0]
+    with open(so, "rb") as fh:
+        return so, hashlib.sha256(fh.read()).hexdigest()
 
 
 # Heaviside-authored current-density gate for the FAST magnetic adviser. MKF's
