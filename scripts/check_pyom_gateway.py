@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
-"""CI guard: all PyOpenMagnetics access goes through the bridge gateway.
+"""CI guard: all PyOpenMagnetics access goes through the bridge gateway, and
+there is exactly ONE PyOpenMagnetics build in the process.
 
 ``heaviside/bridge.py`` is the single place allowed to import the
-PyOpenMagnetics extension (``_import_pyom`` / ``_import_pyom_vendor``
-apply and VERIFY the Heaviside settings on every module they hand out).
-A direct import anywhere else gets an unconfigured PyOM whose simulator
-knobs (saturation, mutual resistance) are still at MKF defaults — wrong
-decks, not merely degraded ones.
+PyOpenMagnetics extension (``_import_pyom`` applies and VERIFIES the Heaviside
+settings on every module it hands out). A direct import anywhere else gets an
+unconfigured PyOM whose simulator knobs (saturation, mutual resistance) are
+still at MKF defaults — wrong decks, not merely degraded ones.
 
-Allowed:
+Allowed to import the package:
   * heaviside/bridge.py             — the gateway itself
   * heaviside/_pyom_cache.py        — imports the *package* only to
                                       locate and hash the .so (no API calls)
 
-Everything else under heaviside/ must not:
-  * ``import PyOpenMagnetics`` / ``from PyOpenMagnetics import ...``
-  * load a PyOpenMagnetics .so via ``importlib.util.spec_from_file_location``
+Everything else under heaviside/ must not ``import PyOpenMagnetics`` /
+``from PyOpenMagnetics import ...``.
+
+Loading a PyOpenMagnetics ``.so`` by PATH is forbidden EVERYWHERE, the gateway
+included. Two builds cannot coexist: they share a global symbol namespace, so
+whichever loads first wins and the other raises ``undefined symbol:
+Kirchhoff::api::…``. That is not hypothetical — a second, vendored build was
+loaded this way, which made ``calculate_saturation_current`` unreachable on the
+installed one and killed converter design for two months behind a message that
+blamed the physics (ABT #897). One build, one gateway.
 
 Exit code 1 with file:line diagnostics on any violation.
 """
@@ -35,10 +42,14 @@ ALLOWED = {
 }
 
 
-def violations_in(path: Path) -> list[tuple[int, str]]:
+def violations_in(path: Path, *, may_import: bool) -> list[tuple[int, str]]:
+    """Collect gateway violations. ``may_import`` exempts the two files allowed
+    to import the package; loading a .so by path is checked regardless."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
+        if may_import and not isinstance(node, ast.Call):
+            continue
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name.split(".")[0] == "PyOpenMagnetics":
@@ -65,15 +76,21 @@ def violations_in(path: Path) -> list[tuple[int, str]]:
 def main() -> int:
     bad = 0
     for path in sorted(PACKAGE.rglob("*.py")):
-        if path in ALLOWED:
-            continue
-        for lineno, what in violations_in(path):
-            print(f"{path.relative_to(REPO)}:{lineno}: {what} — route through heaviside.bridge._import_pyom[_vendor]")
+        for lineno, what in violations_in(path, may_import=path in ALLOWED):
+            hint = (
+                "one build only — do NOT load a second PyOpenMagnetics .so (ABT #897)"
+                if "spec_from_file_location" in what
+                else "route through heaviside.bridge._import_pyom"
+            )
+            print(f"{path.relative_to(REPO)}:{lineno}: {what} — {hint}")
             bad += 1
     if bad:
-        print(f"\n{bad} direct PyOpenMagnetics access(es) outside the gateway.")
+        print(f"\n{bad} PyOpenMagnetics gateway violation(s).")
         return 1
-    print("PyOM gateway check OK — no direct PyOpenMagnetics access outside heaviside/bridge.py.")
+    print(
+        "PyOM gateway check OK — one build, no direct PyOpenMagnetics access "
+        "outside heaviside/bridge.py."
+    )
     return 0
 
 

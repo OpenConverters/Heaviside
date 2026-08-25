@@ -51,7 +51,7 @@ def test_isat_computation_failure_raises_not_swallowed() -> None:
         _design_ktas_magnetics(
             _k_tas_with_one_magnetic(),
             bridge_mod=_FakeBridgeIsatRaises(),
-            pyom_vendor=object(),  # not reached — we raise before autocomplete
+            pyom=object(),  # not reached — we raise before autocomplete
             stamp_fn=lambda *a, **k: None,
         )
     # The original PyOM error is chained, not lost.

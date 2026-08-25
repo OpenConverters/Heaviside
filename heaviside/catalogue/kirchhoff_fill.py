@@ -160,7 +160,7 @@ def stamp_mkf_magnetic(
     wiring.
 
     ``pyom`` is the imported PyOpenMagnetics module (injected by the caller, e.g.
-    ``bridge._import_pyom_vendor()``). Fail-loud ``KirchhoffFillError`` on a bad
+    ``bridge._import_pyom()``). Fail-loud ``KirchhoffFillError`` on a bad
     export or if there is no magnetic component to stamp.
     """
     subckt = pyom.export_magnetic_as_subcircuit(magnetic)

@@ -480,7 +480,7 @@ def _simulate_kirchhoff_backend(
         # the topologies whose seeds Kirchhoff emits but MKF's topology path cannot
         # design). One design+stamp per magnetic component (transformer, output/resonant
         # inductors), targeted by name so each slot gets its own core.
-        _pyom_vendor = _bridge._import_pyom_vendor()
+        _pyom = _bridge._import_pyom()
         n_mag = 0
         for st in k_tas.get("topology", {}).get("stages", []):
             for comp in st.get("circuit", {}).get("components", []):
@@ -498,11 +498,11 @@ def _simulate_kirchhoff_backend(
                 # The fast geometry-advise selects a core + turns but leaves the coil
                 # un-wound (no turnsDescription); autocomplete fills the derived coil
                 # geometry so MKF can export it as a SPICE subcircuit (MKF_MODEL).
-                magnetic = _pyom_vendor.magnetic_autocomplete(designs[0].magnetic, dict(seed))
+                magnetic = _pyom.magnetic_autocomplete(designs[0].magnetic, dict(seed))
                 stamp_mkf_magnetic(
                     k_tas,
                     magnetic,
-                    pyom=_pyom_vendor,
+                    pyom=_pyom,
                     component_name=comp.get("name"),
                 )
                 n_mag += 1
@@ -659,7 +659,7 @@ def _design_ktas_magnetics(
     k_tas: dict[str, Any],
     *,
     bridge_mod: Any,
-    pyom_vendor: Any,
+    pyom: Any,
     stamp_fn: Any,
     main_name: str | None = None,
     pinned_main: Any = None,
@@ -723,7 +723,7 @@ def _design_ktas_magnetics(
                 comp["ipeak_worst"] = float(ipk)
             # The fast advise leaves the coil un-wound; autocomplete fills the coil
             # geometry so it can be exported as a SPICE subcircuit (MKF_MODEL).
-            magnetic = pyom_vendor.magnetic_autocomplete(d.magnetic, dict(seed))
+            magnetic = pyom.magnetic_autocomplete(d.magnetic, dict(seed))
             # Fail-loud: the MKF fast advise sizes the core on the primary area-product
             # then sets inductance-driven turns AFTER, with no windability gate — so a
             # high-Lm/low-current transformer can get a core whose window cannot hold the
@@ -737,7 +737,7 @@ def _design_ktas_magnetics(
                     f"hold the inductance-driven turns (un-windable transformer). MKF fast-advise "
                     f"needs a windability/fill-factor gate."
                 )
-            stamp_fn(k_tas, magnetic, pyom=pyom_vendor, component_name=comp.get("name"))
+            stamp_fn(k_tas, magnetic, pyom=pyom, component_name=comp.get("name"))
             n += 1
     return n
 
@@ -1020,7 +1020,7 @@ def _realize_via_kirchhoff(
             _design_ktas_magnetics(
                 k_tas,
                 bridge_mod=_bridge,
-                pyom_vendor=_bridge._import_pyom_vendor(),
+                pyom=_bridge._import_pyom(),
                 stamp_fn=stamp_mkf_magnetic,
                 main_name=main_name,
                 pinned_main=pinned_main,

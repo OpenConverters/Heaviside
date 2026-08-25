@@ -330,9 +330,9 @@ def test_stage3_kirchhoff_backend_stamps_regulated_operating_point():
     from heaviside.pipeline.full_design import _simulate_kirchhoff_backend
 
     try:
-        pyom = bridge._import_pyom_vendor()
+        pyom = bridge._import_pyom()
     except Exception as exc:
-        pytest.skip(f"PyOM vendor not available: {exc}")
+        pytest.skip(f"PyOM not available: {exc}")
     mag = _design_boost_magnetic(pyom)
     components = types.SimpleNamespace(main_magnetic=types.SimpleNamespace(mas={"magnetic": mag}))
     spec_dict = {
@@ -398,9 +398,9 @@ def test_full_cutover_real_semis_and_mkf_magnetic():
     from heaviside import bridge
 
     try:
-        pyom = bridge._import_pyom_vendor()
+        pyom = bridge._import_pyom()
     except Exception as exc:
-        pytest.skip(f"PyOM vendor not available: {exc}")
+        pytest.skip(f"PyOM not available: {exc}")
     magnetic = _design_boost_magnetic(pyom)
 
     tas = ka.design_topology_tas("boost", _BOOST)
@@ -542,9 +542,9 @@ def test_stage3_kirchhoff_native_single_tas_gate_passes():
     from heaviside.pipeline.full_design import stage3_realize
 
     try:
-        bridge._import_pyom_vendor()
+        bridge._import_pyom()
     except Exception as exc:
-        pytest.skip(f"PyOM vendor not available: {exc}")
+        pytest.skip(f"PyOM not available: {exc}")
 
     outcome = stage3_realize(_boost_pick(), _BOOST_HS_SPEC)
 

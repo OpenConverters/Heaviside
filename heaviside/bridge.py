@@ -195,17 +195,33 @@ def _apply_pyom_settings(ext: Any) -> Any:
 
 
 _pyom_settings_applied: bool = False
-_pyom_vendor_module: Any = None
 _pyom_fast_param_supported: bool | None = None  # None = not yet probed
 
 
 def _import_pyom() -> Any:
-    """Gateway to the installed PyOpenMagnetics extension.
+    """Gateway to the PyOpenMagnetics extension — the ONE magnetics engine.
 
-    Every production access to PyOM goes through this function or
-    :func:`_import_pyom_vendor` (enforced by
+    Every production access to PyOM goes through this function (enforced by
     ``scripts/check_pyom_gateway.py`` in CI), so every caller sees a
     consistently-configured PyOM.
+
+    There used to be a second gateway, ``_import_pyom_vendor``, which loaded
+    ``vendor/PyOpenMagnetics/build/cp312-*/…so`` as a separate native module
+    for the two bindings the installed wheel then lacked. Two PyOpenMagnetics
+    builds cannot coexist in one process: they share a global symbol namespace,
+    so whichever loads FIRST wins and the other becomes unloadable —
+
+        installed first -> installed OK, vendor then fails to load
+        vendor first    -> vendor OK, installed then fails to load
+
+    with the loser raising ``undefined symbol: Kirchhoff::api::…``. Because the
+    magnetic adviser loaded the vendor build first, ``calculate_saturation_current``
+    on the installed build could never run, every candidate came back unrankable,
+    and converter design died for two months behind a physics-flavoured message
+    (ABT #897). The vendored build is also the OLDER of the two and a strict
+    subset of the installed one — it does not even carry the ``spice_config`` /
+    ``bridge_simulation_mode`` bindings it was originally kept for. So it is
+    gone: one build, one gateway, no load-order hazard.
     """
     global _pyom_settings_applied
 
@@ -215,48 +231,6 @@ def _import_pyom() -> Any:
         _apply_pyom_settings(_ext)
         _pyom_settings_applied = True
     return _ext
-
-
-_PYOM_VENDOR_SO = (
-    Path(__file__).resolve().parent.parent
-    / "vendor"
-    / "PyOpenMagnetics"
-    / "build"
-    / "cp312-cp312-linux_x86_64"
-    / "PyOpenMagnetics.cpython-312-x86_64-linux-gnu.so"
-)
-
-
-def _import_pyom_vendor() -> Any:
-    """Gateway to the vendored PyOpenMagnetics build, if present.
-
-    Prefers the vendor ``.so`` (needed by the decomposer for
-    ``bridge_simulation_mode``); falls back to the installed extension.
-    Either way the module comes back with Heaviside settings applied —
-    the vendor ``.so`` is a distinct native module whose settings state
-    is independent of the installed one.
-    """
-    global _pyom_vendor_module
-
-    if _pyom_vendor_module is not None:
-        return _pyom_vendor_module
-
-    if _PYOM_VENDOR_SO.exists():
-        import importlib.util
-
-        # The module name must match the .so's PyInit_PyOpenMagnetics
-        # export; the module is deliberately NOT registered in
-        # sys.modules so it never shadows the installed package.
-        spec = importlib.util.spec_from_file_location("PyOpenMagnetics", str(_PYOM_VENDOR_SO))
-        if spec is None or spec.loader is None:
-            raise BridgeError(f"cannot build an import spec for {_PYOM_VENDOR_SO}")
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        _pyom_vendor_module = _apply_pyom_settings(mod)
-        return _pyom_vendor_module
-
-    _pyom_vendor_module = _import_pyom()
-    return _pyom_vendor_module
 
 
 # Heaviside-authored current-density gate for the FAST magnetic adviser. MKF's
@@ -423,12 +397,9 @@ def design_magnetic_from_mas_inputs(
             "excitationsPerWinding — the magnetic cannot be sized without a winding "
             "excitation (ABT #34 requires one per winding)."
         )
-    # Use the vendored build: it carries the current-density-gated
-    # calculate_advised_magnetics_with_filters binding (falls back to the
-    # installed extension when the vendor .so is absent). The realize/stamp path
-    # already runs on the vendored PyOM, so magnetic design + stamp stay on one
-    # engine.
-    pyom = _import_pyom_vendor()
+    # Design, stamp and the saturation gate all run on the one engine, so a
+    # candidate is advised and judged by the same build (ABT #897).
+    pyom = _import_pyom()
     return _advise_magnetics_fast(pyom, mas_inputs, "mas-inputs seed", max_results, core_mode)
 
 

@@ -765,7 +765,7 @@ def _build_phase2_tas(
     n_mag = _design_ktas_magnetics(
         k_tas,
         bridge_mod=_bridge,
-        pyom_vendor=_bridge._import_pyom_vendor(),
+        pyom=_bridge._import_pyom(),
         stamp_fn=stamp_mkf_magnetic,
     )
     if n_mag == 0:
