@@ -71,7 +71,15 @@ def _configure_heaviside_logging() -> None:
     progress lines (CR stage N, correction loops, per-batch timing, …) are
     actually recorded — there was no logging config, so every ``logger.info``
     was silently dropped and prod runs were unobservable. stderr is captured by
-    supervisor (heaviside.err.log). Honour HEAVISIDE_LOG_LEVEL if set."""
+    supervisor (heaviside.err.log). Honour HEAVISIDE_LOG_LEVEL if set.
+
+    Called from the ASGI **startup** event, NOT at import time. Configuring the
+    root of a logger tree is a process-wide, irreversible act (in particular
+    ``propagate = False`` detaches every ``heaviside.*`` logger from the root
+    handlers); doing it as an import side effect imposed it on every process
+    that merely *imports* this module — including the test runner, where it
+    silently blinded ``caplog`` for the whole session (ABT #899). Only a process
+    that actually serves the app owns the process's logging config."""
     import os
 
     level = getattr(logging, os.environ.get("HEAVISIDE_LOG_LEVEL", "INFO").upper(), logging.INFO)
@@ -84,8 +92,6 @@ def _configure_heaviside_logging() -> None:
     hlog.setLevel(level)
     hlog.propagate = False
 
-
-_configure_heaviside_logging()
 
 # Interactive API docs (/docs, /redoc) and the OpenAPI schema expose the full
 # route/parameter surface — an attacker's map of a live app. Disabled unless
@@ -100,6 +106,15 @@ app = FastAPI(
     redoc_url="/redoc" if _docs_enabled else None,
     openapi_url="/openapi.json" if _docs_enabled else None,
 )
+
+
+@app.on_event("startup")
+def _configure_logging_on_startup() -> None:
+    """Own the process's logging config only when this process actually serves.
+
+    Registered first, so the ``heaviside.*`` handler is in place before any
+    other startup hook (cache warming, …) emits its first line."""
+    _configure_heaviside_logging()
 
 
 # ---------------------------------------------------------------------------
