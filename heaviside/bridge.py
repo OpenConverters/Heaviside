@@ -1145,8 +1145,16 @@ def _isat_from_mas(
     """
     if not isinstance(mas, Mapping) or L_henries <= 0:
         return None
+    # The IMPORT is outside the try on purpose. "PyOM cannot be loaded" and
+    # "PyOM rejected this candidate" are different failures, and collapsing them
+    # into None reported the first as the second: with the extension unloadable,
+    # EVERY candidate came back unrankable and the frequency sweep blamed the
+    # physics — "no feasible (magnetic, fsw) … at 1.2x isat margin", advising the
+    # user to widen the band or fetch parts. That misdiagnosis stood for two
+    # months (ABT #896). An unavailable engine is not a property of a candidate;
+    # it raises.
+    pyom = _import_pyom()
     try:
-        pyom = _import_pyom()
         isat = pyom.calculate_saturation_current(dict(mas), float(temperature_c))
     except Exception:
         # PyOM rejected the MAS — cannot evaluate this candidate. Return
