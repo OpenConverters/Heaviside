@@ -1151,7 +1151,7 @@ def _isat_from_mas(
     # EVERY candidate came back unrankable and the frequency sweep blamed the
     # physics — "no feasible (magnetic, fsw) … at 1.2x isat margin", advising the
     # user to widen the band or fetch parts. That misdiagnosis stood for two
-    # months (ABT #896). An unavailable engine is not a property of a candidate;
+    # months (ABT #897). An unavailable engine is not a property of a candidate;
     # it raises.
     pyom = _import_pyom()
     try:
