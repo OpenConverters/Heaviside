@@ -131,23 +131,69 @@ def _mantissas(value: float) -> tuple[str, ...]:
     return tuple(out)
 
 
-def _printed_in(text: str, mantissa: str, prefix: str) -> bool:
-    """Is ``mantissa`` printed in the datasheet, followed by ``prefix``?
+# How far a unit may sit from its number and still be that number's unit.
+# A datasheet table is extracted as text with the unit COLUMN detached from the
+# value: on the IRFP4668 sheet "241" reads as "161 241 I = 81A" and the "nC"
+# that qualifies it is 62 characters away, in the column header. Requiring
+# adjacency threw away correct readings of well-formed datasheets.
+_UNIT_COLUMN_CHARS = 220
 
-    Matched on a NUMBER boundary. A bare substring search let "1" corroborate
-    itself out of the "100" in "100 V", which would accept a 100 V part as a
-    1 V one — the single worst thing this check exists to prevent.
+# The unit symbol each field is printed in. The wide search must match the
+# prefix AND the unit: looking for the bare prefix letter let a gate charge of
+# "117" borrow the "p" out of an unrelated "1460 pF" and come back as 117 pC.
+# The unit symbol each field is printed in, as a set of spellings, because a
+# PDF's text layer does not render units the way the page shows them. The ohm
+# sign is the worst: Infineon's sheets come out as "4.5 mW" (Symbol-font omega
+# read as W) and as "9.7 m\uf057" (a private-use glyph). Insisting on the real
+# Omega rejected almost every RDS(on) there is.
+_FIELD_UNIT: dict[str, tuple[str, ...]] = {
+    "drainSourceVoltage": ("V",), "gateThresholdVoltage": ("V",),
+    "onResistanceVgs": ("V",), "capacitanceMeasurementVds": ("V",),
+    "reverseVoltage": ("V",), "forwardVoltage": ("V",),
+    "continuousDrainCurrent": ("A",), "onResistanceId": ("A",),
+    "forwardCurrent": ("A",),
+    "onResistance": ("\u03a9", "\u2126", "\uf057", "W", "ohm", "Ohm", "OHM"),
+    "totalGateCharge": ("C",), "reverseRecoveryCharge": ("C",),
+    "outputCapacitance": ("F",),
+    "reverseRecoveryTime": ("s",),
+    "junctionTemperatureMax": ("C", "\u00b0C"),
+}
 
-    The trailing window is short on purpose: "117 nC" corroborates a gate
-    charge; "117" alone (a page number, an order code, an axis label) does not.
+
+def _printed_in(text: str, mantissa: str, prefix: str, *, wide: bool = False,
+                unit: tuple[str, ...] | str = ()) -> bool:
+    """Is ``mantissa`` printed in the datasheet, qualified by ``prefix``?
+
+    Matched on a NUMBER boundary, on BOTH sides and through the decimal point.
+    A bare substring search let the "1" corroborate itself out of the "100" in
+    "100 V"; excluding only a following digit still let it out of the "1.0" of
+    an unrelated gate resistance. Accepting a 200 V part as a 1 V one is the
+    single worst thing this check exists to prevent, so the boundary rejects a
+    following digit, and a following decimal point that leads to one.
+
+    ``wide`` looks for the prefix in the table row rather than right after the
+    number. It is used ONLY for a value that needs an SI prefix to make sense,
+    never for a bare one: a number that is already plausible as written must
+    have its unit beside it, or "Figure 1 ... 200 V" would corroborate a 1 V
+    part out of a caption.
     """
-    forms = _PREFIX_ALIASES.get(prefix, (prefix,)) if prefix else ("",)
-    for m in re.finditer(r"(?<![0-9.])" + re.escape(mantissa) + r"(?![0-9])", text):
-        after = text[m.end(): m.end() + 6]
+    heads = _PREFIX_ALIASES.get(prefix, (prefix,)) if prefix else ("",)
+    # The unit is required whenever we know it. Without that, an unprefixed
+    # value matched on the mantissa alone and ANY number on the page
+    # corroborated ANY field — the 1.0 of an internal gate resistance stood in
+    # for a 1 V drain-source rating on a 200 V part.
+    units = (unit,) if isinstance(unit, str) and unit else tuple(unit or ())
+    forms = [h + u for h in heads for u in units] if units else list(heads)
+    span = _UNIT_COLUMN_CHARS if wide else 6
+    for m in re.finditer(r"(?<![0-9.])" + re.escape(mantissa) + r"(?!\.?[0-9])", text):
+        after = text[m.end(): m.end() + span]
+        before = text[max(0, m.start() - span): m.start()] if wide else ""
         for form in forms:
             if not form:
                 return True
             if form in after or form.upper() in after:
+                return True
+            if wide and (form in before or form.upper() in before):
                 return True
     return False
 
@@ -165,9 +211,21 @@ def _forms_of(value: float):
                 yield mantissa, prefix
 
 
-def _is_printed(value: float, text: str) -> bool:
-    return any(_printed_in(text, mantissa, prefix)
-               for mantissa, prefix in _forms_of(value))
+def _is_printed(value: float, text: str, field: str = "") -> bool:
+    """Is this value printed anywhere, in any units the document uses?
+
+    A prefixed form may take its unit from the table column; an unprefixed one
+    may not, for the reason in :func:`_printed_in`.
+    """
+    unit = _FIELD_UNIT.get(field, ())
+    forms = list(_forms_of(value))
+    for mantissa, prefix in forms:
+        if _printed_in(text, mantissa, prefix, unit=unit):
+            return True
+    for mantissa, prefix in forms:
+        if prefix and _printed_in(text, mantissa, prefix, wide=True, unit=unit):
+            return True
+    return False
 
 
 def _plausible(field: str, value: float | None) -> bool:
@@ -200,19 +258,25 @@ def _corroborated(field: str, raw: float | None, text: str) -> tuple[float | Non
         return None, ""
     # 1. taken as given, when it is possible AND the document prints it (in
     #    whatever units the document prints it in: 0.0045 appears as "4.5 m").
-    if _plausible(field, raw) and _is_printed(raw, text):
+    if _plausible(field, raw) and _is_printed(raw, text, field):
         return raw, ""
     # 2. otherwise the reading may have dropped an SI prefix. Only a scale the
     #    document itself prints is accepted.
-    for factor, prefix in _PREFIXES:
-        if factor == 1.0:
-            continue
-        scaled = raw * factor
-        if not _plausible(field, scaled):
-            continue
-        for mantissa in _mantissas(raw):
-            if _printed_in(text, mantissa, prefix):
-                return scaled, f"{field} read as {mantissa} {prefix} and converted to SI"
+    unit = _FIELD_UNIT.get(field, ())
+    # Adjacency is the strong evidence, so EVERY prefix is tried that way
+    # before any of them is allowed to take its unit from the table column.
+    for wide in (False, True):
+        for factor, prefix in _PREFIXES:
+            if factor == 1.0:
+                continue
+            scaled = raw * factor
+            if not _plausible(field, scaled):
+                continue
+            for mantissa in _mantissas(raw):
+                if _printed_in(text, mantissa, prefix, wide=wide, unit=unit):
+                    where = " (unit taken from the table column)" if wide else ""
+                    return scaled, (f"{field} read as {mantissa} {prefix} and "
+                                    f"converted to SI{where}")
     if _plausible(field, raw):
         return None, f"{field}={raw:g} is possible but is not printed in the datasheet"
     return None, f"{field}={raw:g} is not a possible value"

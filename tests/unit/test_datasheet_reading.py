@@ -276,3 +276,74 @@ def test_a_condition_the_page_does_not_print_is_not_carried_either():
                                  SHEET, verbatim)
     e = env["semiconductor"]["mosfet"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
     assert "onResistanceVgs" not in e
+
+
+# ---------------------------------------------------------------------------
+# a real datasheet's table, as the text layer actually renders it
+# ---------------------------------------------------------------------------
+
+# IRFP4668: the unit COLUMN is detached from the value. "241" reads as
+# "161 241 I = 81A" and the "nC" that qualifies it is 62 characters away.
+# Requiring the unit beside the number threw this reading away and the record
+# failed schema validation for a gate charge the datasheet states plainly.
+IRFP_SHEET = (
+    "IRFP4668PbF V DSS 200V R typ. 8.0m DS(on) max. 9.7m I 130A D TO-247AC\n"
+    "Gate-to-Source Voltage +/- 30 V\n"
+    "R G Internal Gate Resistance --- 1.0 --- \n"
+    "Dynamic @ TJ = 25C (unless otherwise specified)  nC\n"
+    "Q Total Gate Charge --- 161 241 I = 81A\ng D\n"
+    "Q Gate-to-Source Charge --- 54 ---\n"
+    "t Turn-On Delay Time --- 105 --- I = 81A r D ns\n"
+    "C Input Capacitance --- 10870 --- V = 0V iss GS pF\n"
+    "C Output Capacitance --- 810 --- V = 50V oss DS\n"
+    "V GS(th) Gate Threshold Voltage 3.0 --- 5.0 V\n"
+    "TJ Operating Junction Temperature -55 to 175 C\n"
+)
+
+
+def test_a_value_whose_unit_is_in_the_table_column_is_still_corroborated():
+    value, note = _corroborated("totalGateCharge", 241.0, IRFP_SHEET)
+    assert value == pytest.approx(2.41e-7)
+    assert "table column" in note
+
+
+def test_the_wide_search_needs_the_unit_not_just_the_prefix_letter():
+    """Matching the bare prefix let a gate charge of 117 borrow the "p" out of
+    an unrelated "1460 pF" and come back as 117 pC — three orders out."""
+    sheet = "QG 117 ... nC ... Coss 1460 pF"
+    assert _corroborated("totalGateCharge", 117.0, sheet)[0] == pytest.approx(1.17e-7)
+
+
+def test_a_bare_number_still_needs_its_unit_beside_it():
+    """The wide window is only for a value that NEEDS a prefix. A number that
+    is already plausible as written must have its unit adjacent, or a "1" in a
+    figure caption would corroborate a 1 V part on a 200 V sheet."""
+    value, note = _corroborated("drainSourceVoltage", 1.0, IRFP_SHEET)
+    assert value is None
+    assert "not printed" in note
+
+
+def test_the_whole_irfp4668_reading_builds_a_valid_record():
+    verbatim = {
+        "drainSourceVoltage": (200.0, "200 V"),
+        "continuousDrainCurrent": (130.0, "130 A"),
+        "onResistance": (0.0097, "9.7 mOhm"),
+        "onResistanceVgs": (10.0, "10 V"),
+        "onResistanceId": (81.0, "81 A"),
+        "capacitanceMeasurementVds": (50.0, "50 V"),
+        "totalGateCharge": (2.41e-7, "241 nC"),
+        "outputCapacitance": (8.1e-10, "810 pF"),
+        "gateThresholdVoltage": (5.0, "5.0 V"),
+        "junctionTemperatureMax": (175.0, "175 C"),
+    }
+    env, _ = _BUILDERS["mosfet"]({}, "IRFP4668PBF", "Infineon",
+                                 "https://www.infineon.com/x.pdf",
+                                 "www.infineon.com", IRFP_SHEET, verbatim)
+    assert env is not None
+    e = env["semiconductor"]["mosfet"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    # every field the schema requires of a MOSFET
+    for required in ("drainSourceVoltage", "continuousDrainCurrent", "onResistance",
+                     "gateThresholdVoltage", "totalGateCharge"):
+        assert required in e, f"{required} was dropped"
+    assert e["totalGateCharge"] == pytest.approx(2.41e-7)
+    assert e["outputCapacitance"] == pytest.approx(8.1e-10)
