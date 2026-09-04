@@ -64,6 +64,53 @@ _AGGREGATORS = (
     "iiic.cc", "datasheets.com", "datasheetspdf", "pdf1.", "html.alldatasheet",
     "kynix", "chipdocs", "datasheetbank", "hqew", "seekic", "alldatasheetde",
 )
+# Semiconductor and passive makers, by the domain they publish documents on.
+# Used twice: to rank a candidate (a PDF served by a maker beats a PDF served by
+# a mirror, even when nobody told us which maker to expect) and to name the
+# manufacturer of a part no distributor carries.
+#
+# Without this, a search for a bare MPN has no manufacturer token to match, so
+# every unrecognised host looked alike and eupecsemi.com — a mirror with a
+# self-signed certificate — outranked infineon.com for an Infineon part.
+MANUFACTURER_DOMAINS = {
+    "ti.com": "Texas Instruments", "st.com": "STMicroelectronics",
+    "nxp.com": "NXP Semiconductors", "onsemi.com": "onsemi",
+    "diodes.com": "Diodes Incorporated", "vishay.com": "Vishay",
+    "rohm.com": "ROHM", "toshiba.semicon-storage.com": "Toshiba",
+    "infineon.com": "Infineon Technologies", "microchip.com": "Microchip",
+    "analog.com": "Analog Devices", "renesas.com": "Renesas",
+    "epc-co.com": "EPC", "wolfspeed.com": "Wolfspeed",
+    "we-online.com": "Wurth Elektronik", "murata.com": "Murata",
+    "nexperia.com": "Nexperia", "littelfuse.com": "Littelfuse",
+    "mccsemi.com": "Micro Commercial Components",
+    "alphaandomega.com": "Alpha & Omega", "aosmd.com": "Alpha & Omega Semiconductor",
+    "semtech.com": "Semtech", "ixys.com": "IXYS", "qorvo.com": "Qorvo",
+    "mouser-semi.com": "", "fairchildsemi.com": "Fairchild",
+    "irf.com": "International Rectifier", "vishay.de": "Vishay",
+    "kemet.com": "KEMET", "avx.com": "AVX", "yageo.com": "YAGEO",
+    "tdk.com": "TDK", "taiyo-yuden.com": "Taiyo Yuden",
+    "samsungsem.com": "Samsung Electro-Mechanics", "panasonic.com": "Panasonic",
+    "nichicon.co.jp": "Nichicon", "rubycon.co.jp": "Rubycon",
+    "coilcraft.com": "Coilcraft", "bourns.com": "Bourns",
+    "abracon.com": "Abracon", "epcos.com": "EPCOS",
+    "skyworksinc.com": "Skyworks", "power.com": "Power Integrations",
+    "monolithicpower.com": "Monolithic Power Systems",
+    "silabs.com": "Silicon Labs", "maximintegrated.com": "Maxim Integrated",
+    "cree.com": "Cree", "transphormusa.com": "Transphorm",
+    "navitassemi.com": "Navitas", "gansystems.com": "GaN Systems",
+}
+
+
+def manufacturer_domain(host: str) -> str | None:
+    """The manufacturer domain ``host`` belongs to, if any."""
+    host = (host or "").lower()
+    bare = host[4:] if host.startswith("www.") else host
+    for domain in MANUFACTURER_DOMAINS:
+        if bare == domain or bare.endswith("." + domain):
+            return domain
+    return None
+
+
 # Distributors: useful, authoritative-ish, but a listing page is not a datasheet.
 _DISTRIBUTORS = (
     "digikey.", "mouser.", "farnell.", "rs-online.", "newark.", "arrow.com",
@@ -123,11 +170,16 @@ def _score(url: str, mpn: str, mfr_tokens: list[str]) -> DatasheetCandidate | No
         rank -= 1.0
         why.append("a distributor listing")
     elif mfr_tokens and any(t in host for t in mfr_tokens):
-        # The only positive evidence that a host IS the manufacturer. An
-        # earlier version credited every host it did not recognise, which put
-        # a PDF mirror above infineon.com's own copy of the same document.
+        # The strongest evidence: the host carries the expected maker's name.
         rank += 3.0
         why.append("the manufacturer's own site")
+    elif manufacturer_domain(host):
+        # A maker's domain, just not the one we were told to expect (usually
+        # because nobody told us). Still far better than a mirror: an earlier
+        # version credited every unrecognised host equally, which put
+        # eupecsemi.com above infineon.com for an Infineon part.
+        rank += 2.5
+        why.append("a component manufacturer's site")
     else:
         why.append("an unrecognised site")
     if "datasheet" in low:

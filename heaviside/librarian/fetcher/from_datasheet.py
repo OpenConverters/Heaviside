@@ -123,11 +123,25 @@ _PREFIX_ALIASES = {"u": ("u", "\u00b5", "\u03bc")}
 
 
 def _mantissas(value: float) -> tuple[str, ...]:
-    """How a datasheet might print this number: 4.5, 4.50, 45 …"""
-    out = []
-    for text in (f"{value:g}", f"{value:.1f}", f"{value:.2f}", f"{value:.0f}"):
-        if text not in out and text not in ("0", "-0"):
-            out.append(text)
+    """How a datasheet might print this number: 4.5, 4.50, 0.00210, 45 …
+
+    Trailing zeros are part of how a spec is written — Vishay prints an
+    on-resistance as "0.00210", not "0.0021" — so padded forms are generated
+    too. A form that has ROUNDED the value into a different number is not this
+    value and is dropped, and so is a form that is all zeros, which every page
+    contains and which would therefore corroborate anything.
+    """
+    out: list[str] = []
+    for text in (f"{value:g}", f"{value:.0f}", f"{value:.1f}", f"{value:.2f}",
+                 f"{value:.3f}", f"{value:.4f}", f"{value:.5f}"):
+        if text in out or text.strip("-0.") == "":
+            continue
+        try:
+            if abs(float(text) - value) > abs(value) * 1e-6:
+                continue
+        except ValueError:
+            continue
+        out.append(text)
     return tuple(out)
 
 
@@ -138,9 +152,6 @@ def _mantissas(value: float) -> tuple[str, ...]:
 # adjacency threw away correct readings of well-formed datasheets.
 _UNIT_COLUMN_CHARS = 220
 
-# The unit symbol each field is printed in. The wide search must match the
-# prefix AND the unit: looking for the bare prefix letter let a gate charge of
-# "117" borrow the "p" out of an unrelated "1460 pF" and come back as 117 pC.
 # The unit symbol each field is printed in, as a set of spellings, because a
 # PDF's text layer does not render units the way the page shows them. The ohm
 # sign is the worst: Infineon's sheets come out as "4.5 mW" (Symbol-font omega
@@ -220,7 +231,11 @@ def _forms_of(value: float):
     """
     for factor, prefix in _PREFIXES:
         m = value / factor
-        if 0.05 <= abs(m) < 100000:
+        # The unprefixed form is ALWAYS worth trying: a datasheet may print a
+        # small quantity in base units ("0.00210 Ohm") rather than scale it,
+        # and a lower bound of 0.05 skipped exactly those.
+        lo = 1e-6 if factor == 1.0 else 0.05
+        if lo <= abs(m) < 100000:
             for mantissa in _mantissas(m):
                 yield mantissa, prefix
 
@@ -451,22 +466,6 @@ def _read_verbatim(mpn: str, category: str, text: str, call=None,
     return out, disagreed
 
 
-# Manufacturer sites whose hostname is not their name.
-_HOST_MANUFACTURER = {
-    "ti.com": "Texas Instruments", "st.com": "STMicroelectronics",
-    "nxp.com": "NXP Semiconductors", "onsemi.com": "onsemi",
-    "diodes.com": "Diodes Incorporated", "vishay.com": "Vishay",
-    "rohm.com": "ROHM", "toshiba.semicon-storage.com": "Toshiba",
-    "infineon.com": "Infineon Technologies", "microchip.com": "Microchip",
-    "analog.com": "Analog Devices", "renesas.com": "Renesas",
-    "epc-co.com": "EPC", "wolfspeed.com": "Wolfspeed",
-    "we-online.com": "Wurth Elektronik", "murata.com": "Murata",
-    "nexperia.com": "Nexperia", "littelfuse.com": "Littelfuse",
-    "mccsemi.com": "Micro Commercial Components", "alphaandomega.com": "Alpha & Omega",
-    "aosmd.com": "Alpha & Omega Semiconductor", "semtech.com": "Semtech",
-}
-
-
 def _manufacturer_from_host(host: str) -> str:
     """Who publishes documents at this hostname.
 
@@ -475,15 +474,16 @@ def _manufacturer_from_host(host: str) -> str:
     infineon.com is Infineon's. It is only trusted for a host that is not a
     reseller or an aggregator, because those republish everyone's.
     """
-    from heaviside.librarian.fetcher.websearch import _AGGREGATORS, _DISTRIBUTORS
+    from heaviside.librarian.fetcher.websearch import (
+        _AGGREGATORS, _DISTRIBUTORS, MANUFACTURER_DOMAINS, manufacturer_domain)
 
     host = (host or "").lower()
     if not host or any(a in host for a in _AGGREGATORS) or any(d in host for d in _DISTRIBUTORS):
         return ""
+    domain = manufacturer_domain(host)
+    if domain and MANUFACTURER_DOMAINS[domain]:
+        return MANUFACTURER_DOMAINS[domain]
     bare = host[4:] if host.startswith("www.") else host
-    for domain, name in _HOST_MANUFACTURER.items():
-        if bare == domain or bare.endswith("." + domain):
-            return name
     # a plain corporate domain: "somevendor.com" -> "Somevendor"
     label = bare.split(".")[0]
     return label.capitalize() if len(label) >= 3 and label.isalpha() else ""
@@ -694,32 +694,52 @@ def envelope_from_datasheet(
         cands = search(mpn, manufacturer or None)
         detail["from"] = "a web search"
         detail["candidates"] = [{"url": c.url, "why": c.why} for c in cands]
-        urls = [c.url for c in cands if c.is_pdf][:3] or [c.url for c in cands][:2]
+        # PDFs first, then anything else — a maker's HTML product page often
+        # carries the same table, and one bad PDF must not end the search.
+        urls = [c.url for c in cands if c.is_pdf][:4]
+        urls += [c.url for c in cands if not c.is_pdf][:2]
     if not urls:
         return None, "no datasheet could be found on the web for this part number", detail
 
-    # 2. read the first one that yields real text
+    # 2. read the first candidate that is actually THIS part's datasheet.
+    #
+    # "yields text" was too weak a test. A search result can be a landing page,
+    # a selection guide, or another part's sheet, and reading one of those
+    # produced either nothing or — worse — a plausible record for the wrong
+    # component. A datasheet for this part names this part, so that is the
+    # test, and a candidate that fails it is skipped rather than accepted.
     text = ""
     used = ""
+    rejected: list[str] = []
+    squashed_mpn = re.sub(r"[^a-z0-9]", "", mpn.lower())
     for url in urls:
         detail["tried"].append(url)
         try:
             doc = fetch(url, timeout=60)
         except Exception as exc:
-            logger.debug("datasheet fetch failed for %s: %s", url, exc)
+            rejected.append(f"{url[:60]}: could not be fetched ({str(exc)[:60]})")
             continue
         try:
-            text = _text_of(doc)
+            candidate_text = _text_of(doc)
         except Exception as exc:
-            logger.debug("datasheet parse failed for %s: %s", url, exc)
+            rejected.append(f"{url[:60]}: no text could be parsed ({str(exc)[:50]})")
             continue
-        if len(text) >= _MIN_TEXT:
-            used = doc.final_url or url
-            break
-        text = ""
+        if len(candidate_text) < _MIN_TEXT:
+            rejected.append(f"{url[:60]}: {len(candidate_text)} characters of text "
+                            f"(a scanned image, most likely)")
+            continue
+        # the part number, however the sheet punctuates it
+        if squashed_mpn not in re.sub(r"[^a-z0-9]", "", candidate_text.lower()):
+            rejected.append(f"{url[:60]}: readable, but does not name {mpn}")
+            continue
+        text = candidate_text
+        used = doc.final_url or url
+        break
+    if rejected:
+        detail["rejected"] = rejected
     if not used:
-        return None, ("a datasheet was found but no readable text could be taken from it "
-                      "(a scanned image, most likely)"), detail
+        return None, ("no document was found that is this part's datasheet — "
+                      + ("; ".join(rejected[:3]) if rejected else "nothing to read")), detail
     detail["read"] = used
 
     # 3. the model reads it — GROUNDED, never from memory.

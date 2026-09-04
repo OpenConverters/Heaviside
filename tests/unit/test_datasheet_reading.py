@@ -364,3 +364,47 @@ def test_lifting_the_unit_rule_is_per_field_and_does_not_leak():
     sheet = "RDS(on) max 4.1 m  VDSS 120 V  ID 90 A"
     value, note = _corroborated("drainSourceVoltage", 1.0, sheet)
     assert value is None and "not printed" in note
+
+
+def test_a_small_value_printed_in_base_units_is_found():
+    """Vishay prints an on-resistance as "0.00210 Ω" rather than scaling it to
+    milliohms. The form generator skipped every mantissa below 0.05 and never
+    produced trailing zeros, so neither "0.0021" nor "0.00210" was looked for
+    and a correctly-read value was refused."""
+    sheet = "R DS(on) V GS = 10 V, I D = 30 A 0.00210 Ω  V DS 60 V"
+    assert _corroborated("onResistance", 0.0021, sheet)[0] == pytest.approx(0.0021)
+
+
+def test_a_form_that_rounds_the_value_away_is_not_that_value():
+    """"4" is not 4.5, and "0.00" is not 0.0021. Generating them would let any
+    page with a zero on it corroborate anything."""
+    from heaviside.librarian.fetcher.from_datasheet import _mantissas
+
+    assert "4" not in _mantissas(4.5)
+    assert "0.0" not in _mantissas(0.0021)
+    assert "0.00" not in _mantissas(0.0021)
+    assert "0.00210" in _mantissas(0.0021)
+
+
+def test_a_document_that_does_not_name_the_part_is_not_its_datasheet():
+    """"Yields text" was too weak: a landing page, a selection guide or another
+    part's sheet all yield text, and reading one produced a plausible record
+    for the wrong component."""
+    from heaviside.librarian.fetcher.from_datasheet import envelope_from_datasheet
+
+    class _Doc:
+        content_type = "text/plain"
+        final_url = "https://example.com/other.pdf"
+        content = (b"Some other part entirely. " * 40)
+
+    seen = []
+
+    def fetch(url, timeout=60):
+        seen.append(url)
+        return _Doc()
+
+    env, why, detail = envelope_from_datasheet(
+        "IPA045N10N3G", "mosfet", datasheet_url="https://example.com/other.pdf",
+        fetch=fetch, seek=lambda *a, **k: {})
+    assert env is None
+    assert "does not name" in " ".join(detail.get("rejected", []))
