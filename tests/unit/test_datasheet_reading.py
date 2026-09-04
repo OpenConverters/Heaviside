@@ -164,3 +164,29 @@ def test_a_reading_that_cannot_fill_the_required_fields_builds_nothing():
     env, why = _BUILDERS["mosfet"]({"vds_V": 100}, "X", "Infineon", "u", "h", SHEET, {})
     assert env is None
     assert "missing" in why and "onResistance" in why
+
+
+# ---------------------------------------------------------------------------
+# who made it
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "host,expected",
+    [
+        ("www.infineon.com", "Infineon Technologies"),
+        ("ti.com", "Texas Instruments"),
+        ("www.st.com", "STMicroelectronics"),
+        ("somevendor.com", "Somevendor"),
+        # a reseller or an aggregator republishes everyone's documents, so its
+        # hostname says nothing about who made the part
+        ("www.alldatasheet.com", ""),
+        ("www.mouser.com", ""),
+        ("datasheet.iiic.cc", ""),
+        ("", ""),
+    ],
+)
+def test_the_serving_site_names_the_manufacturer_only_when_it_can(host, expected):
+    from heaviside.librarian.fetcher.from_datasheet import _manufacturer_from_host
+
+    assert _manufacturer_from_host(host) == expected

@@ -338,6 +338,44 @@ def _read_verbatim(mpn: str, category: str, text: str, call=None) -> dict[str, A
     return out
 
 
+# Manufacturer sites whose hostname is not their name.
+_HOST_MANUFACTURER = {
+    "ti.com": "Texas Instruments", "st.com": "STMicroelectronics",
+    "nxp.com": "NXP Semiconductors", "onsemi.com": "onsemi",
+    "diodes.com": "Diodes Incorporated", "vishay.com": "Vishay",
+    "rohm.com": "ROHM", "toshiba.semicon-storage.com": "Toshiba",
+    "infineon.com": "Infineon Technologies", "microchip.com": "Microchip",
+    "analog.com": "Analog Devices", "renesas.com": "Renesas",
+    "epc-co.com": "EPC", "wolfspeed.com": "Wolfspeed",
+    "we-online.com": "Wurth Elektronik", "murata.com": "Murata",
+    "nexperia.com": "Nexperia", "littelfuse.com": "Littelfuse",
+    "mccsemi.com": "Micro Commercial Components", "alphaandomega.com": "Alpha & Omega",
+    "aosmd.com": "Alpha & Omega Semiconductor", "semtech.com": "Semtech",
+}
+
+
+def _manufacturer_from_host(host: str) -> str:
+    """Who publishes documents at this hostname.
+
+    When nothing else names the manufacturer, the site the datasheet was
+    fetched FROM is real evidence rather than a guess — a PDF served by
+    infineon.com is Infineon's. It is only trusted for a host that is not a
+    reseller or an aggregator, because those republish everyone's.
+    """
+    from heaviside.librarian.fetcher.websearch import _AGGREGATORS, _DISTRIBUTORS
+
+    host = (host or "").lower()
+    if not host or any(a in host for a in _AGGREGATORS) or any(d in host for d in _DISTRIBUTORS):
+        return ""
+    bare = host[4:] if host.startswith("www.") else host
+    for domain, name in _HOST_MANUFACTURER.items():
+        if bare == domain or bare.endswith("." + domain):
+            return name
+    # a plain corporate domain: "somevendor.com" -> "Somevendor"
+    label = bare.split(".")[0]
+    return label.capitalize() if len(label) >= 3 and label.isalpha() else ""
+
+
 def _provenance(url: str, host: str) -> list[dict[str, Any]]:
     """Say plainly where this came from and that a model read it.
 
@@ -604,9 +642,18 @@ def envelope_from_datasheet(
     host = (urlparse(used).hostname or "").lower()
     mfr = str(specs.get("manufacturer") or manufacturer or "").strip()
     if not mfr:
+        # Nothing named it, so fall back to who served the document. This is
+        # the common case for a part no distributor carries: there is no
+        # distributor record to take a manufacturer from, and the reading does
+        # not always report one.
+        mfr = _manufacturer_from_host(host)
+        if mfr:
+            detail["manufacturerFrom"] = f"the site the datasheet was served by ({host})"
+    if not mfr:
         # A record with no manufacturer is not a catalogue record; the schema
         # wants one and a reviewer needs it.
-        return None, "the datasheet did not name a manufacturer", detail
+        return None, ("the datasheet did not name a manufacturer, and it was not served "
+                      f"by a site that identifies one ({host})"), detail
 
     envelope, why = _BUILDERS[category](specs, mpn, mfr, used, host, text, verbatim)
     if envelope is None:
