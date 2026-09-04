@@ -517,3 +517,63 @@ def test_bjt_is_absent_because_the_librarian_cannot_write_one():
     for supported in SUPPORTED:
         from heaviside.librarian.fetcher.from_datasheet import _CATEGORY_TO_DB
         assert _CATEGORY_TO_DB[supported] in safe_access.CATEGORIES
+
+
+# ---------------------------------------------------------------------------
+# the document has to be the part's own datasheet
+# ---------------------------------------------------------------------------
+
+
+def test_a_family_datasheet_with_a_wildcarded_suffix_names_the_part():
+    """Manufacturers publish ONE sheet for a family whose trailing characters
+    are packaging options, written as a wildcard: Murata's sheet for
+    GRM188R71H104KA93D calls it "GRM188R71H104KA93#". An exact match threw a
+    correct datasheet away over a hash."""
+    from heaviside.librarian.fetcher.from_datasheet import _names_the_part
+
+    mpn = "grm188r71h104ka93d"
+    assert _names_the_part(mpn, "... GRM188R71H104KA93D ...")[0] is True
+    named, how = _names_the_part(mpn, "... GRM188R71H104KA93# ...")
+    assert named and "packaging or tolerance" in how
+    # but a stem is never allowed to get short enough to match anything
+    assert _names_the_part("ss34", "... SS3 ...")[0] is False
+    assert _names_the_part(mpn, "... C0603C104K5RACTU ...")[0] is False
+
+
+def test_the_technology_is_read_from_the_title_block_not_the_whole_file():
+    """A TDK product page's related-products sidebar listed an MLCC whose part
+    number contains "C0G", and a polypropylene film capacitor came back
+    classified ceramic-class-1. The part's own description is at the top."""
+    from heaviside.librarian.fetcher.from_datasheet import technology_from_text
+
+    sheet = ("Metallized Polypropylene Film Capacitor B32922 series, EMI suppression"
+             + " filler " * 400 + " related products: FG26C0G2J102JNT06 MLCC")
+    assert technology_from_text("capacitor", sheet) == "film-polypropylene"
+
+
+def test_the_manufacturer_can_come_from_the_datasheets_own_title_block():
+    """The only PDF copy is often hosted by a DISTRIBUTOR — Farnell serves
+    Murata's sheet — and a distributor's hostname says nothing about who made
+    the part. The document's first page does."""
+    from heaviside.librarian.fetcher.from_datasheet import manufacturer_from_text
+
+    assert manufacturer_from_text("Murata Manufacturing Co., Ltd. Chip MLCC") == "Murata"
+    assert manufacturer_from_text("no vendor named here at all") == ""
+
+
+def test_a_web_page_is_not_a_datasheet(tmp_path):
+    """Accepting HTML to widen coverage let a product page through, and its
+    sidebar renamed the part's technology. A wrong record is worse than none."""
+    from heaviside.librarian.fetcher.from_datasheet import envelope_from_datasheet
+
+    class _Page:
+        content_type = "text/html; charset=utf-8"
+        final_url = "https://product.tdk.com/en/search/capacitor/film/info"
+        content = (b"<html>B32922C3224M electrical characteristics rating "
+                   b"absolute maximum </html>" + b"x" * 900)
+
+    env, why, detail = envelope_from_datasheet(
+        "B32922C3224M", "mosfet", datasheet_url="https://product.tdk.com/x",
+        fetch=lambda url, timeout=60: _Page(), seek=lambda *a, **k: {})
+    assert env is None
+    assert "not a datasheet PDF" in " ".join(detail.get("rejected", []))

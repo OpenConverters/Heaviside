@@ -168,12 +168,26 @@ def _toleranced(value: float, tol_fraction: float | None) -> dict[str, float]:
     return out
 
 
+# How much of a datasheet is about THIS part before it starts listing others.
+_TITLE_BLOCK = 3000
+
+
 def technology_from_text(category: str, text: str) -> str:
-    """The technology this datasheet states, or "" when it states none."""
-    low = text.lower()
-    for word, value in _TECHNOLOGY_WORDS.get(category, ()):
-        if word in low:
-            return value
+    """The technology this datasheet states for its own part, or "".
+
+    Read from the TITLE BLOCK first. A datasheet says what the part is in its
+    first paragraph ("Metallized Polypropylene Film Capacitors"), and searching
+    the whole file instead picks up every other product it mentions — a
+    related-products list containing one MLCC part number was enough to call a
+    film capacitor ceramic. The rest of the document is a fallback for sheets
+    that bury the description, and it is better than refusing outright.
+    """
+    words = _TECHNOLOGY_WORDS.get(category, ())
+    for chunk in (text[:_TITLE_BLOCK], text):
+        low = chunk.lower()
+        for word, value in words:
+            if word in low:
+                return value
     return ""
 
 _MIN_TEXT = 400          # a PDF yielding less than this is a scan or a stub
@@ -665,6 +679,34 @@ def _read_verbatim(mpn: str, category: str, text: str, call=None,
     return out, disagreed
 
 
+def manufacturer_from_text(text: str) -> str:
+    """The maker this datasheet names in its own title block.
+
+    Needed because the only PDF copy of a part's datasheet is often hosted by a
+    DISTRIBUTOR — Farnell serves Murata's sheet for GRM188R71H104KA93D — and a
+    distributor's hostname says nothing about who made the part. The document
+    does: its first page carries the maker's name. Matched against the known
+    makers rather than guessed from the text, so a mention of a competitor
+    deeper in the file cannot rename the part.
+    """
+    from heaviside.librarian.fetcher.websearch import MANUFACTURER_DOMAINS
+
+    head = (text or "")[:_TITLE_BLOCK].lower()
+    best, best_at = "", len(head) + 1
+    for name in set(MANUFACTURER_DOMAINS.values()):
+        if not name:
+            continue
+        needle = name.lower()
+        at = head.find(needle)
+        if at < 0 and " " in needle:      # "Murata Manufacturing" -> "murata"
+            needle = needle.split()[0]
+            at = head.find(needle)
+        # a bare short token is too weak to rename a part on
+        if at >= 0 and len(needle) >= 4 and at < best_at:
+            best, best_at = name, at
+    return best
+
+
 def _manufacturer_from_host(host: str) -> str:
     """Who publishes documents at this hostname.
 
@@ -1003,9 +1045,11 @@ def envelope_from_datasheet(
         cands = search(mpn, manufacturer or None)
         detail["from"] = "a web search"
         detail["candidates"] = [{"url": c.url, "why": c.why} for c in cands]
-        # PDFs first, then anything else — a maker's HTML product page often
-        # carries the same table, and one bad PDF must not end the search.
-        urls = [c.url for c in cands if c.is_pdf][:4]
+        # PDFs only, but several of them: one unreachable copy must not end
+        # the search, and a non-PDF candidate is rejected downstream anyway.
+        urls = [c.url for c in cands if c.is_pdf][:5]
+        # a URL without a .pdf suffix can still serve a PDF (query-string
+        # download links), so a couple are tried and content-checked
         urls += [c.url for c in cands if not c.is_pdf][:2]
     if not urls:
         return None, "no datasheet could be found on the web for this part number", detail
@@ -1038,14 +1082,27 @@ def envelope_from_datasheet(
                             f"(a scanned image, most likely)")
             continue
         # the part number, however the sheet punctuates it
-        if squashed_mpn not in re.sub(r"[^a-z0-9]", "", candidate_text.lower()):
+        named, how = _names_the_part(squashed_mpn, candidate_text)
+        if not named:
             rejected.append(f"{url[:60]}: readable, but does not name {mpn}")
+            continue
+        if how:
+            detail.setdefault("namedAs", how)
+        # A DATASHEET IS A PDF. Letting an HTML page through to widen coverage
+        # was a mistake: TDK's product page for B32922C3224M passed the
+        # characteristics-word test, and its related-products sidebar listed an
+        # MLCC whose part number contains "C0G" — so a polypropylene film
+        # capacitor was classified ceramic-class-1. A wrong record is worse
+        # than no record, and a product page is not the part's datasheet.
+        ctype = (getattr(doc, "content_type", "") or "").lower()
+        if "pdf" not in ctype and doc.content[:5] != b"%PDF-":
+            rejected.append(f"{url[:60]}: names {mpn} but is a web page, not a datasheet PDF")
             continue
         low = candidate_text.lower()
         markers = sum(1 for m in _DATASHEET_MARKERS if m in low)
         if markers < _MIN_MARKERS:
-            rejected.append(f"{url[:60]}: names {mpn} but reads like a product "
-                            f"page, not a datasheet (no characteristics table)")
+            rejected.append(f"{url[:60]}: a PDF naming {mpn}, but with no "
+                            f"characteristics table (a brochure or selection guide)")
             continue
         text = candidate_text
         used = doc.final_url or url
@@ -1102,6 +1159,11 @@ def envelope_from_datasheet(
     host = (urlparse(used).hostname or "").lower()
     mfr = str(specs.get("manufacturer") or manufacturer or "").strip()
     if not mfr:
+        # the document's own title block, before the host it happens to sit on
+        mfr = manufacturer_from_text(text)
+        if mfr:
+            detail["manufacturerFrom"] = "the datasheet's own title block"
+    if not mfr:
         # Nothing named it, so fall back to who served the document. This is
         # the common case for a part no distributor carries: there is no
         # distributor record to take a manufacturer from, and the reading does
@@ -1140,6 +1202,32 @@ def envelope_from_datasheet(
         return None, f"the record read from the datasheet could not be validated: {exc}", detail
 
     return envelope, db_cat, detail
+
+
+def _names_the_part(squashed_mpn: str, text: str) -> tuple[bool, str]:
+    """Does this document name the part, allowing for a wildcarded suffix?
+
+    Manufacturers publish ONE datasheet for a family whose trailing characters
+    are packaging and tolerance options, and write those as a wildcard: Murata's
+    sheet for GRM188R71H104KA93D calls it "GRM188R71H104KA93#". An exact match
+    threw that document away — a correct datasheet, rejected over a hash.
+
+    So the full number is tried first, then up to three trailing characters are
+    dropped, never below six so a short prefix cannot match half the catalogue.
+    Returns (named, how) where `how` says which form matched, because reading a
+    family sheet is worth knowing when the values are reviewed.
+    """
+    squashed_text = re.sub(r"[^a-z0-9]", "", text.lower())
+    if squashed_mpn in squashed_text:
+        return True, ""
+    for drop in (1, 2, 3):
+        stem = squashed_mpn[:-drop]
+        if len(stem) < 6:
+            break
+        if stem in squashed_text:
+            return True, (f"the datasheet names {stem.upper()}, a family sheet whose last "
+                          f"{drop} character(s) are packaging or tolerance options")
+    return False, ""
 
 
 def _text_of(doc: Any) -> str:
