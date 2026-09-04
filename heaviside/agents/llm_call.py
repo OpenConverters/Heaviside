@@ -126,7 +126,12 @@ def call_llm(
         "https://api.moonshot.ai/v1",
     )
     if model is None:
-        model = os.environ.get("HEAVISIDE_LLM_MODEL", "kimi-k2.5")
+        # kimi-k2.5 was retired from the account and every call 404'd
+        # ("Not found the model kimi-k2.5 or Permission denied"), which took
+        # the seeker and the crossref enrichment down silently — both swallow
+        # LLMCallError. k2.6 is the successor the account actually serves;
+        # HEAVISIDE_LLM_MODEL still overrides.
+        model = os.environ.get("HEAVISIDE_LLM_MODEL", "kimi-k2.6")
 
     try:
         import httpx

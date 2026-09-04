@@ -20,9 +20,35 @@ import pytest
 
 from heaviside.librarian.fetcher.auth import MissingCredentialError
 from heaviside.librarian.fetcher.base import DistributorError
-from heaviside.librarian.fetcher.lookup import MAX_MPN_LENGTH, lookup_part
+from heaviside.librarian.fetcher.lookup import MAX_MPN_LENGTH, _mouser_exact, lookup_part
+
+_REAL_MOUSER_EXACT = _mouser_exact
 
 _MPN = "IPB017N10N5LFATMA1"
+
+
+@pytest.fixture
+def real_mouser(monkeypatch):
+    """Undo the autouse stub so a test can exercise _mouser_exact's own guard.
+    Patching _mouser_exact from a test would only prove the mock returns what
+    the mock was told to."""
+    from heaviside.librarian.fetcher import lookup as lookup_mod
+
+    monkeypatch.setattr(lookup_mod, "_mouser_exact", _REAL_MOUSER_EXACT)
+
+
+@pytest.fixture(autouse=True)
+def _no_secondary_sources(monkeypatch):
+    """Digi-Key is faked per test; the two LATER sources must never touch the
+    network from a unit test. Each is silenced explicitly rather than by a
+    blanket socket block, so a test that means to exercise one just overrides
+    it back."""
+    monkeypatch.setattr(
+        "heaviside.librarian.fetcher.lookup._mouser_exact",
+        lambda mpn: (None, "no Mouser credentials are configured"))
+    monkeypatch.setattr(
+        "heaviside.librarian.fetcher.from_datasheet.envelope_from_datasheet",
+        lambda *a, **k: (None, "the datasheet route is disabled in this test", {}))
 
 
 def _mosfet(mpn: str = _MPN) -> dict:
@@ -108,8 +134,20 @@ def test_a_found_part_comes_back_valid_and_staged(tmp_path, monkeypatch):
 def test_a_part_the_distributor_does_not_have_is_a_miss_not_an_error(tmp_path):
     out = lookup_part("NO-SUCH-PART-9999", client=_FakeDK(None), staging_root=tmp_path)
     assert out["found"] is False
-    assert "no part with exactly this number" in out["reason"]
+    # each source's own answer is kept, so a miss says which of them said what
+    dk = [a for a in out["attempts"] if a["source"] == "digikey"]
+    assert dk and "no part with exactly this number" in dk[0]["outcome"]
     assert not list(tmp_path.rglob("*.json"))
+
+
+def test_every_source_that_was_tried_is_named_in_the_answer(tmp_path):
+    """A bare "not found" invites the reader to assume the whole web was
+    searched. The answer lists what each source actually said."""
+    out = lookup_part("NO-SUCH-PART-9999", "mosfet",
+                      client=_FakeDK(None), staging_root=tmp_path)
+    sources = [a["source"] for a in out["attempts"]]
+    assert sources == ["digikey", "mouser", "datasheet"]
+    assert all(a["outcome"] for a in out["attempts"])
 
 
 def test_an_unreachable_distributor_raises_and_is_never_reported_as_absent(tmp_path):
@@ -224,7 +262,8 @@ def test_a_part_that_will_not_validate_is_neither_returned_nor_staged(tmp_path, 
     monkeypatch.setattr(tas_mod, "validate_component", _reject)
     out = lookup_part(_MPN, client=_FakeDK(_mosfet()), staging_root=tmp_path)
     assert out["found"] is False
-    assert "schema validation" in out["reason"]
+    dk = [a for a in out["attempts"] if a["source"] == "digikey"]
+    assert dk and "schema validation" in dk[0]["outcome"]
     assert not list(tmp_path.rglob("*.json"))
 
 
@@ -289,3 +328,141 @@ def test_endpoint_is_key_gated_like_every_other_mutating_route(monkeypatch):
     monkeypatch.setenv("HEAVISIDE_API_KEY", "unit-test-secret")
     r = TestClient(app).post("/librarian/lookup", json={"mpn": _MPN})
     assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# the second and third sources
+# ---------------------------------------------------------------------------
+
+
+def _mouser_row(mpn=_MPN):
+    return {
+        "ManufacturerPartNumber": mpn,
+        "Manufacturer": "Infineon Technologies",
+        "Category": "MOSFET",
+        "DataSheetUrl": "https://www.infineon.com/dgdl/x.pdf",
+        "ProductDetailUrl": "https://www.mouser.com/x",
+    }
+
+
+def test_mouser_is_asked_when_digikey_does_not_have_the_part(tmp_path, monkeypatch):
+    """Mouser was configured and unused. It holds parts Digi-Key does not, and
+    asking costs nothing that is not already paid for."""
+    seen = {}
+    env = {"semiconductor": {"mosfet": {"manufacturerInfo": {"reference": _MPN}}}}
+    monkeypatch.setattr("heaviside.librarian.fetcher.lookup._mouser_exact",
+                        lambda mpn: (seen.setdefault("asked", mpn) and None) or (_mouser_row(), ""))
+    monkeypatch.setattr("heaviside.librarian.fetcher.lookup._mouser_envelope",
+                        lambda p, mpn, hint: (env, "mosfets"))
+    monkeypatch.setattr("heaviside.librarian.tas.component_exists", lambda c, m: False)
+    out = lookup_part(_MPN, client=_FakeDK(None), staging_root=tmp_path)
+    assert seen["asked"] == _MPN
+    assert out["found"] is True and out["source"] == "mouser"
+    assert (tmp_path / "mosfets" / f"mouser-{_MPN}.json").exists()
+
+
+def test_a_rate_limited_mouser_is_not_reported_as_not_having_the_part(
+        tmp_path, monkeypatch, real_mouser):
+    """Mouser's key is rate-limited in practice. "Could not be asked" and "does
+    not have it" are different facts and the trail keeps them apart."""
+    from heaviside.librarian.fetcher.base import RateLimitError
+
+    class _RateLimited:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *e):
+            return False
+
+        def get_product(self, mpn):
+            raise RateLimitError("mouser", 429, "")
+
+    monkeypatch.setattr("heaviside.librarian.fetcher.mouser.MouserClient", _RateLimited)
+    out = lookup_part(_MPN, "mosfet", client=_FakeDK(None), staging_root=tmp_path)
+    mo = [a for a in out["attempts"] if a["source"] == "mouser"][0]
+    assert "could not be asked" in mo["outcome"] or "credentials" in mo["outcome"]
+    assert "no part with exactly this number" not in mo["outcome"]
+
+
+def test_a_secondary_source_blowing_up_never_sinks_the_lookup(
+        tmp_path, monkeypatch, real_mouser):
+    """Digi-Key has already answered by the time Mouser is asked, so a flaky
+    secondary must degrade to a note rather than an exception the caller sees.
+    The guard lives inside _mouser_exact, so the failure is injected BELOW it —
+    patching _mouser_exact itself would test the mock, not the guard."""
+
+    class _Exploding:
+        def __init__(self, *a, **k):
+            raise RuntimeError("mouser transport exploded")
+
+    monkeypatch.setattr("heaviside.librarian.fetcher.mouser.MouserClient", _Exploding)
+    out = lookup_part(_MPN, "mosfet", client=_FakeDK(None), staging_root=tmp_path)
+    assert out["found"] is False          # no crash reached the caller
+    mo = [a for a in out["attempts"] if a["source"] == "mouser"][0]
+    assert "could not be asked" in mo["outcome"]
+    assert "RuntimeError" in mo["outcome"]
+
+
+def test_the_datasheet_route_runs_when_no_distributor_has_the_part(tmp_path, monkeypatch):
+    """The case that prompted this: IPA045N10N3G is a real Infineon MOSFET that
+    Digi-Key does not list."""
+    env = {"semiconductor": {"mosfet": {"manufacturerInfo": {"reference": "IPA045N10N3G"}}}}
+    called = {}
+
+    def _from_ds(mpn, category, *, manufacturer="", datasheet_url=None, **kw):
+        called.update(mpn=mpn, category=category, url=datasheet_url)
+        return env, "mosfets", {"read": "https://www.infineon.com/real.pdf"}
+
+    monkeypatch.setattr(
+        "heaviside.librarian.fetcher.from_datasheet.envelope_from_datasheet", _from_ds)
+    monkeypatch.setattr("heaviside.librarian.tas.component_exists", lambda c, m: False)
+    out = lookup_part("IPA045N10N3G", "mosfet", client=_FakeDK(None), staging_root=tmp_path)
+    assert called["category"] == "mosfet"
+    assert out["found"] is True and out["source"] == "datasheet"
+    # the record names the document it was read from, so it can be checked
+    assert out["readFrom"] == "https://www.infineon.com/real.pdf"
+    assert (tmp_path / "mosfets" / "datasheet-IPA045N10N3G.json").exists()
+
+
+def test_a_part_digikey_has_but_cannot_describe_reuses_its_datasheet_link(tmp_path, monkeypatch):
+    """Digi-Key rarely publishes Coss, so the MOSFET converter refuses real
+    parts over a number the datasheet prints. The route should read THAT
+    datasheet rather than start a fresh web search."""
+    product = _mosfet()
+    product["Parameters"] = [p for p in product["Parameters"]
+                             if "Output Capacitance" not in p["Parameter"]]
+    product["PrimaryDatasheet"] = "https://www.infineon.com/dgdl/known.pdf"
+    seen = {}
+
+    def _from_ds(mpn, category, *, manufacturer="", datasheet_url=None, **kw):
+        seen.update(url=datasheet_url, mfr=manufacturer)
+        return None, "stub", {}
+
+    monkeypatch.setattr(
+        "heaviside.librarian.fetcher.from_datasheet.envelope_from_datasheet", _from_ds)
+    lookup_part(_MPN, client=_FakeDK(product), staging_root=tmp_path)
+    assert seen["url"] == "https://www.infineon.com/dgdl/known.pdf"
+    assert seen["mfr"] == "Infineon Technologies"
+
+
+def test_the_datasheet_route_is_refused_by_name_for_a_category_it_cannot_map(tmp_path):
+    """Capacitor/resistor technology is a taxonomy a model would guess. Saying
+    so is better than a confident wrong record."""
+    out = lookup_part("SOME-CAP-123", "capacitor", client=_FakeDK(None), staging_root=tmp_path)
+    ds = [a for a in out["attempts"] if a["source"] == "datasheet"][0]
+    assert "only supported for" in ds["outcome"] and "mosfet" in ds["outcome"]
+    assert not list(tmp_path.rglob("*.json"))
+
+
+def test_nothing_is_read_from_the_web_when_the_caller_forbids_it(tmp_path, monkeypatch):
+    def _must_not_run(*a, **k):
+        raise AssertionError("the datasheet route ran with allow_datasheet=False")
+
+    monkeypatch.setattr(
+        "heaviside.librarian.fetcher.from_datasheet.envelope_from_datasheet", _must_not_run)
+    out = lookup_part(_MPN, "mosfet", client=_FakeDK(None),
+                      staging_root=tmp_path, allow_datasheet=False)
+    assert out["found"] is False

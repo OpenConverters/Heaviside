@@ -117,13 +117,21 @@ def kimi_seek(
     category: str,
     *,
     datasheet_text: str | None = None,
+    raise_on_llm_error: bool = False,
 ) -> dict[str, Any] | None:
     """Source a part's specs with a Kimi k2.5 call (Heaviside's available LLM) —
     the in-prod replacement for the Haiku seeker. Grounded in ``datasheet_text``
     when provided, else Kimi's knowledge of the exact MPN (conservative). Kimi
     is called NON-REASONING first (fast); if the magnetic result pins no current
     rating, it retries THAT call with reasoning on. Returns the parsed spec dict
-    (with an ``mpn`` field) or None."""
+    (with an ``mpn`` field) or None.
+
+    ``raise_on_llm_error`` re-raises ``LLMCallError`` instead of returning
+    None. Callers that must tell "the model read it and found nothing" from
+    "the model could not be called at all" pass True — without it a retired
+    model or an expired key is indistinguishable from a datasheet with no
+    specifications in it, which is how a 404 on kimi-k2.5 went unnoticed.
+    """
     import json as _json
     import os as _os
 
@@ -139,8 +147,13 @@ def kimi_seek(
         prev = _os.environ.get("HEAVISIDE_KIMI_DISABLE_THINKING")
         _os.environ["HEAVISIDE_KIMI_DISABLE_THINKING"] = "0" if reasoning else "1"
         try:
-            raw = call_llm(_SEEKER_SYSTEM, user, model="kimi-k2.5", json_mode=True, max_tokens=1500)
+            # No hardcoded version: the model resolves from HEAVISIDE_LLM_MODEL
+            # / call_llm's default, so a retirement is a config change and not
+            # a code change in five places.
+            raw = call_llm(_SEEKER_SYSTEM, user, json_mode=True, max_tokens=1500)
         except LLMCallError:
+            if raise_on_llm_error:
+                raise
             return None
         finally:
             if prev is None:
