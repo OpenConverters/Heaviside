@@ -347,3 +347,20 @@ def test_the_whole_irfp4668_reading_builds_a_valid_record():
         assert required in e, f"{required} was dropped"
     assert e["totalGateCharge"] == pytest.approx(2.41e-7)
     assert e["outputCapacitance"] == pytest.approx(8.1e-10)
+
+
+def test_a_unit_the_document_never_spells_cannot_be_required():
+    """A PDF's text layer renders the ohm sign as "W", as a private-use glyph,
+    or not at all. Requiring it unconditionally scored 1 of 6 on real MOSFETs.
+    When none of a field's spellings appear anywhere in the document, the check
+    cannot be applied to that field and the mantissa alone stands."""
+    sheet = "RDS(on) max 4.1 m  VDSS 120 V  ID 90 A"   # no ohm sign at all
+    assert _corroborated("onResistance", 0.0041, sheet)[0] == pytest.approx(0.0041)
+
+
+def test_lifting_the_unit_rule_is_per_field_and_does_not_leak():
+    """Volts ARE on that page, so the drain-source check still applies and a
+    1 V reading of a 120 V part is still refused."""
+    sheet = "RDS(on) max 4.1 m  VDSS 120 V  ID 90 A"
+    value, note = _corroborated("drainSourceVoltage", 1.0, sheet)
+    assert value is None and "not printed" in note

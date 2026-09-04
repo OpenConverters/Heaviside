@@ -183,6 +183,20 @@ def _printed_in(text: str, mantissa: str, prefix: str, *, wide: bool = False,
     # corroborated ANY field — the 1.0 of an internal gate resistance stood in
     # for a 1 V drain-source rating on a 200 V part.
     units = (unit,) if isinstance(unit, str) and unit else tuple(unit or ())
+    # The unit is required only when this document actually spells it.
+    #
+    # Requiring it unconditionally scored 1 of 6 on real MOSFETs: a PDF's text
+    # layer spells units however it likes, and an ohm sign in particular
+    # arrives as "W", as a private-use glyph, or not at all. Dropping the
+    # requirement outright would give up the check that stops a 200 V part
+    # being read as a 1 V one, since "V" is always on the page.
+    #
+    # So: if none of the field's spellings appear ANYWHERE in the document, the
+    # check cannot be applied to this field and the mantissa alone is taken. If
+    # one does appear, the document can express that unit, and the value has to
+    # be qualified by it.
+    if units and not any(u in text or u.upper() in text for u in units):
+        units = ()
     forms = [h + u for h in heads for u in units] if units else list(heads)
     span = _UNIT_COLUMN_CHARS if wide else 6
     for m in re.finditer(r"(?<![0-9.])" + re.escape(mantissa) + r"(?!\.?[0-9])", text):
