@@ -466,3 +466,27 @@ def test_nothing_is_read_from_the_web_when_the_caller_forbids_it(tmp_path, monke
     out = lookup_part(_MPN, "mosfet", client=_FakeDK(None),
                       staging_root=tmp_path, allow_datasheet=False)
     assert out["found"] is False
+
+
+def test_the_cli_builds_its_clients_the_way_their_signatures_demand():
+    """`heaviside librarian search` had the identical bare-constructor bug the
+    lookup module had, and shipped with it for as long. A signature check is
+    cheap and catches the whole class."""
+    import ast
+    import inspect
+    from pathlib import Path
+
+    from heaviside.librarian.fetcher.digikey import DigiKeyClient
+    from heaviside.librarian.fetcher.mouser import MouserClient
+
+    for cls in (DigiKeyClient, MouserClient):
+        params = list(inspect.signature(cls.__init__).parameters)
+        assert params[1] == "credentials", f"{cls.__name__} takes credentials first"
+
+    tree = ast.parse(Path("heaviside/cli.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in ("DigiKeyClient", "MouserClient")):
+            assert node.args, (
+                f"{node.func.id}() is constructed with no credentials at "
+                f"heaviside/cli.py:{node.lineno} — that is a TypeError at runtime")

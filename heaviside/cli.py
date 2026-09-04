@@ -563,9 +563,13 @@ def search(
                 convert_digikey_to_tas_mosfet,
                 convert_digikey_to_tas_resistor,
             )
+            from heaviside.librarian.fetcher.auth import load_credentials
             from heaviside.librarian.fetcher.digikey import DigiKeyClient
 
-            with DigiKeyClient() as client:
+            # DigiKeyClient takes its credentials positionally; calling it bare
+            # is a TypeError, so `librarian search --distributor digikey` had
+            # never worked from the CLI.
+            with DigiKeyClient(load_credentials(require_digikey=True).digikey) as client:
                 product = client.get_product(mpn)
             converters = {
                 "mosfets": convert_digikey_to_tas_mosfet,
@@ -582,9 +586,10 @@ def search(
                 convert_mouser_to_tas_mosfet,
                 convert_mouser_to_tas_resistor,
             )
+            from heaviside.librarian.fetcher.auth import load_credentials
             from heaviside.librarian.fetcher.mouser import MouserClient
 
-            with MouserClient() as client:
+            with MouserClient(load_credentials(require_mouser=True).mouser) as client:
                 product = client.get_product(mpn)
             converters = {
                 "mosfets": convert_mouser_to_tas_mosfet,
