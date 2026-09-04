@@ -477,6 +477,63 @@ def crossref_endpoint(req: CrossRefRequest) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Librarian lookup — "the catalogue does not have this part"
+# ---------------------------------------------------------------------------
+
+
+class LibrarianLookupRequest(BaseModel):
+    """One part number, plus an optional category hint the librarian may ignore."""
+
+    mpn: str
+    category: str | None = None
+
+
+@app.post("/librarian/lookup")
+def librarian_lookup_endpoint(req: LibrarianLookupRequest) -> dict[str, Any]:
+    """Source one part by MPN from the distributor and stage it for the catalogue.
+
+    The caller is a tool that has hit the end of the catalogue — Faraday's part
+    inspector, holding a part number off a PCB that Kelvin cannot resolve. The
+    answer is the schema-valid TAS envelope (the same shape the catalogue
+    serves, so the caller renders it with the code it already has) plus where
+    it was parked.
+
+    Nothing here writes to TAS. A found part lands in ``staging/`` and is
+    applied by a librarian; that review step is the reason the catalogue can be
+    trusted, and an HTTP endpoint must not be a way around it.
+
+    Status codes carry the distinction that matters:
+      * **200 with found=false** — the distributor answered and has no such part.
+      * **502** — the distributor could not be asked (credentials, transport,
+        rate limit). Never reported as an absent part: a caller told "this does
+        not exist" would go and invent it.
+    """
+    from heaviside.librarian.fetcher.auth import CredentialError
+    from heaviside.librarian.fetcher.base import DistributorError
+    from heaviside.librarian.fetcher.lookup import lookup_part
+    from heaviside.librarian.fetcher.staging import StagingError
+
+    try:
+        return dict(lookup_part(req.mpn, req.category))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (DistributorError, CredentialError) as exc:
+        # A credential error is NOT a DistributorError (it is a sibling under
+        # FetcherError), and catching only the latter turned "nobody configured
+        # a Digi-Key key" into an unexplained 500.
+        raise HTTPException(
+            status_code=502, detail=f"could not reach the parts distributor: {exc}"
+        ) from exc
+    except StagingError as exc:
+        # The part was found and validated; parking it failed. Saying "could
+        # not reach the distributor" here would send the reader after the
+        # wrong fault.
+        raise HTTPException(
+            status_code=500, detail=f"found the part but could not stage it: {exc}"
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
 # Async jobs — the design / RE / cross-reference pipelines take minutes, so
 # the UI submits a job and polls. Workers serialize LLM-heavy runs (avoids
 # Moonshot 429). See heaviside/api/jobs.py.
