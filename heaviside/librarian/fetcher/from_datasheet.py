@@ -99,6 +99,9 @@ _PLAUSIBLE = {
     "drainSourceVoltage": (1.0, 20e3),        # V
     "continuousDrainCurrent": (1e-3, 5e3),    # A
     "onResistance": (1e-6, 1e4),              # ohm
+    "onResistanceVgs": (1.0, 30.0),           # V
+    "onResistanceId": (1e-3, 5e3),            # A
+    "capacitanceMeasurementVds": (1.0, 20e3), # V
     "totalGateCharge": (1e-10, 1e-5),         # C  (0.1 nC … 10 µC)
     "outputCapacitance": (1e-15, 1e-6),       # F
     "gateThresholdVoltage": (0.1, 20.0),      # V
@@ -240,6 +243,13 @@ _VERBATIM_FIELDS = {
         "drainSourceVoltage": "drain-source breakdown voltage V(BR)DSS / VDS",
         "continuousDrainCurrent": "continuous drain current ID",
         "onResistance": "on-state resistance RDS(on), the MAX",
+        # RDS(on) is meaningless without the gate drive it was measured at: a
+        # logic-level part specified at 4.5 V and a standard one at 10 V are not
+        # the same number, and the catalogue has fields for both conditions.
+        # Capturing them also shows a reviewer WHICH row of the table was read.
+        "onResistanceVgs": "the VGS that RDS(on) max is specified at",
+        "onResistanceId": "the ID that RDS(on) max is specified at",
+        "capacitanceMeasurementVds": "the VDS the capacitances are specified at",
         "totalGateCharge": "total gate charge QG",
         "outputCapacitance": "output capacitance Coss",
         "gateThresholdVoltage": "gate threshold voltage VGS(th), the MAX",
@@ -313,29 +323,54 @@ def _is_unit(tail: str) -> bool:
     return folded.lower().startswith(_UNIT_SUFFIXES)
 
 
-def _read_verbatim(mpn: str, category: str, text: str, call=None) -> dict[str, Any]:
-    """Ask for each field exactly as the datasheet prints it, then parse it here."""
+def _read_verbatim(mpn: str, category: str, text: str, call=None,
+                   passes: int = 2) -> tuple[dict[str, Any], list[str]]:
+    """Ask for each field exactly as the datasheet prints it, twice, and keep
+    only what both readings agree on.
+
+    Corroboration proves a number is ON the page; it cannot prove it came from
+    the RIGHT row. On IPA045N10N3G, RDS(on) came back as 4.5 mOhm on one run
+    and 4.7 mOhm on the next — both printed, at different conditions. A field
+    the two passes disagree about is dropped and named, because a value that
+    changes when you ask again is not one the catalogue should carry.
+
+    Returns ``(fields, disagreements)``; fields maps name -> (value, printed).
+    """
     fields = _VERBATIM_FIELDS.get(category)
     if not fields:
-        return {}
+        return {}, []
     if call is None:
         from heaviside.agents.llm_call import call_llm as call
     system = _VERBATIM_SYSTEM + "\n".join(f'  "{k}": {v}' for k, v in fields.items())
     user = (f"Component: MPN={mpn}, category={category}.\n\n"
             f"DATASHEET TEXT:\n{text[:_MAX_TEXT]}")
-    raw = call(system, user, json_mode=True, max_tokens=800)
+
     from heaviside.librarian.datasheet.seeker import _parse_json_lenient
 
-    obj = _parse_json_lenient(raw)
-    if not isinstance(obj, dict):
-        return {}
+    reads: list[dict[str, Any]] = []
+    for _ in range(max(1, passes)):
+        raw = call(system, user, json_mode=True, max_tokens=900)
+        obj = _parse_json_lenient(raw)
+        reads.append(obj if isinstance(obj, dict) else {})
+
     out: dict[str, Any] = {}
+    disagreed: list[str] = []
     for field in fields:
-        printed = obj.get(field)
-        value = parse_verbatim(printed)
-        if value is not None:
-            out[field] = (value, str(printed))
-    return out
+        parsed = [(parse_verbatim(r.get(field)), r.get(field)) for r in reads]
+        values = [v for v, _ in parsed if v is not None]
+        if not values:
+            continue
+        if len(values) < len(reads):
+            # one pass found it and the other did not: that is not agreement
+            disagreed.append(f"{field} (found in only {len(values)} of {len(reads)} readings)")
+            continue
+        first = values[0]
+        if any(abs(v - first) > abs(first) * 1e-9 for v in values[1:]):
+            disagreed.append(f"{field} ({' vs '.join(f'{v:g}' for v in values)})")
+            continue
+        printed = next(p for v, p in parsed if v is not None)
+        out[field] = (first, str(printed))
+    return out, disagreed
 
 
 # Manufacturer sites whose hostname is not their name.
@@ -424,6 +459,14 @@ def _mosfet(specs: dict, mpn: str, mfr: str, url: str, host: str,
                 notes.append(note)
         elif note:
             dropped.append(note)
+    # the conditions the values were specified at, where the reading captured
+    # them — an Rds(on) without its Vgs is not comparable to another part's
+    for cond in ("onResistanceVgs", "onResistanceId", "capacitanceMeasurementVds"):
+        got = verbatim.get(cond)
+        if got is not None:
+            v, _n = _corroborated(cond, got[0], text)
+            if v is not None:
+                e[cond] = v
     vth, note = _resolve("gateThresholdVoltage", verbatim, specs, "vgs_th_max_V", text)
     if vth is not None:
         e["gateThresholdVoltage"] = {"maximum": vth}
@@ -625,16 +668,20 @@ def envelope_from_datasheet(
     # it answers; the pass above supplies the descriptive fields (manufacturer,
     # subtype) and covers anything it missed.
     try:
-        verbatim = _read_verbatim(mpn, category, text)
+        verbatim, disagreed = _read_verbatim(mpn, category, text)
     except LLMCallError as exc:
         raise DatasheetSourceError(
             f"the datasheet was fetched but the extraction model could not be "
             f"called: {exc}") from exc
     except Exception as exc:  # noqa: BLE001 — the first pass may still carry it
         logger.debug("verbatim read failed for %s: %s", mpn, exc)
-        verbatim = {}
+        verbatim, disagreed = {}, []
     if verbatim:
         detail["verbatim"] = {k: v[1] for k, v in verbatim.items()}
+    if disagreed:
+        # the fields two readings of the same PDF did not agree on: dropped,
+        # and named, because that is exactly what a reviewer needs to look at
+        detail["disagreed"] = disagreed
     if not specs and not verbatim:
         return None, "the datasheet was read but no specifications could be extracted from it", detail
 

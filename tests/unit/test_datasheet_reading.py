@@ -190,3 +190,89 @@ def test_the_serving_site_names_the_manufacturer_only_when_it_can(host, expected
     from heaviside.librarian.fetcher.from_datasheet import _manufacturer_from_host
 
     assert _manufacturer_from_host(host) == expected
+
+
+# ---------------------------------------------------------------------------
+# which row did that come from?
+# ---------------------------------------------------------------------------
+
+
+def _reader(*responses):
+    """A call_llm stand-in that returns each response in turn."""
+    seq = list(responses)
+
+    def call(system, user, **kw):
+        return seq.pop(0) if seq else seq[-1]
+
+    return call
+
+
+def test_a_field_two_readings_disagree_about_is_dropped_and_named():
+    """Corroboration proves a number is ON the page, never that it came from
+    the RIGHT row. On IPA045N10N3G, RDS(on) read 4.5 mOhm one run and 4.7 mOhm
+    the next — both printed, at different conditions. A value that changes when
+    you ask again is not one the catalogue should carry."""
+    from heaviside.librarian.fetcher.from_datasheet import _read_verbatim
+
+    kept, disagreed = _read_verbatim(
+        "X", "mosfet", "text",
+        call=_reader('{"drainSourceVoltage":"100 V","onResistance":"4.5 mOhm"}',
+                     '{"drainSourceVoltage":"100 V","onResistance":"4.7 mOhm"}'))
+    assert "drainSourceVoltage" in kept
+    assert "onResistance" not in kept
+    assert any("onResistance" in d and "0.0045" in d and "0.0047" in d for d in disagreed)
+
+
+def test_a_field_only_one_reading_found_is_not_agreement():
+    from heaviside.librarian.fetcher.from_datasheet import _read_verbatim
+
+    kept, disagreed = _read_verbatim(
+        "X", "mosfet", "text",
+        call=_reader('{"totalGateCharge":"117 nC"}', '{"totalGateCharge":null}'))
+    assert "totalGateCharge" not in kept
+    assert any("only 1 of 2" in d for d in disagreed)
+
+
+def test_two_readings_that_print_it_differently_still_agree():
+    """"4.5 mOhm" and "max 4.50 mΩ" are the same measurement; agreement is on
+    the parsed value, not on the string."""
+    from heaviside.librarian.fetcher.from_datasheet import _read_verbatim
+
+    kept, disagreed = _read_verbatim(
+        "X", "mosfet", "text",
+        call=_reader('{"onResistance":"4.5 mOhm"}', '{"onResistance":"max 4.50 mΩ"}'))
+    assert kept["onResistance"][0] == pytest.approx(0.0045)
+    assert disagreed == []
+
+
+def test_the_condition_a_value_was_measured_at_is_carried():
+    """An Rds(on) without its Vgs is not comparable to another part's: a
+    logic-level part at 4.5 V and a standard one at 10 V are different
+    numbers. The schema has fields for it, so the reading fills them."""
+    verbatim = {
+        "drainSourceVoltage": (100.0, "100 V"),
+        "continuousDrainCurrent": (64.0, "64 A"),
+        "onResistance": (0.0045, "4.5 mOhm"),
+        "onResistanceVgs": (10.0, "10 V"),
+        "onResistanceId": (64.0, "64 A"),
+    }
+    sheet = SHEET + " RDS(on) at VGS = 10 V, ID = 64 A"
+    env, _ = _BUILDERS["mosfet"]({}, "X", "Infineon", "https://www.infineon.com/x.pdf",
+                                 "www.infineon.com", sheet, verbatim)
+    assert env is not None
+    e = env["semiconductor"]["mosfet"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    assert e["onResistanceVgs"] == 10.0
+    assert e["onResistanceId"] == 64.0
+
+
+def test_a_condition_the_page_does_not_print_is_not_carried_either():
+    verbatim = {
+        "drainSourceVoltage": (100.0, "100 V"),
+        "continuousDrainCurrent": (64.0, "64 A"),
+        "onResistance": (0.0045, "4.5 mOhm"),
+        "onResistanceVgs": (7.0, "7 V"),        # nowhere in SHEET
+    }
+    env, _ = _BUILDERS["mosfet"]({}, "X", "Infineon", "u", "www.infineon.com",
+                                 SHEET, verbatim)
+    e = env["semiconductor"]["mosfet"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    assert "onResistanceVgs" not in e
