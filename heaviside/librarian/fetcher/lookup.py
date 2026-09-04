@@ -111,9 +111,15 @@ def lookup_part(
 
     owned = client is None
     if owned:
+        from heaviside.librarian.fetcher.auth import load_credentials
         from heaviside.librarian.fetcher.digikey import DigiKeyClient
 
-        client = DigiKeyClient()  # MissingCredentialError propagates (a CredentialError)
+        # require_digikey=True so an unconfigured box raises
+        # MissingCredentialError here — a CredentialError the endpoint maps to
+        # "could not reach the distributor" — instead of handing the client a
+        # None it would reject with a less honest message.
+        creds = load_credentials(require_digikey=True)
+        client = DigiKeyClient(creds.digikey)
     try:
         product = _dk_exact(client, mpn)
     finally:

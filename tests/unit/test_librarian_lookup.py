@@ -123,14 +123,50 @@ def test_an_unreachable_distributor_raises_and_is_never_reported_as_absent(tmp_p
 
 
 def test_missing_credentials_raise_rather_than_looking_like_a_miss(tmp_path, monkeypatch):
-    def _no_creds():
-        raise MissingCredentialError("DigiKeyClient requires both client_id and client_secret.")
+    """Builds the REAL client, on purpose.
 
+    The first version of this test stubbed DigiKeyClient itself, so the only
+    line that constructs one was never executed — and it was wrong:
+    `DigiKeyClient()` takes a required `credentials` argument, so every live
+    call raised TypeError and became a 500. Prod found that, not the suite.
+    Point the credential lookup at an empty environment and let the genuine
+    constructor run.
+    """
     monkeypatch.setattr(
-        "heaviside.librarian.fetcher.digikey.DigiKeyClient", lambda *a, **k: _no_creds()
+        "heaviside.librarian.fetcher.auth.CREDENTIALS_PATH", tmp_path / "nope.json"
     )
+    for var in ("DIGIKEY_CLIENT_ID", "DIGIKEY_CLIENT_SECRET"):
+        monkeypatch.delenv(var, raising=False)
     with pytest.raises(MissingCredentialError):
         lookup_part(_MPN, staging_root=tmp_path)
+
+
+def test_the_real_client_is_constructed_the_way_its_signature_demands(tmp_path, monkeypatch):
+    """The constructor takes credentials positionally. Calling it bare is a
+    TypeError, which is neither a miss nor a distributor failure — it is a 500,
+    and no amount of stubbing the class would show it."""
+    import inspect
+
+    from heaviside.librarian.fetcher.digikey import DigiKeyClient
+
+    params = list(inspect.signature(DigiKeyClient.__init__).parameters)
+    assert params[1] == "credentials", "the lookup passes credentials positionally"
+
+    built = {}
+    creds = type("C", (), {"digikey": object()})()
+    monkeypatch.setattr(
+        "heaviside.librarian.fetcher.auth.load_credentials", lambda **k: creds
+    )
+
+    class _Spy(_FakeDK):
+        def __init__(self, credentials, **kw):
+            super().__init__(None)
+            built["creds"] = credentials
+
+    monkeypatch.setattr("heaviside.librarian.fetcher.digikey.DigiKeyClient", _Spy)
+    out = lookup_part(_MPN, staging_root=tmp_path)
+    assert built["creds"] is creds.digikey
+    assert out["found"] is False
 
 
 def test_endpoint_maps_a_missing_credential_to_502_not_500(monkeypatch):
