@@ -302,9 +302,11 @@ IRFP_SHEET = (
 
 
 def test_a_value_whose_unit_is_in_the_table_column_is_still_corroborated():
+    """"241" reads as "161 241 I = 81A" and the "nC" that qualifies it is 62
+    characters away, in the column header."""
     value, note = _corroborated("totalGateCharge", 241.0, IRFP_SHEET)
     assert value == pytest.approx(2.41e-7)
-    assert "table column" in note
+    assert "converted to SI" in note
 
 
 def test_the_wide_search_needs_the_unit_not_just_the_prefix_letter():
@@ -314,11 +316,22 @@ def test_the_wide_search_needs_the_unit_not_just_the_prefix_letter():
     assert _corroborated("totalGateCharge", 117.0, sheet)[0] == pytest.approx(1.17e-7)
 
 
-def test_a_bare_number_still_needs_its_unit_beside_it():
-    """The wide window is only for a value that NEEDS a prefix. A number that
-    is already plausible as written must have its unit adjacent, or a "1" in a
-    figure caption would corroborate a 1 V part on a 200 V sheet."""
-    value, note = _corroborated("drainSourceVoltage", 1.0, IRFP_SHEET)
+def test_a_value_nowhere_on_the_page_is_still_refused():
+    """What this check still guarantees, after the unit window had to widen.
+
+    A table puts its unit in a column HEADER — Vishay writes "RDS(on) max.
+    (Ohm) at VGS = 10 V 0.00210", 24 characters ahead of the number — so
+    looking only AFTER the number refused correct readings of well-formed
+    sheets, repeatedly. Widening it costs the strongest form of this check: a
+    stray "1.0" elsewhere on a 200 V sheet can now find a "V" near enough to
+    qualify it.
+
+    What is left, and what this pins, is that a number the page does not print
+    at all is refused. The rest of the defence is the physical bound, the two
+    readings having to agree, and the record being staged for a human against
+    the document it links — never this check on its own.
+    """
+    value, note = _corroborated("drainSourceVoltage", 37.0, IRFP_SHEET)
     assert value is None
     assert "not printed" in note
 
@@ -408,3 +421,99 @@ def test_a_document_that_does_not_name_the_part_is_not_its_datasheet():
         fetch=fetch, seek=lambda *a, **k: {})
     assert env is None
     assert "does not name" in " ".join(detail.get("rejected", []))
+
+
+# ---------------------------------------------------------------------------
+# the families beyond MOSFET and diode
+# ---------------------------------------------------------------------------
+
+
+def test_a_capacitors_technology_is_read_off_the_page_never_chosen():
+    """This is why capacitors were left out at first. The schema wants one of
+    twenty technologies, and a model asked to pick from an enum always returns
+    something. A datasheet SAYS "X7R", so the mapping is a lookup here."""
+    from heaviside.librarian.fetcher.from_datasheet import technology_from_text
+
+    assert technology_from_text("capacitor", "MLCC, X7R dielectric") == "ceramic-class-2"
+    assert technology_from_text("capacitor", "C0G/NP0 class 1") == "ceramic-class-1"
+    assert technology_from_text("capacitor", "Aluminum electrolytic") == "aluminum-electrolytic-wet"
+    assert technology_from_text("capacitor", "conductive polymer aluminum") == "aluminum-electrolytic-polymer"
+    assert technology_from_text("capacitor", "metallized polypropylene") == "film-polypropylene"
+    assert technology_from_text("resistor", "Thick Film Chip Resistor") == "thickFilm"
+    assert technology_from_text("resistor", "Bulk Metal Foil") == "bulkMetalFoil"
+    # most specific wins: bulk metal foil is not metal foil
+    assert technology_from_text("resistor", "metal foil") == "metalFoil"
+    # and a page that says none of them yields nothing to guess from
+    assert technology_from_text("capacitor", "a capacitor of some kind") == ""
+
+
+def test_a_capacitor_with_no_stated_technology_is_refused():
+    env, why = _BUILDERS["capacitor"](
+        {}, "X", "Murata", "u", "h", "Capacitance 100 nF Rated 50 V chip",
+        {"capacitance": (1e-7, "100 nF"), "ratedVoltage": (50.0, "50 V")})
+    assert env is None
+    assert "not a value to guess" in why
+
+
+def _valid(cat, env):
+    from heaviside.librarian.fetcher.from_datasheet import _CATEGORY_TO_DB
+    from heaviside.librarian.tas import validate_component
+
+    validate_component(_CATEGORY_TO_DB[cat], env)   # raises if not
+
+
+def test_a_capacitor_reading_builds_a_valid_record_with_its_tolerance_band():
+    text = ("Chip Monolithic Ceramic Capacitor X7R dielectric SMD "
+            "Capacitance 100 nF Rated Voltage 50 V Tolerance 10 % ESR 20 mOhm")
+    env, _ = _BUILDERS["capacitor"](
+        {}, "GRM188R71H104KA93D", "Murata", "https://x/y.pdf", "x", text,
+        {"capacitance": (1e-7, "100 nF"), "ratedVoltage": (50.0, "50 V"),
+         "tolerance": (10.0, "10 %"), "esr": (0.02, "20 mOhm")})
+    assert env is not None
+    _valid("capacitor", env)
+    e = env["capacitor"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    # a capacitance is a toleranced value, not a number: 100 nF +/-10 % and
+    # 100 nF +/-1 % are different parts
+    assert e["capacitance"]["nominal"] == pytest.approx(1e-7)
+    assert e["capacitance"]["minimum"] == pytest.approx(0.9e-7)
+    assert e["capacitance"]["maximum"] == pytest.approx(1.1e-7)
+    # CAS carries the tolerance in that band, not as a field of its own —
+    # unlike RAS, which requires the field. The record matches the schema it
+    # claims to be.
+    assert "tolerance" not in e
+
+
+def test_a_resistor_reading_builds_a_valid_record():
+    text = "Thick Film Chip Resistor 10 kOhm Tolerance 1 % Power Rating 0.1 W"
+    env, _ = _BUILDERS["resistor"](
+        {}, "CRCW060310K0FKED", "Vishay", "https://x/y.pdf", "x", text,
+        {"resistance": (10000.0, "10 kOhm"), "tolerance": (1.0, "1 %"),
+         "powerRating": (0.1, "0.1 W")})
+    assert env is not None
+    _valid("resistor", env)
+
+
+def test_an_igbt_reading_builds_a_valid_record():
+    text = "IGBT VCES 1200 V IC 40 A VCE(sat) 1.75 V Tj 175 C"
+    env, _ = _BUILDERS["igbt"](
+        {}, "IKW40N120H3", "Infineon", "https://x/y.pdf", "x", text,
+        {"collectorEmitterVoltage": (1200.0, "1200 V"),
+         "continuousCollectorCurrent": (40.0, "40 A"),
+         "collectorEmitterSaturation": (1.75, "1.75 V"),
+         "junctionTemperatureMax": (175.0, "175 C")})
+    assert env is not None
+    _valid("igbt", env)
+
+
+def test_bjt_is_absent_because_the_librarian_cannot_write_one():
+    """Not an oversight: heaviside.librarian.safe_access has no "bjts"
+    category, so a perfectly-read BJT could not be staged anywhere. Adding a
+    category is a data-governance change, not this module's to make."""
+    from heaviside.librarian import safe_access
+    from heaviside.librarian.fetcher.from_datasheet import SUPPORTED
+
+    assert "bjts" not in safe_access.CATEGORIES
+    assert "bjt" not in SUPPORTED
+    for supported in SUPPORTED:
+        from heaviside.librarian.fetcher.from_datasheet import _CATEGORY_TO_DB
+        assert _CATEGORY_TO_DB[supported] in safe_access.CATEGORIES

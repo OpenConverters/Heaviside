@@ -58,10 +58,142 @@ class DatasheetSourceError(FetcherError):
 # so the gap this route exists to close is not there. MOSFETs are: Digi-Key
 # rarely publishes Coss, and the part that prompted all this — IPA045N10N3G —
 # is a MOSFET Digi-Key does not list at all.
-SUPPORTED = ("mosfet", "diode")
+# BJT is absent on purpose: heaviside.librarian.safe_access has no "bjts"
+# category, so the librarian cannot write one to TAS even if it read one
+# perfectly. Adding a category is a data-governance change, not this module's
+# to make.
+SUPPORTED = ("mosfet", "diode", "capacitor", "resistor", "igbt")
+
+
+# ---------------------------------------------------------------------------
+# technology: read off the page, never chosen by the model
+# ---------------------------------------------------------------------------
+# Capacitor and resistor schemas require a `technology` from a fixed taxonomy,
+# and that is why these families were left out at first: a model asked to pick
+# from an enum always returns something, and a wrong technology silently
+# changes what the part IS.
+#
+# But a datasheet SAYS which it is — "X7R", "Thick Film", "Aluminum
+# electrolytic" — so the mapping is a lookup, done here, in code, against words
+# that must actually appear in the document. Most specific first, because
+# "tantalum polymer" is not "tantalum wet" and "bulk metal foil" is not "metal
+# foil". Nothing matching means the datasheet did not say, and the part is
+# refused rather than assigned a plausible technology.
+_TECHNOLOGY_WORDS = {
+    "capacitor": (
+        ("c0g", "ceramic-class-1"), ("np0", "ceramic-class-1"),
+        ("npo", "ceramic-class-1"), ("class 1 ceramic", "ceramic-class-1"),
+        ("x7r", "ceramic-class-2"), ("x5r", "ceramic-class-2"),
+        ("x6s", "ceramic-class-2"), ("x7s", "ceramic-class-2"),
+        ("x8r", "ceramic-class-2"), ("x8l", "ceramic-class-2"),
+        ("y5v", "ceramic-class-3"), ("z5u", "ceramic-class-3"),
+        ("aluminum polymer", "aluminum-electrolytic-polymer"),
+        ("aluminium polymer", "aluminum-electrolytic-polymer"),
+        ("hybrid polymer", "aluminum-hybrid-polymer"),
+        ("conductive polymer aluminum", "aluminum-electrolytic-polymer"),
+        ("polymer tantalum", "tantalum-polymer"),
+        ("tantalum polymer", "tantalum-polymer"),
+        ("tantalum mno2", "tantalum-mno2"), ("manganese dioxide", "tantalum-mno2"),
+        ("niobium oxide", "niobium-oxide"),
+        ("aluminum electrolytic", "aluminum-electrolytic-wet"),
+        ("aluminium electrolytic", "aluminum-electrolytic-wet"),
+        ("tantalum", "tantalum-wet"),
+        ("polypropylene", "film-polypropylene"),
+        ("polyphenylene sulfide", "film-polyphenylene-sulfide"),
+        ("polyester", "film-polyester"), ("metallized pet", "film-polyester"),
+        ("paper", "film-paper"), ("mica", "mica"),
+        ("edlc", "supercapacitor-edlc"), ("electric double layer", "supercapacitor-edlc"),
+    ),
+    "resistor": (
+        ("bulk metal foil", "bulkMetalFoil"), ("metal foil", "metalFoil"),
+        ("thick film", "thickFilm"), ("thin film", "thinFilm"),
+        ("metal oxide", "metalOxide"), ("metal film", "metalFilm"),
+        ("wirewound", "wirewound"), ("wire wound", "wirewound"),
+        ("carbon composition", "carbonComposition"), ("carbon film", "carbonFilm"),
+        ("current sense", "currentSenseShunt"), ("shunt", "currentSenseShunt"),
+        ("melf", "melf"),
+    ),
+}
+
+
+# The body a capacitor has, in the words a datasheet uses. CAS wants a
+# shapeType beside the assembly, and a datasheet always says which it is.
+_SHAPE_WORDS = (
+    ("radial cylindrical", "Radial Cylindrical"), ("snap-in", "Radial Cylindrical"),
+    ("radial", "Radial Cylindrical"), ("axial", "Axial Cylindrical"),
+    ("can", "Radial Cylindrical"), ("screw", "Screw Terminal"),
+    ("rectangular", "Rectangular"), ("chip", "Rectangular"),
+    ("mlcc", "Rectangular"), ("box", "Rectangular"),
+)
+
+
+def shape_from_text(text: str) -> str:
+    low = text.lower()
+    for word, value in _SHAPE_WORDS:
+        if word in low:
+            return value
+    return ""
+
+
+# How the part mounts, in the words a datasheet uses. Same rule as technology:
+# read off the page, never assumed.
+_ASSEMBLY_WORDS = (
+    ("snap-in", "Snap-In"), ("snap in", "Snap-In"),
+    ("screw terminal", "Screw Type"), ("screw type", "Screw Type"),
+    ("surface mount", "SMT"), ("surface-mount", "SMT"), ("smd", "SMT"),
+    ("smt", "SMT"), ("chip capacitor", "SMT"), ("chip resistor", "SMT"),
+    ("mlcc", "SMT"), ("chip", "SMT"),   # a "chip" passive is a surface-mount one
+    ("through hole", "THT"), ("through-hole", "THT"), ("radial", "THT"),
+    ("axial", "THT"), ("tht", "THT"),
+)
+
+
+def assembly_from_text(text: str) -> str:
+    low = text.lower()
+    for word, value in _ASSEMBLY_WORDS:
+        if word in low:
+            return value
+    return ""
+
+
+def _toleranced(value: float, tol_fraction: float | None) -> dict[str, float]:
+    """A value as the schema wants it: nominal, and the tolerance band when the
+    datasheet states one. A capacitance is a dimensionWithTolerance, not a
+    number, because a 100 nF +/-10 % part is not the same as a 100 nF +/-1 %
+    one and the catalogue has to be able to tell them apart."""
+    out = {"nominal": value}
+    if tol_fraction:
+        out["minimum"] = value * (1.0 - tol_fraction)
+        out["maximum"] = value * (1.0 + tol_fraction)
+    return out
+
+
+def technology_from_text(category: str, text: str) -> str:
+    """The technology this datasheet states, or "" when it states none."""
+    low = text.lower()
+    for word, value in _TECHNOLOGY_WORDS.get(category, ()):
+        if word in low:
+            return value
+    return ""
 
 _MIN_TEXT = 400          # a PDF yielding less than this is a scan or a stub
-_MAX_TEXT = 12000        # what the seeker prompt itself truncates to
+
+# A datasheet has a characteristics table; a product landing page does not.
+# Infineon's /part/ page names the part, reads cleanly, and carries none of
+# its numbers — so it passed the "names the part" test and produced a reading
+# the two passes could not agree on a single field of.
+_DATASHEET_MARKERS = (
+    "absolute maximum", "electrical characteristic", "electrical parameter",
+    "thermal characteristic", "static characteristic", "dynamic characteristic",
+    "characteristics", "parameter symbol", "test condition", "rating",
+)
+_MIN_MARKERS = 2
+# The whole document, not its first pages. A datasheet puts absolute maximums
+# up front and the dynamic characteristics — where the gate charge lives —
+# several pages in: Nexperia's BUK98180 sheet is 20 000 characters and its Qg
+# row sat past a 12 000-character cutoff, so the part was refused for a number
+# that was in the file all along.
+_MAX_TEXT = 45000
 
 
 def _num(v: Any, *, prefer: str = "max") -> float | None:
@@ -111,6 +243,20 @@ _PLAUSIBLE = {
     "reverseRecoveryCharge": (1e-12, 1e-3),   # C
     "reverseRecoveryTime": (1e-12, 1e-3),     # s
     "junctionTemperatureMax": (25.0, 400.0),  # degC
+    "capacitance": (1e-15, 10.0),             # F
+    "ratedVoltage": (0.5, 1e5),               # V
+    "esr": (1e-6, 1e6),                       # ohm
+    "ripplecurrent": (1e-6, 1e3),             # A
+    # A datasheet prints a tolerance as a PERCENTAGE ("10 %"), and the record
+    # carries a fraction. The band has to admit what the page says or the value
+    # is dropped before it can be converted; the conversion happens after.
+    "tolerance": (1e-3, 100.0),
+    "resistance": (1e-6, 1e12),               # ohm
+    "powerRating": (1e-4, 1e4),               # W
+    "collectorEmitterVoltage": (1.0, 20e3),   # V
+    "continuousCollectorCurrent": (1e-3, 5e3),
+    "collectorCurrent": (1e-6, 5e3),          # A
+    "collectorEmitterSaturation": (0.05, 20.0),
 }
 
 
@@ -168,6 +314,13 @@ _FIELD_UNIT: dict[str, tuple[str, ...]] = {
     "outputCapacitance": ("F",),
     "reverseRecoveryTime": ("s",),
     "junctionTemperatureMax": ("C", "\u00b0C"),
+    "capacitance": ("F",), "ratedVoltage": ("V",),
+    "esr": ("\u03a9", "\u2126", "\uf057", "W", "ohm", "Ohm", "OHM"),
+    "ripplecurrent": ("A",), "tolerance": ("%",),
+    "resistance": ("\u03a9", "\u2126", "\uf057", "W", "ohm", "Ohm", "OHM"),
+    "powerRating": ("W",),
+    "collectorEmitterVoltage": ("V",), "collectorEmitterSaturation": ("V",),
+    "continuousCollectorCurrent": ("A",), "collectorCurrent": ("A",),
 }
 
 
@@ -188,6 +341,16 @@ def _printed_in(text: str, mantissa: str, prefix: str, *, wide: bool = False,
     have its unit beside it, or "Figure 1 ... 200 V" would corroborate a 1 V
     part out of a caption.
     """
+    # A table puts its unit in a column HEADER, which lands before the value
+    # as often as after it: Vishay writes "RDS(on) max. (Ohm) at VGS = 10 V
+    # 0.00210", with the unit 24 characters ahead of the number. Looking only
+    # after it refused correct readings of well-formed sheets.
+    #
+    # The cost is real and worth naming: a unit found before a number is weaker
+    # evidence than one found after it, so what stops a wrong reading here is
+    # no longer this check alone. It is this check plus the physical bound plus
+    # the two readings having to agree — and, in the end, the record being
+    # staged for a human against the document it links.
     heads = _PREFIX_ALIASES.get(prefix, (prefix,)) if prefix else ("",)
     # The unit is required whenever we know it. Without that, an unprefixed
     # value matched on the mantissa alone and ANY number on the page
@@ -210,15 +373,17 @@ def _printed_in(text: str, mantissa: str, prefix: str, *, wide: bool = False,
         units = ()
     forms = [h + u for h in heads for u in units] if units else list(heads)
     span = _UNIT_COLUMN_CHARS if wide else 6
+    # the header sits ahead of the value even in the narrow case
+    back = _UNIT_COLUMN_CHARS if wide else 48
     for m in re.finditer(r"(?<![0-9.])" + re.escape(mantissa) + r"(?!\.?[0-9])", text):
         after = text[m.end(): m.end() + span]
-        before = text[max(0, m.start() - span): m.start()] if wide else ""
+        before = text[max(0, m.start() - back): m.start()]
         for form in forms:
             if not form:
                 return True
             if form in after or form.upper() in after:
                 return True
-            if wide and (form in before or form.upper() in before):
+            if form in before or form.upper() in before:
                 return True
     return False
 
@@ -335,21 +500,55 @@ _VERBATIM_FIELDS = {
     "mosfet": {
         "drainSourceVoltage": "drain-source breakdown voltage V(BR)DSS / VDS",
         "continuousDrainCurrent": "continuous drain current ID",
-        "onResistance": "on-state resistance RDS(on), the MAX",
+        # A datasheet lists RDS(on) at SEVERAL gate drives, and asking for
+        # "the max" made the answer depend on which row the model happened to
+        # read: two passes over the Vishay SUM60020E returned 2.47 mOhm at
+        # VGS=7.5 V and 2.10 mOhm at VGS=10 V, disagreed, and the part was
+        # refused. Naming the condition makes the question have one answer.
+        "onResistance": ("on-state resistance RDS(on) — the MAXIMUM value at the "
+                         "HIGHEST gate-source voltage the table lists"),
         # RDS(on) is meaningless without the gate drive it was measured at: a
         # logic-level part specified at 4.5 V and a standard one at 10 V are not
         # the same number, and the catalogue has fields for both conditions.
         # Capturing them also shows a reviewer WHICH row of the table was read.
-        "onResistanceVgs": "the VGS that RDS(on) max is specified at",
-        "onResistanceId": "the ID that RDS(on) max is specified at",
+        "onResistanceVgs": "the HIGHEST VGS that the RDS(on) table lists",
+        "onResistanceId": "the ID in that same RDS(on) row",
         "capacitanceMeasurementVds": "the VDS the capacitances are specified at",
-        "totalGateCharge": "total gate charge QG",
-        "outputCapacitance": "output capacitance Coss",
+        # Named the way each vendor names it: Nexperia prints "Q G(tot)",
+        # Infineon "Qg", Vishay "Total gate charge". Asking only for "QG"
+        # got no answer from the Nexperia sheet and the part was refused for
+        # a number printed on it.
+        "totalGateCharge": ("total gate charge — QG, Qg, QG(tot), Qg(tot), "
+                            "'Total gate charge' or 'gate charge total'"),
+        "outputCapacitance": "output capacitance Coss or Co(ss)",
         "gateThresholdVoltage": "gate threshold voltage VGS(th), the MAX",
         "junctionTemperatureMax": "maximum junction temperature Tj",
     },
+    "capacitor": {
+        "capacitance": "nominal capacitance C",
+        "ratedVoltage": "rated DC voltage",
+        "esr": "equivalent series resistance ESR",
+        "ripplecurrent": "rated RMS ripple current",
+        "tolerance": "capacitance tolerance, as a percentage",
+    },
+    "resistor": {
+        "resistance": "nominal resistance R",
+        "powerRating": "rated power dissipation at 70 C",
+        "tolerance": "resistance tolerance, as a percentage",
+    },
+    "igbt": {
+        "collectorEmitterVoltage": "collector-emitter breakdown voltage VCES",
+        "continuousCollectorCurrent": "continuous collector current IC",
+        "collectorEmitterSaturation": "collector-emitter saturation voltage VCE(sat)",
+        "junctionTemperatureMax": "maximum junction temperature Tj",
+    },
+    "bjt": {
+        "collectorEmitterVoltage": "collector-emitter breakdown voltage VCEO",
+        "collectorCurrent": "continuous collector current IC",
+        "junctionTemperatureMax": "maximum junction temperature Tj",
+    },
     "diode": {
-        "reverseVoltage": "repetitive peak reverse voltage VRRM",
+        "reverseVoltage": "repetitive peak reverse voltage VRRM or VR",
         "forwardCurrent": "average forward current IF(AV)",
         "forwardVoltage": "forward voltage VF, the MAX",
         "reverseRecoveryCharge": "reverse recovery charge Qrr",
@@ -636,8 +835,118 @@ def _diode(specs: dict, mpn: str, mfr: str, url: str, host: str,
     return {"semiconductor": {"diode": node}}, "; ".join(notes)
 
 
-_BUILDERS = {"mosfet": _mosfet, "diode": _diode}
-_CATEGORY_TO_DB = {"mosfet": "mosfets", "diode": "diodes"}
+def _semi_node(mpn, mfr, url, host, part, e, tmax):
+    node = {"manufacturerInfo": {
+        "name": mfr, "reference": mpn, "status": "production", "datasheetUrl": url,
+        "datasheetInfo": {"part": part, "electrical": e,
+                          "provenance": _provenance(url, host)}}}
+    if tmax is not None:
+        node["manufacturerInfo"]["datasheetInfo"]["thermal"] = {"junctionTemperatureMax": tmax}
+    return node
+
+
+def _passive(kind, required, specs, mpn, mfr, url, host, text, verbatim):
+    """Capacitor and resistor: same shape, different fields.
+
+    `technology` is read off the page rather than chosen — see
+    technology_from_text — and its absence refuses the part, because a
+    capacitor whose dielectric nobody knows is not a catalogue capacitor.
+    """
+    verbatim = verbatim or {}
+    e, notes = {}, []
+    for field in _VERBATIM_FIELDS[kind]:
+        v, note = _resolve(field, verbatim, specs, field, text)
+        if v is not None:
+            e[field] = v
+            if note:
+                notes.append(note)
+    # "5 %" on the page is the fraction 0.05 in the record. A value already
+    # below 1 is already a fraction and is left alone.
+    if e.get("tolerance", 0) > 1.0:
+        e["tolerance"] = e["tolerance"] / 100.0
+    missing = [k for k in required if k not in e]
+    if missing:
+        return None, f"the datasheet reading is missing {', '.join(missing)}"
+    technology = technology_from_text(kind, text)
+    if not technology:
+        return None, (f"the datasheet does not state a {kind} technology, and it is "
+                      f"not a value to guess — the schema needs one of a fixed list")
+    # the primary value carries its tolerance band, per the schema
+    primary = "capacitance" if kind == "capacitor" else "resistance"
+    e[primary] = _toleranced(e[primary], e.get("tolerance"))
+    part = {"partNumber": mpn, "technology": technology}
+    if kind == "capacitor":
+        # CAS carries a capacitor's tolerance INSIDE the value's band, not as a
+        # field of its own; RAS requires it as a field. Same reading, two
+        # schemas, and the record has to match the one it claims to be.
+        e.pop("tolerance", None)
+    node = _semi_node(mpn, mfr, url, host, part, e, None)
+    if kind == "capacitor":
+        # CAS requires a mechanical block with a shape; RAS does not have one
+        # at all, so this is added where it belongs and nowhere else.
+        assembly = assembly_from_text(text)
+        shape = shape_from_text(text)
+        if not assembly or not shape:
+            return None, ("the datasheet does not say how the part mounts and what "
+                          "body it has, which the capacitor schema requires")
+        node["manufacturerInfo"]["datasheetInfo"]["mechanical"] = {
+            "shape": {"assembly": assembly, "shapeType": shape}}
+    return {kind: node}, "; ".join(notes)
+
+
+def _capacitor(specs, mpn, mfr, url, host, text="", verbatim=None):
+    return _passive("capacitor", ("capacitance", "ratedVoltage"),
+                    specs, mpn, mfr, url, host, text, verbatim)
+
+
+def _resistor(specs, mpn, mfr, url, host, text="", verbatim=None):
+    out, why = _passive("resistor", ("resistance", "tolerance", "powerRating"),
+                        specs, mpn, mfr, url, host, text, verbatim)
+    return out, why
+
+
+def _bipolar(kind, required, subtype, specs, mpn, mfr, url, host, text, verbatim):
+    verbatim = verbatim or {}
+    e, notes = {}, []
+    for field in _VERBATIM_FIELDS[kind]:
+        if field == "junctionTemperatureMax":
+            continue
+        v, note = _resolve(field, verbatim, specs, field, text)
+        if v is not None:
+            e[field] = v
+            if note:
+                notes.append(note)
+    missing = [k for k in required if k not in e]
+    if missing:
+        return None, f"the datasheet reading is missing {', '.join(missing)}"
+    part = {"partNumber": mpn, "technology": "Si"}
+    if subtype:
+        part["subType"] = subtype
+    tmax, _ = _resolve("junctionTemperatureMax", verbatim, specs, "temp_max_C", text)
+    return {"semiconductor": {kind: _semi_node(mpn, mfr, url, host, part, e, tmax)}}, \
+           "; ".join(notes)
+
+
+def _igbt(specs, mpn, mfr, url, host, text="", verbatim=None):
+    return _bipolar("igbt", ("collectorEmitterVoltage", "continuousCollectorCurrent",
+                             "collectorEmitterSaturation"), "",
+                    specs, mpn, mfr, url, host, text, verbatim)
+
+
+def _bjt(specs, mpn, mfr, url, host, text="", verbatim=None):
+    low = (text or "").lower()
+    # a datasheet says which it is, in its title
+    subtype = "pnp" if ("pnp" in low and "npn" not in low) else "npn" if "npn" in low else ""
+    if not subtype:
+        return None, "the datasheet does not say whether this is an NPN or a PNP"
+    return _bipolar("bjt", ("collectorEmitterVoltage", "collectorCurrent"), subtype,
+                    specs, mpn, mfr, url, host, text, verbatim)
+
+
+_BUILDERS = {"mosfet": _mosfet, "diode": _diode, "capacitor": _capacitor,
+             "resistor": _resistor, "igbt": _igbt}
+_CATEGORY_TO_DB = {"mosfet": "mosfets", "diode": "diodes", "capacitor": "capacitors",
+                   "resistor": "resistors", "igbt": "igbts"}
 
 
 def envelope_from_datasheet(
@@ -731,6 +1040,12 @@ def envelope_from_datasheet(
         # the part number, however the sheet punctuates it
         if squashed_mpn not in re.sub(r"[^a-z0-9]", "", candidate_text.lower()):
             rejected.append(f"{url[:60]}: readable, but does not name {mpn}")
+            continue
+        low = candidate_text.lower()
+        markers = sum(1 for m in _DATASHEET_MARKERS if m in low)
+        if markers < _MIN_MARKERS:
+            rejected.append(f"{url[:60]}: names {mpn} but reads like a product "
+                            f"page, not a datasheet (no characteristics table)")
             continue
         text = candidate_text
         used = doc.final_url or url

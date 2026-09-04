@@ -449,9 +449,12 @@ def test_a_part_digikey_has_but_cannot_describe_reuses_its_datasheet_link(tmp_pa
 
 
 def test_the_datasheet_route_is_refused_by_name_for_a_category_it_cannot_map(tmp_path):
-    """Capacitor/resistor technology is a taxonomy a model would guess. Saying
-    so is better than a confident wrong record."""
-    out = lookup_part("SOME-CAP-123", "capacitor", client=_FakeDK(None), staging_root=tmp_path)
+    """A magnetic's saturation current is defined by the inductance drop it is
+    quoted at, and a connector is described by a pinout, not a parameter list.
+    Neither maps to a record without inventing something, so both are refused
+    by name rather than attempted."""
+    out = lookup_part("SOME-INDUCTOR-123", "magnetic",
+                      client=_FakeDK(None), staging_root=tmp_path)
     ds = [a for a in out["attempts"] if a["source"] == "datasheet"][0]
     assert "only supported for" in ds["outcome"] and "mosfet" in ds["outcome"]
     assert not list(tmp_path.rglob("*.json"))
