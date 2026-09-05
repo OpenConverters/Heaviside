@@ -27,13 +27,25 @@ from pathlib import Path
 import pdfplumber
 
 
-def extract_pdf_text(path: Path) -> str:
+def extract_pdf_text(path: Path, y_tolerance: float | None = None) -> str:
     """Extract all text from a PDF, page by page.
 
     Parameters
     ----------
     path : Path
         Filesystem path to the PDF file.
+    y_tolerance : float, optional
+        How far apart, in points, two characters may sit vertically and still
+        be called the same line. pdfplumber's default (3) merges the sub-rows
+        of a tight specification table into ONE line and then sorts them by x,
+        which INTERLEAVES them character by character: Vishay's Si4850EY prints
+        RDS(on) at TJ = 25 °C and TJ = 125 °C on adjacent sub-rows, and the
+        default reading came out as
+        ``T T J J = = 1 1 7 2 5 5 ° ° C C 0 0 . . 0 0 3 3 1 9 ...``
+        — from which any reader, human or model, can extract a different number
+        each time it looks. Pass 1 to keep such sub-rows apart. Subscripts then
+        land on their own line, which is ugly but true; interleaved digits are
+        neither.
 
     Returns
     -------
@@ -56,7 +68,9 @@ def extract_pdf_text(path: Path) -> str:
         parts: list[str] = []
         with pdfplumber.open(path) as pdf:
             for i, page in enumerate(pdf.pages):
-                page_text = page.extract_text()
+                page_text = (page.extract_text()
+                             if y_tolerance is None
+                             else page.extract_text(y_tolerance=y_tolerance))
                 if page_text:
                     parts.append(f"--- Page {i + 1} ---\n{page_text}")
     except Exception as exc:

@@ -531,8 +531,16 @@ _VERBATIM_FIELDS = {
         # read: two passes over the Vishay SUM60020E returned 2.47 mOhm at
         # VGS=7.5 V and 2.10 mOhm at VGS=10 V, disagreed, and the part was
         # refused. Naming the condition makes the question have one answer.
-        "onResistance": ("on-state resistance RDS(on) — the MAXIMUM value at the "
-                         "HIGHEST gate-source voltage the table lists"),
+        #
+        # The temperature has to be named too, and for the same reason. Vishay
+        # prints the Si4850EY at VGS = 10 V three times — TJ = 25, 125 and
+        # 175 C — so "the maximum at the highest VGS" is the 175 C figure,
+        # 0.047 Ohm against the 0.022 Ohm a catalogue means by RDS(on). Every
+        # datasheet specifies the 25 C row; not all specify the hot ones.
+        "onResistance": ("on-state resistance RDS(on) — the MAXIMUM value in the row "
+                         "at the HIGHEST gate-source voltage the table lists AND at "
+                         "25 C junction/ambient temperature. IGNORE rows measured at "
+                         "an elevated temperature (TJ = 125 C, 150 C, 175 C)"),
         # RDS(on) is meaningless without the gate drive it was measured at: a
         # logic-level part specified at 4.5 V and a standard one at 10 V are not
         # the same number, and the catalogue has fields for both conditions.
@@ -565,7 +573,11 @@ _VERBATIM_FIELDS = {
     "igbt": {
         "collectorEmitterVoltage": "collector-emitter breakdown voltage VCES",
         "continuousCollectorCurrent": "continuous collector current IC",
-        "collectorEmitterSaturation": "collector-emitter saturation voltage VCE(sat)",
+        # Same trap as the MOSFET's RDS(on): VCE(sat) is printed hot as well as
+        # at 25 C, and the hot row is the larger number.
+        "collectorEmitterSaturation": ("collector-emitter saturation voltage VCE(sat), "
+                                       "the MAX at 25 C — ignore rows at an elevated "
+                                       "junction temperature"),
         "junctionTemperatureMax": "maximum junction temperature Tj",
     },
     "bjt": {
@@ -589,7 +601,9 @@ _VERBATIM_FIELDS = {
     "diode": {
         "reverseVoltage": "repetitive peak reverse voltage VRRM or VR",
         "forwardCurrent": "average forward current IF(AV)",
-        "forwardVoltage": "forward voltage VF, the MAX",
+        # at 25 C: a diode's VF is also tabulated hot, where it is smaller,
+        # and either row would otherwise answer "the MAX"
+        "forwardVoltage": "forward voltage VF, the MAX at 25 C",
         "reverseRecoveryCharge": "reverse recovery charge Qrr",
         "reverseRecoveryTime": "reverse recovery time trr",
         "junctionTemperatureMax": "maximum junction temperature Tj",
@@ -1450,7 +1464,14 @@ def _names_the_part(squashed_mpn: str, text: str) -> tuple[bool, str]:
 
 
 def _text_of(doc: Any) -> str:
-    """Text from a fetched document, PDF or HTML."""
+    """Text from a fetched document, PDF or HTML.
+
+    A datasheet is read for its TABLE, so the extraction has to keep a table's
+    sub-rows apart — see ``extract_pdf_text``'s y_tolerance. At pdfplumber's
+    default, Vishay's Si4850EY RDS(on) rows arrived interleaved and the two
+    verbatim readings disagreed on every pass, so a part whose numbers are
+    plainly printed could never be sourced.
+    """
     ctype = (getattr(doc, "content_type", "") or "").lower()
     content = doc.content
     if "pdf" in ctype or content[:5] == b"%PDF-":
@@ -1463,7 +1484,7 @@ def _text_of(doc: Any) -> str:
             tmp.write(content)
             path = Path(tmp.name)
         try:
-            return extract_pdf_text(path)
+            return extract_pdf_text(path, y_tolerance=1)
         finally:
             path.unlink(missing_ok=True)
     import re as _re
