@@ -258,6 +258,23 @@ def _dk_datasheet_url(product: dict[str, Any]) -> str | None:
     return None
 
 
+# Mouser's free tier is a DAILY call budget, and when it is spent every request
+# comes back 403 {"Code":"TooManyRequests","Message":"Maximum calls per day
+# exceeded."}. Asking again costs a round trip on every lookup and can never
+# succeed, so after a couple of those the source is skipped until the process
+# restarts — which is also when a raised quota or a new key would take effect.
+# It is a latency guard, never a silence: the trail still says Mouser was
+# skipped and why.
+_MOUSER_EXHAUSTED_AFTER = 2
+_mouser_quota_strikes = 0
+
+
+def _mouser_out_of_quota(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "maxcallperday" in text or "maximum calls per day" in text or (
+        "toomanyrequests" in text and "day" in text)
+
+
 def _mouser_exact(mpn: str) -> tuple[dict[str, Any] | None, str]:
     """Mouser's answer for an exact MPN, as (product, note).
 
@@ -267,6 +284,10 @@ def _mouser_exact(mpn: str) -> tuple[dict[str, Any] | None, str]:
     things happened, so "Mouser is rate limited" never reads as "Mouser does
     not have it".
     """
+    global _mouser_quota_strikes
+    if _mouser_quota_strikes >= _MOUSER_EXHAUSTED_AFTER:
+        return None, ("skipped — Mouser's daily call quota is spent, and asking "
+                      "again cannot succeed until it resets or the plan is raised")
     try:
         from heaviside.librarian.fetcher.auth import load_credentials
         from heaviside.librarian.fetcher.mouser import MouserClient
@@ -276,10 +297,15 @@ def _mouser_exact(mpn: str) -> tuple[dict[str, Any] | None, str]:
             return None, "no Mouser credentials are configured"
         with MouserClient(creds.mouser) as m:
             product = m.get_product(mpn)
+        _mouser_quota_strikes = 0        # a success clears the count
         if product is None:
             return None, "no part with exactly this number"
         return product, ""
     except Exception as exc:  # noqa: BLE001 — see docstring
+        if _mouser_out_of_quota(exc):
+            _mouser_quota_strikes += 1
+            return None, ("its daily call quota is spent (Mouser: maximum calls "
+                          "per day exceeded)")
         return None, f"could not be asked ({type(exc).__name__}: {str(exc)[:120]})"
 
 

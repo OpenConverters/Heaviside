@@ -493,3 +493,42 @@ def test_the_cli_builds_its_clients_the_way_their_signatures_demand():
             assert node.args, (
                 f"{node.func.id}() is constructed with no credentials at "
                 f"heaviside/cli.py:{node.lineno} — that is a TypeError at runtime")
+
+
+def test_mouser_is_skipped_once_its_daily_quota_is_spent(tmp_path, monkeypatch, real_mouser):
+    """Mouser's free tier is a DAILY budget. Once spent, every call returns
+    403 "Maximum calls per day exceeded" — asking again costs a round trip on
+    every lookup and can never succeed. After two strikes the source is skipped
+    until the process restarts, which is also when a raised quota takes effect."""
+    from heaviside.librarian.fetcher import lookup as lookup_mod
+
+    monkeypatch.setattr(lookup_mod, "_mouser_quota_strikes", 0)
+    calls = []
+
+    class _OutOfQuota:
+        def __init__(self, *a, **k):
+            calls.append(1)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *e):
+            return False
+
+        def get_product(self, mpn):
+            raise RuntimeError(
+                'mouser 403: {"Code":"TooManyRequests","Message":'
+                '"Maximum calls per day exceeded.","ResourceKey":"MaxCallPerDay"}')
+
+    monkeypatch.setattr("heaviside.librarian.fetcher.mouser.MouserClient", _OutOfQuota)
+    outcomes = []
+    for _ in range(4):
+        out = lookup_part(_MPN, "mosfet", client=_FakeDK(None), staging_root=tmp_path)
+        outcomes.append([a for a in out["attempts"] if a["source"] == "mouser"][0]["outcome"])
+
+    # the first two try and report the quota; the rest skip without a call
+    assert len(calls) == 2, f"asked Mouser {len(calls)} times after it ran out"
+    assert "daily call quota is spent" in outcomes[0]
+    assert "skipped" in outcomes[-1]
+    # and it is never silent: every attempt still says what happened
+    assert all(o for o in outcomes)

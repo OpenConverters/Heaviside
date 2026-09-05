@@ -227,3 +227,52 @@ def test_parts_wrong_type_raises_malformed() -> None:
 
     with pytest.raises(MalformedResponseError, match="Parts"):
         _client(handler).get_product("X")
+
+
+def test_every_mouser_call_records_who_made_it(tmp_path, monkeypatch):
+    """Mouser's plan is a DAILY budget, and its exhaustion message says the
+    budget is gone but nothing about who spent it. Several tools call this API
+    — the per-part lookup, `librarian search`, and librarian_run.py, which
+    prefers Mouser for EVERY part of a bulk run — so attributing an exhaustion
+    afterwards was guesswork. Each call now names its process."""
+    import json
+
+    import httpx
+
+    from heaviside.librarian.fetcher import mouser as mouser_mod
+    from heaviside.librarian.fetcher.auth import MouserCredentials
+
+    log = tmp_path / "calls.ndjson"
+    monkeypatch.setattr(mouser_mod, "_CALL_LOG", log)
+
+    def handler(request):
+        return httpx.Response(200, json={"SearchResults": {"Parts": []}, "Errors": []})
+
+    with mouser_mod.MouserClient(MouserCredentials(api_key="k"),
+                                 transport=httpx.MockTransport(handler)) as c:
+        c.search("STPS340U", limit=1)
+        c.search("IRFP4668PBF", limit=1)
+
+    lines = [json.loads(x) for x in log.read_text().splitlines() if x.strip()]
+    assert len(lines) == 2
+    assert {l["keywords"] for l in lines} == {"STPS340U", "IRFP4668PBF"}
+    assert all(l["pid"] and l["who"] and l["at"] for l in lines)
+
+
+def test_accounting_never_breaks_a_lookup(tmp_path, monkeypatch):
+    """It is a log, not a limiter. An unwritable path must cost nothing."""
+    import httpx
+
+    from heaviside.librarian.fetcher import mouser as mouser_mod
+    from heaviside.librarian.fetcher.auth import MouserCredentials
+
+    monkeypatch.setattr(mouser_mod, "_CALL_LOG", tmp_path / "no" / "such" / "dir" / "x")
+    monkeypatch.setattr(mouser_mod.Path, "mkdir",
+                        lambda *a, **k: (_ for _ in ()).throw(PermissionError("nope")))
+
+    def handler(request):
+        return httpx.Response(200, json={"SearchResults": {"Parts": []}, "Errors": []})
+
+    with mouser_mod.MouserClient(MouserCredentials(api_key="k"),
+                                 transport=httpx.MockTransport(handler)) as c:
+        assert c.search("ANY", limit=1) is not None

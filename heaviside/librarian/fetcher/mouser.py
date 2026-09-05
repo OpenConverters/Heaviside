@@ -24,6 +24,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
 import httpx
 
 from heaviside.librarian.fetcher.auth import MouserCredentials
@@ -42,6 +48,40 @@ __all__ = [
 MOUSER_API_BASE = "https://api.mouser.com/api/v1"
 
 _DEFAULT_TIMEOUT = 30.0
+
+
+# ---------------------------------------------------------------------------
+# Call accounting
+# ---------------------------------------------------------------------------
+# Mouser's plan is a DAILY call budget, and when it is spent every request comes
+# back 403 "Maximum calls per day exceeded" — which tells you the budget is gone
+# but nothing about who spent it. Several tools here call this API (the
+# per-part lookup, `librarian search`, and scripts/librarian_run.py, which
+# prefers Mouser for EVERY part in a bulk run), so attributing an exhaustion
+# afterwards was guesswork.
+#
+# Each call appends one line naming the process that made it. It is a log, not
+# a limiter: nothing is throttled, and a failure to write is never allowed to
+# break a lookup.
+_CALL_LOG = Path(
+    os.environ.get("HEAVISIDE_MOUSER_CALL_LOG")
+    or (Path.home() / ".heaviside" / "mouser_calls.ndjson")
+)
+
+
+def _account_call(keywords: str) -> None:
+    try:
+        _CALL_LOG.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+            "pid": os.getpid(),
+            "who": " ".join(sys.argv[:2])[:120] or "?",
+            "keywords": keywords[:60],
+        }
+        with _CALL_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception:  # noqa: BLE001 — accounting must never break a lookup
+        pass
 
 
 class MouserClient:
@@ -92,6 +132,7 @@ class MouserClient:
             }
         }
         url = f"{self.base_url}/search/keyword"
+        _account_call(keywords)
         response = self._client.post(
             url,
             headers={
