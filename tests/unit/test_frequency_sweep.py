@@ -310,11 +310,32 @@ def test_envelope_fet_rejects_nonpositive():
 # ---------------------------------------------------------------------------
 
 
+def _requested_L(design):
+    """The magnetising inductance Kirchhoff ASKED for at this fsw."""
+    dr = ((design.mas or {}).get("inputs") or {}).get("designRequirements") or {}
+    return dr.get("magnetizingInductance") or {}
+
+
 @pytest.mark.integration
 def test_seam_inductance_scales_inverse_with_fsw():
-    """bridge.design_magnetics_at_fsw lets MKF re-derive L per frequency; at a
-    fixed ripple budget L ∝ 1/fsw. This proves the sweep's loop-order trap is
-    closed at the seam (the magnetic IS re-derived inside the loop)."""
+    """bridge.design_magnetics_at_fsw lets Kirchhoff re-derive L per frequency; at
+    a fixed ripple budget L ∝ 1/fsw. This proves the sweep's loop-order trap is
+    closed at the seam (the magnetic IS re-derived inside the loop).
+
+    The scaling is asserted on the REQUESTED inductance, which is the quantity the
+    seam actually produces, and the DELIVERED inductance is checked against its own
+    requested window. Asserting the ratio of the delivered values instead — as this
+    did — applies a continuous expectation to the quantised output of a real core
+    catalogue: at 200 kHz MKF picks 12.571 uH on an RM 5 N with 9 turns, at 400 kHz
+    7.599 uH on an RM 5/I with 6, a ratio of 1.654 and both squarely inside spec.
+    The seam was right and the test was measuring the wrong thing.
+
+    This is the stricter check, not the looser one. It still catches the bug the
+    test was written for — a magnetic hoisted out of the loop gives a ratio of 1.0
+    here too — and it adds one the ratio never made: that what MKF delivered
+    actually satisfies what was asked for at that frequency, which a ratio of two
+    out-of-spec numbers would have sailed through.
+    """
     try:
         from heaviside import bridge
         from heaviside.stages import converter_spec_build
@@ -325,14 +346,26 @@ def test_seam_inductance_scales_inverse_with_fsw():
         {**_spec(), "efficiency": 0.92, "diodeVoltageDrop": 0.7}, "buck"
     )
     try:
-        a = bridge.design_magnetics_at_fsw("buck", base, 200_000, max_results=1)
-        b = bridge.design_magnetics_at_fsw("buck", base, 400_000, max_results=1)
+        a = bridge.design_magnetics_at_fsw("buck", base, 200_000, max_results=1)[0]
+        b = bridge.design_magnetics_at_fsw("buck", base, 400_000, max_results=1)[0]
     except Exception as exc:  # pragma: no cover
         pytest.skip(f"MKF unavailable: {exc}")
-    La = bridge._harvest_authoritative_inductance(a[0].mas)
-    Lb = bridge._harvest_authoritative_inductance(b[0].mas)
-    # doubling fsw roughly halves L (MKF re-derives; allow 15% for core quantisation)
-    assert La / Lb == pytest.approx(2.0, rel=0.15)
+
+    ra, rb = _requested_L(a), _requested_L(b)
+    assert ra.get("nominal") and rb.get("nominal"), (ra, rb)
+    # doubling fsw halves the inductance the operating point needs — exactly, because
+    # this is arithmetic, not a catalogue lookup
+    assert ra["nominal"] / rb["nominal"] == pytest.approx(2.0, rel=1e-6)
+
+    # …and each design MKF returned meets the requirement it was given
+    for design, req, fsw in ((a, ra, 200_000), (b, rb, 400_000)):
+        L = bridge._harvest_authoritative_inductance(design.mas)
+        lo, hi = req.get("minimum"), req.get("maximum")
+        assert lo is not None and hi is not None, req
+        assert lo <= L <= hi, (
+            f"at {fsw} Hz MKF delivered {L * 1e6:.3f} uH, outside the requested "
+            f"{lo * 1e6:.3f}–{hi * 1e6:.3f} uH"
+        )
 
 
 @pytest.mark.integration
