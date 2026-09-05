@@ -237,7 +237,8 @@ def lookup_part(
 
 # Only what from_datasheet can map without guessing. Kept here so the chain can
 # say "not supported for this kind of part" before spending a web search.
-DATASHEET_CATEGORIES = ("mosfet", "diode", "capacitor", "resistor", "igbt")
+DATASHEET_CATEGORIES = ("mosfet", "diode", "capacitor", "resistor", "igbt",
+                        "connector", "varistor")
 
 _TO_SINGULAR = {
     "mosfets": "mosfet", "diodes": "diode", "capacitors": "capacitor",

@@ -62,7 +62,8 @@ class DatasheetSourceError(FetcherError):
 # category, so the librarian cannot write one to TAS even if it read one
 # perfectly. Adding a category is a data-governance change, not this module's
 # to make.
-SUPPORTED = ("mosfet", "diode", "capacitor", "resistor", "igbt")
+SUPPORTED = ("mosfet", "diode", "capacitor", "resistor", "igbt",
+             "connector", "varistor")
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +272,13 @@ _PLAUSIBLE = {
     "continuousCollectorCurrent": (1e-3, 5e3),
     "collectorCurrent": (1e-6, 5e3),          # A
     "collectorEmitterSaturation": (0.05, 20.0),
+    "ratedCurrentPerContact": (1e-3, 1e4),    # A
+    "contactResistance": (1e-6, 10.0),        # ohm
+    "positions": (1, 10000),                  # count
+    "pitch": (1e-5, 0.1),                     # m
+    "varistorVoltage": (1.0, 20e3),           # V
+    "clampingVoltage": (1.0, 50e3),           # V
+    "peakSurgeCurrent": (1.0, 2e5),           # A
 }
 
 
@@ -335,6 +343,10 @@ _FIELD_UNIT: dict[str, tuple[str, ...]] = {
     "powerRating": ("W",),
     "collectorEmitterVoltage": ("V",), "collectorEmitterSaturation": ("V",),
     "continuousCollectorCurrent": ("A",), "collectorCurrent": ("A",),
+    "ratedCurrentPerContact": ("A",), "peakSurgeCurrent": ("A",),
+    "contactResistance": ("\u03a9", "\u2126", "\uf057", "W", "ohm", "Ohm", "m\u03a9"),
+    "pitch": ("m", "mm"),
+    "varistorVoltage": ("V",), "clampingVoltage": ("V",),
 }
 
 
@@ -561,6 +573,19 @@ _VERBATIM_FIELDS = {
         "collectorCurrent": "continuous collector current IC",
         "junctionTemperatureMax": "maximum junction temperature Tj",
     },
+    "connector": {
+        "ratedCurrentPerContact": "current rating PER CONTACT (per pin/position)",
+        "ratedVoltage": "rated working voltage",
+        "contactResistance": "contact resistance",
+        "positions": "number of contacts/positions/ways",
+        "pitch": "contact pitch (centre-to-centre spacing)",
+    },
+    "varistor": {
+        "varistorVoltage": "varistor voltage V1mA (the voltage at 1 mA)",
+        "clampingVoltage": "maximum clamping voltage Vc",
+        "peakSurgeCurrent": "maximum peak surge current (8/20 us)",
+        "ratedVoltage": "maximum continuous RMS operating voltage",
+    },
     "diode": {
         "reverseVoltage": "repetitive peak reverse voltage VRRM or VR",
         "forwardCurrent": "average forward current IF(AV)",
@@ -730,6 +755,63 @@ def _manufacturer_from_host(host: str) -> str:
     return label.capitalize() if len(label) >= 3 and label.isalpha() else ""
 
 
+# Which electrical fields the schema wants as a dimensionWithTolerance object
+# rather than a bare number. Asked of the schema rather than hardcoded: the
+# answer differs per family and per field — a varistor's varistorVoltage is a
+# toleranced object while its clampingVoltage beside it is a plain number — and
+# a table of that here would be a second copy of the contract, drifting.
+_TOLERANCED_CACHE: dict[str, frozenset] = {}
+
+
+def toleranced_fields(db_category: str) -> frozenset:
+    """Electrical field names that must be {"nominal": …} for this category."""
+    if db_category in _TOLERANCED_CACHE:
+        return _TOLERANCED_CACHE[db_category]
+    names: set[str] = set()
+    try:
+        import json as _json
+
+        from heaviside.librarian.tas import SCHEMA_MAP
+
+        path, _unwrap = SCHEMA_MAP[db_category]
+        schema = _json.loads(open(path, encoding="utf-8").read())
+
+        # Every property anywhere whose definition is a dimensionWithTolerance.
+        # Not scoped to the electrical block: the block is reached through a
+        # local $ref, and following those is more machinery than the answer is
+        # worth. Over-collecting is harmless because the result is only applied
+        # to field names a builder actually produced.
+        def walk(node):
+            if isinstance(node, dict):
+                props = node.get("properties")
+                if isinstance(props, dict):
+                    for key, val in props.items():
+                        if isinstance(val, dict) and "dimensionWithTolerance" in str(
+                                val.get("$ref", "")):
+                            names.add(key)
+                for val in node.values():
+                    walk(val)
+            elif isinstance(node, list):
+                for val in node:
+                    walk(val)
+
+        walk(schema)
+    except Exception as exc:  # noqa: BLE001 — a missing schema is the caller's problem
+        logger.debug("could not read toleranced fields for %s: %s", db_category, exc)
+    out = frozenset(names)
+    _TOLERANCED_CACHE[db_category] = out
+    return out
+
+
+def _shape_electrical(db_category: str, e: dict[str, Any],
+                      tolerance: float | None = None) -> None:
+    """Put each value in the shape its schema asks for, in place."""
+    for field in toleranced_fields(db_category):
+        v = e.get(field)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            e[field] = _toleranced(float(v), tolerance)
+
+
 def _provenance(url: str, host: str) -> list[dict[str, Any]]:
     """Say plainly where this came from and that a model read it.
 
@@ -746,13 +828,22 @@ def _provenance(url: str, host: str) -> list[dict[str, Any]]:
     }]
 
 
-def _resolve(field: str, verbatim: dict, specs: dict, key: str, text: str):
+def _resolve(field: str, verbatim: dict, specs: dict, key: str, text: str,
+             disagreed: frozenset = frozenset()):
     """One field's value: the verbatim reading first, the SI reading second.
 
     The verbatim pass carries the datasheet's own units, so its exponent is the
     document's rather than the model's arithmetic. It still goes through
     corroboration — a copied string can be copied from the wrong row.
+
+    A field the two verbatim passes DISAGREED about is dropped outright and
+    never falls through to the SI pass. Falling through defeated the whole
+    agreement check: on IPA045N10N3G the two readings gave 4.5 and 4.7 mOhm,
+    the field was correctly withheld, and the record was then built anyway
+    from the pass with no second opinion behind it.
     """
+    if field in disagreed:
+        return None, f"{field}: two readings of the datasheet disagreed"
     got = verbatim.get(field)
     if got is not None:
         value, note = _corroborated(field, got[0], text)
@@ -763,7 +854,8 @@ def _resolve(field: str, verbatim: dict, specs: dict, key: str, text: str):
 
 
 def _mosfet(specs: dict, mpn: str, mfr: str, url: str, host: str,
-            text: str = "", verbatim: dict | None = None) -> tuple[dict | None, str]:
+            text: str = "", verbatim: dict | None = None,
+            disagreed: frozenset = frozenset()) -> tuple[dict | None, str]:
     verbatim = verbatim or {}
     e: dict[str, Any] = {}
     dropped: list[str] = []
@@ -771,7 +863,7 @@ def _mosfet(specs: dict, mpn: str, mfr: str, url: str, host: str,
     for key, dst in (("vds_V", "drainSourceVoltage"), ("id_A", "continuousDrainCurrent"),
                      ("rds_on_ohm", "onResistance"), ("qg_C", "totalGateCharge"),
                      ("coss_F", "outputCapacitance")):
-        v, note = _resolve(dst, verbatim, specs, key, text)
+        v, note = _resolve(dst, verbatim, specs, key, text, disagreed)
         if v is not None:
             e[dst] = v
             if note:
@@ -786,7 +878,7 @@ def _mosfet(specs: dict, mpn: str, mfr: str, url: str, host: str,
             v, _n = _corroborated(cond, got[0], text)
             if v is not None:
                 e[cond] = v
-    vth, note = _resolve("gateThresholdVoltage", verbatim, specs, "vgs_th_max_V", text)
+    vth, note = _resolve("gateThresholdVoltage", verbatim, specs, "vgs_th_max_V", text, disagreed)
     if vth is not None:
         e["gateThresholdVoltage"] = {"maximum": vth}
         if note:
@@ -812,7 +904,7 @@ def _mosfet(specs: dict, mpn: str, mfr: str, url: str, host: str,
             },
         }
     }
-    tmax, _ = _resolve("junctionTemperatureMax", verbatim, specs, "temp_max_C", text)
+    tmax, _ = _resolve("junctionTemperatureMax", verbatim, specs, "temp_max_C", text, disagreed)
     if tmax is not None:
         node["manufacturerInfo"]["datasheetInfo"]["thermal"] = {"junctionTemperatureMax": tmax}
     return {"semiconductor": {"mosfet": node}}, "; ".join(notes)
@@ -844,14 +936,15 @@ def _diode_subtype(specs: dict) -> str:
 
 
 def _diode(specs: dict, mpn: str, mfr: str, url: str, host: str,
-           text: str = "", verbatim: dict | None = None) -> tuple[dict | None, str]:
+           text: str = "", verbatim: dict | None = None,
+           disagreed: frozenset = frozenset()) -> tuple[dict | None, str]:
     verbatim = verbatim or {}
     e: dict[str, Any] = {}
     notes: list[str] = []
     for key, dst in (("vrrm_V", "reverseVoltage"), ("vf_V", "forwardVoltage"),
                      ("if_A", "forwardCurrent"), ("qrr_C", "reverseRecoveryCharge"),
                      ("trr_s", "reverseRecoveryTime")):
-        v, note = _resolve(dst, verbatim, specs, key, text)
+        v, note = _resolve(dst, verbatim, specs, key, text, disagreed)
         if v is not None:
             e[dst] = v
             if note:
@@ -871,7 +964,7 @@ def _diode(specs: dict, mpn: str, mfr: str, url: str, host: str,
             },
         }
     }
-    tmax, _ = _resolve("junctionTemperatureMax", verbatim, specs, "temp_max_C", text)
+    tmax, _ = _resolve("junctionTemperatureMax", verbatim, specs, "temp_max_C", text, disagreed)
     if tmax is not None:
         node["manufacturerInfo"]["datasheetInfo"]["thermal"] = {"junctionTemperatureMax": tmax}
     return {"semiconductor": {"diode": node}}, "; ".join(notes)
@@ -887,7 +980,7 @@ def _semi_node(mpn, mfr, url, host, part, e, tmax):
     return node
 
 
-def _passive(kind, required, specs, mpn, mfr, url, host, text, verbatim):
+def _passive(kind, required, specs, mpn, mfr, url, host, text, verbatim, disagreed=frozenset()):
     """Capacitor and resistor: same shape, different fields.
 
     `technology` is read off the page rather than chosen — see
@@ -897,7 +990,7 @@ def _passive(kind, required, specs, mpn, mfr, url, host, text, verbatim):
     verbatim = verbatim or {}
     e, notes = {}, []
     for field in _VERBATIM_FIELDS[kind]:
-        v, note = _resolve(field, verbatim, specs, field, text)
+        v, note = _resolve(field, verbatim, specs, field, text, disagreed)
         if v is not None:
             e[field] = v
             if note:
@@ -913,9 +1006,9 @@ def _passive(kind, required, specs, mpn, mfr, url, host, text, verbatim):
     if not technology:
         return None, (f"the datasheet does not state a {kind} technology, and it is "
                       f"not a value to guess — the schema needs one of a fixed list")
-    # the primary value carries its tolerance band, per the schema
-    primary = "capacitance" if kind == "capacitor" else "resistance"
-    e[primary] = _toleranced(e[primary], e.get("tolerance"))
+    # each value in the shape its schema asks for, tolerance band included
+    tol = e.get("tolerance")
+    _shape_electrical(_CATEGORY_TO_DB[kind], e, tol)
     part = {"partNumber": mpn, "technology": technology}
     if kind == "capacitor":
         # CAS carries a capacitor's tolerance INSIDE the value's band, not as a
@@ -936,24 +1029,26 @@ def _passive(kind, required, specs, mpn, mfr, url, host, text, verbatim):
     return {kind: node}, "; ".join(notes)
 
 
-def _capacitor(specs, mpn, mfr, url, host, text="", verbatim=None):
+def _capacitor(specs, mpn, mfr, url, host, text="", verbatim=None,
+               disagreed=frozenset()):
     return _passive("capacitor", ("capacitance", "ratedVoltage"),
-                    specs, mpn, mfr, url, host, text, verbatim)
+                    specs, mpn, mfr, url, host, text, verbatim, disagreed)
 
 
-def _resistor(specs, mpn, mfr, url, host, text="", verbatim=None):
+def _resistor(specs, mpn, mfr, url, host, text="", verbatim=None,
+              disagreed=frozenset()):
     out, why = _passive("resistor", ("resistance", "tolerance", "powerRating"),
-                        specs, mpn, mfr, url, host, text, verbatim)
+                        specs, mpn, mfr, url, host, text, verbatim, disagreed)
     return out, why
 
 
-def _bipolar(kind, required, subtype, specs, mpn, mfr, url, host, text, verbatim):
+def _bipolar(kind, required, subtype, specs, mpn, mfr, url, host, text, verbatim, disagreed=frozenset()):
     verbatim = verbatim or {}
     e, notes = {}, []
     for field in _VERBATIM_FIELDS[kind]:
         if field == "junctionTemperatureMax":
             continue
-        v, note = _resolve(field, verbatim, specs, field, text)
+        v, note = _resolve(field, verbatim, specs, field, text, disagreed)
         if v is not None:
             e[field] = v
             if note:
@@ -964,15 +1059,16 @@ def _bipolar(kind, required, subtype, specs, mpn, mfr, url, host, text, verbatim
     part = {"partNumber": mpn, "technology": "Si"}
     if subtype:
         part["subType"] = subtype
-    tmax, _ = _resolve("junctionTemperatureMax", verbatim, specs, "temp_max_C", text)
+    tmax, _ = _resolve("junctionTemperatureMax", verbatim, specs, "temp_max_C", text, disagreed)
     return {"semiconductor": {kind: _semi_node(mpn, mfr, url, host, part, e, tmax)}}, \
            "; ".join(notes)
 
 
-def _igbt(specs, mpn, mfr, url, host, text="", verbatim=None):
+def _igbt(specs, mpn, mfr, url, host, text="", verbatim=None,
+          disagreed=frozenset()):
     return _bipolar("igbt", ("collectorEmitterVoltage", "continuousCollectorCurrent",
                              "collectorEmitterSaturation"), "",
-                    specs, mpn, mfr, url, host, text, verbatim)
+                    specs, mpn, mfr, url, host, text, verbatim, disagreed)
 
 
 def _bjt(specs, mpn, mfr, url, host, text="", verbatim=None):
@@ -985,10 +1081,132 @@ def _bjt(specs, mpn, mfr, url, host, text="", verbatim=None):
                     specs, mpn, mfr, url, host, text, verbatim)
 
 
+# A varistor's technology, stated on its own datasheet. Same rule as the other
+# taxonomies: read, never chosen.
+_VARISTOR_WORDS = (
+    ("metal oxide", "metalOxide"), ("mov", "metalOxide"),
+    ("zinc oxide", "metalOxide"), ("multilayer", "multilayer"),
+    ("silicon carbide", "siliconCarbide"),
+)
+
+
+# CONAS's familyDetails is a DISCRIMINATED UNION: `family` is a const that
+# selects the variant, and catalogue filtering reads it. So it is not a label
+# to invent — it is read off the title block like every other taxonomy here,
+# most specific first, and a sheet that names none of them is refused rather
+# than filed under a guess. Three variants need a field of their own; without
+# it the record cannot be built either.
+_CONNECTOR_FAMILY_WORDS = (
+    ("terminal block", "terminalBlock"), ("screw terminal", "terminalBlock"),
+    ("pluggable terminal", "terminalBlock"), ("din rail terminal", "terminalBlock"),
+    ("pin header", "pinHeaderSocket"), ("socket strip", "pinHeaderSocket"),
+    ("header and socket", "pinHeaderSocket"), ("box header", "pinHeaderSocket"),
+    ("board-to-board", "boardToBoard"), ("board to board", "boardToBoard"),
+    ("mezzanine", "boardToBoard"),
+    ("wire-to-board", "wireToBoard"), ("wire to board", "wireToBoard"),
+    ("wire-to-wire", "wireToWire"), ("wire to wire", "wireToWire"),
+    ("fpc", "fpcFfc"), ("ffc", "fpcFfc"), ("flat flexible", "fpcFfc"),
+    ("card edge", "cardEdge"), ("edge connector", "cardEdge"),
+    ("circular connector", "circular"), ("m12", "circular"), ("m8 connector", "circular"),
+    ("coaxial", "rf"), ("sma connector", "rf"), ("u.fl", "rf"), ("rf connector", "rf"),
+    ("usb", "dataInterface"), ("rj45", "dataInterface"), ("ethernet", "dataInterface"),
+    ("hdmi", "dataInterface"), ("displayport", "dataInterface"),
+    ("iec 60320", "acInlet"), ("ac inlet", "acInlet"), ("mains inlet", "acInlet"),
+    ("dc jack", "power"), ("barrel jack", "power"), ("power connector", "power"),
+    ("busbar", "busbar"), ("bus bar", "busbar"),
+    ("solder pad", "solderPad"),
+)
+# variants that carry a required field of their own
+_FAMILY_EXTRA = {"rf": "characteristicImpedance",
+                 "dataInterface": "interfaceStandard",
+                 "acInlet": "standardSheet"}
+
+
+def _connector_family(text: str) -> str:
+    low = (text or "")[:_TITLE_BLOCK].lower()
+    for word, value in _CONNECTOR_FAMILY_WORDS:
+        if word in low:
+            return value
+    return ""
+
+
+def _connector(specs, mpn, mfr, url, host, text="", verbatim=None,
+               disagreed=frozenset()):
+    """A connector record.
+
+    CONAS wants part, electrical, mechanical and familyDetails present, and
+    then EITHER a family name OR a per-contact current rating — a family sheet
+    is allowed to describe the series and leave the ratings to a table. Both
+    are on a real connector datasheet, so both are read and the record is
+    refused when neither is.
+    """
+    verbatim = verbatim or {}
+    e, notes = {}, []
+    for field in ("ratedCurrentPerContact", "ratedVoltage", "contactResistance"):
+        v, note = _resolve(field, verbatim, specs, field, text, disagreed)
+        if v is not None:
+            e[field] = v
+            if note:
+                notes.append(note)
+    family = _connector_family(text)
+    if not family:
+        return None, ("the datasheet does not say what kind of connector this is, and "
+                      "the schema's family is a fixed list, not a label to invent")
+    if family in _FAMILY_EXTRA:
+        return None, (f"a {family} connector needs {_FAMILY_EXTRA[family]}, which this "
+                      f"reader does not extract yet")
+    # every family except rf requires the per-contact current rating
+    if "ratedCurrentPerContact" not in e:
+        return None, "the datasheet reading is missing ratedCurrentPerContact"
+    mech: dict[str, Any] = {}
+    for field, key in (("positions", "positions"), ("pitch", "pitch")):
+        v, _n = _resolve(field, verbatim, specs, field, text, disagreed)
+        if v is not None:
+            mech[key] = int(v) if key == "positions" else v
+    _shape_electrical("connectors", e)
+    node = {"manufacturerInfo": {
+        "name": mfr, "reference": mpn, "status": "production", "datasheetUrl": url,
+        "datasheetInfo": {"part": {"partNumber": mpn}, "electrical": e,
+                          "mechanical": mech,
+                          "familyDetails": {"family": family},
+                          "provenance": _provenance(url, host)}}}
+    return {"connector": node}, "; ".join(notes)
+
+
+def _varistor(specs, mpn, mfr, url, host, text="", verbatim=None,
+              disagreed=frozenset()):
+    verbatim = verbatim or {}
+    e, notes = {}, []
+    for field in ("varistorVoltage", "clampingVoltage", "peakSurgeCurrent"):
+        v, note = _resolve(field, verbatim, specs, field, text, disagreed)
+        if v is not None:
+            e[field] = v
+            if note:
+                notes.append(note)
+    missing = [k for k in ("varistorVoltage", "clampingVoltage", "peakSurgeCurrent")
+               if k not in e]
+    if missing:
+        return None, f"the datasheet reading is missing {', '.join(missing)}"
+    low = (text or "")[:_TITLE_BLOCK].lower()
+    technology = next((v for w, v in _VARISTOR_WORDS if w in low), "")
+    if not technology:
+        return None, ("the datasheet does not state a varistor technology, and the "
+                      "schema needs one of a fixed list")
+    _shape_electrical("varistors", e)
+    node = {"manufacturerInfo": {
+        "name": mfr, "reference": mpn, "status": "production", "datasheetUrl": url,
+        "datasheetInfo": {"part": {"partNumber": mpn, "technology": technology},
+                          "electrical": e,
+                          "provenance": _provenance(url, host)}}}
+    return {"varistor": node}, "; ".join(notes)
+
+
 _BUILDERS = {"mosfet": _mosfet, "diode": _diode, "capacitor": _capacitor,
-             "resistor": _resistor, "igbt": _igbt}
+             "resistor": _resistor, "igbt": _igbt, "connector": _connector,
+             "varistor": _varistor}
 _CATEGORY_TO_DB = {"mosfet": "mosfets", "diode": "diodes", "capacitor": "capacitors",
-                   "resistor": "resistors", "igbt": "igbts"}
+                   "resistor": "resistors", "igbt": "igbts",
+                   "connector": "connectors", "varistor": "varistors"}
 
 
 def envelope_from_datasheet(
@@ -1177,7 +1395,8 @@ def envelope_from_datasheet(
         return None, ("the datasheet did not name a manufacturer, and it was not served "
                       f"by a site that identifies one ({host})"), detail
 
-    envelope, why = _BUILDERS[category](specs, mpn, mfr, used, host, text, verbatim)
+    envelope, why = _BUILDERS[category](specs, mpn, mfr, used, host, text, verbatim,
+                                       frozenset(d.split(" ")[0] for d in disagreed))
     if envelope is None:
         detail["extracted"] = {k: v for k, v in specs.items() if v is not None}
         return None, why, detail

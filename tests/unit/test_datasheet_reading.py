@@ -577,3 +577,107 @@ def test_a_web_page_is_not_a_datasheet(tmp_path):
         fetch=lambda url, timeout=60: _Page(), seek=lambda *a, **k: {})
     assert env is None
     assert "not a datasheet PDF" in " ".join(detail.get("rejected", []))
+
+
+# ---------------------------------------------------------------------------
+# connectors and varistors
+# ---------------------------------------------------------------------------
+
+
+def test_the_schema_says_which_fields_are_toleranced_objects():
+    """A varistor's varistorVoltage is a dimensionWithTolerance while the
+    clampingVoltage beside it is a plain number. A table of that here would be
+    a second copy of the contract, drifting; the schema is asked instead."""
+    from heaviside.librarian.fetcher.from_datasheet import toleranced_fields
+
+    assert "varistorVoltage" in toleranced_fields("varistors")
+    assert "clampingVoltage" not in toleranced_fields("varistors")
+    assert "contactResistance" in toleranced_fields("connectors")
+    assert "capacitance" in toleranced_fields("capacitors")
+    assert "resistance" in toleranced_fields("resistors")
+
+
+def test_a_connector_family_is_read_not_invented():
+    """CONAS's familyDetails is a discriminated union — `family` is a const that
+    selects the variant and catalogue filtering reads it — so it is read off the
+    title block, and a sheet naming none of the fourteen is refused."""
+    from heaviside.librarian.fetcher.from_datasheet import _connector_family
+
+    assert _connector_family("PCB Terminal Block, pluggable") == "terminalBlock"
+    assert _connector_family("2.54 mm Pin Header, single row") == "pinHeaderSocket"
+    assert _connector_family("USB Type-C Receptacle") == "dataInterface"
+    assert _connector_family("M12 circular connector, 5-pole") == "circular"
+    assert _connector_family("a connector of some kind") == ""
+
+
+def test_a_connector_reading_builds_a_valid_record():
+    text = ("MKDS 1,5/2-5,08 PCB terminal block, 2 positions, pitch 5.08 mm, "
+            "rated current per contact 17.5 A, rated voltage 630 V")
+    env, _ = _BUILDERS["connector"](
+        {}, "1725656", "Phoenix Contact", "https://x/y.pdf", "x", text,
+        {"ratedCurrentPerContact": (17.5, "17.5 A"), "ratedVoltage": (630.0, "630 V"),
+         "positions": (2.0, "2"), "pitch": (0.00508, "5.08 mm")})
+    assert env is not None
+    _valid("connector", env)
+    ds = env["connector"]["manufacturerInfo"]["datasheetInfo"]
+    assert ds["familyDetails"]["family"] == "terminalBlock"
+    assert ds["electrical"]["ratedCurrentPerContact"] == 17.5
+
+
+def test_a_connector_family_needing_its_own_field_is_refused_not_faked():
+    """rf, dataInterface and acInlet each require a field of their own. Filing
+    one without it would be a record the schema accepts and the catalogue
+    cannot use."""
+    env, why = _BUILDERS["connector"](
+        {}, "X", "Amphenol", "u", "h", "USB Type-C Receptacle, 24 position",
+        {"ratedCurrentPerContact": (5.0, "5 A")})
+    assert env is None and "interfaceStandard" in why
+
+
+def test_a_varistor_reading_builds_a_valid_record_with_its_toleranced_voltage():
+    text = ("Metal Oxide Varistor MOV. Varistor voltage V1mA 430 V, "
+            "clamping voltage 710 V, peak surge current 6500 A")
+    env, _ = _BUILDERS["varistor"](
+        {}, "V275LA40AP", "Littelfuse", "https://x/y.pdf", "x", text,
+        {"varistorVoltage": (430.0, "430 V"), "clampingVoltage": (710.0, "710 V"),
+         "peakSurgeCurrent": (6500.0, "6500 A")})
+    assert env is not None
+    _valid("varistor", env)
+    e = env["varistor"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    # the schema wants this one as an object and the one beside it as a number
+    assert e["varistorVoltage"] == {"nominal": 430.0}
+    assert e["clampingVoltage"] == 710.0
+
+
+def test_a_varistor_with_no_stated_technology_is_refused():
+    """Every value reads fine; the sheet just never says what kind of varistor
+    it is. The technology is a fixed list, so that is a refusal, not a guess."""
+    text = ("Surge protection device. Varistor voltage V1mA 430 V, "
+            "clamping voltage 710 V, peak surge current 6500 A")
+    env, why = _BUILDERS["varistor"](
+        {}, "X", "Y", "u", "h", text,
+        {"varistorVoltage": (430.0, "430 V"), "clampingVoltage": (710.0, "710 V"),
+         "peakSurgeCurrent": (6500.0, "6500 A")})
+    assert env is None and "technology" in why
+
+
+def test_a_disagreed_field_never_falls_through_to_the_weaker_reading():
+    """The hole this closes. When the two verbatim passes disagreed the field
+    was correctly withheld — and then _resolve fell back to the SI pass and
+    built the record anyway from the reading with no second opinion behind it.
+    Observed live on IPA045N10N3G: 4.5 vs 4.7 mOhm, disagreement recorded,
+    record built regardless."""
+    specs = {"vds_V": 100, "id_A": 64, "rds_on_ohm": 0.0047, "manufacturer": "Infineon"}
+    verbatim = {"drainSourceVoltage": (100.0, "100 V"),
+                "continuousDrainCurrent": (64.0, "64 A")}   # onResistance withheld
+    sheet = "VDSS 100 V ID 64 A RDS(on) max 4.5 mOhm typ 4.7 mOhm"
+
+    # without the disagreement it falls through and builds
+    env, _ = _BUILDERS["mosfet"](specs, "X", "Infineon", "u", "h", sheet, verbatim)
+    assert env is not None, "sanity: the SI pass can supply it when nothing objected"
+
+    # with it, the field is dropped and the record refused
+    env, why = _BUILDERS["mosfet"](specs, "X", "Infineon", "u", "h", sheet, verbatim,
+                                   frozenset({"onResistance"}))
+    assert env is None
+    assert "onResistance" in why
