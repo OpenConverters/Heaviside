@@ -118,6 +118,41 @@ say "4. Pull from the bundle"
 R "git -c submodule.recurse=false pull --ff-only $BUNDLE_REMOTE $BRANCH" | tail -3
 R 'git log --oneline -1'
 
+# 4b. SCHEMAS. The pull deliberately does not recurse (a submodule fetch would need
+# GitHub, which prod cannot reach), so a commit that MOVES a schema pointer lands the
+# pointer and not the files. That is not cosmetic: on 2026-09-05 prod's PEAS working
+# tree was the commit before the one that gave provenance its verification vocabulary,
+# so prod rejected 44,156 TAS records that validate everywhere else, and `git status`
+# in the submodule reported 2,623 lines of "local modifications" that were nothing of
+# the kind — just an old pointer describing a newer tree.
+#
+# Prod already HAS the objects (they travel inside the superproject's bundle), so the
+# checkout is local and needs no network. Reported, never forced: a submodule whose
+# tree genuinely differs from what the pointer names is a person's business, not a
+# deploy script's, and this stops rather than overwriting it.
+say "4b. Schemas: are prod's submodule trees the ones this commit names?"
+for SM in $(R "git config --file .gitmodules --get-regexp path | awk '{print \$2}'"); do
+    STATUS=$(R "git submodule status --cached $SM 2>/dev/null | cut -c1")
+    [ "$STATUS" = " " ] && continue
+    WANT=$(R "git ls-tree HEAD $SM | awk '{print \$3}'")
+    [ -z "$WANT" ] && continue
+    if R "cd $SM && git cat-file -e $WANT 2>/dev/null"; then
+        if R "cd $SM && git diff --quiet && git diff --cached --quiet"; then
+            R "cd $SM && git checkout -q $WANT" && echo "    $SM -> $WANT"
+        elif R "cd $SM && git diff --quiet $WANT --"; then
+            # The FILES are already the ones the pointer names; only HEAD lags.
+            # Moving it changes no content, so this is safe and it is the common
+            # shape of the drift (someone copied the schemas, nobody moved the ref).
+            R "cd $SM && git checkout -q $WANT" && echo "    $SM -> $WANT (files already matched)"
+        else
+            echo "    $SM: SKIPPED — the working tree has changes the pointer does not"
+            echo "      explain. Inspect before syncing:  git -C $SM diff"
+        fi
+    else
+        echo "    $SM: SKIPPED — prod does not have commit $WANT"
+    fi
+done
+
 say "5. Restart"
 ROOT 'supervisorctl restart heaviside' || true
 sleep 15
