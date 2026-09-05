@@ -404,6 +404,25 @@ def test_digikey_diode_happy_path_validates() -> None:
     validate_component("diodes", envelope)
 
 
+# What a payload must carry for each subtype, because the converter now asks
+# each subtype its own questions (SAS/schemas/diode.json is conditional on
+# part.subType, and the converter mirrors it). A TVS payload made of rectifier
+# parameters is not a TVS payload, and the fixture says so rather than the
+# converter going soft — see test_digikey_diode_subtypes.py, whose payloads are
+# real ones captured from the live feed.
+_SUPPRESSOR_PARAMS = {
+    "tvs": [
+        {"Parameter": "Voltage - Reverse Standoff (Typ)", "Value": "33 V"},
+        {"Parameter": "Voltage - Clamping (Max) @ Ipp", "Value": "53.3 V"},
+        {"Parameter": "Current - Peak Pulse (10/1000\u00b5s)", "Value": "11.3 A"},
+    ],
+    "zener": [
+        {"Parameter": "Voltage - Zener (Nom) (Vz)", "Value": "12 V"},
+        {"Parameter": "Power - Max", "Value": "500 mW"},
+    ],
+}
+
+
 @pytest.mark.parametrize(
     "description,expected_subtype",
     [
@@ -423,6 +442,9 @@ def test_digikey_diode_subtype_resolution(
     payload = _wolfspeed_diode_digikey(
         Description={"ProductDescription": description},
     )
+    extra = _SUPPRESSOR_PARAMS.get(expected_subtype)
+    if extra:
+        payload["Parameters"] = payload["Parameters"] + extra
     env = convert_digikey_to_tas_diode(payload)
     assert (
         env["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"]["part"]["subType"]

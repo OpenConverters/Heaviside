@@ -1,0 +1,254 @@
+{
+ "SMAJ58A-13-F": {
+  "ProductDescription": "TVS DIODE 58VWM 93.6VC SMA",
+  "DetailedDescription": "93.6V Clamp 4.3A Ipp Tvs Diode Surface Mount SMA",
+  "Parameters": [
+   {
+    "Parameter": "Packaging",
+    "Value": "Tape & Reel (TR)"
+   },
+   {
+    "Parameter": "Package / Case",
+    "Value": "DO-214AC, SMA"
+   },
+   {
+    "Parameter": "Mounting Type",
+    "Value": "Surface Mount"
+   },
+   {
+    "Parameter": "Type",
+    "Value": "Zener"
+   },
+   {
+    "Parameter": "Operating Temperature",
+    "Value": "-55°C ~ 150°C (TJ)"
+   },
+   {
+    "Parameter": "Applications",
+    "Value": "General Purpose"
+   },
+   {
+    "Parameter": "Capacitance @ Frequency",
+    "Value": "-"
+   },
+   {
+    "Parameter": "Current - Peak Pulse (10/1000µs)",
+    "Value": "4.3A"
+   },
+   {
+    "Parameter": "Voltage - Reverse Standoff (Typ)",
+    "Value": "58V"
+   },
+   {
+    "Parameter": "Supplier Device Package",
+    "Value": "SMA"
+   },
+   {
+    "Parameter": "Unidirectional Channels",
+    "Value": "1"
+   },
+   {
+    "Parameter": "Voltage - Breakdown (Min)",
+    "Value": "64.4V"
+   },
+   {
+    "Parameter": "Voltage - Clamping (Max) @ Ipp",
+    "Value": "93.6V"
+   },
+   {
+    "Parameter": "Power - Peak Pulse",
+    "Value": "400W"
+   },
+   {
+    "Parameter": "Power Line Protection",
+    "Value": "No"
+   }
+  ]
+ },
+ "BZT52C5V1-7-F": {
+  "ProductDescription": "DIODE ZENER 5.1V 500MW SOD123",
+  "DetailedDescription": "Zener Diode 5.1 V 500 mW ±6% Surface Mount SOD-123",
+  "Parameters": [
+   {
+    "Parameter": "Packaging",
+    "Value": "Tape & Reel (TR)"
+   },
+   {
+    "Parameter": "Tolerance",
+    "Value": "±6%"
+   },
+   {
+    "Parameter": "Package / Case",
+    "Value": "SOD-123"
+   },
+   {
+    "Parameter": "Mounting Type",
+    "Value": "Surface Mount"
+   },
+   {
+    "Parameter": "Operating Temperature",
+    "Value": "-65°C ~ 150°C"
+   },
+   {
+    "Parameter": "Voltage - Zener (Nom) (Vz)",
+    "Value": "5.1 V"
+   },
+   {
+    "Parameter": "Impedance (Max) (Zzt)",
+    "Value": "60 Ohms"
+   },
+   {
+    "Parameter": "Supplier Device Package",
+    "Value": "SOD-123"
+   },
+   {
+    "Parameter": "Grade",
+    "Value": "-"
+   },
+   {
+    "Parameter": "Power - Max",
+    "Value": "500 mW"
+   },
+   {
+    "Parameter": "Voltage - Forward (Vf) (Max) @ If",
+    "Value": "900 mV @ 10 mA"
+   },
+   {
+    "Parameter": "Current - Reverse Leakage @ Vr",
+    "Value": "2 µA @ 2 V"
+   },
+   {
+    "Parameter": "Qualification",
+    "Value": "-"
+   }
+  ]
+ },
+ "SMBJ33CA-13-F": {
+  "ProductDescription": "TVS DIODE 33VWM 53.3VC SMB",
+  "DetailedDescription": "53.3V Clamp 11.3A Ipp Tvs Diode Surface Mount SMB",
+  "Parameters": [
+   {
+    "Parameter": "Packaging",
+    "Value": "Tape & Reel (TR)"
+   },
+   {
+    "Parameter": "Package / Case",
+    "Value": "DO-214AA, SMB"
+   },
+   {
+    "Parameter": "Mounting Type",
+    "Value": "Surface Mount"
+   },
+   {
+    "Parameter": "Type",
+    "Value": "Zener"
+   },
+   {
+    "Parameter": "Operating Temperature",
+    "Value": "-55°C ~ 150°C (TJ)"
+   },
+   {
+    "Parameter": "Applications",
+    "Value": "General Purpose"
+   },
+   {
+    "Parameter": "Capacitance @ Frequency",
+    "Value": "-"
+   },
+   {
+    "Parameter": "Current - Peak Pulse (10/1000µs)",
+    "Value": "11.3A"
+   },
+   {
+    "Parameter": "Voltage - Reverse Standoff (Typ)",
+    "Value": "33V"
+   },
+   {
+    "Parameter": "Supplier Device Package",
+    "Value": "SMB"
+   },
+   {
+    "Parameter": "Bidirectional Channels",
+    "Value": "1"
+   },
+   {
+    "Parameter": "Voltage - Breakdown (Min)",
+    "Value": "36.7V"
+   },
+   {
+    "Parameter": "Voltage - Clamping (Max) @ Ipp",
+    "Value": "53.3V"
+   },
+   {
+    "Parameter": "Power - Peak Pulse",
+    "Value": "600W"
+   },
+   {
+    "Parameter": "Power Line Protection",
+    "Value": "No"
+   }
+  ]
+ },
+ "B1100-13-F": {
+  "ProductDescription": "DIODE SCHOTTKY 100V 1A SMA",
+  "DetailedDescription": "Diode 100 V 1A Surface Mount SMA",
+  "Parameters": [
+   {
+    "Parameter": "Packaging",
+    "Value": "Tape & Reel (TR)"
+   },
+   {
+    "Parameter": "Package / Case",
+    "Value": "DO-214AC, SMA"
+   },
+   {
+    "Parameter": "Mounting Type",
+    "Value": "Surface Mount"
+   },
+   {
+    "Parameter": "Speed",
+    "Value": "Fast Recovery =< 500ns, > 200mA (Io)"
+   },
+   {
+    "Parameter": "Technology",
+    "Value": "Schottky"
+   },
+   {
+    "Parameter": "Capacitance @ Vr, F",
+    "Value": "80pF @ 4V, 1MHz"
+   },
+   {
+    "Parameter": "Current - Average Rectified (Io)",
+    "Value": "1A"
+   },
+   {
+    "Parameter": "Supplier Device Package",
+    "Value": "SMA"
+   },
+   {
+    "Parameter": "Operating Temperature - Junction",
+    "Value": "-65°C ~ 150°C"
+   },
+   {
+    "Parameter": "Grade",
+    "Value": "-"
+   },
+   {
+    "Parameter": "Voltage - DC Reverse (Vr) (Max)",
+    "Value": "100 V"
+   },
+   {
+    "Parameter": "Voltage - Forward (Vf) (Max) @ If",
+    "Value": "790 mV @ 1 A"
+   },
+   {
+    "Parameter": "Current - Reverse Leakage @ Vr",
+    "Value": "500 µA @ 100 V"
+   },
+   {
+    "Parameter": "Qualification",
+    "Value": "-"
+   }
+  ]
+ }
+}

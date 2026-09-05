@@ -899,10 +899,17 @@ def _resolve_diode_subtype(description: str) -> str:
         return "fastRecovery"
     if "FAST" in blob:
         return "fast"
-    if "ZENER" in blob:
-        return "zener"
+    # TVS BEFORE zener: a TVS is an avalanche device and gets called a zener by
+    # people and by feeds alike — Digi-Key files SMAJ58A-13-F under
+    # Type = "Zener" while describing it as "TVS DIODE 58VWM 93.6VC SMA". The
+    # other order would classify a suppressor as a zener and then require the
+    # steady-state power dissipation a TVS does not have.
     if "TVS" in blob or "TRANSIENT VOLTAGE" in blob:
         return "tvs"
+    if "ESD" in blob:
+        return "esd"
+    if "ZENER" in blob:
+        return "zener"
     return "standard"
 
 
@@ -928,7 +935,49 @@ DIGIKEY_DIODE_PARAM_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ("Reverse Recovery Charge (Qrr) (Typ)", "C"),
         ("Reverse Recovery Charge (Qrr)", "C"),
     ),
+    # Suppressor and zener fields. Verified against the live Digi-Key feed for
+    # SMAJ58A-13-F, SMBJ33CA-13-F and BZT52C5V1-7-F rather than written from
+    # memory — the labels carry their own punctuation and it matters.
+    "standoffVoltage": (("Voltage - Reverse Standoff (Typ)", "V"),),
+    "clampingVoltage": (("Voltage - Clamping (Max) @ Ipp", "V"),),
+    "peakPulseCurrent": (("Current - Peak Pulse (10/1000\u00b5s)", "A"),
+                         ("Current - Peak Pulse", "A")),
+    "peakPulsePower": (("Power - Peak Pulse", "W"),),
+    "powerDissipation": (("Power - Max", "W"), ("Power (Watts)", "W")),
+    "zenerImpedance": (("Impedance (Max) (Zzt)", "Ohm"),),
+    "reverseLeakageCurrent": (("Current - Reverse Leakage @ Vr", "A"),),
 }
+
+# breakdownVoltage is a dimensionWithTolerance, not a number, so it is built
+# separately rather than through the numeric map.
+_DIGIKEY_BREAKDOWN = (("Voltage - Breakdown (Min)", "V"), ("Voltage - Zener (Nom) (Vz)", "V"))
+
+# What each diode subtype must carry, mirroring SAS/schemas/diode.json's own
+# conditional chain on part.subType. It was not mirrored at all before: every
+# diode was asked for reverseVoltage, forwardVoltage and forwardCurrent, which
+# a rectifier has and a suppressor does not. Digi-Key publishes no average
+# rectified forward current for SMAJ58A-13-F because the part has none, so a
+# TVS the distributor holds in full could never be sourced — and neither could
+# a zener, which publishes a zener voltage and a power rating instead.
+#
+# Kept beside the schema deliberately: if the schema's chain changes, this
+# must change with it, and a reader comparing the two should see the same shape.
+_DIODE_REQUIRED_BY_SUBTYPE: dict[str, tuple[str, ...]] = {
+    "zener": ("breakdownVoltage", "powerDissipation"),
+    "esd": ("standoffVoltage",),
+    "tvs": ("standoffVoltage", "clampingVoltage"),
+}
+# ...plus, for the two pulse-rated subtypes, at least one of these.
+_DIODE_ONE_OF_BY_SUBTYPE: dict[str, tuple[str, ...]] = {
+    "esd": ("peakPulseCurrent", "peakPulsePower", "esdVoltageContact"),
+    "tvs": ("peakPulseCurrent", "peakPulsePower"),
+}
+# forwardVoltage is NOT here, though the schema requires it of a rectifier: it
+# is optional at FETCH time by long-standing design, because Digi-Key often
+# omits it and the librarian enriches it from the datasheet afterwards. Adding
+# it broke test_digikey_diode_optional_param_omitted_not_defaulted, which is
+# the test doing its job.
+_DIODE_RECTIFIER_REQUIRED = ("reverseVoltage", "forwardCurrent")
 
 
 def _build_diode_envelope(
@@ -942,21 +991,9 @@ def _build_diode_envelope(
     datasheet_url: str,
     status: str | None,
 ) -> dict[str, Any]:
-    _DIODE_OPTIONAL = {"forwardVoltage", "reverseRecoveryCharge"}
-    electrical: dict[str, Any] = {}
-    for field, candidates in DIGIKEY_DIODE_PARAM_MAP.items():
-        if field in _DIODE_OPTIONAL:
-            val = _extract_optional_numeric(params=params, candidates=candidates)
-            if val is not None:
-                electrical[field] = val
-        else:
-            electrical[field] = _extract_required_numeric(
-                source=source,
-                mpn=mpn,
-                params=params,
-                field=field,
-                candidates=candidates,
-            )
+    # The subtype is resolved FIRST, because it decides which fields are
+    # required — a suppressor and a rectifier are asked different questions.
+    #
     # Digi-Key publishes an explicit "Technology" parameter for diodes
     # ("SiC (Silicon Carbide) Schottky" / "Schottky" / "Standard").  It is
     # authoritative where present — the v3 search descriptions abbreviate
@@ -971,6 +1008,42 @@ def _build_diode_envelope(
     else:
         subtype = _resolve_diode_subtype(description)
         technology = _resolve_semi_technology(description, mpn)
+
+    required = _DIODE_REQUIRED_BY_SUBTYPE.get(subtype, _DIODE_RECTIFIER_REQUIRED)
+    one_of = _DIODE_ONE_OF_BY_SUBTYPE.get(subtype, ())
+
+    electrical: dict[str, Any] = {}
+    # Everything the feed happens to carry is kept, whether this subtype needs
+    # it or not: a TVS's breakdown voltage is real data, and dropping it
+    # because the schema does not demand it would throw away what a reviewer
+    # and a cross-reference both want.
+    for field, candidates in DIGIKEY_DIODE_PARAM_MAP.items():
+        if field in required:
+            continue                       # asked for by name below, so it can fail loudly
+        val = _extract_optional_numeric(params=params, candidates=candidates)
+        if val is not None:
+            electrical[field] = val
+    bv = _extract_optional_numeric(params=params, candidates=_DIGIKEY_BREAKDOWN)
+    if bv is not None and "breakdownVoltage" not in required:
+        electrical["breakdownVoltage"] = {"nominal": bv}
+
+    for field in required:
+        if field == "breakdownVoltage":
+            # a dimensionWithTolerance, and Digi-Key gives one end of it
+            electrical[field] = {"nominal": _extract_required_numeric(
+                source=source, mpn=mpn, params=params, field=field,
+                candidates=_DIGIKEY_BREAKDOWN)}
+            continue
+        electrical[field] = _extract_required_numeric(
+            source=source, mpn=mpn, params=params, field=field,
+            candidates=DIGIKEY_DIODE_PARAM_MAP[field],
+        )
+    if one_of and not any(f in electrical for f in one_of):
+        raise IncompleteSourceError(
+            source, mpn, "electrical." + "/".join(one_of),
+            detail=(f"a {subtype} needs at least one of {', '.join(one_of)}, and "
+                    f"no Digi-Key parameter supplied any of them"),
+        )
     case = params.get("Supplier Device Package") or params.get("Package / Case")
     part: dict[str, Any] = {
         "partNumber": mpn,
