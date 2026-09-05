@@ -191,6 +191,49 @@ def technology_from_text(category: str, text: str) -> str:
                 return value
     return ""
 
+# Device classes the catalogue has no home for, recognised by markers no other
+# kind of part carries. The point is the MESSAGE, not the refusal: the librarian
+# refused Wurth's 140356145100 with "the datasheet reading is missing
+# drainSourceVoltage, continuousDrainCurrent, onResistance", which reads as a
+# bad datasheet. The datasheet is fine — it is an optocoupler, and there is no
+# optocoupler category in SAS, so no reading of it could ever have succeeded.
+# Saying which is the difference between a bug report and an answer.
+# Two tiers, because the evidence is not equally strong. DECISIVE markers are
+# ones no other kind of part carries — DIN EN 60747-5-5 and UL 1577 are the
+# optical-isolation safety standards, and a MOSFET sheet has no reason to cite
+# them — so they count anywhere in the title block. NAME markers are ordinary
+# words a datasheet may use about something it drives ("suitable for driving an
+# optocoupler"), so they count only in the product TITLE.
+_TITLE_LINE = 300
+
+_FOREIGN_CLASSES = (
+    ("an optocoupler (an optically isolated device)",
+     ("60747-5-5", "ul 1577", "ul1577", "photocoupler", "photo-coupler",
+      "optoisolator", "opto-isolator", "current transfer ratio"),
+     ("optocoupler", "opto-coupler")),
+    ("a solid-state relay", (), ("solid state relay", "solid-state relay")),
+    ("a Hall-effect or current sensor", (),
+     ("hall effect sensor", "hall-effect sensor", "current sensor ic")),
+    ("a crystal oscillator module", (), ("crystal oscillator module",)),
+)
+
+
+def foreign_device_class(text: str) -> str:
+    """A device class the catalogue does not model, if this sheet is plainly one.
+
+    Read from the TITLE BLOCK, for the same reason technology_from_text is: a
+    MOSFET datasheet that mentions driving an optocoupler in its application
+    notes is still a MOSFET datasheet. That case is real — it is why the name
+    markers are confined to the title line and the standards markers are not.
+    """
+    body = (text or "")[:_TITLE_BLOCK].lower()
+    title = body[:_TITLE_LINE]
+    for label, decisive, named in _FOREIGN_CLASSES:
+        if any(m in body for m in decisive) or any(m in title for m in named):
+            return label
+    return ""
+
+
 _MIN_TEXT = 400          # a PDF yielding less than this is a scan or a stub
 
 # A datasheet has a characteristics table; a product landing page does not.
@@ -867,6 +910,25 @@ def _resolve(field: str, verbatim: dict, specs: dict, key: str, text: str,
     return value, note
 
 
+def _missing_why(kind: str, missing: list[str], required: tuple[str, ...],
+                 dropped: list[str] | None = None) -> str:
+    """Why a reading failed — and, when NOTHING was found, the likelier reason.
+
+    A datasheet missing one required field is a datasheet the reader could not
+    fully parse. A datasheet missing EVERY required field is almost never that:
+    it is a document about a different kind of part, reached through a wrong
+    category hint. Reporting the second as the first sent people to check a
+    datasheet that was perfectly good.
+    """
+    why = f"the datasheet reading is missing {', '.join(missing)}"
+    if len(missing) == len(required):
+        why += (f" — every field a {kind} record requires, which usually means "
+                f"this document is not a {kind}'s datasheet")
+    if dropped:
+        why += f" — also dropped: {'; '.join(dropped)}"
+    return why
+
+
 def _mosfet(specs: dict, mpn: str, mfr: str, url: str, host: str,
             text: str = "", verbatim: dict | None = None,
             disagreed: frozenset = frozenset()) -> tuple[dict | None, str]:
@@ -899,13 +961,10 @@ def _mosfet(specs: dict, mpn: str, mfr: str, url: str, host: str,
             notes.append(note)
     elif note:
         dropped.append(note)
-    missing = [k for k in ("drainSourceVoltage", "continuousDrainCurrent", "onResistance")
-               if k not in e]
+    req = ("drainSourceVoltage", "continuousDrainCurrent", "onResistance")
+    missing = [k for k in req if k not in e]
     if missing:
-        why = f"the datasheet reading is missing {', '.join(missing)}"
-        if dropped:
-            why += f" — also dropped: {'; '.join(dropped)}"
-        return None, why
+        return None, _missing_why("mosfet", missing, req, dropped)
     node: dict[str, Any] = {
         "manufacturerInfo": {
             "name": mfr, "reference": mpn, "status": "production",
@@ -963,9 +1022,10 @@ def _diode(specs: dict, mpn: str, mfr: str, url: str, host: str,
             e[dst] = v
             if note:
                 notes.append(note)
-    missing = [k for k in ("reverseVoltage", "forwardCurrent") if k not in e]
+    req = ("reverseVoltage", "forwardCurrent")
+    missing = [k for k in req if k not in e]
     if missing:
-        return None, f"the datasheet reading is missing {', '.join(missing)}"
+        return None, _missing_why("diode", missing, req)
     node: dict[str, Any] = {
         "manufacturerInfo": {
             "name": mfr, "reference": mpn, "status": "production",
@@ -1015,7 +1075,7 @@ def _passive(kind, required, specs, mpn, mfr, url, host, text, verbatim, disagre
         e["tolerance"] = e["tolerance"] / 100.0
     missing = [k for k in required if k not in e]
     if missing:
-        return None, f"the datasheet reading is missing {', '.join(missing)}"
+        return None, _missing_why(kind, missing, tuple(required))
     technology = technology_from_text(kind, text)
     if not technology:
         return None, (f"the datasheet does not state a {kind} technology, and it is "
@@ -1069,7 +1129,7 @@ def _bipolar(kind, required, subtype, specs, mpn, mfr, url, host, text, verbatim
                 notes.append(note)
     missing = [k for k in required if k not in e]
     if missing:
-        return None, f"the datasheet reading is missing {', '.join(missing)}"
+        return None, _missing_why(kind, missing, tuple(required))
     part = {"partNumber": mpn, "technology": "Si"}
     if subtype:
         part["subType"] = subtype
@@ -1345,6 +1405,21 @@ def envelope_from_datasheet(
         return None, ("no document was found that is this part's datasheet — "
                       + ("; ".join(rejected[:3]) if rejected else "nothing to read")), detail
     detail["read"] = used
+
+    # The document is this part's datasheet — but is the part something the
+    # catalogue can hold at all? Asked BEFORE the model is called: reading an
+    # optocoupler's sheet for a drain-source voltage spends two LLM passes to
+    # arrive at a list of absent MOSFET fields, which describes the reader's
+    # question rather than the part.
+    foreign = foreign_device_class(text)
+    if foreign:
+        detail["deviceClass"] = foreign
+        return None, (
+            f"the datasheet is for {foreign}, and the catalogue has no category "
+            f"for that — it holds mosfets, diodes, igbts, bjts, capacitors, "
+            f"resistors, varistors, magnetics, connectors, controllers, analog "
+            f"ICs and timing devices. Nothing is wrong with the datasheet"
+        ), detail
 
     # 3. the model reads it — GROUNDED, never from memory.
     # raise_on_llm_error: "the model found nothing in this PDF" and "the model
