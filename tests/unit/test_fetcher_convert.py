@@ -1011,3 +1011,66 @@ def test_mouser_capacitor_happy_path_validates() -> None:
     }
     envelope = convert_mouser_to_tas_capacitor(payload)
     validate_component("capacitors", envelope)
+
+
+# ---------------------------------------------------------------------------
+# Jumpers. A 0 ohm link has no tolerance — its spec is a maximum resistance —
+# so Digi-Key reports the tolerance parameter as the literal string "Jumper".
+# float() refused it and the librarian could not source ANY jumper from any
+# board. The catalogue's own 107 zero-ohm records answer what to record: the
+# tolerance their part number's code designates, which is what the vendors
+# publish (Yageo prints "F" on RC0402FR-070RL and means it).
+# ---------------------------------------------------------------------------
+def _yageo_jumper_digikey(mpn: str = "RC0603FR-070RL") -> dict[str, Any]:
+    return _vishay_resistor_digikey(
+        ManufacturerPartNumber=mpn,
+        Manufacturer={"Value": "YAGEO"},
+        Description={"ProductDescription": "RES SMD 0 OHM JUMPER 1/10W 0603"},
+        Parameters=[
+            {"Parameter": "Resistance", "Value": "0 Ω"},
+            {"Parameter": "Tolerance", "Value": "Jumper"},
+            {"Parameter": "Power (Watts)", "Value": "0.1 W"},
+            {"Parameter": "Composition", "Value": "Thick Film"},
+            {"Parameter": "Supplier Device Package", "Value": "0603 (1608 Metric)"},
+        ],
+    )
+
+
+def test_digikey_jumper_takes_the_tolerance_its_part_number_names() -> None:
+    envelope = convert_digikey_to_tas_resistor(_yageo_jumper_digikey())
+    elec = envelope["resistor"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    assert elec["resistance"]["nominal"] == 0.0
+    # F in RC0603*F*R-070RL, exactly as its 0402 sibling already in the catalogue
+    assert elec["tolerance"] == 0.01
+    validate_component("resistors", envelope)
+
+
+def test_digikey_jumper_j_code_reads_five_percent() -> None:
+    envelope = convert_digikey_to_tas_resistor(
+        _yageo_jumper_digikey("RC0603JR-070RL")
+    )
+    elec = envelope["resistor"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    assert elec["tolerance"] == 0.05   # matches the 90 J records in the catalogue
+    validate_component("resistors", envelope)
+
+
+def test_a_jumper_whose_part_number_names_no_code_is_still_refused() -> None:
+    # No invented number: if the ordering code says nothing, neither do we.
+    with pytest.raises(IncompleteSourceError) as excinfo:
+        convert_digikey_to_tas_resistor(_yageo_jumper_digikey("SHORTING-LINK-0603"))
+    assert "names no tolerance code" in str(excinfo.value)
+
+
+def test_a_real_resistor_still_needs_a_real_tolerance() -> None:
+    # The jumper path must not become a way in for any unparseable tolerance.
+    bad = _vishay_resistor_digikey(
+        Parameters=[
+            {"Parameter": "Resistance", "Value": "1 kΩ"},
+            {"Parameter": "Tolerance", "Value": "Jumper"},
+            {"Parameter": "Power (Watts)", "Value": "0.125 W"},
+            {"Parameter": "Composition", "Value": "Thick Film"},
+            {"Parameter": "Supplier Device Package", "Value": "0805 (2012 Metric)"},
+        ],
+    )
+    with pytest.raises(IncompleteSourceError):
+        convert_digikey_to_tas_resistor(bad)

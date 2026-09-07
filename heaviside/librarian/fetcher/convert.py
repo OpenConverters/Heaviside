@@ -1294,12 +1294,51 @@ def _resolve_resistor_technology(source: str, mpn: str, raw: str | None) -> str:
     )
 
 
-def _parse_tolerance(source: str, mpn: str, raw: str | None) -> float:
+# A 0 ohm link is a jumper, and a jumper has no tolerance: its specification
+# is a MAXIMUM resistance (Yageo's 0603 is 50 mOhm), which is why Digi-Key
+# reports the tolerance parameter as the literal string "Jumper". The converter
+# called float() on it and refused the part, so the librarian could not source
+# ANY jumper from any board — and jumpers are everywhere.
+#
+# The catalogue already answers the question. All 107 zero-ohm records in it
+# carry the tolerance their part number's own code designates (J -> 0.05 on 90
+# of them, F/K -> 0.01 on 17), because that is what the manufacturers publish:
+# Yageo prints "F" on RC0402FR-070RL and means it. Reading that code is reading
+# the manufacturer, not inventing a number — and it keeps a part sourced today
+# identical to its siblings scraped from Yageo's own API.
+#
+# Only ever consulted for a jumper whose distributor gave a non-numeric
+# tolerance. A normal resistor still needs a real one, and is still refused
+# without it.
+_MPN_TOLERANCE_CODE = {"B": 0.001, "C": 0.0025, "D": 0.005, "F": 0.01,
+                       "G": 0.02, "J": 0.05, "K": 0.10, "M": 0.20}
+
+
+def _jumper_tolerance_from_mpn(mpn: str) -> float | None:
+    """The tolerance letter a part number designates, or None if it names none.
+
+    Conservative on purpose: the letter must sit in the tolerance position of a
+    recognisable ordering code, immediately before the resistance field. A
+    wrong reading here would put a fabricated number on a real part.
+    """
+    # ...FR-070RL / ...JR-070RL / ...FK-070RL: <case><tol><packaging>-<value>
+    m = re.search(r"[0-9]([B-M])[A-Z]-\d", mpn.upper())
+    if not m:
+        return None
+    return _MPN_TOLERANCE_CODE.get(m.group(1))
+
+
+def _parse_tolerance(
+    source: str, mpn: str, raw: str | None, *, is_jumper: bool = False
+) -> float:
     """Parse a Digi-Key/Mouser tolerance string into a unit-less fraction.
 
     Examples: ``"±1%"`` → 0.01, ``"5%"`` → 0.05, ``"0.1%"`` → 0.001.
     Raises :class:`IncompleteSourceError` on any other shape; Proteus
     used to default to 0.05 silently here.
+
+    ``is_jumper`` (0 ohm) allows the one documented fallback: the tolerance
+    code the part number itself designates. See _jumper_tolerance_from_mpn.
     """
     if not raw or not isinstance(raw, str):
         raise IncompleteSourceError(
@@ -1312,6 +1351,19 @@ def _parse_tolerance(source: str, mpn: str, raw: str | None) -> float:
     try:
         pct = float(cleaned)
     except ValueError as exc:
+        if is_jumper:
+            coded = _jumper_tolerance_from_mpn(mpn)
+            if coded is not None:
+                return coded
+            raise IncompleteSourceError(
+                source,
+                mpn,
+                "electrical.tolerance",
+                detail=(
+                    f"tolerance {raw!r} says this is a jumper, and its part "
+                    "number names no tolerance code to read one from"
+                ),
+            ) from exc
         raise IncompleteSourceError(
             source,
             mpn,
@@ -1351,7 +1403,9 @@ def _build_resistor_envelope(
         field="powerRating",
         candidates=DIGIKEY_RESISTOR_PARAM_MAP["powerRating"],
     )
-    tolerance = _parse_tolerance(source, mpn, params.get("Tolerance"))
+    tolerance = _parse_tolerance(
+        source, mpn, params.get("Tolerance"), is_jumper=(resistance == 0)
+    )
     case = params.get("Supplier Device Package") or params.get("Package / Case")
     if not case:
         raise IncompleteSourceError(
