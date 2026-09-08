@@ -1836,6 +1836,81 @@ def convert_mouser_to_tas_capacitor(product: dict[str, Any]) -> dict[str, Any]:
 # Magnetic / inductor converter
 # ---------------------------------------------------------------------------
 
+# `subtype` is the ONE field MAS requires of a magnetic, which makes getting it
+# wrong the most consequential mistake a magnetic record can carry. It used to
+# be hardcoded to "inductor" for everything this converter produced — harmless
+# only for as long as the DCR requirement happened to bar every transformer and
+# common-mode choke from getting this far. It no longer does, so the subtype has
+# to be read rather than assumed.
+#
+# Read from the distributor's OWN category and family strings, which is where
+# detect_category already reads to decide this is a magnetic at all. Order
+# matters: "common mode choke" contains "choke", and a flyback transformer's
+# family says "transformer" while its description also says "inductor".
+# What this converter cannot describe, whatever the distributor says. MAS gives
+# these subtypes PER-WINDING electrical data — dcResistances (plural),
+# turnsRatios, leakageInductance — and closes the object to anything else, so an
+# inductor's single `dcResistance` is not merely thin on a transformer, it is
+# schema-invalid. The two ways to force one through are both wrong: label it
+# "inductor" and the record is valid and false, or label it honestly and it does
+# not validate at all.
+_WINDING_SUBTYPES = frozenset({"transformer", "commonModeChoke", "cableCore"})
+
+_MAGNETIC_SUBTYPE_MARKERS: tuple[tuple[str, str], ...] = (
+    ("common mode", "commonModeChoke"),
+    ("common-mode", "commonModeChoke"),
+    ("coupled inductor", "coupledInductor"),
+    ("cable core", "cableCore"),
+    ("cable ferrite", "cableCore"),
+    ("transformer", "transformer"),
+    ("choke", "inductor"),
+    ("inductor", "inductor"),
+    ("coil", "inductor"),
+)
+
+
+def _digikey_magnetic_subtype(source: str, mpn: str, product: dict[str, Any]) -> str:
+    """The MAS subtype this part is, from the distributor's own classification.
+
+    Refuses rather than guesses. A magnetic whose subtype we cannot read is a
+    magnetic we cannot describe: the schema would accept "inductor" for a
+    transformer without complaint, and the record would be quietly wrong about
+    what the part is.
+    """
+    text = " ".join((
+        product.get("Category", {}).get("Value", "") or "",
+        product.get("Family", {}).get("Value", "") or "",
+        (product.get("Description", {}) or {}).get("ProductDescription", "") or "",
+    )).lower()
+    for marker, subtype in _MAGNETIC_SUBTYPE_MARKERS:
+        if marker in text:
+            if subtype in _WINDING_SUBTYPES:
+                raise IncompleteSourceError(
+                    source,
+                    mpn,
+                    f"datasheetInfo.electrical[] for a {subtype}",
+                    detail=(
+                        f"this is a {subtype}, whose electrical data is PER "
+                        "WINDING — MAS wants dcResistances, turnsRatios and "
+                        "leakageInductance, and a distributor's flat parameter "
+                        "list has none of them. Filing it with an inductor's "
+                        "single inductance and DCR would describe a part that "
+                        "does not exist. Its datasheet has the winding table"
+                    ),
+                )
+            return subtype
+    raise IncompleteSourceError(
+        source,
+        mpn,
+        "datasheetInfo.electrical[].subtype",
+        detail=(
+            "the distributor's category, family and description name no kind of "
+            f"magnetic ({text.strip()[:80]!r}); refusing rather than filing it "
+            "as an inductor"
+        ),
+    )
+
+
 DIGIKEY_MAGNETIC_PARAM_MAP: dict[str, tuple[tuple[str, str], ...]] = {
     "inductance": (
         ("Inductance", "H"),
@@ -2009,6 +2084,7 @@ def _build_magnetic_envelope(
     *,
     source: str,
     mpn: str,
+    subtype: str,
     manufacturer: str,
     params: dict[str, str],
     distributor_block: dict[str, Any],
@@ -2061,7 +2137,7 @@ def _build_magnetic_envelope(
     # (each with a subtype), NOT a bare object — a single inductor is a one-element
     # list. ratedCurrent is the array field `ratedCurrents`.
     electrical_item: dict[str, Any] = {
-        "subtype": "inductor",
+        "subtype": subtype,
         "inductance": {
             "nominal": inductance,
             "minimum": inductance * (1 - tol_frac),
@@ -2123,6 +2199,7 @@ def convert_digikey_to_tas_magnetic(
     return _build_magnetic_envelope(
         source=source,
         mpn=mpn,
+        subtype=_digikey_magnetic_subtype(source, mpn, product),
         manufacturer=manufacturer,
         params=params,
         distributor_block=_digikey_distributor_block(source, mpn, product, distributor),
