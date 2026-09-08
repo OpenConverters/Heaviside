@@ -2024,11 +2024,17 @@ def _build_magnetic_envelope(
         field="inductance",
         candidates=DIGIKEY_MAGNETIC_PARAM_MAP["inductance"],
     )
-    dcr = _extract_required_numeric(
-        source=source,
-        mpn=mpn,
+    # DCR is OPTIONAL, and has to be: a transformer's DC resistance is a figure
+    # PER WINDING, so there is no single number for the field to hold. Every one
+    # of the 4,450 transformers already in the catalogue omits it, as do all
+    # 2,980 common-mode chokes and all 542 cable cores — 21% of magnetics
+    # overall. MAS agrees: its electrical entry requires only `subtype`.
+    #
+    # Requiring it here refused real parts for a field that cannot exist for
+    # them. Wurth's 750311320 is a transformer, and Digi-Key describes it
+    # perfectly well apart from a DCR it has no way to state.
+    dcr = _extract_optional_numeric(
         params=params,
-        field="dcResistance",
         candidates=DIGIKEY_MAGNETIC_PARAM_MAP["dcResistance"],
     )
     rated_current = _extract_optional_numeric(
@@ -2061,8 +2067,9 @@ def _build_magnetic_envelope(
             "minimum": inductance * (1 - tol_frac),
             "maximum": inductance * (1 + tol_frac),
         },
-        "dcResistance": {"maximum": dcr},
     }
+    if dcr is not None:
+        electrical_item["dcResistance"] = {"maximum": dcr}
     if isat is not None:
         electrical_item["saturationCurrentPeak"] = isat
     if srf is not None:

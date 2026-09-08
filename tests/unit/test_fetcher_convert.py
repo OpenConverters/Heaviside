@@ -29,6 +29,7 @@ from heaviside.librarian.fetcher.convert import (
     convert_digikey_to_tas_igbt,
     convert_digikey_to_tas_mosfet,
     convert_digikey_to_tas_resistor,
+    convert_digikey_to_tas_magnetic,
     convert_mouser_to_tas_capacitor,
     convert_mouser_to_tas_diode,
     convert_mouser_to_tas_igbt,
@@ -1074,3 +1075,64 @@ def test_a_real_resistor_still_needs_a_real_tolerance() -> None:
     )
     with pytest.raises(IncompleteSourceError):
         convert_digikey_to_tas_resistor(bad)
+
+
+# ---------------------------------------------------------------------------
+# Magnetics. A transformer's DC resistance is a figure PER WINDING, so there is
+# no single number for the field to hold — every one of the 4,450 transformers
+# in the catalogue omits it, as do all 2,980 common-mode chokes and all 542
+# cable cores. MAS agrees: its electrical entry requires only `subtype`.
+# Requiring DCR here refused real parts for a field they cannot have.
+# ---------------------------------------------------------------------------
+def _wurth_magnetic_digikey(mpn: str, params: list[dict[str, str]]) -> dict[str, Any]:
+    return {
+        "ManufacturerPartNumber": mpn,
+        "Manufacturer": {"Value": "Würth Elektronik"},
+        "DigiKeyPartNumber": "732-CT-ND",
+        "ProductStatus": "Active",
+        "UnitPrice": 3.50,
+        "QuantityAvailable": 500,
+        "PrimaryDatasheet": "https://we-online.com/...",
+        "ProductUrl": "https://digikey.com/...",
+        "Description": {"ProductDescription": "TRANSFORMER FLYBACK"},
+        "Parameters": params,
+    }
+
+
+def test_digikey_transformer_without_dcr_converts() -> None:
+    envelope = convert_digikey_to_tas_magnetic(_wurth_magnetic_digikey(
+        "750311320",
+        [
+            {"Parameter": "Inductance", "Value": "220 µH"},
+            {"Parameter": "Current Rating (Amps)", "Value": "1.5 A"},
+        ],
+    ))
+    elec = envelope["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"]
+    assert isinstance(elec, list) and len(elec) == 1
+    # absent, not invented: nothing claims a DCR the source never stated
+    assert "dcResistance" not in elec[0]
+    assert elec[0]["inductance"]["nominal"] == pytest.approx(220e-6)
+    validate_component("magnetics", envelope)
+
+
+def test_digikey_magnetic_keeps_a_dcr_when_the_source_has_one() -> None:
+    envelope = convert_digikey_to_tas_magnetic(_wurth_magnetic_digikey(
+        "744770122",
+        [
+            {"Parameter": "Inductance", "Value": "22 µH"},
+            {"Parameter": "DC Resistance (DCR)", "Value": "35 mOhm"},
+            {"Parameter": "Current Rating (Amps)", "Value": "4.6 A"},
+        ],
+    ))
+    elec = envelope["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"][0]
+    assert elec["dcResistance"]["maximum"] == pytest.approx(0.035)
+    validate_component("magnetics", envelope)
+
+
+def test_digikey_magnetic_still_needs_an_inductance() -> None:
+    # Loosening DCR must not loosen the field that says what the part IS.
+    with pytest.raises(IncompleteSourceError):
+        convert_digikey_to_tas_magnetic(_wurth_magnetic_digikey(
+            "750311320",
+            [{"Parameter": "Current Rating (Amps)", "Value": "1.5 A"}],
+        ))
