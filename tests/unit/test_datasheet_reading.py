@@ -681,3 +681,112 @@ def test_a_disagreed_field_never_falls_through_to_the_weaker_reading():
                                    frozenset({"onResistance"}))
     assert env is None
     assert "onResistance" in why
+
+
+# ---------------------------------------------------------------------------
+# Magnetics. The category this module was written to EXCLUDE — 177 invented
+# parts (ABT #247) and 1,232 more (#316) came from here — and the one where
+# the schema protects least: MAS requires exactly one field of a magnetic's
+# electrical entry, `subtype`, so a reading that found nothing still validates.
+# Everything below is the floor that stands in for the missing schema gate.
+# ---------------------------------------------------------------------------
+def test_an_inductor_reading_builds_a_valid_record():
+    text = ("WE-PD SMD Power Inductor 744770122, inductance 22 uH, "
+            "DC resistance 35 mOhm, rated current 4.6 A, Isat 5.0 A")
+    env, _ = _BUILDERS["magnetic"](
+        {}, "744770122", "Würth Elektronik", "https://x/y.pdf", "x", text,
+        {"inductance": (22e-6, "22 uH"), "dcResistance": (0.035, "35 mOhm"),
+         "ratedCurrent": (4.6, "4.6 A"), "saturationCurrent": (5.0, "5.0 A")})
+    assert env is not None
+    _valid("magnetic", env)
+    e = env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"][0]
+    assert e["subtype"] == "inductor"
+    assert e["inductance"]["nominal"] == pytest.approx(22e-6)
+    assert e["dcResistance"]["maximum"] == pytest.approx(0.035)   # singular
+    assert e["saturationCurrentPeak"] == pytest.approx(5.0)
+
+
+def test_a_transformer_gets_the_shape_mas_defines_for_a_winding_set():
+    # dcResistances is PLURAL here and the singular form is not allowed at all:
+    # the electrical object is closed, so this is the schema saying a winding
+    # set's resistance is per winding.
+    text = ("750311320 Flyback Transformer for LED drivers. Primary inductance "
+            "Lp 100 uH, turns ratio 1:0.5, primary DCR 0.5 Ohm, "
+            "leakage inductance 2 uH")
+    env, _ = _BUILDERS["magnetic"](
+        {}, "750311320", "Würth Elektronik", "https://x/y.pdf", "x", text,
+        {"inductance": (100e-6, "100 uH"), "turnsRatio": (2.0, "1:0.5"),
+         "dcResistance": (0.5, "0.5 Ohm"), "leakageInductance": (2e-6, "2 uH")})
+    assert env is not None
+    _valid("magnetic", env)
+    e = env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"][0]
+    assert e["subtype"] == "transformer"
+    assert "dcResistance" not in e
+    assert e["dcResistances"][0]["maximum"] == pytest.approx(0.5)
+    assert e["turnsRatios"][0]["nominal"] == pytest.approx(2.0)
+
+
+def test_a_transformer_without_its_turns_ratio_is_refused():
+    """Primary inductance alone describes an inductor that happens to have more
+    wires. The relationship between the windings is what makes it a
+    transformer, so it is part of the floor."""
+    env, why = _BUILDERS["magnetic"](
+        {}, "750311320", "Würth", "u", "h",
+        "Flyback Transformer, primary inductance 100 uH",
+        {"inductance": (100e-6, "100 uH")})
+    assert env is None and "turnsRatio" in why
+
+
+def test_an_inductor_without_an_inductance_is_refused():
+    env, why = _BUILDERS["magnetic"](
+        {}, "744770122", "Würth", "u", "h",
+        "SMD Power Inductor, rated current 4.6 A",
+        {"ratedCurrent": (4.6, "4.6 A")})
+    assert env is None and "inductance" in why
+
+
+def test_a_bead_is_defined_by_its_impedance_not_an_inductance():
+    text = "WE-CBF Ferrite Bead 742792625, impedance 120 Ohm at 100 MHz, DCR 50 mOhm"
+    env, _ = _BUILDERS["magnetic"](
+        {}, "742792625", "Würth Elektronik", "https://x/y.pdf", "x", text,
+        {"impedance": (120.0, "120 Ohm"), "dcResistance": (0.05, "50 mOhm")})
+    assert env is not None
+    _valid("magnetic", env)
+    e = env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"][0]
+    assert e["subtype"] == "chipBead"
+    assert e["impedancePoints"][0]["impedance"]["magnitude"] == pytest.approx(120.0)
+    assert e["impedancePoints"][0]["frequency"] == pytest.approx(1e8)
+
+
+def test_a_document_that_names_no_kind_of_magnetic_is_refused():
+    """The kind decides which schema the record is measured against, and MAS
+    would take "inductor" for a transformer without a word. So it is read from
+    the document rather than assumed."""
+    env, why = _BUILDERS["magnetic"](
+        {}, "MYSTERY-1", "Nobody", "u", "h",
+        "Wound component, 100 uH",
+        {"inductance": (100e-6, "100 uH")})
+    assert env is None and "what kind of magnetic" in why
+
+
+def test_a_common_mode_choke_is_not_read_as_a_choke():
+    # "common mode choke" contains "choke": the specific marker has to win, or
+    # a CMC is filed with an inductor's shape.
+    text = "WE-CMB Common Mode Choke 744232222, inductance 2.2 mH, DCR 0.3 Ohm"
+    env, _ = _BUILDERS["magnetic"](
+        {}, "744232222", "Würth Elektronik", "https://x/y.pdf", "x", text,
+        {"inductance": (2.2e-3, "2.2 mH"), "dcResistance": (0.3, "0.3 Ohm")})
+    assert env is not None
+    _valid("magnetic", env)
+    e = env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"][0]
+    assert e["subtype"] == "commonModeChoke"
+    assert e["dcResistances"][0]["maximum"] == pytest.approx(0.3)
+
+
+def test_a_magnetic_record_says_it_was_read_from_a_datasheet():
+    text = "SMD Power Inductor, inductance 10 uH"
+    env, _ = _BUILDERS["magnetic"](
+        {}, "X", "Y", "https://x/y.pdf", "x", text,
+        {"inductance": (10e-6, "10 uH")})
+    prov = env["magnetic"]["manufacturerInfo"]["datasheetInfo"]["provenance"]
+    assert prov and "https://x/y.pdf" in str(prov)

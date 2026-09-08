@@ -63,7 +63,51 @@ class DatasheetSourceError(FetcherError):
 # perfectly. Adding a category is a data-governance change, not this module's
 # to make.
 SUPPORTED = ("mosfet", "diode", "capacitor", "resistor", "igbt",
-             "connector", "varistor")
+             "connector", "varistor", "magnetic")
+
+
+# MAGNETICS, and why they need a floor of their own.
+#
+# This is the category that produced the fabrications this module opens by
+# citing: 177 invented parts (ABT #247) and 1,232 more (#316). It is also the
+# category where the schema gate protects least — MAS requires exactly ONE
+# field of a magnetic's electrical entry, `subtype`, so a reading that found
+# nothing at all still validates. For a MOSFET the schema's own required list
+# is the floor; here there effectively is none, so the floor is below.
+#
+# Per subtype, the quantity WITHOUT WHICH THE RECORD DOES NOT DESCRIBE A PART.
+# Not a wish list: an inductor with no inductance is not a thin inductor, it is
+# a part number with a picture of a component.
+_MAGNETIC_FLOOR: dict[str, tuple[str, ...]] = {
+    "inductor": ("inductance",),
+    "coupledInductor": ("inductance",),
+    # A bead's entire published spec is |Z| at 100 MHz; without it there is
+    # nothing to select on and nothing to simulate.
+    "chipBead": ("impedance",),
+    "cableCore": ("impedance",),
+    # A transformer is defined by its winding RELATIONSHIP. Primary inductance
+    # alone would describe an inductor that happens to have more wires.
+    "transformer": ("inductance", "turnsRatio"),
+    "commonModeChoke": ("inductance",),
+}
+
+# What kind of magnetic the DOCUMENT says it is. Read from the datasheet's own
+# words rather than asked of the model: "is this a transformer?" is a question
+# a language model will always answer, and the answer decides which schema the
+# record is checked against. Order matters — "common mode choke" contains
+# "choke", and a flyback transformer's sheet says "inductance" throughout.
+_MAGNETIC_KIND_MARKERS: tuple[tuple[str, str], ...] = (
+    ("common mode choke", "commonModeChoke"),
+    ("common-mode choke", "commonModeChoke"),
+    ("cable core", "cableCore"),
+    ("coupled inductor", "coupledInductor"),
+    ("ferrite bead", "chipBead"),
+    ("chip bead", "chipBead"),
+    ("transformer", "transformer"),
+    ("power inductor", "inductor"),
+    ("inductor", "inductor"),
+    ("choke", "inductor"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +366,13 @@ _PLAUSIBLE = {
     "varistorVoltage": (1.0, 20e3),           # V
     "clampingVoltage": (1.0, 50e3),           # V
     "peakSurgeCurrent": (1.0, 2e5),           # A
+    "inductance": (1e-12, 10.0),              # H  — 1 pH to 10 H
+    "dcResistance": (1e-6, 1e5),              # ohm
+    "ratedCurrent": (1e-6, 1e4),              # A
+    "saturationCurrent": (1e-6, 1e4),         # A
+    "leakageInductance": (1e-12, 1.0),        # H
+    "turnsRatio": (1e-3, 1e3),                # dimensionless
+    "impedance": (0.1, 1e6),                  # ohm
 }
 
 
@@ -390,6 +441,11 @@ _FIELD_UNIT: dict[str, tuple[str, ...]] = {
     "contactResistance": ("\u03a9", "\u2126", "\uf057", "W", "ohm", "Ohm", "m\u03a9"),
     "pitch": ("m", "mm"),
     "varistorVoltage": ("V",), "clampingVoltage": ("V",),
+    "inductance": ("H",), "leakageInductance": ("H",),
+    "dcResistance": ("\u03a9", "\u2126", "\uf057", "W", "ohm", "Ohm", "m\u03a9"),
+    "impedance": ("\u03a9", "\u2126", "\uf057", "W", "ohm", "Ohm"),
+    "ratedCurrent": ("A",), "saturationCurrent": ("A",),
+    "selfResonantFrequency": ("Hz",),
 }
 
 
@@ -640,6 +696,22 @@ _VERBATIM_FIELDS = {
         "clampingVoltage": "maximum clamping voltage Vc",
         "peakSurgeCurrent": "maximum peak surge current (8/20 us)",
         "ratedVoltage": "maximum continuous RMS operating voltage",
+    },
+    "magnetic": {
+        # A transformer sheet prints several inductances (primary, secondary,
+        # leakage). Naming the primary is what makes the question have one
+        # answer, exactly as VGS does for a MOSFET's RDS(on).
+        "inductance": ("nominal inductance L — for a transformer the PRIMARY "
+                       "inductance Lp, NOT the leakage inductance"),
+        "dcResistance": ("DC resistance DCR of the winding — for a transformer "
+                         "the PRIMARY winding's DCR"),
+        "ratedCurrent": "rated / RMS current IR",
+        "saturationCurrent": "saturation current Isat (the 20-30% inductance drop)",
+        "selfResonantFrequency": "self-resonant frequency SRF",
+        "leakageInductance": "leakage inductance Lk / Ls",
+        "turnsRatio": ("turns ratio, primary:secondary, as a single number "
+                       "Np/Ns — from the ratio the sheet prints (1:0.5 is 2)"),
+        "impedance": "impedance |Z| at 100 MHz",
     },
     "diode": {
         "reverseVoltage": "repetitive peak reverse voltage VRRM or VR",
@@ -1275,12 +1347,119 @@ def _varistor(specs, mpn, mfr, url, host, text="", verbatim=None,
     return {"varistor": node}, "; ".join(notes)
 
 
+
+def _magnetic_kind(text: str, specs: dict) -> str | None:
+    """Which kind of magnetic this document is about, in its own words.
+
+    The first 3000 characters: a datasheet says what it is in its title block,
+    and the body of an inductor sheet mentions transformers in application
+    notes. Returns None when the document names no kind — refusing is the point,
+    because the kind decides which schema the record is measured against and
+    MAS would accept "inductor" for a transformer without a word.
+    """
+    head = (text or "")[:3000].lower()
+    for marker, kind in _MAGNETIC_KIND_MARKERS:
+        if marker in head:
+            return kind
+    said = str(specs.get("subtype") or "").strip().lower()
+    for marker, kind in _MAGNETIC_KIND_MARKERS:
+        if marker in said:
+            return kind
+    return None
+
+
+def _magnetic(specs: dict, mpn: str, mfr: str, url: str, host: str,
+              text: str = "", verbatim: dict | None = None,
+              disagreed: frozenset = frozenset()) -> tuple[dict | None, str]:
+    """Build a MAS magnetic from a datasheet reading.
+
+    The category this module was written to exclude, so the rules are tighter
+    here than anywhere else in it: the document has to say what kind of magnetic
+    it is, and the reading has to carry the quantity that kind is DEFINED by.
+    MAS requires only `subtype`, so without that floor an empty record would
+    validate and ship — which is how 1,409 invented magnetics reached
+    production before (ABT #247, #316).
+    """
+    verbatim = verbatim or {}
+    kind = _magnetic_kind(text, specs)
+    if kind is None:
+        return None, ("the datasheet does not say what kind of magnetic this is "
+                      "(inductor, transformer, common-mode choke, ferrite bead, "
+                      "cable core) — refusing rather than filing it as an inductor")
+
+    read: dict[str, float] = {}
+    dropped: list[str] = []
+    notes: list[str] = []
+    for key in ("inductance", "dcResistance", "ratedCurrent", "saturationCurrent",
+                "selfResonantFrequency", "leakageInductance", "turnsRatio",
+                "impedance"):
+        v, note = _resolve(key, verbatim, specs, key, text, disagreed)
+        if v is not None:
+            read[key] = v
+            if note:
+                notes.append(note)
+        elif note:
+            dropped.append(note)
+
+    floor = _MAGNETIC_FLOOR[kind]
+    missing = [k for k in floor if k not in read]
+    if missing:
+        return None, _missing_why(kind, missing, floor, dropped)
+
+    # Each subtype gets the shape MAS defines for it, and nothing else: the
+    # electrical objects are closed, so a transformer with an inductor's
+    # singular `dcResistance` does not validate — which is the schema saying
+    # that a winding set's resistance is per winding.
+    e: dict[str, Any] = {"subtype": kind}
+    if "inductance" in read:
+        e["inductance"] = {"nominal": read["inductance"]}
+    if "selfResonantFrequency" in read:
+        e["selfResonantFrequency"] = read["selfResonantFrequency"]
+    if "ratedCurrent" in read:
+        e["ratedCurrents"] = [read["ratedCurrent"]]
+
+    plural_dcr = kind in ("transformer", "commonModeChoke", "coupledInductor")
+    if "dcResistance" in read:
+        if plural_dcr:
+            # the primary's, and only the primary's — the reading was asked for
+            # that one winding, so it is filed as the one figure it is
+            e["dcResistances"] = [{"maximum": read["dcResistance"]}]
+        else:
+            e["dcResistance"] = {"maximum": read["dcResistance"]}
+
+    if kind in ("inductor", "coupledInductor") and "saturationCurrent" in read:
+        e["saturationCurrentPeak"] = read["saturationCurrent"]
+    if kind in ("transformer", "coupledInductor", "commonModeChoke"):
+        if "turnsRatio" in read:
+            e["turnsRatios"] = [{"nominal": read["turnsRatio"]}]
+        if "leakageInductance" in read:
+            e["leakageInductance"] = {"nominal": read["leakageInductance"]}
+    if kind in ("chipBead", "cableCore", "commonModeChoke") and "impedance" in read:
+        # the conventional test point, and the frequency the field was asked at
+        e["impedancePoints"] = [{"frequency": 1e8,
+                                 "impedance": {"magnitude": read["impedance"]}}]
+
+    node: dict[str, Any] = {
+        "manufacturerInfo": {
+            "name": mfr, "reference": mpn, "status": "production",
+            "datasheetUrl": url,
+            "datasheetInfo": {
+                "part": {"partNumber": mpn},
+                "electrical": [e],
+                "provenance": _provenance(url, host),
+            },
+        }
+    }
+    return {"magnetic": node}, "; ".join(notes)
+
+
 _BUILDERS = {"mosfet": _mosfet, "diode": _diode, "capacitor": _capacitor,
              "resistor": _resistor, "igbt": _igbt, "connector": _connector,
-             "varistor": _varistor}
+             "varistor": _varistor, "magnetic": _magnetic}
 _CATEGORY_TO_DB = {"mosfet": "mosfets", "diode": "diodes", "capacitor": "capacitors",
                    "resistor": "resistors", "igbt": "igbts",
-                   "connector": "connectors", "varistor": "varistors"}
+                   "connector": "connectors", "varistor": "varistors",
+                   "magnetic": "magnetics"}
 
 
 def envelope_from_datasheet(
