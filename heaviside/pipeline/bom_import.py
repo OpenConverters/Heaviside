@@ -253,6 +253,64 @@ def _llm_available() -> bool:
     return bool(os.environ.get("MOONSHOT_API_KEY") or os.environ.get("OPENAI_API_KEY"))
 
 
+#: Canonical fields the header mapper assigns, with what each column holds.
+_JEV_HEADER_FIELDS: dict[str, str] = {
+    "original_mpn": ("the MANUFACTURER part number: the orderable device code a distributor "
+                     "recognises (e.g. `GRM188R71H104KA93D`, `744770133`) — not an internal/house "
+                     "number, a line-item index or a distributor order number"),
+    "manufacturer": "the maker / brand of the part",
+    "ref_des": "the reference designator(s) (e.g. `C1`, `R12, R13`)",
+    "description": ("a free-text part description whose cells spell out the part, e.g. "
+                    "`CAP CER 0.1UF 50V X7R 0603` — not short remarks such as `DNP` or `check`"),
+    "value": "the electrical value on its own (capacitance, resistance, inductance…)",
+    "rated_voltage": "the voltage rating on its own",
+    "quantity": "the quantity per board",
+    "component_type": ("ONLY a dedicated category column whose cells are single words such as "
+                       "`capacitor`, `resistor`, `inductor`, `diode`, `IC` — never a free-text "
+                       "description and never a package/footprint code such as `0402`, `SOT23`, "
+                       "`C0603`"),
+    "notes": "notes or comments",
+}
+
+
+def _jev_header_overrides(headers: list[str], rows: list[list[Any]]) -> dict[str, str]:
+    """Which column is each canonical field — one Jev choice per field.
+
+    The options are the file's own columns (shown with sample cells) plus
+    "none", so the answer can only ever name a real column. A column already
+    claimed by an earlier field is not reused. Raises ``JevError`` on failure.
+    """
+    from heaviside.llm.jev import choice_question, decide
+
+    cols = [(i, str(h)) for i, h in enumerate(headers) if str(h).strip()]
+    samples = {
+        i: [("" if i >= len(r) or r[i] is None else str(r[i]))[:40] for r in rows[:5]]
+        for i, _ in cols
+    }
+    options = {f"h{i}": f"Column `{h}` — sample cells: {samples[i]}" for i, h in cols}
+    options["none"] = "No column of this file holds this field."
+    sample_rows = []
+    for n in range(min(5, len(rows))):
+        sample_rows.append({h: samples[i][n] for i, h in cols})
+    state = {"headers": [h for _, h in cols], "sample_rows": sample_rows}
+    qs = {f: choice_question(f"Which column of this bill of materials holds {desc}?", options)
+          for f, desc in _JEV_HEADER_FIELDS.items()}
+    answers = decide(state, qs)
+    out: dict[str, str] = {}
+    claimed: set[str] = set()
+    for f in _JEV_HEADER_FIELDS:  # dict order = claim priority (MPN first, category late)
+        key = answers[f].get("choice")
+        if key not in options:
+            from heaviside.llm.jev import JevError
+
+            raise JevError(f"header mapper: Jev chose {key!r} for {f}, not a listed column")
+        if key == "none" or key in claimed:
+            continue
+        claimed.add(key)
+        out[f] = headers[int(key[1:])]
+    return out
+
+
 def _llm_header_overrides(headers: list[str], rows: list[list[Any]]) -> dict[str, str]:
     """Ask the bom-header-mapper agent which columns map to which canonical
     fields, returning a ``{source_header: canonical_field}`` override map.
@@ -265,7 +323,10 @@ def _llm_header_overrides(headers: list[str], rows: list[list[Any]]) -> dict[str
     import json
 
     from heaviside.agents.llm_call import LLMCallError, call_agent_json
+    from heaviside.pipeline.jev_decisions import jev_enabled
 
+    if jev_enabled():
+        return _jev_header_overrides(headers, rows)
     if not _llm_available():
         return {}
     # Feed the header row + a few sample data rows so the agent can tell a real

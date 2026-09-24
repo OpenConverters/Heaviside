@@ -160,6 +160,24 @@ def select_candidate(
     cands = list(candidates)
     if not cands:
         return None
+    from heaviside.pipeline.jev_decisions import jev_enabled
+
+    if jev_enabled():
+        # Choosing one of N is a closed choice: Jev. Failures raise (JevError).
+        import json
+
+        from heaviside.llm.jev import decide_choice
+
+        shown = cands[:25]
+        options = {f"c{i}": json.dumps({"mpn": c.mpn, "value_si": c.value_si, "voltage": c.voltage,
+                                        "technology": c.technology, "package": c.package})
+                   for i, c in enumerate(shown)}
+        pick = decide_choice(
+            {"original_mpn": original_mpn, "requirement": requirement},
+            "Pick the single best drop-in substitute for `original_mpn` that meets `requirement`: "
+            "prefer the same package and an adequate voltage rating; candidate `c0` is the "
+            "top-ranked one.", options)
+        return shown[int(pick.choice[1:])]
     if not os.environ.get("MOONSHOT_API_KEY"):
         return cands[0]
     import json

@@ -108,6 +108,7 @@ def test_topology_selector_uses_shared_call_agent(
 ) -> None:
     """The selector has no private HTTP client any more — it must go
     through llm_call.call_agent."""
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")  # exercises the Kimi path
     from heaviside.agents import topology_selector_llm as ts
 
     seen: dict[str, Any] = {}
@@ -127,6 +128,7 @@ def test_topology_selector_uses_shared_call_agent(
 def test_topology_selector_wraps_llm_call_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")  # exercises the Kimi path
     from heaviside.agents import topology_selector_llm as ts
 
     def fail(*args: Any, **kwargs: Any) -> str:

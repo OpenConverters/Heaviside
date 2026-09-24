@@ -2971,6 +2971,28 @@ def _run_crossref_batches(
     under the model context window AND each reply under the output-token cap; one
     failed batch only loses its own rows, surfaced as a diagnostic.
     """
+    # Choosing among catalogue candidates is a closed choice: Jev makes it. Rows
+    # with no candidates need a part PROPOSED, which only the Kimi
+    # cross-referencer can do, so they keep going there.
+    from heaviside.pipeline.jev_decisions import jev_crossref_row, jev_enabled
+
+    jev_rows: list[dict[str, Any]] = []
+    if jev_enabled():
+        jev_entries = [e for e in entries if e.get("_tas_candidates")]
+        entries = [e for e in entries if not e.get("_tas_candidates")]
+        if jev_entries:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(8, len(jev_entries))) as pool:
+                jev_rows = list(pool.map(
+                    lambda e: jev_crossref_row(e, state.target_manufacturer, state.circuit_context),
+                    jev_entries,
+                ))
+            logger.info("CR stage 3: %d component(s) chosen by Jev, %d to the cross-referencer",
+                        len(jev_rows), len(entries))
+        if not entries:
+            return jev_rows, 0
+
     batches = _batch_for_llm(entries, max_parts=max_parts)
     if len(batches) > 1:
         logger.info(
@@ -3023,7 +3045,7 @@ def _run_crossref_batches(
     if batches and failed_batches == len(batches):
         # Nothing came back at all — surface it as a single clear diagnostic.
         state.diagnostics.append("cross-referencer produced no results (all batches failed)")
-    return results, failed_batches
+    return jev_rows + results, failed_batches
 
 
 def _reconcile_crossref_coverage(state: CrossRefState, bom_for_llm: list[dict[str, Any]]) -> None:
@@ -3757,6 +3779,25 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
     if not no_subs:
         return state
 
+    # Which rows deserve a challenge is a yes/no question — Jev triages; Otto
+    # (Kimi) writes the challenges for the rows it keeps. The ones it drops are
+    # named in the log so "not challenged" is never mistaken for "confirmed".
+    triage_skipped: list[str] = []
+    from heaviside.pipeline.jev_decisions import jev_enabled, jev_otto_triage
+
+    if jev_enabled():
+        kept = jev_otto_triage(no_subs, state.target_manufacturer)
+        kept_refs = {r.get("ref_des") for r in kept}
+        triage_skipped = [str(r.get("ref_des", "?")) for r in no_subs if r.get("ref_des") not in kept_refs]
+        logger.info("CR stage 6: Jev triage kept %d/%d no_substitute row(s) for Otto",
+                    len(kept), len(no_subs))
+        no_subs = kept
+        if not no_subs:
+            state.otto_log = {"raw_response": "", "challenges": [], "summary": {},
+                              "status": "triaged_out", "batches": 0, "batches_failed": 0,
+                              "unchallenged_refs": [], "triage_skipped_refs": triage_skipped}
+            return state
+
     # Trim to essential fields to keep payload small for the reasoning model
     trimmed = [
         {
@@ -3835,6 +3876,7 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
             "batches": batches,
             "batches_failed": failed,
             "unchallenged_refs": unchallenged,
+            "triage_skipped_refs": triage_skipped,
         }
 
         # Collect Otto's diagnoses as hints for the cross-referencer
@@ -3980,6 +4022,25 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
         "guardrail_fires",
     )
     trimmed_xref = [{k: row[k] for k in _REVIEW_KEYS if k in row} for row in state.crossref_result]
+    # Jev gate: a substituted row whose every compared parameter matches clears
+    # without Ray; any doubt, and every no_substitute, still goes to Ray.
+    from heaviside.pipeline.jev_decisions import jev_enabled
+
+    if jev_enabled():
+        cleared, gate_record = _jev_review_gate(state)
+        state.review_verdicts.append(gate_record)
+        trimmed_xref = [r for r in trimmed_xref if r.get("ref_des") not in cleared]
+        if not trimmed_xref:
+            for reviewer_name in ("ray", "nicola"):
+                verdict_data = {"reviewer": reviewer_name, "verdict": "APPROVED", "objections": [],
+                                "batches": 0, "cleared_by": "jev-gate"}
+                state.review_verdicts.append(verdict_data)
+                state.reviewer_log += (f"\n--- {reviewer_name.upper()} ---\n"
+                                       f"{json.dumps(verdict_data)}\n")
+            logger.info("CR stage 7: all %d row(s) cleared by the Jev gate; no LLM review needed",
+                        len(cleared))
+            state.passed = True
+            return state
     # Batch the rows so a large BOM doesn't exceed the model context (the prod
     # 400 "exceeded model token limit" on Ray's review). Each batch is reviewed
     # independently and the verdicts are aggregated: a reviewer APPROVES overall
@@ -4088,6 +4149,52 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
 # ---------------------------------------------------------------------------
 # Public orchestrator
 # ---------------------------------------------------------------------------
+
+
+def _jev_review_gate(state: CrossRefState) -> tuple[set[str], dict[str, Any]]:
+    """Clear the substituted rows Jev finds deviating on no parameter.
+
+    The parameters must be the grounded, param-checked ones the report will
+    show — not the LLM's echoed fields — so grounding and the parameter check
+    run here on a COPY of the rows (the real ones are grounded after review,
+    once the correction loop has settled the picks).
+    """
+    import copy
+
+    from heaviside.pipeline.jev_decisions import REVIEW_GATE_THRESHOLD, jev_review_gate
+
+    shadow = copy.copy(state)
+    shadow.crossref_result = copy.deepcopy(state.crossref_result)
+    shadow.diagnostics = []
+    _ground_row_fields_in_catalogue(shadow)
+    _stage_param_check(shadow)
+    todo = []
+    for row in shadow.crossref_result:
+        sub = str(row.get("substitute_pn") or "").strip()
+        if row.get("status") in ("exact", "recommended", "partial") and sub and sub != "no_substitute":
+            params = [p for p in build_match_detail(row)["params"]
+                      if p.get("original") and p.get("substitute")]
+            todo.append((row, params))
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(todo)))) as pool:
+        results = list(pool.map(lambda rp: jev_review_gate(rp[0], rp[1]), todo))
+    cleared: set[str] = set()
+    per_row: dict[str, Any] = {}
+    for (row, _), (ok, probs) in zip(todo, results):
+        ref = str(row.get("ref_des"))
+        per_row[ref] = {"cleared": ok, "p_deviates": probs}
+        if ok:
+            cleared.add(ref)
+    logger.info("CR stage 7: Jev gate cleared %d of %d substituted row(s) (threshold %.2f)",
+                len(cleared), len(todo), REVIEW_GATE_THRESHOLD)
+    summary = (f"Decision-model gate: {len(cleared)} of {len(todo)} substituted line(s) matched "
+               f"the original on every compared parameter and were cleared without the LLM "
+               f"reviewer ({', '.join(sorted(cleared)) or 'none'}); every other line went to Ray.")
+    return cleared, {"reviewer": "jev-gate", "verdict": "GATE", "summary": summary,
+                     "cleared_refs": sorted(cleared),
+                     "threshold": REVIEW_GATE_THRESHOLD, "rows": per_row, "objections": []}
 
 
 def _latest_ray_verdict(verdicts: list[dict[str, Any]]) -> dict[str, Any]:

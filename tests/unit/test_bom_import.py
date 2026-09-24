@@ -103,6 +103,7 @@ def test_llm_fallback_maps_novel_headers(monkeypatch):
     import heaviside.agents.llm_call as llm
 
     monkeypatch.setenv("MOONSHOT_API_KEY", "test")  # gate _llm_available()
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")  # exercises the Kimi path
 
     def fake_call_agent_json(name, message, **kw):
         assert name == "bom-header-mapper"
@@ -127,6 +128,7 @@ def test_llm_unavailable_falls_back_to_deterministic(monkeypatch):
     import heaviside.agents.llm_call as llm
 
     monkeypatch.setenv("MOONSHOT_API_KEY", "test")
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")  # exercises the Kimi path
     monkeypatch.setattr(
         llm, "call_agent_json",
         lambda *a, **k: (_ for _ in ()).throw(llm.LLMCallError("API 521")),
@@ -141,6 +143,7 @@ def test_no_mpn_raises_even_after_llm(monkeypatch):
     import heaviside.agents.llm_call as llm
 
     monkeypatch.setenv("MOONSHOT_API_KEY", "test")
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")  # exercises the Kimi path
     monkeypatch.setattr(
         llm, "call_agent_json",
         lambda *a, **k: {"original_mpn": None, "manufacturer": "Maker"},
@@ -156,6 +159,7 @@ def test_llm_maps_location_to_refdes(monkeypatch):
     import heaviside.agents.llm_call as llm
 
     monkeypatch.setenv("MOONSHOT_API_KEY", "test")
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")  # exercises the Kimi path
     monkeypatch.setattr(
         llm, "call_agent_json",
         lambda *a, **k: {"original_mpn": "MFG_PN", "manufacturer": "MFG", "ref_des": "LOCATION"},

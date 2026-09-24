@@ -119,6 +119,7 @@ def test_llm_pick_falls_back_to_deterministic_without_key(monkeypatch):
 
 def test_llm_pick_uses_valid_index(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "fake")
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")  # exercises the Kimi path
     monkeypatch.setattr(
         mp,
         "call_agent_json" if hasattr(mp, "call_agent_json") else "pareto_summary_from_sweep",
@@ -141,6 +142,7 @@ def test_llm_pick_uses_valid_index(monkeypatch):
 
 def test_llm_pick_rejects_invented_index(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "fake")
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")  # exercises the Kimi path
     import heaviside.agents.llm_call as llm
 
     monkeypatch.setattr(
@@ -152,6 +154,7 @@ def test_llm_pick_rejects_invented_index(monkeypatch):
 
 def test_llm_pick_malformed_response_raises(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "fake")
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")  # exercises the Kimi path
     import heaviside.agents.llm_call as llm
 
     monkeypatch.setattr(

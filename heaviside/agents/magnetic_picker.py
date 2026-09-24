@@ -209,6 +209,26 @@ def pick_magnetic_from_sweep_llm(
                 'Return JSON {"index": <int>, "reason": "<1-2 sentences>"}.'
             ),
         }
+        from heaviside.pipeline.jev_decisions import jev_enabled
+
+        if jev_enabled():
+            from heaviside.llm.jev import decide_choice
+
+            state: dict[str, Any] = {"topology_spec": payload["topology_spec"],
+                                     "fsw_hz": payload["fsw_hz"]}
+            if feedback:  # reviewer objections from a prior round
+                state["reviewer_objections"] = feedback
+            options = {f"c{i}": ("Loss argmin. " if i == 0 else "") + json.dumps(r, default=str)
+                       for i, r in enumerate(rows)}
+            c = decide_choice(state, (
+                "Pick the magnetic to build. Candidate `c0` is the total-loss argmin at `fsw_hz`; "
+                "choose it unless a qualitative reason favours a nearby candidate: a common "
+                "stocked core shape and material, a sane turn count, an easily gapped core, or "
+                "more saturation margin (`isat_a` well above `ipeak_worst_a`). Address any "
+                "`reviewer_objections`."), options)
+            idx = int(c.choice[1:])
+            return {"index": idx, "source": "jev",
+                    "reason": f"Decision model pick (P={c.probabilities.get(c.choice, 0.0):.2f})."}
         msg = json.dumps(payload)
         if feedback:  # reviewer objections from a prior round
             msg += "\n\n" + feedback

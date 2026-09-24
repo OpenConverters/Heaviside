@@ -470,6 +470,19 @@ def render_crossref_html(
         )
         parts.append('<hr class="sep">')
 
+    # Rows the triage decided were not worth Otto's challenge are unchallenged
+    # too — by choice rather than failure, but the reader must still see which.
+    skipped = otto.get("triage_skipped_refs") or []
+    if skipped:
+        parts.append(
+            '<div class="warn-block">'
+            f"<strong>{len(skipped)} no-substitute line(s) were not sent to Otto</strong> — "
+            "triaged as not worth a second catalogue search: "
+            f"{_e(', '.join(skipped))}"
+            "</div>"
+        )
+        parts.append('<hr class="sep">')
+
     # ── Appendix: Guardrails / Otto / Reviewer (collapsed for print) ─────────
 
     if guardrails or otto.get("challenges") or verdicts or diags:
