@@ -203,6 +203,8 @@ def main() -> int:
             continue
         result = job.get("result", {})
         (d / "result.json").write_text(json.dumps(result, indent=2))
+        if job.get("llm_usage") is not None:  # measured Jev/Kimi + estimated Kimi avoided
+            (d / "llm_usage.json").write_text(json.dumps(job["llm_usage"], indent=2))
         has_pdf = _download_pdf(args.base_url, job_id, d / "report.pdf")
         has_html = _render_html(result, d / "report.html", title=fx.get("title", stem))
         violations = _grade(result, fx.get("invariants", {}))
@@ -249,6 +251,8 @@ def main() -> int:
             continue
         result = job.get("result", {})
         (d / "result.json").write_text(json.dumps(result, indent=2))
+        if job.get("llm_usage") is not None:  # measured Jev/Kimi + estimated Kimi avoided
+            (d / "llm_usage.json").write_text(json.dumps(job["llm_usage"], indent=2))
         has_pdf = _download_pdf(args.base_url, job_id, d / "report.pdf")
         has_html = _render_html(result, d / "report.html", title=design.get("title", stem))
         violations = _grade(result, design.get("invariants", {}))

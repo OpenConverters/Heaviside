@@ -88,6 +88,9 @@ class Job:
     #   ready     — the PDF is cached and downloadable
     #   error     — rendering failed (the download endpoint will report why)
     report_pdf: str = "none"
+    #: This job's share of the LLM spend ledger (heaviside.llm.usage): Jev and
+    #: Kimi as measured, Kimi avoided as an estimate.
+    llm_usage: dict[str, Any] | None = None
 
 
 #: Name of the tracked post-completion stage that renders the report PDF.
@@ -330,6 +333,7 @@ class JobRegistry:
                 "kind": job.kind,
                 "status": job.status,
                 "result": job.result,
+                "llm_usage": job.llm_usage,
                 "error": job.error,
                 "progress": job.progress,
                 "created_wall": job.created_wall,
@@ -382,6 +386,7 @@ class JobRegistry:
                 created_wall=d.get("created_wall"),
                 stages=stages,
                 report_pdf=d.get("report_pdf", "none"),
+                llm_usage=d.get("llm_usage"),
             )
             self._jobs[job.id] = job
         if self._jobs:
@@ -400,9 +405,16 @@ class JobRegistry:
                 continue
             self._set(job_id, status="running")
             update = ProgressReporter(self, job_id)
+            from heaviside.llm import usage as llm_usage
+
+            usage_before = llm_usage.snapshot()  # one job at a time: the diff is this job's
             try:
                 # fn may be zero-arg or take the progress reporter.
                 result = fn(update) if len(inspect.signature(fn).parameters) >= 1 else fn()
+                share = llm_usage.diff(llm_usage.snapshot(), usage_before)
+                self._set(job_id, llm_usage=share)
+                threading.Thread(target=llm_usage.send_to_umami,
+                                 args=(job.kind if job else "?", share), daemon=True).start()
                 self._finalize_stages(job_id, errored=False)
                 self._set(job_id, status="done", result=result)
             except JobCancelled:

@@ -1441,7 +1441,18 @@ def get_job(job_id: str) -> dict[str, Any]:
         "error": job.error,
         "stages": _serialize_stages(job),
         "report_pdf": getattr(job, "report_pdf", "none"),
+        "llm_usage": job.llm_usage,
     }
+
+
+@app.get("/llm/usage")
+def llm_usage() -> dict[str, Any]:
+    """Running LLM spend since this server started: Jev decisions and Kimi
+    calls as measured, plus the ESTIMATED Kimi cost Jev avoided, per site."""
+    from heaviside.llm.usage import KIMI_PRICE_PER_MTOK, snapshot
+
+    return {**snapshot(), "kimi_price_per_mtok_usd": KIMI_PRICE_PER_MTOK,
+            "note": "avoided_kimi_estimate is an estimate (prompt + payload at ~4 chars/token)"}
 
 
 @app.post("/jobs/{job_id}/cancel")

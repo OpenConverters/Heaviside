@@ -232,6 +232,12 @@ def call_llm(
     _TOTAL_TOKENS["input"] += usage.get("prompt_tokens", 0)
     _TOTAL_TOKENS["output"] += usage.get("completion_tokens", 0)
     _TOTAL_TOKENS["calls"] += 1
+    from heaviside.llm import is_kimi_model
+    from heaviside.llm.usage import record_kimi
+
+    if is_kimi_model(model):
+        record_kimi(int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0),
+                    int(usage.get("cached_tokens") or 0))
 
     try:
         msg = data["choices"][0]["message"]
@@ -361,6 +367,11 @@ def _run_strands_agent(
     if isinstance(usage, dict):
         _TOTAL_TOKENS["input"] += int(usage.get("inputTokens", 0))
         _TOTAL_TOKENS["output"] += int(usage.get("outputTokens", 0))
+        if is_kimi_model(model_id):
+            from heaviside.llm.usage import record_kimi
+
+            record_kimi(int(usage.get("inputTokens", 0)), int(usage.get("outputTokens", 0)),
+                        int(usage.get("cacheReadInputTokens", 0)))
     _TOTAL_TOKENS["calls"] += 1
 
     text = str(result).strip()
