@@ -71,8 +71,11 @@ MOONSHOT_BASE_URL_INTL: str = "https://api.moonshot.ai/v1"
 #: ``MOONSHOT_BASE_URL`` is set to ``"cn"`` (or any explicit URL).
 MOONSHOT_BASE_URL_CN: str = "https://api.moonshot.cn/v1"
 
-#: Default model id per ``heaviside/llm/model_tiers.json`` (Tier 1).
-DEFAULT_KIMI_MODEL_ID: str = "kimi-k2.5"
+#: Default model id per ``heaviside/llm/model_tiers.json`` (Tier 1).  The
+#: single source for every Kimi call path: :data:`heaviside.agents.factory.
+#: DEFAULT_MODEL` and :func:`heaviside.agents.llm_call.call_llm` both read it.
+#: k2.5 was retired from the account (Moonshot 404s it); k2.6 succeeds it.
+DEFAULT_KIMI_MODEL_ID: str = "kimi-k2.6"
 
 #: Model-id prefixes that route through Moonshot.  ``kimi-k2.5`` and
 #: any forthcoming ``kimi-*`` variants live on Moonshot; the

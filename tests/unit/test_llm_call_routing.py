@@ -39,7 +39,7 @@ def test_tooled_agent_routes_through_strands(monkeypatch: pytest.MonkeyPatch) ->
     assert out == '{"ok": true}'
     assert seen["name"] == "otto"
     assert "crossref_capacitor" in seen["tools"]
-    assert seen["model_id"] == "kimi-k2.5"
+    assert seen["model_id"] == "kimi-k2.6"
 
 
 def test_toolless_agent_routes_through_call_llm(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -60,7 +60,7 @@ def test_toolless_agent_routes_through_call_llm(monkeypatch: pytest.MonkeyPatch)
 
     call_agent("cross-referencer", "crossref this BOM")
     assert "Cross-Referencer" in seen["system_prompt"]
-    assert seen["model"] == "kimi-k2.5"
+    assert seen["model"] == "kimi-k2.6"
 
 
 def test_env_model_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:

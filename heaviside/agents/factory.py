@@ -36,6 +36,7 @@ import yaml
 from heaviside.agents import tools as _tools_module
 from heaviside.agents.tools import resolve_tools
 from heaviside.llm import ModelTier, classify_model, is_kimi_model
+from heaviside.llm.kimi import DEFAULT_KIMI_MODEL_ID
 
 __all__ = [
     "DEFAULT_MODEL",
@@ -54,7 +55,7 @@ PROMPTS_DIR: Path = Path(__file__).resolve().parent / "prompts"
 #: Default model id per ``AGENTS.md`` §8 ("Default for v0.1: Kimi
 #: (Moonshot)").  Override via the ``model`` arg to :func:`load_agent`
 #: or the ``model:`` key in prompt frontmatter.
-DEFAULT_MODEL: str = "kimi-k2.5"
+DEFAULT_MODEL: str = DEFAULT_KIMI_MODEL_ID
 
 
 _KNOWN_FRONTMATTER_KEYS: frozenset[str] = frozenset(

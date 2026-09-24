@@ -35,3 +35,18 @@ class TestModelTiers:
 
     def test_review_blocked_for_unknown(self) -> None:
         assert is_review_role_allowed("nonexistent-model-9000") is False
+
+
+def test_default_model_may_run_the_reviewers() -> None:
+    """The default model must be one Ray/Nicola accept.
+
+    The agent-path default stayed on the retired kimi-k2.5 after call_llm
+    moved to k2.6, and k2.6 was never added to the review allow-list, so no
+    setting of HEAVISIDE_LLM_MODEL let crossref stage 7 run.
+    """
+    from heaviside.agents.factory import DEFAULT_MODEL
+    from heaviside.llm.kimi import DEFAULT_KIMI_MODEL_ID
+
+    assert DEFAULT_MODEL == DEFAULT_KIMI_MODEL_ID
+    assert is_review_role_allowed(DEFAULT_MODEL) is True
+    assert context_window(DEFAULT_MODEL) is not None

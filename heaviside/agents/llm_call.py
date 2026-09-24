@@ -112,7 +112,7 @@ def call_llm(
 ) -> str:
     """Send a chat completion request and return the assistant's text.
 
-    ``model`` overrides the ``HEAVISIDE_LLM_MODEL`` env / ``kimi-k2.5``
+    ``model`` overrides the ``HEAVISIDE_LLM_MODEL`` env / ``DEFAULT_KIMI_MODEL_ID``
     default (used by :func:`call_agent` to honour prompt-frontmatter
     model pins). Raises ``LLMCallError`` if no API key is configured or
     the request fails.
@@ -129,9 +129,12 @@ def call_llm(
         # kimi-k2.5 was retired from the account and every call 404'd
         # ("Not found the model kimi-k2.5 or Permission denied"), which took
         # the seeker and the crossref enrichment down silently — both swallow
-        # LLMCallError. k2.6 is the successor the account actually serves;
-        # HEAVISIDE_LLM_MODEL still overrides.
-        model = os.environ.get("HEAVISIDE_LLM_MODEL", "kimi-k2.6")
+        # LLMCallError. The default lives in ONE place: this path once moved
+        # to k2.6 while the agent path kept k2.5, and every Ray/Nicola review
+        # 404'd. HEAVISIDE_LLM_MODEL still overrides.
+        from heaviside.llm.kimi import DEFAULT_KIMI_MODEL_ID
+
+        model = os.environ.get("HEAVISIDE_LLM_MODEL", DEFAULT_KIMI_MODEL_ID)
 
     try:
         import httpx

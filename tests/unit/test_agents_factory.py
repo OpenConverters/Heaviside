@@ -130,7 +130,7 @@ def test_allowed_tools_must_be_list_of_str(tmp_path: Path) -> None:
 
 
 def test_load_agent_default_model_routes_to_kimi_builder() -> None:
-    """Default model id ``kimi-k2.5`` flows through the Kimi builder.
+    """Default model id ``kimi-k2.6`` flows through the Kimi builder.
 
     The factory must hand Strands a fully constructed ``OpenAIModel``
     object — never the bare string ``"kimi-k2.5"`` — because the
@@ -148,9 +148,9 @@ def test_load_agent_default_model_routes_to_kimi_builder() -> None:
         agent_cls=FakeAgent,
         kimi_model_builder=fake_builder,
     )
-    assert DEFAULT_MODEL == "kimi-k2.5"
-    assert seen == {"model_id": "kimi-k2.5"}
-    assert agent.model == "FAKE_KIMI_MODEL(kimi-k2.5)"
+    assert DEFAULT_MODEL == "kimi-k2.6"
+    assert seen == {"model_id": "kimi-k2.6"}
+    assert agent.model == "FAKE_KIMI_MODEL(kimi-k2.6)"
     assert agent.name == "component-librarian"
 
 
