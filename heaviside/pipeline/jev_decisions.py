@@ -94,8 +94,13 @@ def _original_view(entry: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def jev_crossref_row(entry: dict[str, Any], target_manufacturer: str,
-                     circuit_context: Any = None) -> dict[str, Any]:
-    """Build one crossref row for ``entry`` from its ``_tas_candidates`` via Jev."""
+                     circuit_context: Any = None,
+                     extra_state: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build one crossref row for ``entry`` from its ``_tas_candidates`` via Jev.
+
+    ``extra_state`` adds context for Jev to weigh (e.g. the reviewer's
+    objections and the pick they rejected, in the correction pass).
+    """
     cands = entry.get("_tas_candidates") or []
     if not cands:
         raise JevError(f"{entry.get('ref_des')}: no catalogue candidates for Jev to choose from")
@@ -109,6 +114,8 @@ def jev_crossref_row(entry: dict[str, Any], target_manufacturer: str,
     state = {"original": original, "target_manufacturer": target_manufacturer}
     if circuit_context:
         state["circuit_context"] = circuit_context
+    if extra_state:
+        state.update(extra_state)
     pick = decide(state, {"pick": choice_question(
         "Choose the catalogue candidate that best replaces the `original` part as a drop-in: "
         "same primary value (capacitance, resistance, inductance, or function for ICs/connectors), "

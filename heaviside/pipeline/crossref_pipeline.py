@@ -4877,7 +4877,37 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
     if not to_fix:
         return state
 
-    corrections, errors = _crossref_llm_batched(
+    # Re-picking among the catalogue candidates in light of the objections is
+    # a closed choice: Jev, with the objections and the rejected pick in its
+    # state. Rows with no candidates still need Kimi to propose a part.
+    from heaviside.pipeline.jev_decisions import jev_crossref_row, jev_enabled
+
+    jev_fixes: list[dict[str, Any]] = []
+    if jev_enabled():
+        with_cands = [e for e in to_fix if e.get("_tas_candidates")]
+        to_fix = [e for e in to_fix if not e.get("_tas_candidates")]
+        for e in with_cands:
+            ref = str(e["ref_des"])
+            cited = [o for o in objections if ref in _objection_refs([o], {ref})] or objections
+            fix = jev_crossref_row(
+                {**e, "original_mpn": e.get("original_pn", ""), "value": e.get("original_value", ""),
+                 "voltage": e.get("original_voltage", ""), "package": e.get("original_package", "")},
+                state.target_manufacturer, state.circuit_context,
+                extra_state={"reviewer_objections": cited,
+                             "rejected_substitute": e.get("current_substitute"),
+                             "instruction": "The reviewer rejected the previous pick for the "
+                                            "reasons in `reviewer_objections`; choose the "
+                                            "candidate that answers them, or none."})
+            jev_fixes.append(fix)
+        if jev_fixes:
+            from heaviside.llm.usage import record_avoided
+
+            record_avoided("correction_pass", "cross-referencer",
+                           payload_chars=len(json.dumps(with_cands, default=str))
+                           + len(json.dumps(objections)),
+                           output_tokens=250 * len(with_cands), calls=1 if not to_fix else 0)
+
+    corrections, errors = (_crossref_llm_batched(
         to_fix,
         lambda batch: {
             "task": "CORRECTION — fix reviewer objections",
@@ -4893,7 +4923,8 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
             ),
         },
         concurrent=True,
-    )
+    ) if to_fix else ([], []))
+    corrections = jev_fixes + corrections
     for e in errors:
         state.diagnostics.append(f"correction crossref {e}")
     if not corrections:
@@ -4913,6 +4944,10 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
                     row["substitute_pn"] = new_pn
                 if new_status:
                     row["status"] = new_status
+                if new_status == "no_substitute":
+                    # The rejected part must not linger as the substitute of a
+                    # row that now says there is none.
+                    row["substitute_pn"] = None
                 row["notes"] = fix.get("notes", row.get("notes", ""))
                 corrected_refs.add(ref)
                 break

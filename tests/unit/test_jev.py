@@ -296,3 +296,41 @@ def test_otto_only_sees_rows_the_rescue_left(fake_jev, monkeypatch: pytest.Monke
     cp._stage6_otto(state)
     assert sent == ["C2"]
     assert state.otto_log["jev_rescued_refs"] == ["C1"]
+
+
+# ── Stage 3b: correction re-pick ────────────────────────────────────────────
+
+def _correction_state(cands: bool):
+    from heaviside.pipeline.crossref import CrossRefState
+
+    row = {"ref_des": "C1", "component_type": "capacitor", "original_pn": "ORIG",
+           "substitute_pn": "BAD", "status": "recommended", "notes": ""}
+    st = CrossRefState(source_bom=[{"ref_des": "C1", "value": "100nF"}],
+                       target_manufacturer="W", crossref_result=[row])
+    if cands:
+        st.candidates_by_ref["C1"] = [{"x": 1}]
+    return st
+
+
+def test_correction_repicks_with_the_objection_in_state(fake_jev, monkeypatch: pytest.MonkeyPatch) -> None:
+    from heaviside.pipeline import crossref_pipeline as cp
+
+    calls, script = fake_jev
+    script["pick"], script["status"] = "c0", "recommended"
+    monkeypatch.setattr(cp, "_candidate_summaries_for_llm", lambda *a, **k: [{"mpn": "GOOD"}])
+    monkeypatch.setattr(cp, "call_agent_json", lambda *a, **k: pytest.fail("must not call Kimi"))
+    st = cp._stage3b_correct(_correction_state(True), ["C1: voltage rating too low"])
+    assert st.crossref_result[0]["substitute_pn"] == "GOOD"
+    assert calls[0]["state"]["reviewer_objections"] == ["C1: voltage rating too low"]
+    assert calls[0]["state"]["rejected_substitute"] == "BAD"
+
+
+def test_correction_to_none_clears_the_rejected_part(fake_jev, monkeypatch: pytest.MonkeyPatch) -> None:
+    from heaviside.pipeline import crossref_pipeline as cp
+
+    _, script = fake_jev
+    script["pick"] = "none"
+    monkeypatch.setattr(cp, "_candidate_summaries_for_llm", lambda *a, **k: [{"mpn": "X"}])
+    st = cp._stage3b_correct(_correction_state(True), ["C1: wrong value"])
+    row = st.crossref_result[0]
+    assert row["status"] == "no_substitute" and row["substitute_pn"] is None
