@@ -149,6 +149,9 @@ def decide(state: Any, questions: dict[str, dict[str, Any]]) -> dict[str, dict[s
             raise JevError(f"Jev returned no answer for {missing}")
         answers.update(got)
         usage = data.get("usage") or {}
+        from heaviside.llm.usage import record_jev
+
+        record_jev(int(usage.get("input_tokens") or 0), float(usage.get("cost") or 0.0))
         _usage["calls"] += 1
         _usage["input_tokens"] += int(usage.get("input_tokens") or 0)
         _usage["cost"] += float(usage.get("cost") or 0.0)

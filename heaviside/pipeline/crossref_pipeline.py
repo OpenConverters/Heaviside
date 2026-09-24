@@ -2990,6 +2990,12 @@ def _run_crossref_batches(
                 ))
             logger.info("CR stage 3: %d component(s) chosen by Jev, %d to the cross-referencer",
                         len(jev_rows), len(entries))
+            from heaviside.llm.usage import record_avoided
+
+            record_avoided("crossref_stage3_pick", "cross-referencer",
+                           payload_chars=len(json.dumps(jev_entries, default=str)),
+                           output_tokens=250 * len(jev_entries),
+                           calls=-(-len(jev_entries) // max_parts))
         if not entries:
             return jev_rows, 0
 
@@ -3783,19 +3789,59 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
     # (Kimi) writes the challenges for the rows it keeps. The ones it drops are
     # named in the log so "not challenged" is never mistaken for "confirmed".
     triage_skipped: list[str] = []
-    from heaviside.pipeline.jev_decisions import jev_enabled, jev_otto_triage
+    rescued: list[str] = []
+    from heaviside.pipeline.jev_decisions import (
+        jev_broadened_rescue,
+        jev_enabled,
+        jev_otto_triage,
+    )
 
     if jev_enabled():
+        # Most of what Otto finds is the same part a wider search would have
+        # returned. Do that search deterministically and let Jev choose —
+        # after the strict in-kind rescue, so a provable match is never
+        # pre-empted by a relaxed one. Kimi's Otto only sees what is left.
+        _stage6_5_deterministic_rescue(state)
+        for i, row in enumerate(state.crossref_result):
+            if (row.get("status") != "no_substitute"
+                    or row.get("component_type") in _IDENTITY_MATCHED_CATEGORIES):
+                continue
+            new = jev_broadened_rescue(row, state.target_manufacturer, state.circuit_context)
+            if new is not None:
+                state.crossref_result[i] = new
+                rescued.append(str(row.get("ref_des")))
+        if rescued:
+            logger.info("CR stage 6: broadened search + Jev rescued %s", ", ".join(rescued))
+            from heaviside.llm.usage import record_avoided
+
+            # each rescued row skips Otto's challenge and the Kimi re-crossref
+            record_avoided("otto_broadened_rescue", "cross-referencer",
+                           payload_chars=600 * len(rescued), output_tokens=250 * len(rescued),
+                           calls=1)
+        no_subs = [row for row in state.crossref_result if row.get("status") == "no_substitute"]
+        if not no_subs:
+            state.otto_log = {"raw_response": "", "challenges": [], "summary": {},
+                              "status": "resolved_before_otto", "batches": 0, "batches_failed": 0,
+                              "unchallenged_refs": [], "triage_skipped_refs": [],
+                              "jev_rescued_refs": rescued}
+            return state
         kept = jev_otto_triage(no_subs, state.target_manufacturer)
         kept_refs = {r.get("ref_des") for r in kept}
         triage_skipped = [str(r.get("ref_des", "?")) for r in no_subs if r.get("ref_des") not in kept_refs]
         logger.info("CR stage 6: Jev triage kept %d/%d no_substitute row(s) for Otto",
                     len(kept), len(no_subs))
+        if triage_skipped or not kept:
+            from heaviside.llm.usage import record_avoided
+
+            record_avoided("otto_triage", "otto" if not kept else None,
+                           payload_chars=400 * len(triage_skipped),
+                           output_tokens=200 * len(triage_skipped), calls=1 if not kept else 0)
         no_subs = kept
         if not no_subs:
             state.otto_log = {"raw_response": "", "challenges": [], "summary": {},
                               "status": "triaged_out", "batches": 0, "batches_failed": 0,
-                              "unchallenged_refs": [], "triage_skipped_refs": triage_skipped}
+                              "unchallenged_refs": [], "triage_skipped_refs": triage_skipped,
+                              "jev_rescued_refs": rescued}
             return state
 
     # Trim to essential fields to keep payload small for the reasoning model
@@ -3879,6 +3925,7 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
             "batches_failed": failed,
             "unchallenged_refs": unchallenged,
             "triage_skipped_refs": triage_skipped,
+            "jev_rescued_refs": rescued,
         }
 
         # Collect Otto's diagnoses as hints for the cross-referencer
@@ -4031,7 +4078,16 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
     if jev_enabled():
         cleared, gate_record = _jev_review_gate(state)
         state.review_verdicts.append(gate_record)
+        cleared_rows = [r for r in trimmed_xref if r.get("ref_des") in cleared]
         trimmed_xref = [r for r in trimmed_xref if r.get("ref_des") not in cleared]
+        if cleared_rows:
+            from heaviside.llm.usage import record_avoided
+
+            for reviewer_name in ("ray", "nicola"):
+                record_avoided("review_gate", reviewer_name if not trimmed_xref else None,
+                               payload_chars=len(json.dumps(cleared_rows, default=str)),
+                               output_tokens=120 * len(cleared_rows),
+                               calls=1 if not trimmed_xref else 0)
         if not trimmed_xref:
             for reviewer_name in ("ray", "nicola"):
                 verdict_data = {"reviewer": reviewer_name, "verdict": "APPROVED", "objections": [],

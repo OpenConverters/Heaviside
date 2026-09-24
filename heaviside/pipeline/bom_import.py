@@ -280,6 +280,8 @@ def _jev_header_overrides(headers: list[str], rows: list[list[Any]]) -> dict[str
     "none", so the answer can only ever name a real column. A column already
     claimed by an earlier field is not reused. Raises ``JevError`` on failure.
     """
+    import json
+
     from heaviside.llm.jev import choice_question, decide
 
     cols = [(i, str(h)) for i, h in enumerate(headers) if str(h).strip()]
@@ -296,6 +298,10 @@ def _jev_header_overrides(headers: list[str], rows: list[list[Any]]) -> dict[str
     qs = {f: choice_question(f"Which column of this bill of materials holds {desc}?", options)
           for f, desc in _JEV_HEADER_FIELDS.items()}
     answers = decide(state, qs)
+    from heaviside.llm.usage import record_avoided
+
+    record_avoided("bom_header_mapping", "bom-header-mapper",
+                   payload_chars=len(json.dumps(state, default=str)), output_tokens=150)
     out: dict[str, str] = {}
     claimed: set[str] = set()
     for f in _JEV_HEADER_FIELDS:  # dict order = claim priority (MPN first, category late)

@@ -223,3 +223,76 @@ def test_topology_selector_ranks_viable_by_probability(fake_jev) -> None:
     names, _ = _jev_topology_selector({"operatingPoints": [{"outputVoltages": [5],
                                                               "outputCurrents": [2]}]})
     assert names == ["sepic", "buck", "flyback"]
+
+
+# ── Stage 6: broadened search + Jev before Otto ─────────────────────────────
+
+_NOSUB = {"ref_des": "C9", "component_type": "capacitor", "original_pn": "X", "status": "no_substitute",
+          "original_value": "22uF", "original_voltage": "25V", "original_package": "0805"}
+
+
+def test_broadened_rescue_marks_the_pick_partial(fake_jev, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    import heaviside.agents.tools as tools
+    from heaviside.pipeline.jev_decisions import jev_broadened_rescue
+
+    _, script = fake_jev
+    script["pick"], script["status"] = "c0", "recommended"
+    seen: dict[str, Any] = {}
+
+    def fake_search(cat: str, target: str, **kw: Any) -> str:
+        seen.update(kw, cat=cat)
+        return json.dumps({"candidates": [{"mpn": "885012107014", "capacitance": 2.2e-5}]})
+
+    monkeypatch.setattr(tools, "_crossref_search_impl", fake_search)
+    row = jev_broadened_rescue(dict(_NOSUB), "Würth Elektronik")
+    assert row is not None and row["status"] == "partial" and row["substitute_pn"] == "885012107014"
+    assert seen["value_tolerance_pct"] == 20.0 and seen["min_voltage"] == 25.0
+    assert abs(seen["value"] - 2.2e-5) < 1e-12
+
+
+def test_broadened_rescue_none_leaves_the_row(fake_jev, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    import heaviside.agents.tools as tools
+    from heaviside.pipeline.jev_decisions import jev_broadened_rescue
+
+    _, script = fake_jev
+    script["pick"] = "none"
+    monkeypatch.setattr(tools, "_crossref_search_impl",
+                        lambda *a, **k: json.dumps({"candidates": [{"mpn": "A"}]}))
+    assert jev_broadened_rescue(dict(_NOSUB), "Würth Elektronik") is None
+
+
+def test_broadened_rescue_skips_rows_without_a_value(fake_jev) -> None:
+    from heaviside.pipeline.jev_decisions import jev_broadened_rescue
+
+    assert jev_broadened_rescue({**_NOSUB, "original_value": ""}, "W") is None
+    assert jev_broadened_rescue({**_NOSUB, "component_type": "connector"}, "W") is None
+
+
+def test_otto_only_sees_rows_the_rescue_left(fake_jev, monkeypatch: pytest.MonkeyPatch) -> None:
+    from heaviside.pipeline import crossref_pipeline as cp
+    from heaviside.pipeline import jev_decisions as jd
+    from heaviside.pipeline.crossref import CrossRefState
+
+    rows = [dict(_NOSUB, ref_des="C1"), dict(_NOSUB, ref_des="C2")]
+    monkeypatch.setattr(cp, "_stage6_5_deterministic_rescue", lambda s: s)
+    monkeypatch.setattr(jd, "jev_broadened_rescue",
+                        lambda row, *a, **k: ({**row, "status": "partial", "substitute_pn": "P"}
+                                              if row["ref_des"] == "C1" else None))
+    monkeypatch.setattr(jd, "jev_otto_triage", lambda rows, target: rows)
+    sent: list[str] = []
+
+    def fake_otto(name: str, msg: str, **kw: Any) -> str:
+        import json
+
+        sent.extend(i["ref_des"] for i in json.loads(msg)["no_substitute_items"])
+        return '{"challenges": []}'
+
+    monkeypatch.setattr(cp, "call_agent", fake_otto)
+    state = CrossRefState(source_bom=[], target_manufacturer="W", crossref_result=rows)
+    cp._stage6_otto(state)
+    assert sent == ["C2"]
+    assert state.otto_log["jev_rescued_refs"] == ["C1"]

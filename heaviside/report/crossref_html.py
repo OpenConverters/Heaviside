@@ -472,6 +472,16 @@ def render_crossref_html(
 
     # Rows the triage decided were not worth Otto's challenge are unchallenged
     # too — by choice rather than failure, but the reader must still see which.
+    rescued = otto.get("jev_rescued_refs") or []
+    if rescued:
+        parts.append(
+            '<div class="warn-block">'
+            f"<strong>{len(rescued)} line(s) were found by a broadened catalogue search</strong> "
+            "(relaxed value/voltage filters) after the first search returned nothing; they are "
+            f"marked partial — check them: {_e(', '.join(rescued))}"
+            "</div>"
+        )
+        parts.append('<hr class="sep">')
     skipped = otto.get("triage_skipped_refs") or []
     if skipped:
         parts.append(

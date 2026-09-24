@@ -177,6 +177,10 @@ def select_candidate(
             "Pick the single best drop-in substitute for `original_mpn` that meets `requirement`: "
             "prefer the same package and an adequate voltage rating; candidate `c0` is the "
             "top-ranked one.", options)
+        from heaviside.llm.usage import record_avoided
+
+        record_avoided("select_candidate", "cross-referencer",
+                       payload_chars=sum(len(v) for v in options.values()), output_tokens=50)
         return shown[int(pick.choice[1:])]
     if not os.environ.get("MOONSHOT_API_KEY"):
         return cands[0]

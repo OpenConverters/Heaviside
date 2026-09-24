@@ -227,6 +227,10 @@ def pick_magnetic_from_sweep_llm(
                 "more saturation margin (`isat_a` well above `ipeak_worst_a`). Address any "
                 "`reviewer_objections`."), options)
             idx = int(c.choice[1:])
+            from heaviside.llm.usage import record_avoided
+
+            record_avoided("magnetic_pick", "magnetic-pareto-picker",
+                           payload_chars=len(json.dumps(payload, default=str)), output_tokens=150)
             return {"index": idx, "source": "jev",
                     "reason": f"Decision model pick (P={c.probabilities.get(c.choice, 0.0):.2f})."}
         msg = json.dumps(payload)

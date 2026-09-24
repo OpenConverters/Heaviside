@@ -207,3 +207,58 @@ def jev_review_gate(row: dict[str, Any],
     probs = noul_values(ans, list(qs))
     by_name = {view[int(k[1:])]["name"]: v for k, v in probs.items()}
     return all(v <= REVIEW_GATE_THRESHOLD for v in by_name.values()), by_name
+
+
+# ---------------------------------------------------------------------------
+# Stage 6: a broadened catalogue search + Jev pick, before Kimi's Otto
+# ---------------------------------------------------------------------------
+
+#: How far the broadened search relaxes the original's primary value. A
+#: resistor stays tight (a divider cannot drift); caps and inductors get the
+#: ±20 % Otto's own diagnoses kept asking for. The primary-value gate and the
+#: parameter check still judge whatever is picked.
+BROADEN_VALUE_TOLERANCE_PCT: dict[str, float] = {"capacitor": 20.0, "magnetic": 20.0,
+                                                 "resistor": 2.0}
+
+
+def jev_broadened_rescue(row: dict[str, Any], target_manufacturer: str,
+                         circuit_context: Any = None) -> dict[str, Any] | None:
+    """Search the catalogue with relaxed filters and let Jev pick one or none.
+
+    Returns the replacement row (status ``partial``, the relaxation named in
+    the notes) or ``None`` when the row is not searchable this way or Jev
+    finds nothing acceptable.
+    """
+    from heaviside.agents.tools import _crossref_search_impl
+    from heaviside.pipeline.crossref_pipeline import _parse_value_si, _to_volts
+
+    cat = row.get("component_type", "")
+    tol = BROADEN_VALUE_TOLERANCE_PCT.get(cat)
+    value = _parse_value_si(row.get("original_value"), cat) if tol is not None else None
+    if tol is None or value is None:
+        return None
+    kwargs: dict[str, Any] = {}
+    if cat == "capacitor":
+        v = _to_volts(row.get("original_voltage"))
+        if v is not None:
+            kwargs["min_voltage"] = v
+    found = json.loads(_crossref_search_impl(cat, target_manufacturer, value=value,
+                                             value_tolerance_pct=tol, max_results=10, **kwargs))
+    cands = found.get("candidates") or []
+    if not cands:
+        return None
+    entry = {
+        "ref_des": row.get("ref_des"), "component_type": cat,
+        "original_mpn": row.get("original_pn") or row.get("original_mpn") or "",
+        "value": row.get("original_value", ""), "voltage": row.get("original_voltage", ""),
+        "package": row.get("original_package", ""), "_tas_candidates": cands,
+    }
+    picked = jev_crossref_row(entry, target_manufacturer, circuit_context)
+    if picked["status"] == "no_substitute":
+        return None
+    relax = f"value within ±{tol:g}%" + (", voltage ≥ original" if "min_voltage" in kwargs else "")
+    return {**row, **{k: picked[k] for k in ("substitute_pn", "substitute_value",
+                                             "substitute_voltage", "substitute_package")},
+            "status": "partial",
+            "notes": f"Found by a broadened catalogue search ({relax}) after the first search "
+                     f"returned nothing; {picked['notes']}"}

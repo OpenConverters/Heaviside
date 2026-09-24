@@ -113,6 +113,10 @@ def _jev_topology_selector(spec: Mapping[str, Any]) -> tuple[list[str], str]:
                "sized for this power (e.g. a full bridge for 20 W, a flyback for 2 kW)."))
         for name, niche in _TOPOLOGY_NICHES.items()}
     probs = noul_values(decide(state, qs), list(qs))
+    from heaviside.llm.usage import record_avoided
+
+    record_avoided("topology_selector", "topology-selector",
+                   payload_chars=len(json.dumps(state, default=str)), output_tokens=200)
     ranked = sorted((n for n, p in probs.items() if p > 0.5), key=lambda n: -probs[n])[:6]
     reasoning = "Decision model P(viable): " + ", ".join(f"{n} {probs[n]:.2f}" for n in ranked)
     return ranked, reasoning
