@@ -4226,12 +4226,31 @@ def _jev_review_gate(state: CrossRefState) -> tuple[set[str], dict[str, Any]]:
     shadow.diagnostics = []
     _ground_row_fields_in_catalogue(shadow)
     _stage_param_check(shadow)
+    # Rows Ray objected to earlier in this job go back to Ray: the gate must
+    # never be what answers his objection.
+    known = {str(r.get("ref_des")) for r in state.crossref_result if r.get("ref_des")}
+    ray_cited = {str(r) for v in state.review_verdicts if v.get("reviewer") == "ray"
+                 for r in _objection_refs(v.get("objections") or [], known)}
     todo = []
+    ineligible: dict[str, str] = {}
     for row in shadow.crossref_result:
         sub = str(row.get("substitute_pn") or "").strip()
-        if row.get("status") in ("exact", "recommended", "partial") and sub and sub != "no_substitute":
-            params = [p for p in build_match_detail(row)["params"]
-                      if p.get("original") and p.get("substitute")]
+        ref = str(row.get("ref_des"))
+        if not (row.get("status") in ("exact", "recommended", "partial") and sub
+                and sub != "no_substitute"):
+            continue
+        params = build_match_detail(row)["params"]
+        # The threshold was tuned only on rows where both sides of every
+        # parameter were known. A parameter with one side missing (an
+        # unidentified original) is outside that — Ray judges those rows.
+        one_sided = [p["name"] for p in params if not (p.get("original") and p.get("substitute"))]
+        if ref in ray_cited:
+            ineligible[ref] = "objected to by Ray earlier in this job"
+        elif one_sided:
+            ineligible[ref] = "not comparable on " + ", ".join(one_sided)
+        elif not params:
+            ineligible[ref] = "no parameters to compare"
+        else:
             todo.append((row, params))
 
     from concurrent.futures import ThreadPoolExecutor
@@ -4245,6 +4264,8 @@ def _jev_review_gate(state: CrossRefState) -> tuple[set[str], dict[str, Any]]:
         per_row[ref] = {"cleared": ok, "p_deviates": probs}
         if ok:
             cleared.add(ref)
+    for ref, why in ineligible.items():
+        per_row[ref] = {"cleared": False, "sent_to_ray_because": why}
     logger.info("CR stage 7: Jev gate cleared %d of %d substituted row(s) (threshold %.2f)",
                 len(cleared), len(todo), REVIEW_GATE_THRESHOLD)
     summary = (f"Decision-model gate: {len(cleared)} of {len(todo)} substituted line(s) matched "

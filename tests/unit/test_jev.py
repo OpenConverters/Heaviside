@@ -334,3 +334,53 @@ def test_correction_to_none_clears_the_rejected_part(fake_jev, monkeypatch: pyte
     st = cp._stage3b_correct(_correction_state(True), ["C1: wrong value"])
     row = st.crossref_result[0]
     assert row["status"] == "no_substitute" and row["substitute_pn"] is None
+
+
+# ── Stage 7 gate eligibility ────────────────────────────────────────────────
+
+def _gate_state(rows, verdicts=()):
+    from heaviside.pipeline.crossref import CrossRefState
+
+    st = CrossRefState(source_bom=[], target_manufacturer="W", crossref_result=rows)
+    st.review_verdicts.extend(verdicts)
+    return st
+
+
+def _full_row(ref: str) -> dict[str, Any]:
+    return {"ref_des": ref, "component_type": "resistor", "original_pn": "O", "substitute_pn": "S",
+            "status": "recommended", "original_value": "10k", "substitute_value": "10k",
+            "original_package": "0603", "substitute_package": "0603"}
+
+
+@pytest.fixture
+def gate_env(fake_jev, monkeypatch: pytest.MonkeyPatch):
+    from heaviside.pipeline import crossref_pipeline as cp
+
+    monkeypatch.setattr(cp, "_ground_row_fields_in_catalogue", lambda s: None)
+    monkeypatch.setattr(cp, "_stage_param_check", lambda s: None)
+    calls, script = fake_jev
+    for i in range(8):
+        script[f"p{i}"] = 0.01
+    return cp, calls
+
+
+def test_gate_clears_a_fully_comparable_row(gate_env) -> None:
+    cp, _ = gate_env
+    cleared, rec = cp._jev_review_gate(_gate_state([_full_row("R1")]))
+    assert cleared == {"R1"}
+
+
+def test_gate_sends_one_sided_rows_to_ray(gate_env) -> None:
+    cp, calls = gate_env
+    row = {**_full_row("R1"), "original_package": ""}  # original package unknown
+    cleared, rec = cp._jev_review_gate(_gate_state([row]))
+    assert cleared == set() and calls == []
+    assert "package" in rec["rows"]["R1"]["sent_to_ray_because"]
+
+
+def test_gate_never_answers_a_ray_objection(gate_env) -> None:
+    cp, calls = gate_env
+    ray = {"reviewer": "ray", "verdict": "REJECTED", "objections": ["R1: TCR unknown"]}
+    cleared, rec = cp._jev_review_gate(_gate_state([_full_row("R1"), _full_row("R2")], [ray]))
+    assert cleared == {"R2"}
+    assert rec["rows"]["R1"]["sent_to_ray_because"].startswith("objected to by Ray")
