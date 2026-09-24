@@ -264,6 +264,37 @@ def _resolve_model_id(definition: Any) -> str:
     return os.environ.get("HEAVISIDE_LLM_MODEL") or definition.model or DEFAULT_MODEL
 
 
+#: Tool calls one agent run may make. Otto once called crossref_capacitor
+#: hundreds of times in a row, holding the server's only job worker for over an
+#: hour while ignoring cancel (ABT #1395); a normal run makes well under 20.
+DEFAULT_AGENT_TOOL_BUDGET: int = 40
+
+
+def _attach_tool_budget(agent: Any) -> dict[str, Any]:
+    """Cap an agent run's tool calls; returns the live budget record.
+
+    Past the limit the tool call is cancelled and the event loop told to stop;
+    the caller raises when ``exceeded`` is set. A fake agent without Strands
+    hooks (unit tests) gets no budget.
+    """
+    limit = int(os.environ.get("HEAVISIDE_AGENT_TOOL_BUDGET", DEFAULT_AGENT_TOOL_BUDGET))
+    budget: dict[str, Any] = {"limit": limit, "calls": 0, "exceeded": False}
+    hooks = getattr(agent, "hooks", None)
+    if hooks is None:
+        return budget
+    from strands.hooks import BeforeToolCallEvent
+
+    def _count(event: Any) -> None:
+        budget["calls"] += 1
+        if budget["calls"] > limit:
+            budget["exceeded"] = True
+            event.cancel_tool = f"tool-call budget of {limit} exhausted; stop and answer now"
+            event.invocation_state.setdefault("request_state", {})["stop_event_loop"] = True
+
+    hooks.add_callback(BeforeToolCallEvent, _count)
+    return budget
+
+
 def _run_strands_agent(
     definition: Any,
     user_message: str,
@@ -307,11 +338,19 @@ def _run_strands_agent(
             )
         else:
             agent = load_agent(definition.name, model=model_id)
+        budget = _attach_tool_budget(agent)
         result = agent(user_message)
     except LLMCallError:
         raise
     except Exception as exc:
         raise LLMCallError(f"strands agent {definition.name!r} failed: {exc}") from exc
+    if budget["exceeded"]:
+        # The loop was stopped at the budget; whatever text it ended on is
+        # not a finished answer, so it must not be returned as one.
+        raise LLMCallError(
+            f"strands agent {definition.name!r} exceeded its tool-call budget "
+            f"({budget['limit']} calls) — stopped instead of looping further"
+        )
 
     # Token accounting (Strands accumulates across tool-call turns).
     usage = getattr(getattr(result, "metrics", None), "accumulated_usage", None)
