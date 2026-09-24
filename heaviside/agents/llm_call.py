@@ -264,20 +264,23 @@ def _resolve_model_id(definition: Any) -> str:
     return os.environ.get("HEAVISIDE_LLM_MODEL") or definition.model or DEFAULT_MODEL
 
 
-#: Tool calls one agent run may make. Otto once called crossref_capacitor
+#: Most tool calls one agent run may make. Otto once called crossref_capacitor
 #: hundreds of times in a row, holding the server's only job worker for over an
-#: hour while ignoring cancel (ABT #1395); a normal run makes well under 20.
-DEFAULT_AGENT_TOOL_BUDGET: int = 40
+#: hour while ignoring cancel (ABT #1395). A normal Otto run over a few rows
+#: made 7; each catalogue search costs ~18 s, so the ceiling is also a time
+#: cap. Callers that know their item count pass a smaller budget.
+DEFAULT_AGENT_TOOL_BUDGET: int = 15
 
 
-def _attach_tool_budget(agent: Any) -> dict[str, Any]:
+def _attach_tool_budget(agent: Any, limit: int | None = None) -> dict[str, Any]:
     """Cap an agent run's tool calls; returns the live budget record.
 
     Past the limit the tool call is cancelled and the event loop told to stop;
     the caller raises when ``exceeded`` is set. A fake agent without Strands
     hooks (unit tests) gets no budget.
     """
-    limit = int(os.environ.get("HEAVISIDE_AGENT_TOOL_BUDGET", DEFAULT_AGENT_TOOL_BUDGET))
+    ceiling = int(os.environ.get("HEAVISIDE_AGENT_TOOL_BUDGET", DEFAULT_AGENT_TOOL_BUDGET))
+    limit = ceiling if limit is None else min(limit, ceiling)
     budget: dict[str, Any] = {"limit": limit, "calls": 0, "exceeded": False}
     hooks = getattr(agent, "hooks", None)
     if hooks is None:
@@ -303,6 +306,7 @@ def _run_strands_agent(
     temperature: float,
     max_tokens: int,
     json_mode: bool,
+    tool_budget: int | None = None,
 ) -> str:
     """Run a tool-using agent through Strands and return its final text.
 
@@ -338,7 +342,7 @@ def _run_strands_agent(
             )
         else:
             agent = load_agent(definition.name, model=model_id)
-        budget = _attach_tool_budget(agent)
+        budget = _attach_tool_budget(agent, tool_budget)
         result = agent(user_message)
     except LLMCallError:
         raise
@@ -372,8 +376,13 @@ def call_agent(
     temperature: float = 0.3,
     max_tokens: int = 4096,
     json_mode: bool = False,
+    tool_budget: int | None = None,
 ) -> str:
     """Run a named agent prompt and return its final text.
+
+    ``tool_budget`` caps a tool-using agent's calls for this run (never above
+    :data:`DEFAULT_AGENT_TOOL_BUDGET`); callers that know their item count pass
+    one sized to it.
 
     The prompt's YAML frontmatter decides the execution path:
 
@@ -414,6 +423,7 @@ def call_agent(
             temperature=temperature,
             max_tokens=max_tokens,
             json_mode=json_mode,
+            tool_budget=tool_budget,
         )
 
     return call_llm(

@@ -73,3 +73,35 @@ def test_runner_raises_when_the_budget_is_hit(monkeypatch: pytest.MonkeyPatch) -
         lc._run_strands_agent(definition, "go", model_id="gpt-4o", temperature=0.3,
                               max_tokens=100, json_mode=False)
     assert _calls["n"] == 3
+
+
+def test_a_caller_budget_applies_but_never_exceeds_the_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HEAVISIDE_AGENT_TOOL_BUDGET", "6")
+    for asked, expected in ((2, 2), (50, 6)):
+        _calls["n"] = 0
+        agent = Agent(model=_AlwaysCallsTool(), tools=[ping], callback_handler=None)
+        budget = lc._attach_tool_budget(agent, asked)
+        agent("go")
+        assert (_calls["n"], budget["limit"]) == (expected, expected)
+
+
+def test_otto_budget_scales_with_the_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from heaviside.pipeline import crossref_pipeline as cp
+    from heaviside.pipeline.crossref import CrossRefState
+
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")  # no triage: every row reaches Otto
+    seen: list[int | None] = []
+
+    def fake_call_agent(name: str, msg: str, **kwargs: Any) -> str:
+        seen.append(kwargs.get("tool_budget"))
+        return '{"challenges": []}'
+
+    monkeypatch.setattr(cp, "call_agent", fake_call_agent)
+    rows = [{"ref_des": f"C{i}", "component_type": "capacitor", "status": "no_substitute"}
+            for i in range(2)]
+    state = CrossRefState(source_bom=[], target_manufacturer="Würth Elektronik",
+                          crossref_result=rows)
+    cp._stage6_otto(state)
+    assert seen == [3 * 2 + 2]

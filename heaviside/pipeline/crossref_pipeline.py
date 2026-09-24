@@ -3837,6 +3837,8 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
                         indent=2,
                     ),
                     max_tokens=otto_tokens,
+                    # ~3 searches per challenged row plus 2 lookups (ABT #1395).
+                    tool_budget=3 * len(batch) + 2,
                 )
                 raws.append(raw)
                 challenges.extend(extract_json_block(raw).get("challenges", []))
