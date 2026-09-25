@@ -35,17 +35,6 @@ logger = logging.getLogger(__name__)
 #: P(parameter deviates) above which a row is sent to Ray (tuned, see module doc).
 REVIEW_GATE_THRESHOLD: float = 0.25
 
-_STATUS_OPTIONS: dict[str, str] = {
-    "exact": ("The chosen substitute IS the original part: the same manufacturer part number, "
-              "or the original is already made by the target manufacturer."),
-    "recommended": ("The chosen substitute meets or exceeds every requirement of the original: same "
-                    "value within tolerance, equal or higher voltage/current/temperature ratings, "
-                    "equal or lower losses, and it fits the original's footprint."),
-    "partial": ("The chosen substitute meets the critical requirements but has a minor gap the "
-                "engineer must check: a slightly different value, a marginal rating, a larger "
-                "footprint that needs verification, or a missing datasheet parameter."),
-}
-
 _UNITS = {
     "capacitance": "F", "inductance": "H", "resistance": "Ω", "impedance_100mhz": "Ω",
     "vds": "V", "vrrm": "V", "voltage": "V", "rated_voltage": "V", "vf": "V",
@@ -117,11 +106,11 @@ def jev_crossref_row(entry: dict[str, Any], target_manufacturer: str,
     if extra_state:
         state.update(extra_state)
     pick = decide(state, {"pick": choice_question(
-        "Choose the catalogue candidate that best replaces the `original` part as a drop-in: "
-        "same primary value (capacitance, resistance, inductance, or function for ICs/connectors), "
-        "equal or higher voltage/current ratings (and at least `_sim_stress.V_rated_min` when given), "
-        "same or better dielectric/tolerance, and `fits_original` true when present. Prefer an "
-        "exact match over a better-rated one.", options)})["pick"]
+        "Choose the catalogue candidate that best replaces the `original` part. Each candidate "
+        "carries the ranker's verdict in `kelvin`: `status` (recommended beats partial), `grade` "
+        "(drop_in beats minor_review beats major_review beats redesign), `footprint`, and "
+        "per-parameter `params` verdicts with `notes`. Prefer the candidate the verdicts rate "
+        "highest; weigh the notes for anything that matters to this circuit.", options)})["pick"]
     key = pick.get("choice")
     if key not in options:
         raise JevError(f"{entry.get('ref_des')}: Jev chose {key!r}, not a listed candidate")
@@ -143,19 +132,20 @@ def jev_crossref_row(entry: dict[str, Any], target_manufacturer: str,
     mpn = chosen.get("mpn")
     if not mpn or mpn == "?":
         raise JevError(f"{base['ref_des']}: chosen candidate {key} has no MPN")
-    st = decide({**state, "substitute": _readable(chosen)}, {"status": choice_question(
-        "The `substitute` was chosen to replace the `original`. Classify how well it replaces it.",
-        _STATUS_OPTIONS)})["status"]
-    status = st.get("choice")
-    if status not in _STATUS_OPTIONS:
-        raise JevError(f"{base['ref_des']}: Jev status {status!r} is not a valid status")
+    kelvin = chosen.get("kelvin")
+    if not kelvin or kelvin.get("status") not in ("recommended", "partial"):
+        raise JevError(f"{base['ref_des']}: chosen candidate {mpn} carries no Kelvin verdict — "
+                       "candidates must be ranked by Kelvin before the choice")
+    # Kelvin judged the chosen part; the same MPN as the original is exact.
+    status = "exact" if mpn == base["original_pn"] else kelvin["status"]
+    why = "; ".join(kelvin.get("notes") or [])
     return {**base, "substitute_pn": mpn,
             "substitute_value": "", "substitute_voltage": "",
             "substitute_package": chosen.get("package", ""),
             "status": status,
-            "notes": f"Chosen from {len(cands)} catalogue candidates by the decision model "
-                     f"(P={p_pick:.2f}); status {status} "
-                     f"(P={float((st.get('probabilities') or {}).get(status, 0.0)):.2f})."}
+            "notes": f"Chosen from {len(cands)} Kelvin-ranked candidates by the decision model "
+                     f"(P={p_pick:.2f}); Kelvin grades it {kelvin.get('grade', '?')}"
+                     + (f": {why}" if why else ".")}
 
 
 # ---------------------------------------------------------------------------
@@ -220,52 +210,45 @@ def jev_review_gate(row: dict[str, Any],
 # Stage 6: a broadened catalogue search + Jev pick, before Kimi's Otto
 # ---------------------------------------------------------------------------
 
-#: How far the broadened search relaxes the original's primary value. A
-#: resistor stays tight (a divider cannot drift); caps and inductors get the
-#: ±20 % Otto's own diagnoses kept asking for. The primary-value gate and the
-#: parameter check still judge whatever is picked.
-BROADEN_VALUE_TOLERANCE_PCT: dict[str, float] = {"capacitor": 20.0, "magnetic": 20.0,
-                                                 "resistor": 2.0}
+def jev_broadened_rescue(row: dict[str, Any], state: Any,
+                         cache: dict[str, list[dict[str, Any]]]) -> dict[str, Any] | None:
+    """Rank the target's whole category for a no_substitute row through Kelvin
+    (with the circuit's stress), and let Jev pick one or none.
 
-
-def jev_broadened_rescue(row: dict[str, Any], target_manufacturer: str,
-                         circuit_context: Any = None) -> dict[str, Any] | None:
-    """Search the catalogue with relaxed filters and let Jev pick one or none.
-
-    Returns the replacement row (status ``partial``, the relaxation named in
-    the notes) or ``None`` when the row is not searchable this way or Jev
-    finds nothing acceptable.
+    The first pass only saw the prefetch's value-nearest 50; this looks at every
+    part of the category Kelvin will accept. Returns the replacement row
+    (Kelvin's status, noted as found by the wider search) or ``None``.
+    ``cache`` holds each category's target-manufacturer rows across one stage
+    call, so a catalogue file is read once, not once per row.
     """
-    from heaviside.agents.tools import _crossref_search_impl
-    from heaviside.pipeline.crossref_pipeline import _parse_value_si, _to_volts
+    from heaviside.pipeline import kelvin_rank
+    from heaviside.pipeline.crossref_pipeline import (
+        _candidate_summaries_for_llm,
+        _target_manufacturer_envelopes,
+    )
 
     cat = row.get("component_type", "")
-    tol = BROADEN_VALUE_TOLERANCE_PCT.get(cat)
-    value = _parse_value_si(row.get("original_value"), cat) if tol is not None else None
-    if tol is None or value is None:
+    ref = row.get("ref_des")
+    comp = next((c for c in state.source_bom if c.get("ref_des") == ref), None) or {
+        "ref_des": ref, "component_type": cat, "value": row.get("original_value", ""),
+        "voltage": row.get("original_voltage", ""), "package": row.get("original_package", ""),
+        "original_mpn": row.get("original_pn", "")}
+    envs = _target_manufacturer_envelopes(state.target_manufacturer, cat, cache)
+    ranked, verdicts = kelvin_rank.rank(comp, cat, envs, max_results=10,
+                                        stress=state.stress_by_ref.get(ref))
+    if not ranked:
         return None
-    kwargs: dict[str, Any] = {}
-    if cat == "capacitor":
-        v = _to_volts(row.get("original_voltage"))
-        if v is not None:
-            kwargs["min_voltage"] = v
-    found = json.loads(_crossref_search_impl(cat, target_manufacturer, value=value,
-                                             value_tolerance_pct=tol, max_results=10, **kwargs))
-    cands = found.get("candidates") or []
-    if not cands:
-        return None
-    entry = {
-        "ref_des": row.get("ref_des"), "component_type": cat,
-        "original_mpn": row.get("original_pn") or row.get("original_mpn") or "",
-        "value": row.get("original_value", ""), "voltage": row.get("original_voltage", ""),
-        "package": row.get("original_package", ""), "_tas_candidates": cands,
-    }
-    picked = jev_crossref_row(entry, target_manufacturer, circuit_context)
+    state.kelvin_verdicts.setdefault(str(ref), {}).update(verdicts)
+    entry = {**comp, "original_mpn": row.get("original_pn") or comp.get("original_mpn", ""),
+             "_tas_candidates": _candidate_summaries_for_llm(ranked, cat, comp.get("_source_dims_m"),
+                                                            limit=10, kelvin_verdicts=verdicts)}
+    entry.pop("_source_env", None)
+    entry.pop("_source_dims_m", None)
+    picked = jev_crossref_row(entry, state.target_manufacturer, state.circuit_context)
     if picked["status"] == "no_substitute":
         return None
-    relax = f"value within ±{tol:g}%" + (", voltage ≥ original" if "min_voltage" in kwargs else "")
     return {**row, **{k: picked[k] for k in ("substitute_pn", "substitute_value",
-                                             "substitute_voltage", "substitute_package")},
-            "status": "partial",
-            "notes": f"Found by a broadened catalogue search ({relax}) after the first search "
-                     f"returned nothing; {picked['notes']}"}
+                                             "substitute_voltage", "substitute_package",
+                                             "status")},
+            "notes": "Found by ranking the target's whole catalogue category after the first "
+                     f"search returned nothing; {picked['notes']}"}

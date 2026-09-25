@@ -110,6 +110,20 @@ def cross_reference(
     )
 
 
+def cross_reference_options(
+    category: str,
+    original: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    """:func:`cross_reference` with Kelvin's full options object passed through
+    (``original_verified``, ``max_results``, ``requirements``, ``operating_voltage``,
+    ``check_footprint``, …). Kelvin rejects malformed options and unknown
+    categories by raising; nothing is defaulted here."""
+    pk, _ = _engine()
+    return pk.cross_reference(category, original, candidates, options)
+
+
 def chooser_candidates(result: dict[str, Any], limit: int = 25) -> list[dict[str, Any]]:
     """Project a SelectionResult into the compact records HS's LLM chooser
     (`component_match.select_candidate`) consumes: pick-among a ranked list, never invent."""

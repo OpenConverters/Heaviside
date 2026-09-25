@@ -41,6 +41,15 @@ _FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 # Both must parse, enrich, and batch under the token limit deterministically.
 _FIXTURES = ["lumiquote_bom_v2.xlsx", "lumiquote_bom_v1.xlsx"]
 
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _kimi_path(monkeypatch):
+    # these tests measure the Kimi cross-referencer's batching
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")
+
+
 
 def _load_normalized(fixture: str):
     path = _FIXTURE_DIR / fixture

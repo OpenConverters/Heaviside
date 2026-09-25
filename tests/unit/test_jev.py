@@ -115,18 +115,34 @@ def test_review_gate_never_clears_a_row_with_nothing_compared(fake_jev) -> None:
 
 _ENTRY = {"ref_des": "C1", "component_type": "capacitor", "original_mpn": "GRM188R71H104KA93D",
           "value": "100nF", "voltage": "50V", "package": "0603",
-          "_tas_candidates": [{"mpn": "885012206095", "capacitance": 1e-7, "package": "0603"},
-                              {"mpn": "885012206102", "capacitance": 1e-7, "package": "0603"}]}
+          "_tas_candidates": [{"mpn": "885012206095", "capacitance": 1e-7, "package": "0603",
+                               "kelvin": {"status": "recommended", "grade": "drop_in"}},
+                              {"mpn": "885012206102", "capacitance": 1e-7, "package": "0603",
+                               "kelvin": {"status": "partial", "grade": "minor_review",
+                                          "notes": ["X5R vs X7R"]}}]}
 
 
 def test_crossref_pick_returns_the_chosen_candidate(fake_jev) -> None:
     from heaviside.pipeline.jev_decisions import jev_crossref_row
 
     calls, script = fake_jev
-    script["pick"], script["status"] = "c1", "recommended"
+    script["pick"] = "c1"
     row = jev_crossref_row(_ENTRY, "Würth Elektronik")
-    assert row["substitute_pn"] == "885012206102" and row["status"] == "recommended"
+    # Jev chose; the status is Kelvin's verdict for the chosen part.
+    assert row["substitute_pn"] == "885012206102" and row["status"] == "partial"
+    assert "X5R vs X7R" in row["notes"]
     assert "100nF" in str(calls[0]["questions"]["pick"]["criteria"]["c0"])  # SI shown readable
+    assert len(calls) == 1  # no second (status) question
+
+
+def test_crossref_pick_refuses_an_unranked_candidate(fake_jev) -> None:
+    from heaviside.pipeline.jev_decisions import jev_crossref_row
+
+    _, script = fake_jev
+    script["pick"] = "c0"
+    entry = {**_ENTRY, "_tas_candidates": [{"mpn": "X", "capacitance": 1e-7}]}
+    with pytest.raises(JevError, match="Kelvin verdict"):
+        jev_crossref_row(entry, "Würth Elektronik")
 
 
 def test_crossref_pick_none_is_no_substitute(fake_jev) -> None:
@@ -231,45 +247,55 @@ _NOSUB = {"ref_des": "C9", "component_type": "capacitor", "original_pn": "X", "s
           "original_value": "22uF", "original_voltage": "25V", "original_package": "0805"}
 
 
-def test_broadened_rescue_marks_the_pick_partial(fake_jev, monkeypatch: pytest.MonkeyPatch) -> None:
-    import json
+def _rescue_state():
+    from heaviside.pipeline.crossref import CrossRefState
 
-    import heaviside.agents.tools as tools
+    return CrossRefState(source_bom=[{**_NOSUB, "value": "22uF"}], target_manufacturer="W")
+
+
+def test_broadened_rescue_takes_kelvins_verdict(fake_jev, monkeypatch: pytest.MonkeyPatch) -> None:
+    from heaviside.pipeline import crossref_pipeline as cp
+    from heaviside.pipeline import kelvin_rank
     from heaviside.pipeline.jev_decisions import jev_broadened_rescue
 
     _, script = fake_jev
-    script["pick"], script["status"] = "c0", "recommended"
-    seen: dict[str, Any] = {}
-
-    def fake_search(cat: str, target: str, **kw: Any) -> str:
-        seen.update(kw, cat=cat)
-        return json.dumps({"candidates": [{"mpn": "885012107014", "capacitance": 2.2e-5}]})
-
-    monkeypatch.setattr(tools, "_crossref_search_impl", fake_search)
-    row = jev_broadened_rescue(dict(_NOSUB), "Würth Elektronik")
+    script["pick"] = "c0"
+    env = {"x": 1}
+    monkeypatch.setattr(cp, "_target_manufacturer_envelopes", lambda *a, **k: [env])
+    monkeypatch.setattr(kelvin_rank, "rank", lambda *a, **k: (
+        [env], {"885012107014": {"status": "partial", "grade": "minor_review"}}))
+    monkeypatch.setattr(cp, "_candidate_summaries_for_llm", lambda *a, **k: [
+        {"mpn": "885012107014", "kelvin": {"status": "partial", "grade": "minor_review"}}])
+    st = _rescue_state()
+    row = jev_broadened_rescue(dict(_NOSUB), st, {})
     assert row is not None and row["status"] == "partial" and row["substitute_pn"] == "885012107014"
-    assert seen["value_tolerance_pct"] == 20.0 and seen["min_voltage"] == 25.0
-    assert abs(seen["value"] - 2.2e-5) < 1e-12
+    assert st.kelvin_verdicts["C9"]["885012107014"]["status"] == "partial"
 
 
 def test_broadened_rescue_none_leaves_the_row(fake_jev, monkeypatch: pytest.MonkeyPatch) -> None:
-    import json
-
-    import heaviside.agents.tools as tools
+    from heaviside.pipeline import crossref_pipeline as cp
+    from heaviside.pipeline import kelvin_rank
     from heaviside.pipeline.jev_decisions import jev_broadened_rescue
 
     _, script = fake_jev
     script["pick"] = "none"
-    monkeypatch.setattr(tools, "_crossref_search_impl",
-                        lambda *a, **k: json.dumps({"candidates": [{"mpn": "A"}]}))
-    assert jev_broadened_rescue(dict(_NOSUB), "Würth Elektronik") is None
+    monkeypatch.setattr(cp, "_target_manufacturer_envelopes", lambda *a, **k: [{}])
+    monkeypatch.setattr(kelvin_rank, "rank", lambda *a, **k: ([{}], {"A": {"status": "partial"}}))
+    monkeypatch.setattr(cp, "_candidate_summaries_for_llm", lambda *a, **k: [
+        {"mpn": "A", "kelvin": {"status": "partial"}}])
+    assert jev_broadened_rescue(dict(_NOSUB), _rescue_state(), {}) is None
 
 
-def test_broadened_rescue_skips_rows_without_a_value(fake_jev) -> None:
+def test_broadened_rescue_with_nothing_kelvin_accepts(fake_jev, monkeypatch: pytest.MonkeyPatch) -> None:
+    from heaviside.pipeline import crossref_pipeline as cp
+    from heaviside.pipeline import kelvin_rank
     from heaviside.pipeline.jev_decisions import jev_broadened_rescue
 
-    assert jev_broadened_rescue({**_NOSUB, "original_value": ""}, "W") is None
-    assert jev_broadened_rescue({**_NOSUB, "component_type": "connector"}, "W") is None
+    calls, _ = fake_jev
+    monkeypatch.setattr(cp, "_target_manufacturer_envelopes", lambda *a, **k: [{}])
+    monkeypatch.setattr(kelvin_rank, "rank", lambda *a, **k: ([], {}))
+    assert jev_broadened_rescue(dict(_NOSUB), _rescue_state(), {}) is None
+    assert calls == []  # nothing to choose from: Jev is not asked
 
 
 def test_otto_only_sees_rows_the_rescue_left(fake_jev, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -316,8 +342,9 @@ def test_correction_repicks_with_the_objection_in_state(fake_jev, monkeypatch: p
     from heaviside.pipeline import crossref_pipeline as cp
 
     calls, script = fake_jev
-    script["pick"], script["status"] = "c0", "recommended"
-    monkeypatch.setattr(cp, "_candidate_summaries_for_llm", lambda *a, **k: [{"mpn": "GOOD"}])
+    script["pick"] = "c0"
+    monkeypatch.setattr(cp, "_candidate_summaries_for_llm", lambda *a, **k: [
+        {"mpn": "GOOD", "kelvin": {"status": "recommended", "grade": "drop_in"}}])
     monkeypatch.setattr(cp, "call_agent_json", lambda *a, **k: pytest.fail("must not call Kimi"))
     st = cp._stage3b_correct(_correction_state(True), ["C1: voltage rating too low"])
     assert st.crossref_result[0]["substitute_pn"] == "GOOD"
@@ -330,7 +357,8 @@ def test_correction_to_none_clears_the_rejected_part(fake_jev, monkeypatch: pyte
 
     _, script = fake_jev
     script["pick"] = "none"
-    monkeypatch.setattr(cp, "_candidate_summaries_for_llm", lambda *a, **k: [{"mpn": "X"}])
+    monkeypatch.setattr(cp, "_candidate_summaries_for_llm", lambda *a, **k: [
+        {"mpn": "X", "kelvin": {"status": "partial"}}])
     st = cp._stage3b_correct(_correction_state(True), ["C1: wrong value"])
     row = st.crossref_result[0]
     assert row["status"] == "no_substitute" and row["substitute_pn"] is None

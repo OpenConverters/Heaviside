@@ -280,3 +280,34 @@ __all__ = [
     "parse_si_value",
     "parse_voltage",
 ]
+
+
+def resolve_dimensional_value(value: object, preferred: str = "nominal") -> float:
+    """Collapse a PEAS ``dimensionWithTolerance`` to one number.
+
+    Mirrors ``PEAS::resolve_dimensional_values`` (PEAS/src/Dimension.hpp):
+    preferred NOMINAL takes nominal, else the mid-point of minimum and maximum,
+    else maximum, else minimum; MAXIMUM / MINIMUM pick that end first. A bare
+    number passes through. Raises ``ValueError`` when nothing is present —
+    never a silent 0.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"not a dimensional value: {value!r}")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, dict):
+        raise ValueError(f"not a dimensional value: {value!r}")
+    nom, lo, hi = value.get("nominal"), value.get("minimum"), value.get("maximum")
+    if preferred == "maximum" and hi is not None:
+        return float(hi)
+    if preferred == "minimum" and lo is not None:
+        return float(lo)
+    if nom is not None:
+        return float(nom)
+    if lo is not None and hi is not None:
+        return (float(lo) + float(hi)) / 2.0
+    if hi is not None:
+        return float(hi)
+    if lo is not None:
+        return float(lo)
+    raise ValueError(f"dimensional value has no nominal, minimum or maximum: {value!r}")

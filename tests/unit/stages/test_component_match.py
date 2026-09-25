@@ -55,6 +55,7 @@ def test_unsupported_category_raises():
 
 
 def test_select_candidate_fallback_without_llm(monkeypatch):
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")  # the Kimi-era no-key path
     monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
     cands = find_candidates(
         category="capacitor", target_manufacturer="Würth Elektronik",

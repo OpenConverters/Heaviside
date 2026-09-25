@@ -39,8 +39,18 @@ def test_oversize_kept_when_nothing_fits():
 
 
 def test_unknown_source_dims_keeps_all():
-    # No source footprint → cannot enforce fit → no filtering (all retained).
-    comp = {"value": "1uF", "voltage": "50V", "package": "0402", "_source_dims_m": None}
+    # Neither a measured body nor a package: the fit cannot be enforced, so
+    # nothing is filtered on it (all retained).
+    comp = {"value": "1uF", "voltage": "50V", "_source_dims_m": None}
     ranked = _rank_candidates(comp, "capacitor",
                               [_cap("A0402", "0402"), _cap("B2220", "2220")])
     assert set(_refs(ranked)) == {"A0402", "B2220"}
+
+
+def test_a_stated_package_is_a_known_footprint():
+    # The case code IS the footprint: with the original stated as 0402, a 2220
+    # overflows it and is dropped while an 0402 fits.
+    comp = {"value": "1uF", "voltage": "50V", "package": "0402", "_source_dims_m": None}
+    ranked = _rank_candidates(comp, "capacitor",
+                              [_cap("A0402", "0402"), _cap("B2220", "2220")])
+    assert _refs(ranked) == ["A0402"]

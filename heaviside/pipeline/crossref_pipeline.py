@@ -264,6 +264,7 @@ def _stage1_prefetch(state: CrossRefState, only_refs: set[str] | None = None) ->
             all_candidates,
             max_results=50,
             stress=stress,
+            verdicts_out=state.kelvin_verdicts.setdefault(ref, {}),
         )
 
     total = sum(len(v) for v in state.candidates_by_ref.values())
@@ -375,7 +376,12 @@ def _stage1_5_librarian(state: CrossRefState) -> CrossRefState:
         cache_key = (cat, value_str, package)
 
         if cache_key in searched:
-            state.candidates_by_ref[ref] = searched[cache_key]
+            # Same search, different row: the ranking depends on this row's
+            # stress and board space, so rank the cached envelopes for it.
+            state.candidates_by_ref[ref] = _rank_candidates(
+                comp, cat, searched[cache_key], max_results=50,
+                stress=state.stress_by_ref.get(ref),
+                verdicts_out=state.kelvin_verdicts.setdefault(ref, {}))
             continue
 
         keywords = f"{target_mfr} {value_str} {package} {cat}".strip()
@@ -408,8 +414,10 @@ def _stage1_5_librarian(state: CrossRefState) -> CrossRefState:
             except Exception:
                 continue
 
-        ranked = _rank_candidates(comp, cat, envelopes, max_results=50)
-        searched[cache_key] = ranked
+        ranked = _rank_candidates(comp, cat, envelopes, max_results=50,
+                                  stress=state.stress_by_ref.get(ref),
+                                  verdicts_out=state.kelvin_verdicts.setdefault(ref, {}))
+        searched[cache_key] = envelopes
         state.candidates_by_ref[ref] = ranked
         fetched += len(ranked)
         logger.info(
@@ -2299,8 +2307,32 @@ def _rank_candidates(
     all_candidates: list[dict[str, Any]],
     max_results: int = 50,
     stress: Any | None = None,
+    verdicts_out: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Rank and filter TAS candidates by relevance to the BOM component."""
+    """Rank and filter TAS candidates — through Kelvin, the one crossref ranker.
+
+    Returns the surviving envelopes best-first. Kelvin's verdict per candidate
+    (status, grade, parameter verdicts, notes) goes into ``verdicts_out`` keyed
+    by MPN when given; the envelopes are never modified.
+    """
+    from heaviside.pipeline import kelvin_rank
+
+    ranked, verdicts = kelvin_rank.rank(comp, category, all_candidates,
+                                        max_results=max_results, stress=stress)
+    if verdicts_out is not None:
+        verdicts_out.update(verdicts)
+    return ranked
+
+
+def _rank_candidates_python(
+    comp: dict[str, Any],
+    category: str,
+    all_candidates: list[dict[str, Any]],
+    max_results: int = 50,
+    stress: Any | None = None,
+) -> list[dict[str, Any]]:
+    """The retired Python ranker — kept only for the Kelvin-vs-Python
+    comparison on real BOMs; to be deleted once that is done."""
     from heaviside.pipeline.value_parse import (
         parse_capacitance,
         parse_inductance,
@@ -2819,7 +2851,8 @@ def _build_bom_for_llm(state: CrossRefState) -> list[dict[str, Any]]:
         candidates = state.candidates_by_ref.get(ref, [])
         if candidates:
             entry["_tas_candidates"] = _candidate_summaries_for_llm(
-                candidates, cat, source_dims, limit=10
+                candidates, cat, source_dims, limit=10,
+                kelvin_verdicts=state.kelvin_verdicts.get(ref),
             )
         # Connector/analog rows: the BOM carries no value/voltage that could
         # describe the part, so hand the LLM the ORIGINAL's catalogue summary
@@ -3513,6 +3546,7 @@ def _candidate_summaries_for_llm(
     category: str,
     source_dims: tuple[float, float, float | None] | None,
     limit: int,
+    kelvin_verdicts: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Summarise candidates for the LLM, tagging each with an explicit
     ``fits_original`` verdict (True / False / "unknown") so the cross-referencer
@@ -3521,6 +3555,11 @@ def _candidate_summaries_for_llm(
     out: list[dict[str, Any]] = []
     for c in candidates[:limit]:
         summ = _summarize_candidate(c, category)
+        verdict = (kelvin_verdicts or {}).get(str(summ.get("mpn")))
+        if verdict:
+            # Kelvin did the arithmetic; the chooser sees its conclusions.
+            summ["kelvin"] = {k: verdict[k] for k in ("status", "grade", "footprint", "direction",
+                                                      "notes", "params") if k in verdict}
         if source_dims:
             # 3-state: True (fits) / "one_size_larger" (partial, verify fit) /
             # False (≥2 sizes over) / "unknown".
@@ -3601,7 +3640,8 @@ def _stage4b_retry_hallucinations(
         candidates = state.candidates_by_ref.get(ref, [])
         if candidates:
             entry["_tas_candidates"] = _candidate_summaries_for_llm(
-                candidates, cat, source_dims, limit=10
+                candidates, cat, source_dims, limit=10,
+                kelvin_verdicts=state.kelvin_verdicts.get(ref),
             )
         src_env = comp.get("_source_env")
         if cat in ("connector", "analog") and isinstance(src_env, dict):
@@ -3802,11 +3842,12 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
         # after the strict in-kind rescue, so a provable match is never
         # pre-empted by a relaxed one. Kimi's Otto only sees what is left.
         _stage6_5_deterministic_rescue(state)
+        rescue_cache: dict[str, list[dict[str, Any]]] = {}
         for i, row in enumerate(state.crossref_result):
             if (row.get("status") != "no_substitute"
                     or row.get("component_type") in _IDENTITY_MATCHED_CATEGORIES):
                 continue
-            new = jev_broadened_rescue(row, state.target_manufacturer, state.circuit_context)
+            new = jev_broadened_rescue(row, state, rescue_cache)
             if new is not None:
                 state.crossref_result[i] = new
                 rescued.append(str(row.get("ref_des")))
@@ -3980,7 +4021,8 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
             candidates = state.candidates_by_ref.get(ref, [])
             if candidates:
                 entry["_tas_candidates"] = _candidate_summaries_for_llm(
-                    candidates, comp.get("component_type", ""), source_dims, limit=15
+                    candidates, comp.get("component_type", ""), source_dims, limit=15,
+                    kelvin_verdicts=state.kelvin_verdicts.get(ref),
                 )
             hints.append(entry)
 
@@ -4891,7 +4933,8 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
             candidates = state.candidates_by_ref.get(ref, [])
             if candidates:
                 entry["_tas_candidates"] = _candidate_summaries_for_llm(
-                    candidates, row.get("component_type", ""), source_dims, limit=15
+                    candidates, row.get("component_type", ""), source_dims, limit=15,
+                    kelvin_verdicts=state.kelvin_verdicts.get(ref),
                 )
             to_fix.append(entry)
 

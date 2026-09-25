@@ -119,6 +119,9 @@ class CrossRefState:
     target_manufacturer: str
     circuit_context: str | None = None
     candidates_by_ref: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # Kelvin's verdict for each ranked candidate: {ref: {mpn: verdict}}. Kept
+    # beside the envelopes, never inside them (they stay schema-valid TAS).
+    kelvin_verdicts: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     preclassified: dict[str, dict[str, Any]] = field(default_factory=dict)
     crossref_result: list[dict[str, Any]] = field(default_factory=list)
     guardrail_log: list[dict[str, Any]] = field(default_factory=list)

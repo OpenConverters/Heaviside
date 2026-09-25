@@ -85,8 +85,15 @@ def _post_json(base_url: str, path: str, payload: dict) -> str:
         return json.loads(resp.read().decode())["job_id"]
 
 
-def _poll(base_url: str, job_id: str, *, timeout_s: float = 1200.0) -> dict:
-    """Poll GET /jobs/{id} until done/error (the GUI polls every 2.5 s)."""
+def _poll(base_url: str, job_id: str, *, timeout_s: float | None = None) -> dict:
+    """Poll GET /jobs/{id} until done/error (the GUI polls every 2.5 s).
+
+    The limit defaults to 1200 s; ``FAE_JOB_TIMEOUT_S`` raises it for a slow
+    machine (the same for every run being compared)."""
+    import os
+
+    if timeout_s is None:
+        timeout_s = float(os.environ.get("FAE_JOB_TIMEOUT_S", "1200"))
     deadline = time.monotonic() + timeout_s
     last_pct = -1
     while time.monotonic() < deadline:

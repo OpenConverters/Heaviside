@@ -25,8 +25,16 @@ from heaviside.pipeline.crossref_pipeline import (
     _value_from_description,
 )
 
-# --- classification --------------------------------------------------------
+import pytest as _pytest
 
+
+@_pytest.fixture(autouse=True)
+def _kimi_path(monkeypatch):
+    # these tests are about bead ranking; BOM parsing must not reach the decision model
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")
+
+
+# --- classification --------------------------------------------------------
 
 def test_ferrite_chip_without_inductance_is_chipbead():
     """ "Ferrite Chip … 3A, 2 Pin" (Murata BLM wording) is a bead, not an inductor."""
@@ -139,8 +147,12 @@ def test_a_bead_row_is_offered_beads_not_inductors():
         electrical = cand["magnetic"]["manufacturerInfo"]["datasheetInfo"]["electrical"][0]
         assert electrical["subtype"] == "chipBead"
         assert "inductance" not in electrical
+    # Kelvin scores bead impedance as higher-is-better inside the same-bead
+    # window (within 15 % below the original's ~618 ohm is the same bead;
+    # above is more filtering), so the top pick is a same-footprint bead in
+    # that window — not necessarily the one closest to 600 ohm.
     top_z = _chip_bead_impedance_at_100mhz(cands[0])
-    assert top_z is not None and abs(top_z - 600.0) <= 60.0
+    assert top_z is not None and top_z >= 0.85 * 618.0
 
 
 def test_a_ferrite_bead_type_column_is_not_routed_to_magnetic():
@@ -170,7 +182,10 @@ def test_a_bead_with_a_taping_code_resolves_its_own_dimensions():
     summaries = _candidate_summaries_for_llm(
         state.candidates_by_ref["FB1"], "chipBead", dims, limit=4
     )
-    assert summaries and all(s.get("fits_original") is True for s in summaries)
+    # Every candidate is judged against the resolved body (no "unknown"), and
+    # the best one fits it.
+    assert summaries and all(s.get("fits_original") != "unknown" for s in summaries)
+    assert summaries[0].get("fits_original") is True
 
 
 # --- package from the measured body (user report) ---------------------------
