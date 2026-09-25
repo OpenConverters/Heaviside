@@ -33,7 +33,9 @@ def _bead_envelope(mpn: str, ohms: float) -> dict:
                 "name": "Würth Elektronik",
                 "reference": mpn,
                 "datasheetInfo": {
-                    "part": {"partNumber": mpn},
+                    # a real record states the case; Kelvin refuses a bead
+                    # whose size it cannot check against the original's
+                    "part": {"partNumber": mpn, "case": "0805"},
                     "electrical": [
                         {
                             "subtype": "chipBead",

@@ -33,6 +33,15 @@ from heaviside.pipeline.crossref_pipeline import (
     _stage_param_check,
 )
 
+
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _kimi_path(monkeypatch):
+    # part-number canonicalisation; BOM parsing must not reach the decision model
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")
+
 # Exactly the chip-bead rows of the reported BOM (job 1b73eec81dbd).
 BEAD_SPELLINGS = [
     "BLM21AG601SN1D",

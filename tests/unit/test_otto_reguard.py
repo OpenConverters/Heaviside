@@ -19,6 +19,15 @@ import pytest
 from heaviside.pipeline import crossref_pipeline as cp
 from heaviside.pipeline.crossref import CrossRefState
 
+
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _kimi_path(monkeypatch):
+    # Otto's re-guard around a Kimi call; the Jev routing in front of him is covered in test_jev
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")
+
 _HALLUCINATED = "WCAP-TOTALLY-INVENTED-9999"
 
 

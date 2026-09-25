@@ -15,12 +15,23 @@ from __future__ import annotations
 from heaviside.pipeline.crossref_pipeline import (
     _analog_attrs,
     _connector_attrs,
-    _rank_analog_candidates,
-    _rank_connector_candidates,
-    _rank_timebase_candidates,
+    _rank_candidates,
     _summarize_candidate,
     _timebase_attrs,
 )
+
+
+# The identity rankers are Kelvin's now; these tests hold it to the same rules.
+def _rank_candidates_connector(comp, cands, n):
+    return _rank_candidates(comp, "connector", cands, n)
+
+
+def _rank_candidates_analog(comp, cands, n):
+    return _rank_candidates(comp, "analog", cands, n)
+
+
+def _rank_candidates_timeBase(comp, cands, n):
+    return _rank_candidates(comp, "timeBase", cands, n)
 from heaviside.pipeline.param_check import (
     FAIL,
     PASS,
@@ -148,9 +159,15 @@ def test_connector_ranker_drops_wrong_positions_gender_pitch() -> None:
         _conn_env("W-TERM", family="terminalBlock"),
         _conn_env("W-GOOD"),
     ]
-    ranked = _rank_connector_candidates(comp, cands, 10)
+    verdicts: dict = {}
+    ranked = _rank_candidates(comp, "connector", cands, 10, verdicts_out=verdicts)
     mpns = [_summarize_candidate(c, "connector")["mpn"] for c in ranked]
-    assert mpns == ["W-GOOD"]
+    # Wrong positions, gender or family are refused. Another pitch is a board
+    # change, not a mismatch Kelvin hides: offered below the part that keeps
+    # the pads, as partial.
+    assert mpns[0] == "W-GOOD"
+    assert set(mpns) == {"W-GOOD", "W-2MM"}
+    assert verdicts["W-2MM"]["status"] == "partial"
 
 
 def test_connector_ranker_header_family_straddles_board_to_board() -> None:
@@ -158,15 +175,14 @@ def test_connector_ranker_header_family_straddles_board_to_board() -> None:
     # commodity headers as boardToBoard — the family gate must not kill it.
     orig = _conn_env("ORIG", mfr="Molex", family="pinHeaderSocket")
     comp = {"ref_des": "J1", "component_type": "connector", "_source_env": orig}
-    ranked = _rank_connector_candidates(comp, [_conn_env("W-B2B", family="boardToBoard")], 10)
+    ranked = _rank_candidates_connector(comp, [_conn_env("W-B2B", family="boardToBoard")], 10)
     assert len(ranked) == 1
 
 
 def test_connector_ranker_underrated_current_ranks_last() -> None:
     orig = _conn_env("ORIG", mfr="Molex", current=3.0)
     comp = {"ref_des": "J1", "component_type": "connector", "_source_env": orig}
-    ranked = _rank_connector_candidates(
-        comp, [_conn_env("W-WEAK", current=1.0), _conn_env("W-OK", current=3.0)], 10
+    ranked = _rank_candidates_connector(comp, [_conn_env("W-WEAK", current=1.0), _conn_env("W-OK", current=3.0)], 10
     )
     mpns = [_summarize_candidate(c, "connector")["mpn"] for c in ranked]
     assert mpns == ["W-OK", "W-WEAK"]
@@ -176,7 +192,7 @@ def test_connector_ranker_unknown_original_returns_nothing() -> None:
     # Nothing known about the original (not in DB, no parsable text): offering
     # arbitrary candidates would invite a plausible-looking wrong pick.
     comp = {"ref_des": "J1", "component_type": "connector", "original_mpn": "999"}
-    assert _rank_connector_candidates(comp, [_conn_env("W-GOOD")], 10) == []
+    assert _rank_candidates_connector(comp, [_conn_env("W-GOOD")], 10) == []
 
 
 def test_connector_attrs_backfills_pitch_from_description() -> None:
@@ -195,7 +211,7 @@ def test_connector_text_fallback_gates_on_bom_description() -> None:
         "description": "Header, 2.54mm pitch, 10POS, vertical",
     }
     cands = [_conn_env("W-6POS", positions=6), _conn_env("W-10POS", positions=10)]
-    ranked = _rank_connector_candidates(comp, cands, 10)
+    ranked = _rank_candidates_connector(comp, cands, 10)
     mpns = [_summarize_candidate(c, "connector")["mpn"] for c in ranked]
     assert mpns == ["W-10POS"]
 
@@ -296,7 +312,7 @@ def test_analog_ranker_gates_subtype_and_channels() -> None:
         _analog_env("QUAD", channels=4),
         _analog_env("DUAL", channels=2),
     ]
-    ranked = _rank_analog_candidates(comp, cands, 10)
+    ranked = _rank_candidates_analog(comp, cands, 10)
     mpns = [_summarize_candidate(c, "analog")["mpn"] for c in ranked]
     assert mpns == ["DUAL"]
 
@@ -311,7 +327,7 @@ def test_analog_ranker_text_fallback_infers_function() -> None:
         _analog_env("CMP", subtype="comparator"),
         _analog_env("OPA", subtype="operationalAmplifier", channels=2),
     ]
-    ranked = _rank_analog_candidates(comp, cands, 10)
+    ranked = _rank_candidates_analog(comp, cands, 10)
     mpns = [_summarize_candidate(c, "analog")["mpn"] for c in ranked]
     assert mpns == ["OPA"]
 
@@ -411,7 +427,7 @@ def test_timebase_ranker_gates_frequency_technology_cl() -> None:
         _tb_env("W-CL18", load_capacitance=1.8e-11),  # wrong load capacitance
         _tb_env("W-GOOD"),
     ]
-    ranked = _rank_timebase_candidates(comp, cands, 10)
+    ranked = _rank_candidates_timeBase(comp, cands, 10)
     mpns = [_summarize_candidate(c, "timeBase")["mpn"] for c in ranked]
     assert mpns == ["W-GOOD"]
 
@@ -423,7 +439,7 @@ def test_timebase_ranker_text_fallback() -> None:
         "description": "CRYSTAL 32.768KHZ 12.5PF SMD",
     }
     cands = [_tb_env("W-25M", frequency=25e6), _tb_env("W-32K", frequency=32768.0)]
-    ranked = _rank_timebase_candidates(comp, cands, 10)
+    ranked = _rank_candidates_timeBase(comp, cands, 10)
     mpns = [_summarize_candidate(c, "timeBase")["mpn"] for c in ranked]
     assert mpns == ["W-32K"]
 
@@ -450,7 +466,7 @@ def test_timebase_params_verdicts() -> None:
 
 def test_timebase_unknown_original_returns_nothing() -> None:
     comp = {"ref_des": "Y1", "component_type": "timeBase", "original_mpn": "XYZ"}
-    assert _rank_timebase_candidates(comp, [_tb_env("W-GOOD")], 10) == []
+    assert _rank_candidates_timeBase(comp, [_tb_env("W-GOOD")], 10) == []
 
 
 # ── identity-matched: unverifiable original → no_substitute ──────────────────

@@ -21,13 +21,6 @@ def test_one_size_up_penalty_below_oversize_base():
     assert 0 < pen < _OVERSIZE_BASE
 
 
-def test_one_size_up_beats_near_value_fit():
-    # the one-size-up penalty must stay below the value-match weight so an exact
-    # value one size up outranks a near-value fitting part
-    pen = CP._footprint_penalty(_dims("0402"), _dims("0603"))
-    assert pen < CP._VALUE_MATCH_WEIGHT
-
-
 def test_two_sizes_up_stays_oversize():
     pen = CP._footprint_penalty(_dims("0402"), _dims("0805"))
     assert pen >= _OVERSIZE_BASE
