@@ -412,3 +412,21 @@ def test_gate_never_answers_a_ray_objection(gate_env) -> None:
     cleared, rec = cp._jev_review_gate(_gate_state([_full_row("R1"), _full_row("R2")], [ray]))
     assert cleared == {"R2"}
     assert rec["rows"]["R1"]["sent_to_ray_because"].startswith("objected to by Ray")
+
+
+def test_correction_can_keep_the_current_substitute(fake_jev, monkeypatch: pytest.MonkeyPatch) -> None:
+    """trap C1: Ray objected, and the re-pick had no way to say "the current part
+    is fine" — it swapped an exact 0402 drop-in for a larger 0603. Keeping it is
+    an option now, and keeping changes nothing."""
+    from heaviside.pipeline import crossref_pipeline as cp
+
+    calls, script = fake_jev
+    script["pick"] = "keep"
+    monkeypatch.setattr(cp, "_candidate_summaries_for_llm", lambda *a, **k: [
+        {"mpn": "BAD", "kelvin": {"status": "recommended", "grade": "drop_in"}},
+        {"mpn": "BIGGER", "kelvin": {"status": "partial", "grade": "minor_review"}}])
+    st = _correction_state(True)
+    st = cp._stage3b_correct(st, ["C1: dielectric code unverified"])
+    row = st.crossref_result[0]
+    assert row["substitute_pn"] == "BAD" and row["status"] == "recommended"
+    assert "keep" in calls[0]["questions"]["pick"]["criteria"]

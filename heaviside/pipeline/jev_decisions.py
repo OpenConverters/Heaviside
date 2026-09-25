@@ -84,11 +84,14 @@ def _original_view(entry: dict[str, Any]) -> dict[str, Any]:
 
 def jev_crossref_row(entry: dict[str, Any], target_manufacturer: str,
                      circuit_context: Any = None,
-                     extra_state: dict[str, Any] | None = None) -> dict[str, Any]:
+                     extra_state: dict[str, Any] | None = None,
+                     keep: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Build one crossref row for ``entry`` from its ``_tas_candidates`` via Jev.
 
     ``extra_state`` adds context for Jev to weigh (e.g. the reviewer's
     objections and the pick they rejected, in the correction pass).
+    ``keep`` offers the current substitute (its summary, with Kelvin's
+    verdict) as an option; choosing it returns ``None`` — no change.
     """
     cands = entry.get("_tas_candidates") or []
     if not cands:
@@ -96,6 +99,10 @@ def jev_crossref_row(entry: dict[str, Any], target_manufacturer: str,
     original = _original_view(entry)
     options = {f"c{i}": "Candidate " + json.dumps(_readable(c), ensure_ascii=False, default=str)
                for i, c in enumerate(cands)}
+    if keep is not None:
+        options["keep"] = ("Keep the current substitute — the objections do not show it is wrong, "
+                           "or every alternative is worse by the ranker's verdict: "
+                           + json.dumps(_readable(keep), ensure_ascii=False, default=str))
     options["none"] = ("None of the listed candidates can replace the original: each one has a "
                        "different primary value beyond tolerance, a lower voltage or current rating, "
                        "a different function or identity, or does not fit the footprint "
@@ -110,11 +117,15 @@ def jev_crossref_row(entry: dict[str, Any], target_manufacturer: str,
         "carries the ranker's verdict in `kelvin`: `status` (recommended beats partial), `grade` "
         "(drop_in beats minor_review beats major_review beats redesign), `footprint`, and "
         "per-parameter `params` verdicts with `notes`. Prefer the candidate the verdicts rate "
-        "highest; weigh the notes for anything that matters to this circuit.", options)})["pick"]
+        "highest; weigh the notes for anything that matters to this circuit. When verdicts are "
+        "equal, prefer the wider temperature grade (higher `temp_max_C`, e.g. X7R over X5R), then "
+        "the tighter tolerance.", options)})["pick"]
     key = pick.get("choice")
     if key not in options:
         raise JevError(f"{entry.get('ref_des')}: Jev chose {key!r}, not a listed candidate")
     p_pick = float((pick.get("probabilities") or {}).get(key, 0.0))
+    if key == "keep":
+        return None
     base = {
         "ref_des": entry.get("ref_des", entry.get("name")),
         "component_type": entry.get("component_type", ""),

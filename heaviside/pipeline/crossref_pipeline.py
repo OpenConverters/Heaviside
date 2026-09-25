@@ -4953,6 +4953,11 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
         for e in with_cands:
             ref = str(e["ref_des"])
             cited = [o for o in objections if ref in _objection_refs([o], {ref})] or objections
+            current = e.get("current_substitute")
+            keep = None
+            if current and current != "no_substitute" and e.get("current_status") != "no_substitute":
+                keep = next((c for c in e["_tas_candidates"] if c.get("mpn") == current), None) or {
+                    "mpn": current, "kelvin": state.kelvin_verdicts.get(ref, {}).get(str(current))}
             fix = jev_crossref_row(
                 {**e, "original_mpn": e.get("original_pn", ""), "value": e.get("original_value", ""),
                  "voltage": e.get("original_voltage", ""), "package": e.get("original_package", "")},
@@ -4961,8 +4966,11 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
                              "rejected_substitute": e.get("current_substitute"),
                              "instruction": "The reviewer rejected the previous pick for the "
                                             "reasons in `reviewer_objections`; choose the "
-                                            "candidate that answers them, or none."})
-            jev_fixes.append(fix)
+                                            "candidate that answers them, keep the current one, "
+                                            "or none."},
+                keep=keep)
+            if fix is not None:  # None: Jev kept the current substitute
+                jev_fixes.append(fix)
         if jev_fixes:
             from heaviside.llm.usage import record_avoided
 
