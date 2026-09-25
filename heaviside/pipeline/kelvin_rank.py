@@ -141,6 +141,8 @@ def original_spec(comp: dict[str, Any], category: str) -> tuple[dict[str, Any] |
 def stress_requirements(category: str, stress: Any) -> dict[str, float]:
     """The circuit's minimum ratings at the operating point (the old ranker's margins)."""
     from heaviside.pipeline.crossref_pipeline import (
+        _IR_MARGIN,
+        _ISAT_MARGIN,
         CURRENT_DERATING_FACTOR,
         DIODE_VOLTAGE_DERATING,
         VOLTAGE_DERATING_FACTOR,
@@ -154,7 +156,11 @@ def stress_requirements(category: str, stress: Any) -> dict[str, float]:
     if category == "capacitor":
         req = {"voltage": v_peak and v_peak * VOLTAGE_DERATING_FACTOR, "ripple_current": i_rms}
     elif category == "magnetic":
-        req = {"saturation_current": i_peak, "rated_current": i_rms}
+        # The FAE-validated headroom the operating-point rescue already uses:
+        # Isat must clear the peak and the rated current the RMS with margin, or
+        # the part runs at its saturation / temperature-rise limit.
+        req = {"saturation_current": i_peak and i_peak * _ISAT_MARGIN,
+               "rated_current": i_rms and i_rms * _IR_MARGIN}
     elif category == "mosfet":
         req = {"vds": v_peak and v_peak * VOLTAGE_DERATING_FACTOR,
                "id": i_peak and i_peak * CURRENT_DERATING_FACTOR}

@@ -3553,13 +3553,14 @@ def _candidate_summaries_for_llm(
     doesn't have to compare dimensions by hand. The substitute must occupy no
     more board space than the original."""
     out: list[dict[str, Any]] = []
-    for c in candidates[:limit]:
+    for position, c in enumerate(candidates[:limit], 1):
         summ = _summarize_candidate(c, category)
         verdict = (kelvin_verdicts or {}).get(str(summ.get("mpn")))
         if verdict:
-            # Kelvin did the arithmetic; the chooser sees its conclusions.
-            summ["kelvin"] = {k: verdict[k] for k in ("status", "grade", "footprint", "direction",
-                                                      "notes", "params") if k in verdict}
+            # Kelvin did the arithmetic; the chooser sees its conclusions, and
+            # its order (ties inside a grade are broken by Kelvin's penalties).
+            summ["kelvin"] = {"rank": position, **{k: verdict[k] for k in (
+                "status", "grade", "footprint", "direction", "notes", "params") if k in verdict}}
         if source_dims:
             # 3-state: True (fits) / "one_size_larger" (partial, verify fit) /
             # False (≥2 sizes over) / "unknown".

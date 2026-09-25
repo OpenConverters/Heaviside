@@ -116,10 +116,11 @@ def jev_crossref_row(entry: dict[str, Any], target_manufacturer: str,
         "Choose the catalogue candidate that best replaces the `original` part. Each candidate "
         "carries the ranker's verdict in `kelvin`: `status` (recommended beats partial), `grade` "
         "(drop_in beats minor_review beats major_review beats redesign), `footprint`, and "
-        "per-parameter `params` verdicts with `notes`. Prefer the candidate the verdicts rate "
-        "highest; weigh the notes for anything that matters to this circuit. When verdicts are "
-        "equal, prefer the wider temperature grade (higher `temp_max_C`, e.g. X7R over X5R), then "
-        "the tighter tolerance.", options)})["pick"]
+        "per-parameter `params` verdicts with `notes`, and `rank` (1 = the ranker's best). Prefer "
+        "the candidate the verdicts rate highest and, among equals, the lower rank — the ranker "
+        "already breaks ties on temperature grade and size. Do not trade a drop-in for a larger "
+        "or over-rated part: prefer the smallest part that meets the requirements, and weigh the "
+        "notes for anything that matters to this circuit.", options)})["pick"]
     key = pick.get("choice")
     if key not in options:
         raise JevError(f"{entry.get('ref_des')}: Jev chose {key!r}, not a listed candidate")
