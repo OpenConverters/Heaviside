@@ -6665,6 +6665,8 @@ def _ondemand_candidates(
     category: str,
     comp: dict[str, Any],
     cache: dict[str, list[dict[str, Any]]],
+    verdicts_out: dict[str, dict[str, Any]] | None = None,
+    stress: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Load + rank target-manufacturer candidates for one component straight
     from TAS, used by the deterministic rescue when prefetch left none. The
@@ -6673,7 +6675,8 @@ def _ondemand_candidates(
     envs = _target_manufacturer_envelopes(target_manufacturer, category, cache)
     if not envs:
         return []
-    return _rank_candidates(comp, category, envs, max_results=50)
+    return _rank_candidates(comp, category, envs, max_results=50, stress=stress,
+                            verdicts_out=verdicts_out)
 
 
 # Don't offer an inductor more than this multiple of the ripple-required
@@ -7152,7 +7155,11 @@ def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
             # category mismatch between the source BOM (prefetch keys on it) and
             # the cross-referenced result. The deterministic floor must not skip
             # a rescuable part on that account, so fetch from TAS on demand.
-            cands = _ondemand_candidates(state.target_manufacturer, cat, comp, ondemand_cache)
+            cands = _ondemand_candidates(
+                state.target_manufacturer, cat, comp, ondemand_cache,
+                verdicts_out=state.kelvin_verdicts.setdefault(str(ref), {}),
+                stress=state.stress_by_ref.get(ref),
+            )
             if cands:
                 logger.info(
                     "CR stage 6.5: prefetch had 0 candidates for %s (%s); fetched %d on-demand",
@@ -7182,12 +7189,24 @@ def _stage6_5_deterministic_rescue(state: CrossRefState) -> CrossRefState:
         # voltage/chemistry only when the original side was known) — never claim
         # a check that no-oped on a missing original spec.
         basis = "/".join(patch.pop("verified_basis", ["value"]))
-        status = patch.get("status", "partial")
+        # The status is Kelvin's verdict for the part: the in-kind check here
+        # looks at value/voltage/chemistry only, and once marked a 2220 cap
+        # "recommended" for a 1206 original that Kelvin grades a redesign.
+        verdict = state.kelvin_verdicts.get(str(ref), {}).get(str(patch["substitute_pn"]))
+        if verdict is None:
+            raise CrossRefPipelineError(
+                f"CR stage 6.5: rescued {patch['substitute_pn']} for {ref} has no Kelvin "
+                "verdict — every candidate is ranked by Kelvin, so this is a bug"
+            )
+        patch["status"] = verdict["status"]
+        status = patch["status"]
         row.update(patch)
         prior = (row.get("notes") or "").strip()
+        kelvin_notes = "; ".join(verdict.get("notes") or [])
         row["notes"] = (
-            f"{prior} | deterministic in-kind rescue ({status}): "
-            f"{patch['substitute_pn']} verified on {basis} (LLM stages dropped it)."
+            f"{prior} | deterministic in-kind rescue ({status}, Kelvin grade "
+            f"{verdict.get('grade', '?')}): {patch['substitute_pn']} verified on {basis}"
+            + (f" — {kelvin_notes}" if kelvin_notes else "") + "."
         ).strip(" |")
         rescued += 1
     if rescued:

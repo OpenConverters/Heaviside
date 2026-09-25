@@ -101,6 +101,9 @@ def original_spec(comp: dict[str, Any], category: str) -> tuple[dict[str, Any] |
         if not spec:
             return None, False
     value = comp.get("value")
+    if isinstance(comp.get("value_si"), (int, float)) and value in (None, ""):
+        value = None
+        spec["value_si"] = float(comp["value_si"])
     if category == "varistor":
         v = _to_volts(value)
     else:

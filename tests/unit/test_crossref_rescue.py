@@ -41,16 +41,18 @@ def test_family_mismatch_not_rescued() -> None:
 
 
 def test_stage_rescues_no_substitute_row() -> None:
-    class _State:
-        pass
+    from heaviside.pipeline.crossref import CrossRefState
+    from heaviside.pipeline.crossref_pipeline import _rank_candidates
 
-    st = _State()
-    st.target_manufacturer = "Würth Elektronik"
-    st.source_bom = [{"ref_des": "C1", "component_type": "capacitor",
-                      "value_si": 22e-6, "rated_voltage": 10.0, "technology": "X7T"}]
-    st.crossref_result = [{"ref_des": "C1", "component_type": "capacitor",
-                           "status": "no_substitute", "notes": "LLM dropped it"}]
-    st.candidates_by_ref = {"C1": _wurth_envs(22e-6, "X7T", 10)}
+    comp = {"ref_des": "C1", "component_type": "capacitor",
+            "value_si": 22e-6, "rated_voltage": 10.0, "technology": "X7T"}
+    st = CrossRefState(source_bom=[comp], target_manufacturer="Würth Elektronik",
+                       crossref_result=[{"ref_des": "C1", "component_type": "capacitor",
+                                         "status": "no_substitute", "notes": "LLM dropped it"}])
+    # ranked the way stage 1 ranks, so each candidate carries Kelvin's verdict
+    st.candidates_by_ref["C1"] = _rank_candidates(
+        dict(comp), "capacitor", _wurth_envs(22e-6, "X7T", 10),
+        verdicts_out=st.kelvin_verdicts.setdefault("C1", {}))
     _stage6_5_deterministic_rescue(st)
     row = st.crossref_result[0]
     assert row["status"] in ("recommended", "partial")
@@ -76,17 +78,11 @@ def test_value_gate_demotion_is_rescued_after_param_check() -> None:
         value_si=10000.0, max_results=40)]
     comp = {"ref_des": "R1", "component_type": "resistor",
             "value": "10kΩ", "package": "0603", "original_mpn": "CRCW060310K0FKED"}
-    ranked = _rank_candidates(dict(comp), "resistor", cands, max_results=50)
+    from heaviside.pipeline.crossref import CrossRefState
 
-    class _State:
-        pass
-
-    st = _State()
-    st.target_manufacturer = "YAGEO"
-    st.diagnostics = []
-    st.stress_by_ref = {}
-    st.source_bom = [dict(comp)]
-    # the LLM proposed the wrong-value 11.1 kΩ part (a real catalogue MPN)
+    st = CrossRefState(source_bom=[dict(comp)], target_manufacturer="YAGEO")
+    ranked = _rank_candidates(dict(comp), "resistor", cands, max_results=50,
+                              verdicts_out=st.kelvin_verdicts.setdefault("R1", {}))
     st.crossref_result = [{"ref_des": "R1", "component_type": "resistor",
                            "original_pn": "CRCW060310K0FKED", "original_value": "10kΩ",
                            "substitute_pn": "NT0603BRD0711K1L", "status": "recommended",
@@ -105,3 +101,31 @@ def test_value_gate_demotion_is_rescued_after_param_check() -> None:
     assert row["substitute_pn"] and row["substitute_pn"] != "NT0603BRD0711K1L"
     # the promoted part is a genuine 10 kΩ 0603 YAGEO (AA0603*10KL family)
     assert row["substitute_pn"].startswith("AA0603") and "10K" in row["substitute_pn"], row
+
+
+def test_rescued_oversize_part_carries_kelvins_status_not_recommended() -> None:
+    """lt80603evkit C12: a 4.7 uF / 100 V 1206 original, and the only Würth parts
+    that meet 100 V are larger. The in-kind rescue verified value/voltage and
+    marked a 2220 "recommended"; the status must be Kelvin's verdict (partial,
+    with the footprint named), never a drop-in claim."""
+    from heaviside.pipeline.crossref import CrossRefState
+    from heaviside.pipeline.crossref_pipeline import _rank_candidates
+
+    comp = {"ref_des": "C12", "component_type": "capacitor", "value": "4.7uF",
+            "rated_voltage": "100V", "package": "1206", "technology": "X7R",
+            "_source_dims_m": (0.0032, 0.0016, 0.0019)}
+    st = CrossRefState(source_bom=[comp], target_manufacturer="Würth Elektronik",
+                       crossref_result=[{"ref_des": "C12", "component_type": "capacitor",
+                                         "status": "no_substitute", "notes": ""}])
+    st.candidates_by_ref["C12"] = _rank_candidates(
+        dict(comp), "capacitor", _wurth_envs(4.7e-6, "X7R", 100, ),
+        verdicts_out=st.kelvin_verdicts.setdefault("C12", {}))
+    _stage6_5_deterministic_rescue(st)
+    row = st.crossref_result[0]
+    if row["status"] == "no_substitute":
+        return  # nothing in-kind at all: nothing to mislabel
+    verdict = st.kelvin_verdicts["C12"][row["substitute_pn"]]
+    assert row["status"] == verdict["status"]
+    assert "Kelvin grade" in row["notes"]
+    if verdict.get("footprint") in ("overflows", "one_size_larger"):
+        assert row["status"] == "partial"
