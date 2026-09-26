@@ -31,6 +31,7 @@ Adapted to use ``heaviside.catalogue._reader`` and
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 from pathlib import Path
@@ -379,8 +380,15 @@ def _flat_record_from_env(env: dict, mi: dict) -> dict:
 
 
 def _tas_file_index(path: Path) -> dict[str, dict]:
-    """Return (building+caching once) an mpn_lower -> flat_record index for an
+    """Return (building+caching once) an mpn_lower -> LEAN record index for an
     NDJSON catalogue file.
+
+    A lean record is the flat record WITHOUT the raw envelope, plus where the
+    part's line sits in the file (``_at``: byte offset and which sub-record).
+    Holding every part's full envelope — every manufacturer, 130k capacitors —
+    cost ~8 GB to normalise one large BOM; the lookups only ever need the few
+    parts on it. :func:`_hydrate` turns a hit back into the full record by
+    reading that one line.
 
     A read error (e.g. a corrupt NDJSON line) PROPAGATES — it must never be
     swallowed into a partial index that is then cached for the process
@@ -398,20 +406,11 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
 
     evict_if_over_budget()
 
-    from heaviside.catalogue._reader import iter_envelopes
+    from heaviside.catalogue import _reader
 
     index: dict[str, dict] = {}
-    for _lineno, env in iter_envelopes(path):
-        for top_key in (
-            "capacitor",
-            "semiconductor",
-            "resistor",
-            "magnetics",
-            "magnetic",
-            "connector",
-            "analog",
-            "timeBase",
-        ):
+    for offset, env in _reader.iter_envelopes_at(path):
+        for top_key in _ENVELOPE_TOP_KEYS:
             sub = env.get(top_key)
             if not isinstance(sub, dict):
                 continue
@@ -438,16 +437,48 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
                     if isinstance(ref, str) and ref.strip():
                         key = ref.strip().lower()
                         if key not in index:
-                            flat = _flat_record_from_env(env, mi)
+                            lean = _flat_record_from_env(env, mi)
+                            del lean["raw_envelope"]
                             # The catalogue's own spelling of this MPN. The key is
                             # lower-cased for matching, so anything that shows an
                             # MPN to a user must read it from here instead.
-                            flat["mpn"] = ref.strip()
-                            index[key] = flat
+                            lean["mpn"] = ref.strip()
+                            lean["_at"] = (str(path), offset, top_key, inner_key)
+                            index[key] = lean
     # Only reached after the FULL scan succeeds — never cache a partial index.
     _TAS_INDEX_CACHE[str(path)] = index
     return index
 
+
+@functools.lru_cache(maxsize=2048)
+def _hydrate_at(path: str, offset: int, top_key: str, inner_key: str | None,
+                spelling: str) -> dict:
+    with open(path, "rb") as fh:
+        fh.seek(offset)
+        env = json.loads(fh.readline())
+    sub = env.get(top_key) if isinstance(env, dict) else None
+    record = sub if inner_key is None else (sub or {}).get(inner_key)
+    mi = (record or {}).get("manufacturerInfo") if isinstance(record, dict) else None
+    part = ((mi or {}).get("datasheetInfo") or {}).get("part") or {}
+    if not isinstance(mi, dict) or spelling not in (
+        str(mi.get("reference") or "").strip(), str(part.get("partNumber") or "").strip()
+    ):
+        from heaviside.catalogue._reader import CatalogueReadError
+
+        raise CatalogueReadError(
+            Path(path), 0,
+            f"catalogue changed under its index: {spelling} is no longer at byte {offset}",
+        )
+    flat = _flat_record_from_env(env, mi)
+    flat["mpn"] = spelling
+    return flat
+
+
+def _hydrate(lean: dict | None) -> dict | None:
+    """The full flat record (with ``raw_envelope``) for a lean index hit."""
+    if lean is None or "_at" not in lean:
+        return lean
+    return _hydrate_at(*lean["_at"], lean["mpn"])
 
 def _tas_base_index(path: Path) -> dict[str, dict]:
     """Packaging-base → record index for a catalogue file (ABT #137), cached
@@ -631,7 +662,7 @@ def _lookup_tas_part(
         # -153MEC). Exact hits still win, so no MPN that resolves today moves.
         hit = _resolve_with_variants(mpn_l, path, _tas_file_index(path))
         if hit is not None:
-            result = hit
+            result = _hydrate(hit)
             break
 
     _TAS_LOOKUP_CACHE[key] = result

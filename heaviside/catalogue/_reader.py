@@ -61,3 +61,33 @@ def iter_envelopes(path: Path) -> Iterator[tuple[int, dict[str, Any]]]:
 
 
 __all__ = ["CatalogueReadError", "iter_envelopes"]
+
+
+def iter_envelopes_at(path: Path) -> Iterator[tuple[int, dict[str, Any]]]:
+    """Yield ``(byte_offset, envelope)`` pairs — :func:`iter_envelopes` with the
+    offset of each line instead of its number, so an index can hold where a
+    part is rather than the part itself. Same loud errors."""
+    if not path.is_file():
+        raise CatalogueReadError(path, 0, "TAS catalogue file does not exist")
+    with path.open("rb") as fh:
+        lineno = 0
+        while True:
+            offset = fh.tell()
+            raw = fh.readline()
+            if not raw:
+                return
+            lineno += 1
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            try:
+                env = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise CatalogueReadError(
+                    path, lineno, f"JSON decode error: {exc.msg} at col {exc.colno}"
+                ) from exc
+            if not isinstance(env, dict):
+                raise CatalogueReadError(
+                    path, lineno, f"top-level value is {type(env).__name__}, expected object"
+                )
+            yield offset, env

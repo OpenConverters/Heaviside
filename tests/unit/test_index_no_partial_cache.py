@@ -33,6 +33,7 @@ def test_read_error_propagates_and_nothing_cached(
     monkeypatch, tmp_path, module, fn_name, cache_name
 ) -> None:
     monkeypatch.setattr(_reader, "iter_envelopes", _iter_that_fails_midway)
+    monkeypatch.setattr(_reader, "iter_envelopes_at", _iter_that_fails_midway)
     cache = getattr(module, cache_name)
     cache.clear()
 
@@ -59,6 +60,7 @@ def test_complete_scan_is_cached(monkeypatch, tmp_path, module, fn_name, cache_n
         yield (1, {"capacitor": {"manufacturerInfo": {"reference": "GOODPART-1"}}})
 
     monkeypatch.setattr(_reader, "iter_envelopes", _iter_ok)
+    monkeypatch.setattr(_reader, "iter_envelopes_at", _iter_ok)
     cache = getattr(module, cache_name)
     cache.clear()
 
