@@ -47,11 +47,26 @@ def test_a_lookup_returns_the_full_record(catalogue) -> None:
     assert rec["capacitance"] == 1e-7 and rec["voltage"] == 16.0
 
 
-def test_a_rewritten_file_is_caught_not_misread(catalogue) -> None:
+def test_a_rewritten_file_is_reindexed_not_misread(catalogue) -> None:
+    """magnetics.ndjson was rewritten by another session mid-job; the stale
+    offsets must never return another part's line."""
     root, envs = catalogue
     path = root / "capacitors.ndjson"
     g._tas_file_index(path)
     # the catalogue is replaced under the running index (a data deploy)
     path.write_text("\n".join(json.dumps(e) for e in reversed(envs)) + "\n")
-    with pytest.raises(CatalogueReadError, match="changed under its index"):
-        g._lookup_tas_part("885012205037", "capacitor", tas_data_dir=root)
+    rec = g._lookup_tas_part("885012205037", "capacitor", tas_data_dir=root)
+    assert rec["mpn"] == "885012205037" and rec["raw_envelope"] == envs[0]
+
+
+def test_a_stale_offset_in_the_same_mtime_is_still_caught(catalogue, monkeypatch) -> None:
+    """Even if the stat check misses a rewrite (same size, coarse mtime), the
+    re-read line is checked and the lookup re-indexes instead of misreading."""
+    root, envs = catalogue
+    path = root / "capacitors.ndjson"
+    g._tas_file_index(path)
+    stamp = g._TAS_INDEX_STAT[str(path)]
+    path.write_text("\n".join(json.dumps(e) for e in reversed(envs)) + "\n")
+    monkeypatch.setattr(g, "_file_stamp", lambda p: stamp)  # the rewrite goes unnoticed
+    rec = g._lookup_tas_part("885012208019", "capacitor", tas_data_dir=root)
+    assert rec["mpn"] == "885012208019" and rec["raw_envelope"] == envs[2]

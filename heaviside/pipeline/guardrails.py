@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,8 @@ _TAS_LOOKUP_CACHE: dict[tuple[str, str, str], dict | None] = {}
 # access and reused, so validating N substitutes is O(file) total instead of
 # O(N × file) — the latter made a large BOM (hundreds of magnetic substitutes,
 # each previously scanning the whole 50 MB magnetics.ndjson) take ~20 min.
+logger = logging.getLogger(__name__)
+
 _TAS_INDEX_CACHE: dict[str, dict[str, dict]] = {}
 _TAS_BASE_INDEX_CACHE: dict[str, dict[str, dict]] = {}
 _TAS_SQUASHED_INDEX_CACHE: dict[str, dict[str, dict]] = {}
@@ -398,7 +401,11 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
     """
     cached = _TAS_INDEX_CACHE.get(str(path))
     if cached is not None:
-        return cached
+        if _TAS_INDEX_STAT.get(str(path)) == _file_stamp(path):
+            return cached
+        # The file was rewritten since the index was built (a data deploy, the
+        # librarian, another session): its offsets no longer point at the parts.
+        _drop_file_index(path)
 
     # Bound memory before building another full-file index (see index_budget):
     # keeps a large crossref from exhausting RAM on a shared host.
@@ -407,6 +414,8 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
     evict_if_over_budget()
 
     from heaviside.catalogue import _reader
+
+    stamp = _file_stamp(path)
 
     index: dict[str, dict] = {}
     for offset, env in _reader.iter_envelopes_at(path):
@@ -446,8 +455,36 @@ def _tas_file_index(path: Path) -> dict[str, dict]:
                             lean["_at"] = (str(path), offset, top_key, inner_key)
                             index[key] = lean
     # Only reached after the FULL scan succeeds — never cache a partial index.
+    if _file_stamp(path) != stamp:
+        # Rewritten DURING the scan: offsets from before and after are mixed.
+        raise _CatalogueChanged(path, "catalogue rewritten while it was being indexed")
     _TAS_INDEX_CACHE[str(path)] = index
+    _TAS_INDEX_STAT[str(path)] = stamp
     return index
+
+
+#: (mtime_ns, size) of each file when its lean index was built.
+_TAS_INDEX_STAT: dict[str, tuple[int, int]] = {}
+
+
+def _file_stamp(path: Path) -> tuple[int, int]:
+    st = path.stat()
+    return (st.st_mtime_ns, st.st_size)
+
+
+class _CatalogueChanged(Exception):
+    """A catalogue file changed under its lean index; rebuild and look again."""
+
+    def __init__(self, path: Path, why: str) -> None:
+        super().__init__(f"{path}: {why}")
+        self.path = path
+
+
+def _drop_file_index(path: Path) -> None:
+    for cache in (_TAS_INDEX_CACHE, _TAS_BASE_INDEX_CACHE, _TAS_SQUASHED_INDEX_CACHE):
+        cache.pop(str(path), None)
+    _TAS_INDEX_STAT.pop(str(path), None)
+    _hydrate_at.cache_clear()
 
 
 @functools.lru_cache(maxsize=2048)
@@ -455,7 +492,11 @@ def _hydrate_at(path: str, offset: int, top_key: str, inner_key: str | None,
                 spelling: str) -> dict:
     with open(path, "rb") as fh:
         fh.seek(offset)
-        env = json.loads(fh.readline())
+        line = fh.readline()
+    try:
+        env = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise _CatalogueChanged(Path(path), f"no JSON record at byte {offset} any more") from exc
     sub = env.get(top_key) if isinstance(env, dict) else None
     record = sub if inner_key is None else (sub or {}).get(inner_key)
     mi = (record or {}).get("manufacturerInfo") if isinstance(record, dict) else None
@@ -463,15 +504,30 @@ def _hydrate_at(path: str, offset: int, top_key: str, inner_key: str | None,
     if not isinstance(mi, dict) or spelling not in (
         str(mi.get("reference") or "").strip(), str(part.get("partNumber") or "").strip()
     ):
-        from heaviside.catalogue._reader import CatalogueReadError
-
-        raise CatalogueReadError(
-            Path(path), 0,
-            f"catalogue changed under its index: {spelling} is no longer at byte {offset}",
-        )
+        raise _CatalogueChanged(Path(path), f"{spelling} is no longer at byte {offset}")
     flat = _flat_record_from_env(env, mi)
     flat["mpn"] = spelling
     return flat
+
+
+def _find_in_file(mpn_l: str, path: Path) -> dict | None:
+    """Look ``mpn_l`` up in one catalogue file and return its full record.
+
+    A file rewritten under its index is re-indexed and looked up once more; a
+    second change mid-lookup raises (loud, never a record from the wrong line).
+    """
+    for attempt in (1, 2):
+        try:
+            return _hydrate(_resolve_with_variants(mpn_l, path, _tas_file_index(path)))
+        except _CatalogueChanged as exc:
+            _drop_file_index(path)
+            if attempt == 2:
+                from heaviside.catalogue._reader import CatalogueReadError
+
+                raise CatalogueReadError(path, 0, f"catalogue changed under its index "
+                                                  f"twice in one lookup: {exc}") from exc
+            logger.info("catalogue %s changed under its index — re-indexing", path.name)
+    return None
 
 
 def _hydrate(lean: dict | None) -> dict | None:
@@ -660,9 +716,8 @@ def _lookup_tas_part(
         # Packaging-suffix aware (ABT #137): the BOM lists the base orderable
         # MPN while the catalogue stores the reeled variant (XGL5050-153ME vs
         # -153MEC). Exact hits still win, so no MPN that resolves today moves.
-        hit = _resolve_with_variants(mpn_l, path, _tas_file_index(path))
-        if hit is not None:
-            result = _hydrate(hit)
+        result = _find_in_file(mpn_l, path)
+        if result is not None:
             break
 
     _TAS_LOOKUP_CACHE[key] = result
