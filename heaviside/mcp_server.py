@@ -5,6 +5,7 @@ Tools:
   design_magnetic   — magnetic candidates for a topology + spec       [widget]
   design_bom        — real parts for every line of a design            [widget]
   cross_reference   — a whole BOM re-sourced to another manufacturer   [widget]
+  submit_crossref / submit_crossref_bom — the same as a job (lines / an uploaded file)
   reverse_engineer  — extract a reference design's spec + BOM and beat it
   query_lessons     — the teacher's lesson store
 
@@ -535,22 +536,32 @@ def design_bom(topology: str, spec: ConverterSpec, tas: dict) -> CallToolResult:
                           f"looked at and reports the same way"] if unfilled else [])})
 
 
-def _run_crossref(source_bom: list[BomLine], target_manufacturer: str,
+def _bom_rows(source_bom: list[BomLine]) -> list[dict]:
+    """The typed lines as the plain dicts the pipeline works in.
+
+    The typed model exists for the INTERFACE, so it is unwrapped here rather than
+    threaded through. exclude_none so an omitted component_type stays absent and
+    gets inferred, instead of arriving as an explicit null that reads as "the
+    caller says there is no type".
+    """
+    return [line.model_dump(exclude_none=True) for line in source_bom]
+
+
+def _run_crossref(rows: list[dict], target_manufacturer: str,
                   circuit_context: str | None,
                   progress=None) -> tuple[str, dict]:
     """The cross-reference, as (digest, payload).
 
-    Factored out so the blocking tool and the job share ONE code path. Two
-    copies of this mapping would drift, and the version a user reached would
-    depend on which tool they happened to call.
+    Factored out so the blocking tool, the job and the BOM-file job share ONE
+    code path. Two copies of this mapping would drift, and the version a user
+    reached would depend on which tool they happened to call.
+
+    `rows` are plain dicts: typed BomLines unwrapped by _bom_rows, or the rows
+    bom_import parsed out of a file — the same dicts the web API's
+    /jobs/crossref/from-bom hands the pipeline.
     """
     from heaviside.pipeline.crossref_pipeline import run_crossref_pipeline
 
-    # The pipeline works in plain dicts and normalises them itself; the typed
-    # model exists for the INTERFACE, so it is unwrapped here rather than
-    # threaded through. exclude_none so an omitted component_type stays absent
-    # and gets inferred, instead of arriving as an explicit null that reads as
-    # "the caller says there is no type".
     kwargs = {}
     if progress is not None:
         # The pipeline calls progress(message, pct) before each stage. Only the
@@ -558,8 +569,7 @@ def _run_crossref(source_bom: list[BomLine], target_manufacturer: str,
         # and a percentage does not.
         kwargs["progress"] = lambda message, pct=None: progress(str(message))
     outcome = run_crossref_pipeline(
-        [line.model_dump(exclude_none=True) for line in source_bom],
-        target_manufacturer, circuit_context=circuit_context, **kwargs)
+        rows, target_manufacturer, circuit_context=circuit_context, **kwargs)
     components = [
         {"ref_des": c.ref_des, "original_mpn": c.original_mpn, "mpn": c.substitute_mpn,
          "manufacturer": target_manufacturer, "status": c.status.value}
@@ -618,7 +628,8 @@ def cross_reference(source_bom: list[BomLine], target_manufacturer: str,
         target_manufacturer: the vendor to source into.
         circuit_context: what the board does, when it helps judge a substitution.
     """
-    digest, payload = _run_crossref(source_bom, target_manufacturer, circuit_context)
+    digest, payload = _run_crossref(_bom_rows(source_bom), target_manufacturer,
+                                    circuit_context)
     return _result(digest, payload)
 
 
@@ -667,20 +678,118 @@ def submit_crossref(source_bom: list[BomLine], target_manufacturer: str,
         target_manufacturer: the vendor to source into.
         circuit_context: what the board does, when it helps judge a substitution.
     """
-    from heaviside.mcp_jobs import registry
-
     label = f"{len(source_bom)} line(s) -> {target_manufacturer}"
-
-    def work(progress):
-        _digest, payload = _run_crossref(source_bom, target_manufacturer,
-                                         circuit_context, progress=progress)
-        return payload
-
-    job = registry().submit(label, work)
+    job = _submit_crossref_job(_bom_rows(source_bom), target_manufacturer,
+                               circuit_context, label)
     return _result(
         f"job {job.id} queued: {label}. Poll job_status({job.id!r}); the result "
         f"is ready when its state is 'done'. This typically takes minutes.",
         job.envelope())
+
+
+def _submit_crossref_job(rows: list[dict], target_manufacturer: str,
+                         circuit_context: str | None, label: str):
+    """Queue _run_crossref on the job registry — the one submission path for
+    both submit_crossref and submit_crossref_bom, so job_status / job_result
+    cannot tell (and need not know) which of them started a job."""
+    from heaviside.mcp_jobs import registry
+
+    def work(progress):
+        _digest, payload = _run_crossref(rows, target_manufacturer,
+                                         circuit_context, progress=progress)
+        return payload
+
+    return registry().submit(label, work)
+
+
+# The extensions bom_import reads. The parser treats a name with NO extension as
+# CSV, which is right for its web upload (a browser always sends a filename) but
+# would read an extension-less .xlsx reference as garbled text; here the name
+# comes from a reference, so one without a known extension is refused instead.
+_BOM_FILE_SUFFIXES = (".csv", ".tsv", ".txt", ".xlsx", ".xlsm")
+
+
+def _bom_file_diagnostics(rows: list[dict]) -> tuple[list[str], list[str]]:
+    """(designators of lines without a part number, readable diagnostics).
+
+    Derived from the PARSED rows — the parser's own output — rather than by
+    re-reading the file: one parser, and these counts describe exactly what the
+    pipeline will be handed.
+    """
+    def ref(i: int, row: dict) -> str:
+        return str(row.get("ref_des") or f"row {i + 1}")
+
+    no_mpn = [ref(i, r) for i, r in enumerate(rows) if not str(r.get("original_mpn") or "").strip()]
+    no_ref = [i + 1 for i, r in enumerate(rows) if not str(r.get("ref_des") or "").strip()]
+    fields = sorted({k for r in rows for k in r})
+    notes = [f"fields read: {', '.join(fields)}"]
+    if no_mpn:
+        notes.append(
+            f"{len(no_mpn)} line(s) without a part number ({', '.join(no_mpn)}); the "
+            f"pipeline sources those from their value/description, or reports them unmatched")
+    if no_ref:
+        notes.append(f"{len(no_ref)} line(s) without a reference designator "
+                     f"(data rows {', '.join(map(str, no_ref))})")
+    return no_mpn, notes
+
+
+@mcp.tool(
+    title="Submit a BOM FILE cross-reference",
+    description=(
+        "Use this when the user UPLOADED a BOM FILE (.csv, .tsv, .txt, .xlsx): pass the "
+        "file's reference as `bom` — a local path, file:// or artifact://<id> — and the "
+        "server reads and parses the file itself, so its contents never have to pass "
+        "through you. Use submit_crossref instead when you already hold the lines as "
+        "structured data. Returns a job id immediately, with how many lines were parsed "
+        "and which lack a part number; poll job_status and fetch job_result exactly as "
+        "for submit_crossref. A file that cannot be parsed fails the call with the "
+        "parser's reason; nothing is queued."
+    ),
+    structured_output=False,
+)
+async def submit_crossref_bom(bom: str, target_manufacturer: str,
+                              circuit_context: str | None = None) -> CallToolResult:
+    """Parse an uploaded BOM file and queue its cross-reference.
+
+    Args:
+        bom: the BOM file — a local path, file:// URI or artifact://<id>.
+        target_manufacturer: the vendor to source into.
+        circuit_context: what the board does, when it helps judge a substitution.
+    """
+    import asyncio
+
+    from heaviside.mcp_artifacts import display_name, resolved
+    from heaviside.pipeline.bom_import import parse_bom_file
+
+    name = display_name(bom)
+    if not name.lower().endswith(_BOM_FILE_SUFFIXES):
+        raise ValueError(
+            f"cannot tell what kind of BOM file {bom!r} is: its name {name!r} has none of "
+            f"the extensions {', '.join(_BOM_FILE_SUFFIXES)}. Pass a reference whose "
+            f"name carries the file's extension.")
+    with resolved(bom, "HEAVISIDE", "BOM file") as path:
+        raw = Path(path).read_bytes()
+    # BomImportError propagates as-is: its message is the reason the file was
+    # refused, and the caller needs it verbatim. The parse can consult the
+    # column-mapper (Jev/LLM), so it runs off the event loop — job_status polls
+    # for other jobs must not stall behind it.
+    rows = await asyncio.to_thread(parse_bom_file, raw, name)
+
+    no_mpn, notes = _bom_file_diagnostics(rows)
+    label = f"{len(rows)} line(s) from {name} -> {target_manufacturer}"
+    job = _submit_crossref_job(rows, target_manufacturer, circuit_context, label)
+    envelope = job.envelope()
+    # `caveat` is the job branch's free-text slot (the envelope is a closed
+    # schema); the parse summary rides there so a widget can show it too.
+    envelope["caveat"] = (f"parsed {len(rows)} line(s) from {name}; "
+                          f"{len(no_mpn)} without a part number. " + "; ".join(notes))
+    return _result(
+        f"job {job.id} queued: {label}. Parsed {len(rows)} line(s), "
+        f"{len(no_mpn)} without a part number.\n"
+        + "\n".join(f"  ! {n}" for n in notes)
+        + f"\nPoll job_status({job.id!r}); the result is ready when its state is "
+        f"'done'. This typically takes minutes.",
+        envelope)
 
 
 @mcp.tool(
