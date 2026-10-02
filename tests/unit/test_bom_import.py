@@ -263,3 +263,12 @@ def test_the_bom_s_own_words_outrank_the_catalogue():
     )[0]
     assert row["component_type"] == "chipBead"
     assert row["value"] == "600"  # not the catalogue's curve-sampled 618.3Ω
+
+
+def test_manufacturer_part_header_is_the_part_number_column():
+    """A real KiCad-style export (relay_board_BOM.csv) names it "Manufacturer Part"; without
+    the alias the file is refused as having no part-number column."""
+    raw = (b"Comment,Designator,Footprint,Quantity,Manufacturer Part,Description\n"
+           b"100n,C1,C_0402,1,885012205037,cap\n")
+    rows = parse_bom_file(raw, "relay_board_BOM.csv", allow_llm=False)
+    assert rows[0]["original_mpn"] == "885012205037"

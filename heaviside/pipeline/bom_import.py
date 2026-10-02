@@ -47,6 +47,9 @@ _HEADER_ALIASES: dict[str, str] = {
     "manufacturer part number": "original_mpn",
     "manufacturer part no": "original_mpn",
     "manufacturer pn": "original_mpn",
+    # KiCad/EasyEDA-style exports name the column "Manufacturer Part" (no "number").
+    "manufacturer part": "original_mpn",
+    "mfr part": "original_mpn",
     "mfr part number": "original_mpn",
     "mfr part no": "original_mpn",
     "mfr part #": "original_mpn",
