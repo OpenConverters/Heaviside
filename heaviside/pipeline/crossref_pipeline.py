@@ -2982,6 +2982,41 @@ def _source_dims_mm(
     return None
 
 
+#: Fractions of a candidate's rated voltage at which the model is shown its
+#: effective capacitance, read off the measured DC-bias curve.
+_LLM_BIAS_FRACTIONS = (0.0, 0.25, 0.5, 0.75, 1.0)
+
+
+def _llm_bias_view(summary: dict[str, Any]) -> dict[str, Any]:
+    """The candidate summary as a MODEL sees it: the measured C-vs-Vdc curve
+    (typically 201 points, ~17.5k characters per Murata MLCC) is replaced by the
+    effective capacitance at a few fractions of the rated voltage.
+
+    Ten such candidates made one row's choice prompt ~188k characters and the
+    decision service refused it (max_tokens_exceeded), failing the whole job.
+    The deterministic DC-bias gate (``mlcc_bias_param``) does not read this view;
+    it builds its own summaries from the catalogue with the full curve.
+    """
+    points = summary.get("capacitance_bias_points")
+    if not points:
+        return summary
+    from heaviside.pipeline.param_check import capacitance_from_bias_curve
+
+    view = {k: v for k, v in summary.items() if k != "capacitance_bias_points"}
+    rated = summary.get("voltage")
+    c_nom = summary.get("capacitance")
+    if isinstance(rated, (int, float)) and rated > 0:
+        table = {}
+        for f in _LLM_BIAS_FRACTIONS:
+            c = capacitance_from_bias_curve(points, c_nom if isinstance(c_nom, (int, float)) else None,
+                                            f * rated)
+            if c is not None:
+                table[f"{f * rated:g} V"] = float(f"{c:.3g}")
+        if table:
+            view["capacitance_at_dc_bias"] = table
+    return view
+
+
 def _candidate_summaries_for_llm(
     candidates: list[dict[str, Any]],
     category: str,
@@ -2995,7 +3030,7 @@ def _candidate_summaries_for_llm(
     more board space than the original."""
     out: list[dict[str, Any]] = []
     for position, c in enumerate(candidates[:limit], 1):
-        summ = _summarize_candidate(c, category)
+        summ = _llm_bias_view(_summarize_candidate(c, category))
         verdict = (kelvin_verdicts or {}).get(str(summ.get("mpn")))
         if verdict:
             # Kelvin did the arithmetic; the chooser sees its conclusions, and

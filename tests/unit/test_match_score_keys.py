@@ -98,3 +98,24 @@ def test_scoring_finds_a_part_catalogued_by_part_number_only(tmp_path) -> None:
         guardrails._TAS_INDEX_CACHE.clear(); guardrails._TAS_LOOKUP_CACHE.clear()
     score = rows[0]["match_score"]
     assert score["voltage"] == "upgrade" and abs(score["value_pct_delta"]) < 1.0
+
+
+def test_model_sees_a_few_dc_bias_points_not_the_whole_curve() -> None:
+    """A measured 201-point C-vs-Vdc curve per candidate made one row's choice
+    prompt ~188k characters and the decision service refused the whole job."""
+    import json
+
+    from heaviside.pipeline.crossref_pipeline import _candidate_summaries_for_llm
+
+    curve = [{"voltage": 25.0 * i / 200, "capacitance": 1e-7 * (1 - 0.6 * i / 200)}
+             for i in range(201)]
+    env = {"capacitor": {"manufacturerInfo": {"reference": "GRM188R71E104KA01", "name": "Murata",
+        "datasheetInfo": {"electrical": {"capacitance": 1e-7, "ratedVoltage": 25.0,
+                                         "capacitanceBiasPoints": curve},
+                          "part": {"case": "0603"}}}}}
+    (view,) = _candidate_summaries_for_llm([env], "capacitor", None, limit=10)
+    assert "capacitance_bias_points" not in view
+    table = view["capacitance_at_dc_bias"]
+    assert set(table) == {"0 V", "6.25 V", "12.5 V", "18.75 V", "25 V"}
+    assert abs(table["25 V"] - 0.4e-7) < 1e-12 and abs(table["12.5 V"] - 0.7e-7) < 1e-12
+    assert len(json.dumps(view)) < 1000
