@@ -74,3 +74,27 @@ def test_from_state_carries_match_score() -> None:
     ]
     outcome = CrossRefOutcome.from_state(state)
     assert outcome.components[0].match_score == {"overall": 0.87, "voltage": "match"}
+
+
+def test_scoring_finds_a_part_catalogued_by_part_number_only(tmp_path) -> None:
+    """Capacitors and resistors carry their MPN in part.partNumber, not in
+    manufacturerInfo.reference. Scoring now reads through the guardrails' index,
+    which keys both — its own index keyed `reference` only and scored every such
+    substitute as uncatalogued."""
+    import json
+
+    from heaviside.pipeline import guardrails
+    from heaviside.pipeline.match_score import annotate_match_scores
+
+    env = {"capacitor": {"manufacturerInfo": {"name": "Würth Elektronik", "datasheetInfo": {
+        "electrical": {"capacitance": 1e-7, "ratedVoltage": 50.0},
+        "part": {"partNumber": "885012206071", "caseCode": "0603"}}}}}
+    (tmp_path / "capacitors.ndjson").write_text(json.dumps(env) + "\n")
+    rows = [{"ref_des": "C3", "component_type": "capacitor", "substitute_pn": "885012206071"}]
+    try:
+        annotate_match_scores(rows, [{"ref_des": "C3", "component_type": "capacitor",
+                                      "value": "100nF", "voltage": "25"}], tas_data_dir=tmp_path)
+    finally:
+        guardrails._TAS_INDEX_CACHE.clear(); guardrails._TAS_LOOKUP_CACHE.clear()
+    score = rows[0]["match_score"]
+    assert score["voltage"] == "upgrade" and abs(score["value_pct_delta"]) < 1.0

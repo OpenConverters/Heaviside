@@ -793,7 +793,6 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
         # rebuild from the updated NDJSON.
         try:
             from heaviside.pipeline import guardrails as _g
-            from heaviside.pipeline import match_score as _ms
 
             _g._TAS_INDEX_CACHE.clear()
             # the base index is DERIVED from the exact one — clearing one
@@ -807,7 +806,6 @@ def _stage1_6_fetch_originals(state: CrossRefState) -> CrossRefState:
             _g._TAS_KIND_BASE_CACHE.clear()
             _g._TAS_KIND_SQUASHED_CACHE.clear()
             _g._TAS_LOOKUP_CACHE.clear()
-            _ms._MPN_ENV_INDEX_CACHE.clear()
         except Exception:
             pass
 

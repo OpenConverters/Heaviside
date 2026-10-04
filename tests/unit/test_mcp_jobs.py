@@ -138,3 +138,46 @@ def test_an_unknown_job_says_what_to_do(tmp_path) -> None:
     # A queued job really is gone after a restart; the message says so rather
     # than leaving a caller to wonder whether to keep polling.
     assert "restarted" in str(exc.value)
+
+
+def _wait_terminal(reg, job_id, timeout=10):
+    deadline = time.time() + timeout
+    while reg.get(job_id).state not in ("done", "failed") and time.time() < deadline:
+        time.sleep(0.02)
+    return reg.get(job_id)
+
+
+def test_catalogue_indexes_are_released_when_the_last_job_ends(tmp_path) -> None:
+    """An idle server must not keep the GB of catalogue index a crossref built:
+    on the 8 GB prod host that pinned 3 GB resident + 2 GB swap between jobs.
+    While another job is still running, its indexes stay."""
+    import heaviside.pipeline.guardrails as g
+
+    reg = JobRegistry(root=tmp_path, concurrency=2)
+    first_done, release_second = threading.Event(), threading.Event()
+
+    def short(progress):
+        g._TAS_INDEX_CACHE["/cat/capacitors.ndjson"] = {"c1": {}}
+        return {"mode": "catalogue", "families": []}
+
+    def long(progress):
+        first_done.wait(timeout=5)
+        release_second.wait(timeout=5)
+        g._TAS_INDEX_CACHE["/cat/resistors.ndjson"] = {"r1": {}}
+        return {"mode": "catalogue", "families": []}
+
+    try:
+        b = reg.submit("long", long)
+        a = reg.submit("short", short)
+        assert _wait_terminal(reg, a.id).state == "done"
+        first_done.set()
+        assert "/cat/capacitors.ndjson" in g._TAS_INDEX_CACHE, \
+            "released while another job was still running on it"
+        release_second.set()
+        assert _wait_terminal(reg, b.id).state == "done"
+        deadline = time.time() + 5
+        while g._TAS_INDEX_CACHE and time.time() < deadline:
+            time.sleep(0.02)
+        assert not g._TAS_INDEX_CACHE
+    finally:
+        g._TAS_INDEX_CACHE.clear()

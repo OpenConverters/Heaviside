@@ -100,100 +100,27 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TAS_DATA_DEFAULT = _REPO_ROOT / "TAS" / "data"
 
 
-# Per-file MPN -> envelope index, built once and cached. A brute-force linear
-# scan per MPN (the old behaviour) was fine for ~a dozen parts but, on a large
-# BOM (hundreds of substitutes each re-scanning every NDJSON file), it pinned
-# the CPU long enough to starve the API event loop and get the worker restarted
-# by the healthcheck mid-scoring. Indexing makes lookups O(1) after one pass.
-_MPN_ENV_INDEX_CACHE: dict[str, dict[str, dict]] = {}
-
-# Component category → the NDJSON file(s) that can hold it, so a lookup for a
-# known category doesn't build indexes for every OTHER category's file (the
-# unbounded-memory trap: one connector lookup used to index caps+resistors+
-# magnetics+… until it hit connectors.ndjson).
-_CATEGORY_TO_FILES: dict[str, tuple[str, ...]] = {
-    "capacitor": ("capacitors.ndjson",),
-    "resistor": ("resistors.ndjson",),
-    "varistor": ("varistors.ndjson",),
-    "magnetic": ("magnetics.ndjson",),
-    "chipBead": ("magnetics.ndjson",),
-    "inductor": ("magnetics.ndjson",),
-    "mosfet": ("mosfets.ndjson",),
-    "diode": ("diodes.ndjson",),
-    "igbt": ("igbts.ndjson",),
-    "connector": ("connectors.ndjson",),
-    "analog": ("analog_ics.ndjson",),
-    "timeBase": ("timing_devices.ndjson",),
-    "semiconductor": ("mosfets.ndjson", "diodes.ndjson", "igbts.ndjson"),
+# Component category -> the guardrails' catalogue kind. Scoring reads the SAME
+# lean per-file index stage 4 has just built for these files, instead of a
+# second index of its own: that one held the FULL envelope of every part in
+# every file it touched (GB for capacitors + magnetics + connectors), and on the
+# 8 GB prod host a 189-line board pushed the process into swap, where scoring
+# spent 20+ minutes evicting and rebuilding it.
+_CATEGORY_TO_KIND: dict[str, str] = {
+    "capacitor": "capacitor",
+    "resistor": "resistor",
+    "varistor": "varistor",
+    "magnetic": "magnetic",
+    "chipBead": "chipBead",
+    "inductor": "inductor",
+    "mosfet": "mosfet",
+    "diode": "diode",
+    "igbt": "igbt",
+    "connector": "connector",
+    "analog": "analog",
+    "timeBase": "timeBase",
+    "semiconductor": "semiconductor",
 }
-
-
-def _register_index_cache() -> None:
-    from heaviside.pipeline.index_budget import register_cache
-
-    register_cache(_MPN_ENV_INDEX_CACHE)
-
-
-_register_index_cache()
-
-
-def _mpn_env_index(path: Path) -> dict[str, dict]:
-    """Build (once, cached) an mpn_lower -> raw-envelope index for an NDJSON file.
-
-    A read error (e.g. a corrupt NDJSON line) PROPAGATES rather than being
-    swallowed into a partial index cached for the process lifetime — a
-    truncated index would silently make bulk scoring miss real parts. The cache
-    is populated only after a complete, successful scan; callers pass only
-    existing files.
-    """
-    cached = _MPN_ENV_INDEX_CACHE.get(str(path))
-    if cached is not None:
-        return cached
-
-    # Bound memory: if the process is already over the index-RSS budget, evict
-    # all cached indexes before building another (they rebuild on demand). This
-    # keeps a large crossref from exhausting RAM/swap on a shared host and
-    # starving co-resident services (OpenMagnetics).
-    from heaviside.pipeline.index_budget import evict_if_over_budget
-
-    evict_if_over_budget()
-
-    from heaviside.catalogue._reader import iter_envelopes
-
-    index: dict[str, dict] = {}
-    for _lineno, env in iter_envelopes(path):
-        for top_key in (
-            "capacitor",
-            "semiconductor",
-            "resistor",
-            "magnetics",
-            "magnetic",
-            "connector",
-            "varistor",
-            "analog",
-            "timeBase",
-        ):
-            sub = env.get(top_key)
-            if not isinstance(sub, dict):
-                continue
-            # `analog`/`timeBase` nest the record under a per-row FAMILY key.
-            inner_keys: tuple = (
-                tuple(sub.keys())
-                if top_key in ("analog", "timeBase")
-                else (None, "mosfet", "diode", "igbt")
-            )
-            for inner_key in inner_keys:
-                record = sub if inner_key is None else sub.get(inner_key)
-                if not isinstance(record, dict):
-                    continue
-                mi = record.get("manufacturerInfo")
-                if isinstance(mi, dict):
-                    ref = mi.get("reference")
-                    if isinstance(ref, str) and ref.strip():
-                        index.setdefault(ref.strip().lower(), env)
-    # Only reached after the FULL scan succeeds — never cache a partial index.
-    _MPN_ENV_INDEX_CACHE[str(path)] = index
-    return index
 
 
 def _lookup_mpn(
@@ -201,29 +128,20 @@ def _lookup_mpn(
 ) -> dict[str, Any] | None:
     """Find the raw TAS envelope for *mpn*, or ``None``.
 
-    When ``category`` is given, only that category's NDJSON file(s) are indexed
-    — a lookup for a connector never builds the capacitor/resistor/magnetic
-    indexes it doesn't need (bounded memory). When it's unknown, falls back to
-    scanning every file (glob order) as before. Uses a per-file MPN index
-    (built once, cached) so bulk scoring doesn't re-scan multi-megabyte files.
+    When ``category`` is given, only that category's NDJSON file(s) are read;
+    when it is unknown, every catalogue file is. The lookup is the guardrails'
+    (exact spelling first, then packaging/separator variants), so scoring and
+    the physics gates can never disagree about whether a substitute exists.
     """
     if not mpn:
         return None
     root = tas_data_dir or _TAS_DATA_DEFAULT
     if not root.is_dir():
         return None
-    mpn_l = mpn.strip().lower()
+    from heaviside.pipeline.guardrails import lookup_part_fields
 
-    scoped = _CATEGORY_TO_FILES.get(category or "")
-    if scoped:
-        files = [root / name for name in scoped if (root / name).is_file()]
-    else:
-        files = sorted(root.glob("*.ndjson"))
-    for ndjson_file in files:
-        hit = _mpn_env_index(ndjson_file).get(mpn_l)
-        if hit is not None:
-            return hit
-    return None
+    flat = lookup_part_fields(mpn, _CATEGORY_TO_KIND.get(category or "", ""), tas_data_dir=root)
+    return None if flat is None else flat["raw_envelope"]
 
 
 def _normalize_electrical(elec_raw: Any) -> dict[str, Any]:

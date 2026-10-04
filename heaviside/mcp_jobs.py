@@ -98,6 +98,7 @@ class JobRegistry:
 
     def __init__(self, *, root: Path | None = None, concurrency: int = 2):
         self._jobs: dict[str, Job] = {}
+        self._running = 0
         self._lock = threading.Lock()
         self._pool = ThreadPoolExecutor(max_workers=concurrency,
                                         thread_name_prefix="heaviside-job")
@@ -184,6 +185,7 @@ class JobRegistry:
             if job.state == "cancelled":
                 return
             job.state = "running"
+            self._running += 1
 
         def progress(phase: str) -> None:
             job.phase = phase
@@ -209,6 +211,18 @@ class JobRegistry:
 
         job.result, job.error, job.finished_at, job.phase = result, error, finished, ""
         job.state = state
+
+        with self._lock:
+            self._running -= 1
+            idle = self._running == 0
+        if idle:
+            # The catalogue indexes a crossref builds are GB on the full TAS
+            # catalogue. Kept for the process lifetime they pinned 3 GB resident
+            # plus 2 GB of swap on the 8 GB prod host between jobs, and every
+            # co-resident service crawled. The next job rebuilds what it needs.
+            from heaviside.pipeline.index_budget import release_all
+
+            release_all()
 
     def _persist(self, job: Job, *, state: str, finished_at: str,
                  error: str | None, result: dict | None) -> None:

@@ -40,12 +40,19 @@ def register_cache(cache: dict) -> None:
 
 
 def _rss_mb() -> float:
-    """Resident set size of THIS process, in MB. 0.0 if it can't be read (the
-    guard then never fires — fail-open, never crash a run over a stat error)."""
+    """Memory THIS process holds, in MB: resident PLUS swapped out. 0.0 if it
+    can't be read (the guard then never fires — fail-open, never crash a run
+    over a stat error).
+
+    Resident alone is the wrong measure exactly when it matters: once the host
+    is short of RAM the kernel swaps the indexes out, RSS stays under the budget
+    and the guard never fires. Observed on prod: 3.0 GB resident + 2.0 GB in
+    swap, swap 100 % full, every service on the box slowed to a crawl."""
     try:
-        with open("/proc/self/statm") as fh:
-            resident_pages = int(fh.read().split()[1])
-        return resident_pages * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+        with open("/proc/self/status") as fh:
+            fields = dict(line.split(":", 1) for line in fh if ":" in line)
+        kb = int(fields["VmRSS"].split()[0]) + int(fields.get("VmSwap", "0 kB").split()[0])
+        return kb / 1024.0
     except Exception:
         try:
             import resource
@@ -116,10 +123,7 @@ def evict_if_over_budget() -> bool:
         return False
     _LAST_EVICT_AT[0] = now
     rss = _rss_mb()
-    freed_entries = sum(len(c) for c in _REGISTERED_CACHES)
-    for cache in _REGISTERED_CACHES:
-        cache.clear()
-    gc.collect()
+    freed_entries = release_all()
     logger.warning(
         "index memory guard: RSS %.0f MB > budget %.0f MB — evicted %d cached "
         "index entries (rebuild on demand; next eviction ≥ %.0fs away)",
@@ -131,4 +135,31 @@ def evict_if_over_budget() -> bool:
     return True
 
 
-__all__ = ["evict_if_over_budget", "register_cache"]
+def release_all() -> int:
+    """Clear every registered index cache and hand the freed memory back to the
+    OS. Returns how many cached entries were dropped.
+
+    ``gc.collect()`` alone frees the objects but glibc keeps the pages in the
+    process's heap, so RSS barely moves and the host stays short of RAM;
+    ``malloc_trim(0)`` returns them. Called by the memory guard, and by the job
+    registry when its last running job ends: an idle server has no reason to
+    keep gigabytes of catalogue index on a shared host.
+    """
+    freed = sum(len(c) for c in _REGISTERED_CACHES)
+    for cache in _REGISTERED_CACHES:
+        cache.clear()
+    gc.collect()
+    _malloc_trim()
+    return freed
+
+
+def _malloc_trim() -> None:
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass  # not glibc (macOS dev boxes): nothing to trim, the clear still stands
+
+
+__all__ = ["evict_if_over_budget", "register_cache", "release_all"]

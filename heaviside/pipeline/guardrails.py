@@ -102,6 +102,11 @@ _TAS_KIND_TO_FILES = {
     "connector": ["connectors.ndjson"],
     "analog": ["analog_ics.ndjson"],
     "timeBase": ["timing_devices.ndjson"],
+    # Without these three a varistor / IGBT lookup read EVERY *.ndjson file,
+    # circuits.ndjson (1.2 GB, not a part catalogue) included.
+    "varistor": ["varistors.ndjson"],
+    "igbt": ["igbts.ndjson"],
+    "semiconductor": ["mosfets.ndjson", "diodes.ndjson", "igbts.ndjson"],
 }
 
 # Catalogue file → CR canonical category, for the reverse question: "which
