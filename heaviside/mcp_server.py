@@ -570,9 +570,14 @@ def _run_crossref(rows: list[dict], target_manufacturer: str,
         kwargs["progress"] = lambda message, pct=None: progress(str(message))
     outcome = run_crossref_pipeline(
         rows, target_manufacturer, circuit_context=circuit_context, **kwargs)
+    # A line that is not a clean answer (partial / no_substitute) carries its
+    # reason: "no_substitute" alone cannot tell "nothing in the catalogue" from
+    # "the review rejected the part we found", nor say what a partial's caveat is.
     components = [
         {"ref_des": c.ref_des, "original_mpn": c.original_mpn, "mpn": c.substitute_mpn,
-         "manufacturer": target_manufacturer, "status": c.status.value}
+         "manufacturer": target_manufacturer, "status": c.status.value,
+         "notes": (c.notes or "").strip()
+         if c.status.value not in ("exact", "recommended") else ""}
         for c in outcome.components
     ]
     matched = sum(1 for c in components if c["mpn"])
@@ -598,11 +603,14 @@ def _run_crossref(rows: list[dict], target_manufacturer: str,
         "lines": [
             {"ref": c["ref_des"], "originalMpn": c["original_mpn"],
              "mpn": c["mpn"], "manufacturer": c["manufacturer"] if c["mpn"] else None,
-             "status": c["status"]}
+             "status": c["status"], **({"notes": c["notes"]} if c["notes"] else {})}
             for c in components
         ],
         "diagnostics": list(outcome.diagnostics),
     }
+    rejected = [d for d in outcome.diagnostics if str(d).startswith("REVIEW REJECTED")]
+    if rejected:
+        payload["caveat"] = rejected[0]
     return digest, payload
 
 

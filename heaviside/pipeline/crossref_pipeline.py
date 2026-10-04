@@ -3542,10 +3542,12 @@ def _stage6_otto(state: CrossRefState) -> CrossRefState:
 
 
 def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefState:
-    """Run Ray (engineering) and Nicola (quality) reviews sequentially.
+    """Run Ray (engineering) and Nicola (quality) reviews concurrently.
 
-    Both must approve for the pipeline to pass. Ray reviews first
-    (physics/derating), then Nicola (completeness/quality/process).
+    Ray gates the pipeline (physics/derating); Nicola (completeness/quality/
+    process) is advisory. The two reviews are independent LLM calls over the
+    same rows, so they run in parallel — sequentially they cost the sum of two
+    ~30 s calls per round, and a correction loop pays that every round.
     """
     _REVIEW_KEYS = (
         "ref_des",
@@ -3557,6 +3559,12 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
         "guardrail_fires",
     )
     trimmed_xref = [{k: row[k] for k in _REVIEW_KEYS if k in row} for row in state.crossref_result]
+    # Rows the reviewers are NOT shown, with the reason. Without this the review
+    # input said total_components=2 while carrying one row, and both reviewers
+    # raised a critical "the second component was never reviewed" objection in
+    # every round — an objection no correction can answer, so the loop could
+    # never converge (job 48ad52a57d5c).
+    not_under_review: list[dict[str, Any]] = []
     # Jev gate: a substituted row whose every compared parameter matches clears
     # without Ray; any doubt, and every no_substitute, still goes to Ray.
     from heaviside.pipeline.jev_decisions import jev_enabled
@@ -3566,6 +3574,13 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
         state.review_verdicts.append(gate_record)
         cleared_rows = [r for r in trimmed_xref if r.get("ref_des") in cleared]
         trimmed_xref = [r for r in trimmed_xref if r.get("ref_des") not in cleared]
+        not_under_review = [
+            {"ref_des": r.get("ref_des"), "original_pn": r.get("original_pn"),
+             "substitute_pn": r.get("substitute_pn"), "status": r.get("status"),
+             "why_not_shown": "cleared by the deterministic decision-model gate: it matches "
+                              "the original on every compared parameter"}
+            for r in cleared_rows
+        ]
         if cleared_rows:
             from heaviside.llm.usage import record_avoided
 
@@ -3620,9 +3635,22 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
             "crossref": batch,
             "target_manufacturer": state.target_manufacturer,
             "total_components": len(state.source_bom),
+            "rows_under_review": len(trimmed_xref),
             "batch": f"{bi}/{len(_batch_list)}" if len(_batch_list) > 1 else "1/1",
             "guardrail_fires": [f for r in refs for f in fires_by_ref.get(r, [])],
         }
+        if not_under_review or len(_batch_list) > 1:
+            review_input["review_scope"] = (
+                "Review ONLY the rows in `crossref`. "
+                + (f"{len(not_under_review)} row(s) listed in `not_under_review` were "
+                   "deliberately not sent to you, for the reason given on each; they are "
+                   "not missing and must not be objected to as unreviewed. "
+                   if not_under_review else "")
+                + ("The remaining rows are reviewed in the other batches. "
+                   if len(_batch_list) > 1 else "")
+            ).strip()
+            if not_under_review:
+                review_input["not_under_review"] = not_under_review
         review_tokens = min(8192 + len(batch) * 128, 16384)
         try:
             vd = call_agent_json(
@@ -3636,22 +3664,25 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
         except LLMCallError as exc:
             return None, exc
 
-    for reviewer_name in ("ray", "nicola"):
-        # Review batches run concurrently (independent I/O-bound calls) so a
-        # large BOM's review finishes in ~one batch's time, not the sum.
-        if len(_batch_list) > 1:
-            from concurrent.futures import ThreadPoolExecutor
+    # Every (reviewer, batch) call is independent I/O, so they ALL run at once:
+    # Ray and Nicola in parallel, and each one's batches in parallel. A round
+    # then costs ~one call's latency instead of the sum of 2 x batches calls.
+    from concurrent.futures import ThreadPoolExecutor
 
-            workers = min(_CROSSREF_MAX_CONCURRENCY, len(_batch_list))
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                outcomes = list(
-                    pool.map(
-                        lambda a, rn=reviewer_name: _review_one(rn, a[0], a[1]),
-                        list(enumerate(_batch_list, 1)),
-                    )
-                )
-        else:
-            outcomes = [_review_one(reviewer_name, 1, _batch_list[0])]
+    _reviewers = ("ray", "nicola")
+    jobs = [(rn, bi, b) for rn in _reviewers for bi, b in enumerate(_batch_list, 1)]
+    workers = max(1, min(max(_CROSSREF_MAX_CONCURRENCY, len(_reviewers)), len(jobs)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        all_outcomes = list(pool.map(lambda j: _review_one(*j), jobs))
+    outcomes_by_reviewer: dict[str, list[Any]] = {rn: [] for rn in _reviewers}
+    for (rn, _bi, _b), out in zip(jobs, all_outcomes):
+        outcomes_by_reviewer[rn].append(out)
+    reviewed_refs = sorted(str(r.get("ref_des")) for r in trimmed_xref if r.get("ref_des"))
+
+    # Aggregate in a fixed order (Ray then Nicola) so the verdict history reads
+    # the same as before, whichever call finished first.
+    for reviewer_name in _reviewers:
+        outcomes = outcomes_by_reviewer[reviewer_name]
         chunk_verdicts: list[dict[str, Any]] = []
         for bi, (vd, err) in enumerate(outcomes, 1):
             if err is not None:
@@ -3674,6 +3705,7 @@ def _stage7_review(state: CrossRefState, *, max_attempts: int = 2) -> CrossRefSt
             "verdict": "APPROVED" if approved else "REJECTED",
             "objections": merged_obj,
             "batches": len(batches),
+            "reviewed_refs": reviewed_refs,
         }
         state.review_verdicts.append(verdict_data)
         state.reviewer_log += f"\n--- {reviewer_name.upper()} ---\n{json.dumps(verdict_data)}\n"
@@ -4344,8 +4376,20 @@ def _objection_refs(objections: list[Any], known_refs: set[str]) -> set[str]:
     return cited & known_refs
 
 
-def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefState:
-    """Re-run the crossref LLM for components cited in reviewer objections."""
+def _stage3b_correct(
+    state: CrossRefState,
+    objections: list[str],
+    rejected_by_ref: dict[str, set[str]] | None = None,
+) -> CrossRefState:
+    """Re-run the crossref LLM for components cited in reviewer objections.
+
+    ``rejected_by_ref`` holds every substitute the reviewer has already rejected
+    for each ref in this job. Those are removed from the candidates offered and a
+    correction that re-proposes one anyway is not applied: alternating between
+    two rejected picks (job 48ad52a57d5c: 560112116005 <-> 560112110020 for three
+    rounds) answers nothing and costs a full review round each time.
+    """
+    rejected_by_ref = rejected_by_ref or {}
     known_refs = {r.get("ref_des", "") for r in state.crossref_result if r.get("ref_des")}
     cited_refs = _objection_refs(objections, known_refs)
 
@@ -4374,7 +4418,13 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
             src_mm = _source_dims_mm(source_dims)
             if src_mm:
                 entry["_source_dimensions_mm"] = src_mm
-            candidates = state.candidates_by_ref.get(ref, [])
+            rejected = rejected_by_ref.get(ref, set())
+            if rejected:
+                entry["previously_rejected_substitutes"] = sorted(rejected)
+            candidates = [
+                c for c in state.candidates_by_ref.get(ref, [])
+                if _envelope_reference(c, row.get("component_type", "")) not in rejected
+            ] if rejected else state.candidates_by_ref.get(ref, [])
             if candidates:
                 entry["_tas_candidates"] = _candidate_summaries_for_llm(
                     candidates, row.get("component_type", ""), source_dims, limit=15,
@@ -4408,6 +4458,8 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
                 state.target_manufacturer, state.circuit_context,
                 extra_state={"reviewer_objections": cited,
                              "rejected_substitute": e.get("current_substitute"),
+                             "previously_rejected_substitutes":
+                                 e.get("previously_rejected_substitutes", []),
                              "instruction": "The reviewer rejected the previous pick for the "
                                             "reasons in `reviewer_objections`; choose the "
                                             "candidate that answers them, keep the current one, "
@@ -4434,7 +4486,8 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
                 "The reviewer rejected these substitutions. For each component, "
                 "either find a better substitute from _tas_candidates that "
                 "addresses the objection, or change status to no_substitute "
-                "with a note explaining why no fix is possible. "
+                "with a note explaining why no fix is possible. Never propose "
+                "a part listed in previously_rejected_substitutes. "
                 "Respond with the same JSON crossref format."
             ),
         },
@@ -4456,6 +4509,13 @@ def _stage3b_correct(state: CrossRefState, objections: list[str]) -> CrossRefSta
             if row.get("ref_des") == ref:
                 new_pn = fix.get("substitute_pn", fix.get("wurth_pn"))
                 new_status = fix.get("status", row.get("status"))
+                if new_pn and str(new_pn) in rejected_by_ref.get(ref, set()):
+                    state.diagnostics.append(
+                        f"correction loop: {ref} re-proposed {new_pn}, which the reviewer "
+                        f"already rejected in this job — not applied"
+                    )
+                    logger.info("CR stage 3b: %s re-proposed rejected %s — ignored", ref, new_pn)
+                    break
                 if new_pn:
                     row["substitute_pn"] = new_pn
                 if new_status:
@@ -6697,6 +6757,157 @@ def _stage_footprint_caveat(state: CrossRefState) -> CrossRefState:
     return state
 
 
+def _source_footprint_gap(comp: dict[str, Any]) -> str:
+    """Say what IS known about an original whose footprint did not resolve.
+
+    Read from the original's own catalogue record and the BOM — never inferred
+    from the part-number string."""
+    cat = comp.get("component_type", comp.get("category", ""))
+    env = comp.get("_source_env")
+    pkg = str(comp.get("package") or "").strip()
+    bom_part = (f"the BOM package {pkg!r} is not a recognised case code" if pkg
+                else "the BOM gives no package")
+    if env is None:
+        return f"the original is not in the internal catalogue and {bom_part}"
+    try:
+        mech = ((_category_record(env, cat) or {})["manufacturerInfo"]["datasheetInfo"]
+                .get("mechanical") or {})
+    except (KeyError, TypeError):
+        mech = {}
+    known = []
+    for axis in ("length", "width", "height"):
+        v = _dim_value(mech.get(axis)) if isinstance(mech, dict) else None
+        if v is not None:
+            known.append(f"{axis} {v * 1e3:g} mm")
+    missing = [a for a in ("length", "width") if not isinstance(mech, dict)
+               or _dim_value(mech.get(a)) is None]
+    have = f"has {', '.join(known)}" if known else "has no mechanical dimensions"
+    case = _extract_package(env, cat)
+    case_txt = f"case code {case!r} is not resolvable" if case else "no case code"
+    return (f"the original's catalogue record {have} but no {' or '.join(missing)} "
+            f"and {case_txt}, and {bom_part}")
+
+
+def _stage_footprint_unverified(state: CrossRefState) -> CrossRefState:
+    """A substitute for an original whose footprint could not be resolved is
+    UNVERIFIED on board fit, so it is never ``recommended`` (or ``exact``).
+
+    Job 48ad52a57d5c returned an 0402 part as ``recommended`` for an 0603
+    original: prefetch had reported "footprint-fit not enforced" for the row,
+    yet nothing downstream acted on it. The row is demoted to ``partial`` — the
+    contract's "substitute with a caveat the reader must weigh" — with the
+    reason. No dimensions are guessed (not from the MPN string, not from a
+    typical size): the gap is reported as found.
+    """
+    comps = {c.get("ref_des"): c for c in state.source_bom if c.get("ref_des")}
+    for row in state.crossref_result:
+        if row.get("status") not in ("exact", "recommended"):
+            continue
+        sub = str(row.get("substitute_pn") or "").strip()
+        orig = str(row.get("original_pn") or "").strip()
+        if not sub or sub == "no_substitute" or sub.lower() == orig.lower():
+            continue  # kept as-is: same part, same footprint
+        comp = comps.get(row.get("ref_des"))
+        if comp is None:
+            continue
+        cat = comp.get("component_type") or row.get("component_type")
+        if not cat or cat in _IDENTITY_MATCHED_CATEGORIES:
+            continue
+        if comp.get("_source_dims_m") is not None:
+            continue
+        gap = _source_footprint_gap(comp)
+        row["status"] = "partial"
+        row["footprint_unverified"] = gap
+        note = (f"Footprint fit UNVERIFIED: the original's dimensions could not be "
+                f"resolved ({gap}) — check that {sub} fits the original's land pattern.")
+        existing = str(row.get("notes") or "").strip()
+        if "Footprint fit UNVERIFIED" not in existing:
+            row["notes"] = f"{existing} | {note}" if existing else note
+    return state
+
+
+def _objection_text(obj: Any) -> str:
+    """A reviewer objection as one line of text (they come as str or dict)."""
+    if isinstance(obj, dict):
+        for key in ("objection", "issue", "description", "detail", "reason", "text"):
+            if isinstance(obj.get(key), str) and obj[key].strip():
+                return obj[key].strip()
+        return json.dumps(obj, default=str, sort_keys=True)
+    return str(obj).strip()
+
+
+def _objection_signature(objections: list[Any]) -> frozenset[str]:
+    """Order- and whitespace-insensitive identity of an objection set."""
+    return frozenset(" ".join(_objection_text(o).lower().split()) for o in objections)
+
+
+def _row_substitutes(state: CrossRefState, refs: set[str]) -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    for row in state.crossref_result:
+        ref = row.get("ref_des")
+        if ref in refs:
+            sub = row.get("substitute_pn")
+            out[ref] = None if not sub or sub == "no_substitute" else str(sub)
+    return out
+
+
+def _apply_review_rejection(
+    state: CrossRefState, rounds: int, rejected_by_ref: dict[str, set[str]]
+) -> None:
+    """A line the gating reviewer still rejects is NOT a substitute.
+
+    After the correction loop has run out, the rows Ray's latest verdict
+    rejects become ``no_substitute`` ("looked for, nothing suitable found"),
+    carrying the rejected part(s) and the objections — job 48ad52a57d5c handed
+    back a rejected 0402 as ``recommended`` with only ``passed: false`` to show
+    for three failed review rounds. Rows Ray was shown but did not cite are
+    rejected too when his rejection cites no row: he refused what he saw.
+    """
+    latest = _latest_ray_verdict(state.review_verdicts)
+    if not latest or latest.get("verdict", "").upper() in ("APPROVED", "PROCEED"):
+        return
+    objections = list(latest.get("objections") or [])
+    known = {str(r.get("ref_des")) for r in state.crossref_result if r.get("ref_des")}
+    reviewed = set(latest.get("reviewed_refs") or known) & known
+    targets = (_objection_refs(objections, known) & reviewed) or reviewed
+    nicola = next((v for v in reversed(state.review_verdicts)
+                   if v.get("reviewer") == "nicola"), {})
+    rejected_lines: list[str] = []
+    for row in state.crossref_result:
+        ref = str(row.get("ref_des") or "")
+        if ref not in targets:
+            continue
+        own = [o for o in objections if _objection_refs([o], {ref})] or objections
+        texts = [_objection_text(o) for o in own]
+        n_own = [_objection_text(o) for o in (nicola.get("objections") or [])
+                 if _objection_refs([o], {ref})]
+        sub = row.get("substitute_pn")
+        sub = None if not sub or sub == "no_substitute" else str(sub)
+        rejected = sorted(rejected_by_ref.get(ref, set()) | ({sub} if sub else set()))
+        detail = "; ".join(texts) or "no objection text given"
+        nicola_txt = f" Quality review (Nicola): {'; '.join(n_own)}" if n_own else ""
+        if sub is None and row.get("status") == "no_substitute" and not rejected:
+            row["notes"] = (f"{str(row.get('notes') or '').strip()} | Engineering review "
+                            f"(Ray) objected: {detail}").strip(" |")
+            continue
+        reason = (f"REJECTED by the engineering review (Ray) after {rounds} correction "
+                  f"round(s): {', '.join(rejected) or 'the proposed substitute'} not "
+                  f"accepted. Objections: {detail}.{nicola_txt}")
+        _force_no_substitute(row, reason, fire="REVIEW_REJECTED")
+        row["review_rejected"] = {"rejected_substitutes": rejected, "objections": texts,
+                                  "nicola_objections": n_own, "correction_rounds": rounds}
+        rejected_lines.append(f"{ref} ({row.get('original_pn') or '?'}; rejected "
+                              f"{', '.join(rejected) or 'substitute'})")
+    if rejected_lines:
+        state.passed = False
+        state.diagnostics.insert(
+            0,
+            f"REVIEW REJECTED: the engineering review did not accept {len(rejected_lines)} "
+            f"line(s) after {rounds} correction round(s) — reported as no_substitute with "
+            f"the reviewer's objections, not as substitutes: " + "; ".join(rejected_lines),
+        )
+
+
 def run_crossref_pipeline(
     source_bom: list[dict[str, Any]],
     target_manufacturer: str,
@@ -6757,11 +6968,19 @@ def run_crossref_pipeline(
     _say("Deterministic in-kind rescue for residual gaps", 78)
     state = _stage6_5_deterministic_rescue(state)
     state = _stage_footprint_caveat(state)
+    state = _stage_footprint_unverified(state)
     _say("Adversarial review (Ray + Nicola)", 84)
     state = _stage7_review(state)
 
     # Correction loop: if reviewer rejects, fix objected components and re-review.
     # Re-runs stay under the "review" stage (no backward stage bounce in the UI).
+    # A round that changes nothing the reviewer objected to ends the loop: the
+    # same objections, or a correction that keeps / returns to an already
+    # rejected substitute, would only buy another identical rejection (job
+    # 48ad52a57d5c spent 4.7 min on three such rounds).
+    rejected_by_ref: dict[str, set[str]] = {}
+    prev_signature: frozenset[str] | None = None
+    rounds = 0
     for loop_i in range(1, _MAX_REVIEW_LOOPS + 1):
         if state.passed:
             break
@@ -6785,14 +7004,44 @@ def run_crossref_pipeline(
             state.diagnostics.append("correction loop: no ref_des found in objections")
             break
 
+        signature = _objection_signature(objections)
+        if signature == prev_signature:
+            msg = (f"correction loop stopped before round {loop_i}: the reviewer repeated "
+                   f"the previous round's objections unchanged")
+            logger.info("CR %s", msg)
+            state.diagnostics.append(msg)
+            break
+        prev_signature = signature
+        cited = _objection_refs(objections, known_refs)
+        for ref, sub in _row_substitutes(state, cited).items():
+            orig = next((str(r.get("original_pn") or "") for r in state.crossref_result
+                         if r.get("ref_des") == ref), "")
+            if sub and sub.lower() != orig.lower():
+                rejected_by_ref.setdefault(ref, set()).add(sub)
+        before = _row_substitutes(state, cited)
+
         logger.info("CR correction loop %d: addressing %d objections", loop_i, len(objections))
         _say(f"Correction loop {loop_i}: addressing {len(objections)} reviewer objections", 88)
-        state = _stage3b_correct(state, objections)
+        rounds = loop_i
+        state = _stage3b_correct(state, objections, rejected_by_ref)
         state = _stage4_guardrails(state)
         state = _stage5_score(state)
         state = _stage6_otto(state)
         state = _stage6_5_deterministic_rescue(state)
         state = _stage_footprint_caveat(state)
+        state = _stage_footprint_unverified(state)
+        after = _row_substitutes(state, cited)
+        productive = sorted(
+            r for r in cited
+            if after.get(r) != before.get(r) and after.get(r) not in rejected_by_ref.get(r, set())
+        )
+        if not productive:
+            msg = (f"correction loop {loop_i} produced no new substitute for the objected "
+                   f"row(s) ({', '.join(sorted(cited))}) — stopping without another review "
+                   f"round")
+            logger.info("CR %s", msg)
+            state.diagnostics.append(msg)
+            break
         state = _stage7_review(state)
 
     # Stage 8: Learn from this run
@@ -6819,6 +7068,11 @@ def run_crossref_pipeline(
     # rescued picks are themselves value-validated and verdicted.
     _stage6_5_deterministic_rescue(state)
     _stage_param_check(state)
+    # The post-loop rescue can write `recommended` again; re-assert the
+    # unverified-footprint demotion over the FINAL picks, then turn every line
+    # the reviewer still rejects into an explicit rejection.
+    _stage_footprint_unverified(state)
+    _apply_review_rejection(state, rounds, rejected_by_ref)
     # Deterministic per-parameter rationale (why exact/recommended/partial) for
     # every row, computed from the original-vs-substitute fields already present.
     _annotate_match_detail(state)

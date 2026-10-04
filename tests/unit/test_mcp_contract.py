@@ -101,7 +101,8 @@ def test_cross_reference_is_a_bom_not_a_ranked_list(monkeypatch) -> None:
             SimpleNamespace(ref_des="Q1", original_mpn="IRFZ44N",
                             substitute_mpn="WSM-1", status=SimpleNamespace(value="recommended")),
             SimpleNamespace(ref_des="D1", original_mpn="STPS3045",
-                            substitute_mpn=None, status=SimpleNamespace(value="no_substitute")),
+                            substitute_mpn=None, status=SimpleNamespace(value="no_substitute"),
+                            notes="no 45 V Schottky in the target catalogue"),
         ],
     )
     monkeypatch.setattr(
@@ -126,6 +127,42 @@ def test_cross_reference_is_a_bom_not_a_ranked_list(monkeypatch) -> None:
     assert all(ln["ref"] for ln in payload["lines"]), (
         "the designator is the line's identity; without it a BOM is a bag of parts"
     )
+
+
+def test_review_rejected_line_carries_its_objections(monkeypatch) -> None:
+    """Job 48ad52a57d5c: a line the review rejected must read as rejected, with
+    the reviewer's reason on the line and the failure in the result's caveat —
+    not as a bare `no_substitute` (which reads as "nothing in the catalogue")."""
+    reason = ("REJECTED by the engineering review (Ray) after 3 correction round(s): "
+              "560112110020 not accepted. Objections: package changes 0603 -> 0402.")
+    diag = "REVIEW REJECTED: the engineering review did not accept 1 line(s) ..."
+    outcome = SimpleNamespace(
+        passed=False,
+        diagnostics=[diag],
+        components=[
+            SimpleNamespace(ref_des="C1, C2", original_mpn="885012205037",
+                            substitute_mpn="885012205037", notes="already WE",
+                            status=SimpleNamespace(value="exact")),
+            SimpleNamespace(ref_des="R1", original_mpn="RC0603FR-0710KL",
+                            substitute_mpn=None, notes=reason,
+                            status=SimpleNamespace(value="no_substitute")),
+        ],
+    )
+    monkeypatch.setattr(
+        "heaviside.pipeline.crossref_pipeline.run_crossref_pipeline",
+        lambda *a, **k: outcome,
+    )
+    payload = _structured(ms.cross_reference(
+        source_bom=[ms.BomLine(ref_des="C1, C2", original_mpn="885012205037"),
+                    ms.BomLine(ref_des="R1", original_mpn="RC0603FR-0710KL")],
+        target_manufacturer="Würth Elektronik"))
+
+    _validate(payload)
+    by_ref = {ln["ref"]: ln for ln in payload["lines"]}
+    assert by_ref["R1"]["status"] == "no_substitute" and by_ref["R1"]["mpn"] is None
+    assert by_ref["R1"]["notes"] == reason
+    assert "notes" not in by_ref["C1, C2"], "a clean answer needs no explanation line"
+    assert payload["caveat"] == diag
 
 
 def test_design_bom_distinguishes_unsourced_from_no_substitute(monkeypatch) -> None:
