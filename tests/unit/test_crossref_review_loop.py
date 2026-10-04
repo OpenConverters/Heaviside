@@ -107,7 +107,7 @@ class _Reviewer:
 def _corrector(sequence):
     it = iter(sequence)
 
-    def correct(state, objections, rejected_by_ref=None):
+    def correct(state, objections, rejected_by_ref=None, **kw):
         nxt = next(it)
         for row in state.crossref_result:
             if row["ref_des"] == "R1":
@@ -203,6 +203,81 @@ def test_stage3b_never_reapplies_a_rejected_substitute(monkeypatch):
         "an already rejected part must not even be offered as a candidate"
     )
     assert any("already rejected" in d for d in state.diagnostics)
+
+
+# --- Objections that cite no row apply to the rows under review ------------
+
+
+def test_uncited_objection_corrects_the_row_under_review(monkeypatch):
+    """Job 8218ca50f104: Ray rejected R1's 0402 in prose that never wrote "R1".
+    The loop found "no ref_des in objections", ran zero rounds and never tried
+    the 0603 alternative. R1 was the only row under review, so the objection is
+    R1's; the exact C1,C2 row (not under review) is never touched."""
+    monkeypatch.setenv("HEAVISIDE_JEV", "0")
+    real_correct = cp._stage3b_correct
+    rounds: list[int] = []
+
+    class Reviewer:
+        calls = 0
+
+        def __call__(self, state, *a, **k):
+            self.calls += 1
+            if self.calls == 1:
+                ray = {"reviewer": "ray", "verdict": "REJECTED", "reviewed_refs": ["R1"],
+                       "objections": ["The proposed substitute 560112110020 is an 0402 "
+                                      "part; the original is 0603 and will not fit the pads."]}
+            else:
+                ray = {"reviewer": "ray", "verdict": "APPROVED", "objections": [],
+                       "reviewed_refs": ["R1"]}
+            state.review_verdicts += [ray, {"reviewer": "nicola", "verdict": ray["verdict"],
+                                            "reviewed_refs": ["R1"], "objections": []}]
+            state.passed = ray["verdict"] == "APPROVED"
+            return state
+
+    def correct(state, objections, rejected_by_ref=None, **kw):
+        rounds.append(1)
+        state.candidates_by_ref = {"R1": [_we_res("560112110020", "0402"),
+                                          _we_res("560112116005", "0603")]}
+        return real_correct(state, objections, rejected_by_ref, **kw)
+
+    def fake_llm(items, build_payload, **kw):
+        payload = build_payload(items)
+        assert [c["ref_des"] for c in payload["components_to_fix"]] == ["R1"], (
+            "only the row under review is corrected, never the exact C1,C2 row"
+        )
+        comp = payload["components_to_fix"][0]
+        assert comp["previously_rejected_substitutes"] == ["560112110020"]
+        assert all(c.get("mpn") != "560112110020" for c in comp.get("_tas_candidates", []))
+        return ([{"ref_des": "R1", "substitute_pn": "560112116005",
+                  "status": "recommended", "notes": "0603 like the original"}], [])
+
+    review = Reviewer()
+    _wire_pipeline(monkeypatch, bom=_bom(), review=review, correct=correct)
+    monkeypatch.setattr(cp, "_crossref_llm_batched", fake_llm)
+    out = cp.run_crossref_pipeline(_bom(), "Würth Elektronik")
+
+    assert rounds == [1], "an uncited objection on the only reviewed row must run a round"
+    assert review.calls == 2
+    assert not any("no ref_des found" in d for d in out.diagnostics)
+    assert any("cite no row; applied to the row under review (R1)" in d
+               for d in out.diagnostics)
+    r1 = next(c for c in out.components if c.ref_des == "R1")
+    assert r1.substitute_mpn == "560112116005"
+    c = next(c for c in out.components if c.ref_des == "C1, C2")
+    assert c.status.value == "exact" and c.substitute_mpn == "885012205037"
+
+
+def test_rejection_targets_never_reach_rows_outside_review():
+    known = {"C1, C2", "R1", "R2"}
+    ray = {"reviewer": "ray", "verdict": "REJECTED", "reviewed_refs": ["R1", "R2"],
+           "objections": ["wrong package"]}
+    targets, note = cp._rejection_targets(ray, known)
+    assert targets == {"R1", "R2"}
+    assert "all 2 rows under review" in note
+    ray["objections"] = ["R2 wrong package", "C1, C2 also suspicious"]
+    assert cp._rejection_targets(ray, known) == ({"R2"}, None)
+    with pytest.raises(cp.CrossRefPipelineError):
+        cp._rejection_targets({"reviewer": "ray", "objections": ["x"]}, known)
 
 
 # --- Fix 3: Ray and Nicola run concurrently ---------------------------------

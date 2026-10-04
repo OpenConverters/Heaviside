@@ -4380,8 +4380,14 @@ def _stage3b_correct(
     state: CrossRefState,
     objections: list[str],
     rejected_by_ref: dict[str, set[str]] | None = None,
+    *,
+    target_refs: set[str] | None = None,
 ) -> CrossRefState:
     """Re-run the crossref LLM for components cited in reviewer objections.
+
+    ``target_refs`` are the rows to correct as decided by the caller from the
+    verdict (``_rejection_targets``: uncited objections apply to the rows that
+    were under review); without it the rows are the ones the objections cite.
 
     ``rejected_by_ref`` holds every substitute the reviewer has already rejected
     for each ref in this job. Those are removed from the candidates offered and a
@@ -4391,7 +4397,8 @@ def _stage3b_correct(
     """
     rejected_by_ref = rejected_by_ref or {}
     known_refs = {r.get("ref_des", "") for r in state.crossref_result if r.get("ref_des")}
-    cited_refs = _objection_refs(objections, known_refs)
+    cited_refs = (set(target_refs) & known_refs if target_refs is not None
+                  else _objection_refs(objections, known_refs))
 
     if not cited_refs:
         state.diagnostics.append("correction loop: no ref_des found in objections")
@@ -6851,6 +6858,35 @@ def _row_substitutes(state: CrossRefState, refs: set[str]) -> dict[str, str | No
     return out
 
 
+def _rejection_targets(verdict: dict[str, Any], known: set[str]) -> tuple[set[str], str | None]:
+    """The rows a rejecting reviewer verdict applies to, and a note when inferred.
+
+    Objections that cite rows apply to the cited rows that were under review.
+    Objections that cite none apply to the rows that were under review in that
+    round (``reviewed_refs``) — the reviewer refused what he was shown. Rows not
+    under review (kept/exact rows cleared by the gate) are never targets: job
+    8218ca50f104 ended R1 with zero correction rounds because Ray's prose
+    rejecting the 0402 never wrote "R1", while R1 was the only row he saw.
+    Both the correction loop and the final rejection use this one rule.
+    """
+    if "reviewed_refs" not in verdict:
+        raise CrossRefPipelineError(
+            f"CR review: the {verdict.get('reviewer')!r} verdict carries no reviewed_refs, "
+            f"so the rows its objections apply to cannot be determined"
+        )
+    objections = list(verdict.get("objections") or [])
+    reviewed = {str(r) for r in verdict["reviewed_refs"]} & known
+    cited = _objection_refs(objections, known) & reviewed
+    if cited:
+        return cited, None
+    if not reviewed:
+        return set(), None
+    note = (f"the reviewer's {len(objections)} objection(s) cite no row; applied to "
+            + ("the row" if len(reviewed) == 1 else f"all {len(reviewed)} rows")
+            + f" under review ({', '.join(sorted(reviewed))})")
+    return reviewed, note
+
+
 def _apply_review_rejection(
     state: CrossRefState, rounds: int, rejected_by_ref: dict[str, set[str]]
 ) -> None:
@@ -6868,8 +6904,7 @@ def _apply_review_rejection(
         return
     objections = list(latest.get("objections") or [])
     known = {str(r.get("ref_des")) for r in state.crossref_result if r.get("ref_des")}
-    reviewed = set(latest.get("reviewed_refs") or known) & known
-    targets = (_objection_refs(objections, known) & reviewed) or reviewed
+    targets, _ = _rejection_targets(latest, known)
     nicola = next((v for v in reversed(state.review_verdicts)
                    if v.get("reviewer") == "nicola"), {})
     rejected_lines: list[str] = []
@@ -6986,23 +7021,28 @@ def run_crossref_pipeline(
             break
         # Correct the objections from the GATING reviewer (Ray), not
         # review_verdicts[-1] which is always Nicola (appended last).
-        objections = _latest_ray_verdict(state.review_verdicts).get("objections", [])
+        latest_ray = _latest_ray_verdict(state.review_verdicts)
+        objections = latest_ray.get("objections", [])
         if not objections:
             break
 
-        # If the objections don't cite any component we can act on, re-running the
-        # LLM + review won't change anything — break instead of spinning through
-        # the remaining iterations (each is a full re-review round).
-        known_refs = {r.get("ref_des", "") for r in state.crossref_result if r.get("ref_des")}
-        if not _objection_refs(objections, known_refs):
+        # Objections that cite no row apply to the rows that were under review
+        # (job 8218ca50f104: Ray rejected R1's 0402 without writing "R1", and the
+        # loop stopped with zero rounds instead of trying the 0603 alternative).
+        # Only when no row was under review is there nothing to act on.
+        known_refs = {str(r.get("ref_des")) for r in state.crossref_result if r.get("ref_des")}
+        cited, inferred = _rejection_targets(latest_ray, known_refs)
+        if not cited:
             logger.info(
-                "CR correction loop %d: %d objection(s) cite no actionable ref_des — "
-                "stopping the loop (not re-reviewing)",
+                "CR correction loop %d: %d objection(s) and no row under review to act "
+                "on — stopping the loop (not re-reviewing)",
                 loop_i,
                 len(objections),
             )
             state.diagnostics.append("correction loop: no ref_des found in objections")
             break
+        if inferred:
+            state.diagnostics.append(f"correction loop {loop_i}: {inferred}")
 
         signature = _objection_signature(objections)
         if signature == prev_signature:
@@ -7012,7 +7052,6 @@ def run_crossref_pipeline(
             state.diagnostics.append(msg)
             break
         prev_signature = signature
-        cited = _objection_refs(objections, known_refs)
         for ref, sub in _row_substitutes(state, cited).items():
             orig = next((str(r.get("original_pn") or "") for r in state.crossref_result
                          if r.get("ref_des") == ref), "")
@@ -7023,7 +7062,7 @@ def run_crossref_pipeline(
         logger.info("CR correction loop %d: addressing %d objections", loop_i, len(objections))
         _say(f"Correction loop {loop_i}: addressing {len(objections)} reviewer objections", 88)
         rounds = loop_i
-        state = _stage3b_correct(state, objections, rejected_by_ref)
+        state = _stage3b_correct(state, objections, rejected_by_ref, target_refs=cited)
         state = _stage4_guardrails(state)
         state = _stage5_score(state)
         state = _stage6_otto(state)
