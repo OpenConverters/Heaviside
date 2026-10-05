@@ -155,3 +155,42 @@ def test_missing_file_and_unknown_extension_raise(pipeline, tmp_path) -> None:
     with pytest.raises(ValueError, match="extensions"):
         _submit(str(tmp_path / "bom"))
     assert not pipeline
+
+
+def _csv_of(n: int) -> bytes:
+    return ("Designator,MPN,Manufacturer\n"
+            + "".join(f"R{i},RC0603FR-07{i}KL,Yageo\n" for i in range(1, n + 1))).encode()
+
+
+def test_a_bom_over_the_ai_limit_is_refused_and_names_the_fast_path(pipeline, tmp_path) -> None:
+    """A 2,101-line quote BOM was once queued here and ran for over an hour before it had to
+    be killed: the AI path costs minutes per line. Over the limit it is refused up front, with
+    how long it would take and where a whole BOM belongs — and nothing is queued or trimmed."""
+    path = tmp_path / "quote.csv"
+    path.write_bytes(_csv_of(ms.AI_MAX_LINES + 1))
+    with pytest.raises(ValueError) as refused:
+        _submit(str(path))
+    message = str(refused.value)
+    assert f"quote.csv has {ms.AI_MAX_LINES + 1} lines" in message
+    assert "hours" in message and "crossref_bom" in message and "fast, deterministic" in message
+    assert "Nothing was queued" in message
+    assert not pipeline and mcp_jobs.registry().list() == []
+
+
+def test_a_bom_at_the_ai_limit_is_still_submitted(pipeline, tmp_path) -> None:
+    path = tmp_path / "board.csv"
+    path.write_bytes(_csv_of(ms.AI_MAX_LINES))
+    queued = _structured(_submit(str(path)))
+    assert queued["mode"] == "job"
+    _wait_done(queued["job"])
+    assert len(pipeline[0]["rows"]) == ms.AI_MAX_LINES
+
+
+def test_typed_lines_over_the_ai_limit_are_refused_too(pipeline) -> None:
+    lines = [ms.BomLine(ref_des=f"R{i}", original_mpn=f"RC0603FR-07{i}KL")
+             for i in range(ms.AI_MAX_LINES + 1)]
+    with pytest.raises(ValueError, match="crossref_bom"):
+        ms.submit_crossref(lines, "Wurth")
+    with pytest.raises(ValueError, match="crossref_bom"):
+        ms.cross_reference(lines, "Wurth")
+    assert not pipeline and mcp_jobs.registry().list() == []

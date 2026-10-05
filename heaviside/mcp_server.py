@@ -636,6 +636,7 @@ def cross_reference(source_bom: list[BomLine], target_manufacturer: str,
         target_manufacturer: the vendor to source into.
         circuit_context: what the board does, when it helps judge a substitution.
     """
+    _refuse_large_bom(len(source_bom), "This BOM")
     digest, payload = _run_crossref(_bom_rows(source_bom), target_manufacturer,
                                     circuit_context)
     return _result(digest, payload)
@@ -673,7 +674,8 @@ def _job_result(job, *, with_result: bool = False) -> CallToolResult:
         "job_status and fetch with job_result. This is the tool to use: the "
         "blocking cross_reference takes minutes and most callers time out. "
         "job_status reports the pipeline's current stage by name, so progress "
-        "can be shown rather than guessed at."
+        "can be shown rather than guessed at. At most 50 lines per job (minutes per "
+        "line); a larger BOM is refused and belongs in Kelvin's crossref_bom."
     ),
     structured_output=False,
 )
@@ -695,12 +697,38 @@ def submit_crossref(source_bom: list[BomLine], target_manufacturer: str,
         job.envelope())
 
 
+# The most lines one AI cross-reference takes. Each line goes through the agent chain (Otto,
+# reviewers, ...) and costs minutes: on the 4-core demo host 3 lines took ~17 minutes, and a
+# 2,101-line quote BOM submitted there was still in its first stage after an hour when it had to
+# be killed. A BOM that size is a job for the deterministic cross-reference (Kelvin's
+# crossref_bom: seconds to minutes), not for this one. The limit refuses it up front, in words,
+# instead of queueing a run nobody will see finish — and nothing is truncated to fit.
+AI_MAX_LINES = int(os.environ.get("HEAVISIDE_AI_MAX_LINES", "50"))
+_AI_MINUTES_PER_LINE = 17 / 3          # measured on the demo host; for the estimate only
+
+
+def _refuse_large_bom(n_lines: int, what: str) -> None:
+    if n_lines <= AI_MAX_LINES:
+        return
+    hours = n_lines * _AI_MINUTES_PER_LINE / 60
+    raise ValueError(
+        f"{what} has {n_lines:,} lines; the AI cross-reference takes at most {AI_MAX_LINES} "
+        f"per run. At the pace measured on the demo host (3 lines in about 17 minutes) "
+        f"{n_lines:,} lines would take roughly {hours:,.0f} hours. Nothing was queued. "
+        f"Use the fast deterministic cross-reference instead — Kelvin's crossref_bom (upload "
+        f"menu: 'Cross-reference the BOM into Würth — fast, deterministic'), minutes for a "
+        f"whole quote BOM — and send only the lines that need a closer look here, at most "
+        f"{AI_MAX_LINES} at a time.")
+
+
 def _submit_crossref_job(rows: list[dict], target_manufacturer: str,
-                         circuit_context: str | None, label: str):
+                         circuit_context: str | None, label: str, what: str = "This BOM"):
     """Queue _run_crossref on the job registry — the one submission path for
     both submit_crossref and submit_crossref_bom, so job_status / job_result
     cannot tell (and need not know) which of them started a job."""
     from heaviside.mcp_jobs import registry
+
+    _refuse_large_bom(len(rows), what)
 
     def work(progress):
         _digest, payload = _run_crossref(rows, target_manufacturer,
@@ -751,7 +779,9 @@ def _bom_file_diagnostics(rows: list[dict]) -> tuple[list[str], list[str]]:
         "structured data. Returns a job id immediately, with how many lines were parsed "
         "and which lack a part number; poll job_status and fetch job_result exactly as "
         "for submit_crossref. A file that cannot be parsed fails the call with the "
-        "parser's reason; nothing is queued."
+        "parser's reason; nothing is queued. A BOM of more than 50 lines is refused "
+        "(minutes per line: it would run for hours); Kelvin's crossref_bom is the fast "
+        "deterministic cross-reference for a whole BOM."
     ),
     structured_output=False,
 )
@@ -785,7 +815,7 @@ async def submit_crossref_bom(bom: str, target_manufacturer: str,
 
     no_mpn, notes = _bom_file_diagnostics(rows)
     label = f"{len(rows)} line(s) from {name} -> {target_manufacturer}"
-    job = _submit_crossref_job(rows, target_manufacturer, circuit_context, label)
+    job = _submit_crossref_job(rows, target_manufacturer, circuit_context, label, what=name)
     envelope = job.envelope()
     # `caveat` is the job branch's free-text slot (the envelope is a closed
     # schema); the parse summary rides there so a widget can show it too.
