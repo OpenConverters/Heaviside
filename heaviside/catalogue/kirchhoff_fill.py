@@ -75,6 +75,7 @@ _HV_SWITCHING_LOSS_VDS = 100.0
 def _mosfet_constraints(req: dict[str, Any], *, op_fsw: float | None = None) -> MosfetConstraints:
     vds_min = float(req["ratedDrainSourceVoltage"])
     id_min = float(req["ratedContinuousDrainCurrent"])
+    channel = req.get("channel")  # SAS designRequirements; Kirchhoff asks for nChannel
     # For a HIGH-VOLTAGE stage, attach an operating point so select_mosfet can rank by total loss
     # (conduction + Qg crossover + Coss switching). op_vds = the part's own blocking rating and
     # op_i_rms = its current rating are conservative proxies (they scale every candidate's terms
@@ -89,12 +90,14 @@ def _mosfet_constraints(req: dict[str, Any], *, op_fsw: float | None = None) -> 
             op_vds=vds_min,
             op_duty=0.5,
             op_fsw=float(op_fsw),
+            channel=channel,
         )
     return MosfetConstraints(
         vds_min=vds_min,
         id_min=id_min,
         rds_on_max=float(req["maximumOnResistance"]),
         qg_max=math.inf,  # Kirchhoff does not emit a gate-charge limit
+        channel=channel,
     )
 
 

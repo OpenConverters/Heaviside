@@ -230,6 +230,8 @@ class MosfetConstraints:
     qg_max: float
     technology_allowed: frozenset[str] = frozenset({"Si", "SiC", "GaN"})
     exclude_discontinued: bool = True
+    # SAS designRequirements.channel ("nChannel" / "pChannel"); None = either channel.
+    channel: str | None = None
     # Operating point for the LOWEST_TOTAL_LOSS tiebreaker (optional).
     # When all four are set, the selector ranks candidates by
     # duty*i_rms^2*Rds_on + 0.5*vds*i_rms*Qg*fsw/Ig.
@@ -245,6 +247,8 @@ class MosfetConstraints:
                 raise ValueError(f"MosfetConstraints.{name} must be a positive number, got {val!r}")
         if not self.technology_allowed:
             raise ValueError("MosfetConstraints.technology_allowed cannot be empty")
+        if self.channel is not None and self.channel not in ("nChannel", "pChannel"):
+            raise ValueError(f"MosfetConstraints.channel must be nChannel or pChannel, got {self.channel!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,6 +322,8 @@ def select_mosfet(
 
     req = {"ratedDrainSourceVoltage": c.vds_min, "ratedContinuousDrainCurrent": c.id_min,
            "maximumOnResistance": c.rds_on_max}
+    if c.channel is not None:
+        req["channel"] = c.channel
     opts: dict[str, Any] = {"tiebreaker": str(tiebreaker), "excludeDiscontinued": c.exclude_discontinued}
     if c.qg_max != float("inf"):
         opts["qgMax"] = c.qg_max
