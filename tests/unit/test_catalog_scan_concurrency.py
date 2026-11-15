@@ -113,7 +113,7 @@ def test_requests_during_warm_get_503_not_a_scan(data_dir, monkeypatch):
     scans = []
     monkeypatch.setattr(reader, "iter_envelopes", lambda p: (scans.append(p), iter(()))[1])
     srv._WARM_STARTED.set()  # warm running, nothing cached yet
-    for call in (srv.catalog_stats, lambda: srv.catalog_detail("resistors", "R-1")):
+    for call in (srv.catalog_stats, lambda: srv.catalog_detail("resistors", "R-1"), lambda: srv.catalog("resistors")):
         with pytest.raises(HTTPException) as ei:
             call()
         assert ei.value.status_code == 503

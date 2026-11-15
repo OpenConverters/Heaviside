@@ -2418,6 +2418,9 @@ def catalog(
     # A browse is a full scan of the category file (minutes for resistors);
     # cap how many run at once so a burst cannot starve the host (see
     # _CATALOG_BUILD_LOCK). Over the cap: 503 + Retry-After, not a queued scan.
+    if _WARM_STARTED.is_set() and not _WARM_DONE.is_set():
+        # A browse started now would compete with the warm for the same files.
+        raise _catalogue_busy("catalogue caches are still warming after a restart; retry shortly")
     if not _FULL_SCAN_SLOTS.acquire(timeout=_FULL_SCAN_WAIT_S):
         raise _catalogue_busy("catalogue browse is busy; retry shortly")
     try:
