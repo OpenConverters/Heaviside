@@ -14,10 +14,12 @@ Launch:
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
+import threading
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -1480,9 +1482,54 @@ def delete_job(job_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+# Every catalogue cache below is built by a full scan of multi-GB NDJSON files. On
+# 2026-11-15 ~40 requests that arrived while the startup warm was still running
+# each started their OWN scan of the 2.9 GB resistors file; on a 2-vCPU host they
+# crawled at ~0.5 MB/s each and the warm had not finished after 2 h (alone it
+# takes ~16 min). So: (1) one lock serialises every cache build — a second
+# caller waits for the first scan and then reads its result; (2) while the
+# startup warm runs, an endpoint whose cache is not built yet answers 503 with
+# Retry-After instead of queueing a scan; (3) at most _FULL_SCAN_SLOTS uncached
+# browse scans (/catalog/{category}) run at once, the rest get 503.
+_CATALOG_BUILD_LOCK = threading.RLock()
+_WARM_STARTED = threading.Event()
+_WARM_DONE = threading.Event()
+_FULL_SCAN_SLOTS = threading.BoundedSemaphore(2)
+_FULL_SCAN_WAIT_S = 10.0
+_RETRY_AFTER_S = "60"
+_WARM_THREAD_NAME = "catalog-cache-warm"
+
+
+def _catalogue_busy(detail: str) -> HTTPException:
+    return HTTPException(status_code=503, detail=detail, headers={"Retry-After": _RETRY_AFTER_S})
+
+
+def _single_flight(is_cached: Callable[..., bool]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Serialise a cache builder: a cached result returns at once; otherwise the
+    caller takes the build lock (re-checking inside the builder) — or, while the
+    startup warm is still running, gets a 503 instead of starting its own scan.
+    The warm thread itself always builds."""
+
+    def deco(build: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(build)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if is_cached(*args, **kwargs):
+                return build(*args, **kwargs)
+            warming = _WARM_STARTED.is_set() and not _WARM_DONE.is_set()
+            if warming and threading.current_thread().name != _WARM_THREAD_NAME:
+                raise _catalogue_busy("catalogue caches are still warming after a restart; retry shortly")
+            with _CATALOG_BUILD_LOCK:
+                return build(*args, **kwargs)
+
+        return wrapper
+
+    return deco
+
+
 _MANUFACTURER_CACHE: dict[str, Any] | None = None
 
 
+@_single_flight(lambda: _MANUFACTURER_CACHE is not None)
 def _manufacturer_counts() -> dict[str, Any]:
     """Per-manufacturer component counts across the whole catalogue.
 
@@ -1611,6 +1658,7 @@ _OVERVIEW_CACHE: dict[str, Any] | None = None
 # "wurth elektronik" -> "Würth Elektronik". Built during _build_overview
 # (warmed on app load); used to normalize browse-row manufacturer display.
 _MFR_CANONICAL: dict[str, str] = {}
+
 
 # SI unit per category parameter, parallel to _CATALOG_LABELS. "%" is a sentinel
 # meaning "format as a percentage" (used for resistor tolerance).
@@ -2014,6 +2062,7 @@ def _catalog_scan(
     return total, page
 
 
+@_single_flight(lambda: _STATS_CACHE is not None)
 def _build_stats() -> dict[str, int]:
     global _STATS_CACHE
     if _STATS_CACHE is not None:
@@ -2037,6 +2086,7 @@ def _build_stats() -> dict[str, int]:
     return result
 
 
+@_single_flight(lambda category: category in _FACETS_CACHE)
 def _build_facets(category: str) -> dict[str, Any]:
     if category in _FACETS_CACHE:
         return _FACETS_CACHE[category]
@@ -2086,6 +2136,7 @@ def _build_facets(category: str) -> dict[str, Any]:
     return result
 
 
+@_single_flight(lambda: _OVERVIEW_CACHE is not None)
 def _build_overview() -> dict[str, Any]:
     """Rich per-category aggregates for the catalog overview dashboard.
 
@@ -2218,9 +2269,14 @@ def _warm_catalog_caches() -> None:
         _manufacturer_counts()
         for category in _catalog_projectors():
             _build_facets(category)
+        for category in _DETAIL_NDJSON:
+            _detail_index(category)
     except Exception:
         logger.exception("catalog cache warming failed (endpoints will compute lazily)")
         return
+    finally:
+        # Whatever happened, stop answering 503: the lazy (single-flight) path takes over.
+        _WARM_DONE.set()
     logger.info("catalog caches warmed in %.1fs", time.monotonic() - t0)
 
 
@@ -2230,7 +2286,8 @@ def _warm_caches_on_startup() -> None:
     the server becomes ready instantly and health checks pass during the scan."""
     import threading
 
-    threading.Thread(target=_warm_catalog_caches, name="catalog-cache-warm", daemon=True).start()
+    _WARM_STARTED.set()
+    threading.Thread(target=_warm_catalog_caches, name=_WARM_THREAD_NAME, daemon=True).start()
 
 
 @app.get("/catalog/stats")
@@ -2246,60 +2303,92 @@ def catalog_facets(category: str) -> dict[str, Any]:
     return _build_facets(category)
 
 
+_DETAIL_NDJSON: dict[str, str] = {
+    "mosfets": "mosfets.ndjson",
+    "diodes": "diodes.ndjson",
+    "capacitors": "capacitors.ndjson",
+    "resistors": "resistors.ndjson",
+    "magnetics": "magnetics.ndjson",
+    "connectors": "connectors.ndjson",
+    "analog": "analog_ics.ndjson",
+    "timing_devices": "timing_devices.ndjson",
+    "varistors": "varistors.ndjson",
+}
+_DETAIL_INDEX: dict[str, Any] = {}
+
+
+def _detail_keys(env: dict[str, Any]) -> Iterator[str]:
+    """The MPN(s) /detail matches a line by — reference, else part.partNumber,
+    else the manufacturer name — for every manufacturerInfo the envelope holds,
+    in the order the old full-scan endpoint tried them."""
+    for key in (
+        "semiconductor",
+        "capacitor",
+        "resistor",
+        "magnetic",
+        "connector",
+        "analog",
+        "timeBase",
+        "varistor",
+    ):
+        sub = env.get(key, {})
+        if not sub:
+            continue
+        for inner_key in list(sub.keys()):
+            # Inner values may be lists (e.g. distributorsInfo) — only dicts can
+            # nest a manufacturerInfo. A TBAS document's first child may be
+            # `inputs` (no manufacturerInfo) with the real record under a later
+            # sibling — keep scanning, don't break.
+            inner = sub[inner_key]
+            mi = (inner.get("manufacturerInfo") if isinstance(inner, dict) else None) or sub.get(
+                "manufacturerInfo"
+            )
+            if mi is None:
+                continue
+            # Capacitors / resistors carry the MPN in part.partNumber, not in
+            # manufacturerInfo.reference.
+            part = (mi.get("datasheetInfo") or {}).get("part") or {}
+            ref = mi.get("reference") or part.get("partNumber") or mi.get("name", "")
+            if isinstance(ref, str) and ref:
+                yield ref
+
+
+def _detail_index(category: str) -> Any:
+    """The category's MPN -> offset index, built once (single-flight) and rebuilt
+    when the data file is rewritten (a data deploy)."""
+    from heaviside.catalogue.mpn_offsets import MpnOffsetIndex
+    from heaviside.catalogue.selector import _tas_data_dir
+
+    idx = _DETAIL_INDEX.get(category)
+    if idx is not None and not idx.is_stale():
+        return idx
+    warming = _WARM_STARTED.is_set() and not _WARM_DONE.is_set()
+    if warming and threading.current_thread().name != _WARM_THREAD_NAME:
+        raise _catalogue_busy("catalogue index is still being built after a restart; retry shortly")
+    with _CATALOG_BUILD_LOCK:
+        idx = _DETAIL_INDEX.get(category)
+        if idx is None or idx.is_stale():
+            idx = MpnOffsetIndex(_tas_data_dir() / _DETAIL_NDJSON[category], _detail_keys)
+            _DETAIL_INDEX[category] = idx
+        return idx
+
+
 @app.get("/catalog/{category}/{mpn}/detail")
 def catalog_detail(category: str, mpn: str) -> dict[str, Any]:
     """Return the raw full PEAS data for a single MPN so the UI can render a datasheet."""
-    from heaviside.catalogue._reader import iter_envelopes
-    from heaviside.catalogue.selector import _tas_data_dir
+    from heaviside.catalogue.mpn_offsets import IndexStale
 
-    _NDJSON: dict[str, str] = {
-        "mosfets": "mosfets.ndjson",
-        "diodes": "diodes.ndjson",
-        "capacitors": "capacitors.ndjson",
-        "resistors": "resistors.ndjson",
-        "magnetics": "magnetics.ndjson",
-        "connectors": "connectors.ndjson",
-        "analog": "analog_ics.ndjson",
-        "timing_devices": "timing_devices.ndjson",
-        "varistors": "varistors.ndjson",
-    }
-    if category not in _NDJSON:
+    if category not in _DETAIL_NDJSON:
         raise HTTPException(status_code=404, detail=f"unknown category '{category}'")
-    path = _tas_data_dir() / _NDJSON[category]
-    mpn_lo = mpn.strip().lower()
-    for _lineno, env in iter_envelopes(path):
-        # Locate the manufacturerInfo dict regardless of the envelope key.
-        for key in (
-            "semiconductor",
-            "capacitor",
-            "resistor",
-            "magnetic",
-            "connector",
-            "analog",
-            "timeBase",
-            "varistor",
-        ):
-            sub = env.get(key, {})
-            if not sub:
-                continue
-            for inner_key in list(sub.keys()):
-                # Inner values may be lists (e.g. distributorsInfo) — only
-                # dicts can nest a manufacturerInfo. A TBAS document's first
-                # child may be `inputs` (no manufacturerInfo) with the real
-                # record under a later sibling — keep scanning, don't break.
-                inner = sub[inner_key]
-                mi = (
-                    inner.get("manufacturerInfo") if isinstance(inner, dict) else None
-                ) or sub.get("manufacturerInfo")
-                if mi is None:
-                    continue
-                # Capacitors / resistors carry the MPN in part.partNumber, not
-                # in manufacturerInfo.reference.
-                part = (mi.get("datasheetInfo") or {}).get("part") or {}
-                ref = mi.get("reference") or part.get("partNumber") or mi.get("name", "")
-                if ref.lower() == mpn_lo:
-                    return {"category": category, "mpn": mpn, "data": env}
-    raise HTTPException(status_code=404, detail=f"MPN '{mpn}' not found in {category}")
+    try:
+        env = _detail_index(category).lookup(mpn)
+    except IndexStale:
+        # Rewritten between the staleness check and the read: rebuild once.
+        _DETAIL_INDEX.pop(category, None)
+        env = _detail_index(category).lookup(mpn)
+    if env is None:
+        raise HTTPException(status_code=404, detail=f"MPN '{mpn}' not found in {category}")
+    return {"category": category, "mpn": mpn, "data": env}
 
 
 @app.get("/catalog/{category}")
@@ -2326,21 +2415,29 @@ def catalog(
     """
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    total, rows = _catalog_scan(
-        category,
-        query=q,
-        tech=tech,
-        sort=sort,
-        order=order,
-        p1_min=p1_min,
-        p1_max=p1_max,
-        p2_min=p2_min,
-        p2_max=p2_max,
-        p3_min=p3_min,
-        p3_max=p3_max,
-        limit=limit,
-        offset=offset,
-    )
+    # A browse is a full scan of the category file (minutes for resistors);
+    # cap how many run at once so a burst cannot starve the host (see
+    # _CATALOG_BUILD_LOCK). Over the cap: 503 + Retry-After, not a queued scan.
+    if not _FULL_SCAN_SLOTS.acquire(timeout=_FULL_SCAN_WAIT_S):
+        raise _catalogue_busy("catalogue browse is busy; retry shortly")
+    try:
+        total, rows = _catalog_scan(
+            category,
+            query=q,
+            tech=tech,
+            sort=sort,
+            order=order,
+            p1_min=p1_min,
+            p1_max=p1_max,
+            p2_min=p2_min,
+            p2_max=p2_max,
+            p3_min=p3_min,
+            p3_max=p3_max,
+            limit=limit,
+            offset=offset,
+        )
+    finally:
+        _FULL_SCAN_SLOTS.release()
     return {
         "category": category,
         "total": total,
