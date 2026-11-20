@@ -57,6 +57,44 @@ R() { $SSH "$PROD_HOST" "su alf -c 'cd $PROD_DIR; $*'"; }
 ROOT() { $SSH "$PROD_HOST" "$*"; }
 say() { printf '\n=== %s ===\n' "$1"; }
 
+# RS: run a bash script read from STDIN as alf in $PROD_DIR, with positional args.
+# Use it for anything containing quotes or awk: R() wraps its argument in su -c '...',
+# so a single quote inside the command silently ends that string.
+RS() { $SSH "$PROD_HOST" "su alf -s /bin/bash -c 'cd $PROD_DIR && bash -s -- $*'"; }
+
+SCHEMA_SRC="${SCHEMA_SRC:-$HOME/PSMA}"
+SCHEMA_REPOS="${SCHEMA_REPOS:-PEAS MAS SAS CAS RAS CIAS CONAS CTAS AAS TDAS TAS}"
+SCHEMA_SSH="${SCHEMA_SSH:-/usr/bin/ssh -i $HOME/.ssh/hephaestus_om}"
+
+# 4b. SCHEMAS — prod gets each schema repo's LATEST origin/main, never the pinned pointer.
+# The pull deliberately does not recurse (a submodule fetch would need GitHub, which prod
+# cannot reach). On 2026-09-05 prod's PEAS tree predated the provenance vocabulary and
+# prod rejected 44,156 TAS records that validated everywhere else. The previous version
+# of this step checked each submodule out to the commit the superproject pins; that was
+# never what we want (pins lag main, and "always latest schemas everywhere" is the rule),
+# and its quoting broke inside `su -c '...'`, so it never ran at all.
+#
+# Now: for every schema repo, compare prod's <repo>/schemas file-for-file (git blob
+# hashes) with origin/main of the canonical checkout in $SCHEMA_SRC (fetched first; a
+# failed fetch ABORTS rather than shipping a stale main). On a mismatch, --apply ships
+# `git archive origin/main schemas` and swaps it in, keeping the replaced tree as
+# schemas.prev (one copy; prod's disk is small). Only committed upstream content travels:
+# local WIP in $SCHEMA_SRC never does.
+schema_drift() {  # prints the repos whose prod schemas differ from origin/main
+    local SM SRC LOCAL REMOTE
+    for SM in $SCHEMA_REPOS; do
+        SRC="$SCHEMA_SRC/$SM"
+        LOCAL=$(git -C "$SRC" ls-tree -r origin/main schemas | awk '{print $3"  "$4}' | LC_ALL=C sort -k2)
+        REMOTE=$(RS "$SM" <<'EOS' | LC_ALL=C sort -k2
+# git -C / : prod's submodule .git files point at gitdirs that do not exist there, so a
+# git command run inside the tree dies before hashing. Hash from / with the file on stdin.
+cd "$1" && find schemas -type f | while IFS= read -r f; do printf '%s  %s\n' "$(git -C / hash-object --stdin < "$f")" "$f"; done
+EOS
+)
+        [ "$LOCAL" = "$REMOTE" ] || echo "$SM"
+    done
+}
+
 say "0. Gap between prod and local $BRANCH"
 PROD_SHA=$(R 'git rev-parse HEAD')
 echo "prod HEAD : $PROD_SHA"
@@ -65,8 +103,11 @@ if ! git cat-file -e "$PROD_SHA" 2>/dev/null; then
   echo "prod's commit is unknown locally — fetch/pull this repo first."; exit 1
 fi
 BEHIND=$(git rev-list --count "$PROD_SHA"..HEAD)
-if [ "$BEHIND" = "0" ]; then echo "prod is already up to date."; exit 0; fi
-echo "behind by : $BEHIND commits, $(git diff --name-only "$PROD_SHA"..HEAD | wc -l) files"
+if [ "$BEHIND" = "0" ]; then
+  echo "prod code is up to date (schemas are still checked below)."
+else
+  echo "behind by : $BEHIND commits, $(git diff --name-only "$PROD_SHA"..HEAD | wc -l) files"
+fi
 
 say "1. Prod's local state — captured, never assumed away"
 PATCH="/tmp/prod_local_$(date +%Y%m%d%H%M%S).patch"
@@ -79,12 +120,30 @@ if [ "$MODIFIED" != "0" ]; then
   echo "modified files:"; R 'git diff --ignore-submodules=all --name-only | head -30'
 fi
 
+say "1b. Schemas: does prod hold origin/main of every schema repo?"
+for SM in $SCHEMA_REPOS; do
+  if ! git -C "$SCHEMA_SRC/$SM" -c core.sshCommand="$SCHEMA_SSH" fetch -q --no-recurse-submodules origin main; then
+    echo "ABORT: cannot fetch $SM origin/main — refusing to compare against a stale main." >&2
+    exit 1
+  fi
+done
+DRIFT=$(schema_drift)
+if [ -n "$DRIFT" ]; then DRIFT=$(echo $DRIFT); echo "behind origin/main: $DRIFT"; else echo "all $(echo $SCHEMA_REPOS | wc -w) schema trees match origin/main"; fi
+
+if [ "$BEHIND" = "0" ] && [ -z "$DRIFT" ]; then echo; echo "nothing to deploy."; exit 0; fi
+
 if [ -z "$APPLY" ]; then
   say "DRY RUN"
-  echo "Would: bundle $PROD_SHA..HEAD -> scp -> git pull --ff-only from the bundle"
-  echo "       stash TRACKED modifications only (never -u), restart, verify import+health."
+  if [ "$BEHIND" != "0" ]; then
+    echo "Would: bundle $PROD_SHA..HEAD -> scp -> git pull --ff-only from the bundle"
+    echo "       stash TRACKED modifications only (never -u)."
+  fi
+  [ -n "$DRIFT" ] && echo "Would: replace <repo>/schemas with origin/main for: $DRIFT"
+  echo "Then:  restart, verify import+health."
   exit 0
 fi
+
+if [ "$BEHIND" != "0" ]; then
 
 say "2. Build and ship the bundle"
 git bundle create "$BUNDLE_LOCAL" "$PROD_SHA..$BRANCH"
@@ -117,41 +176,31 @@ fi
 say "4. Pull from the bundle"
 R "git -c submodule.recurse=false pull --ff-only $BUNDLE_REMOTE $BRANCH" | tail -3
 R 'git log --oneline -1'
+fi  # BEHIND != 0
 
-# 4b. SCHEMAS. The pull deliberately does not recurse (a submodule fetch would need
-# GitHub, which prod cannot reach), so a commit that MOVES a schema pointer lands the
-# pointer and not the files. That is not cosmetic: on 2026-09-05 prod's PEAS working
-# tree was the commit before the one that gave provenance its verification vocabulary,
-# so prod rejected 44,156 TAS records that validate everywhere else, and `git status`
-# in the submodule reported 2,623 lines of "local modifications" that were nothing of
-# the kind — just an old pointer describing a newer tree.
-#
-# Prod already HAS the objects (they travel inside the superproject's bundle), so the
-# checkout is local and needs no network. Reported, never forced: a submodule whose
-# tree genuinely differs from what the pointer names is a person's business, not a
-# deploy script's, and this stops rather than overwriting it.
-say "4b. Schemas: are prod's submodule trees the ones this commit names?"
-for SM in $(R "git config --file .gitmodules --get-regexp path | awk '{print \$2}'"); do
-    STATUS=$(R "git submodule status --cached $SM 2>/dev/null | cut -c1")
-    [ "$STATUS" = " " ] && continue
-    WANT=$(R "git ls-tree HEAD $SM | awk '{print \$3}'")
-    [ -z "$WANT" ] && continue
-    if R "cd $SM && git cat-file -e $WANT 2>/dev/null"; then
-        if R "cd $SM && git diff --quiet && git diff --cached --quiet"; then
-            R "cd $SM && git checkout -q $WANT" && echo "    $SM -> $WANT"
-        elif R "cd $SM && git diff --quiet $WANT --"; then
-            # The FILES are already the ones the pointer names; only HEAD lags.
-            # Moving it changes no content, so this is safe and it is the common
-            # shape of the drift (someone copied the schemas, nobody moved the ref).
-            R "cd $SM && git checkout -q $WANT" && echo "    $SM -> $WANT (files already matched)"
-        else
-            echo "    $SM: SKIPPED — the working tree has changes the pointer does not"
-            echo "      explain. Inspect before syncing:  git -C $SM diff"
-        fi
-    else
-        echo "    $SM: SKIPPED — prod does not have commit $WANT"
-    fi
+say "4b. Schemas -> origin/main"
+for SM in $DRIFT; do
+    REV=$(git -C "$SCHEMA_SRC/$SM" rev-parse --short origin/main)
+    TAR="/tmp/schemas_${SM}_${REV}.tar"
+    git -C "$SCHEMA_SRC/$SM" archive -o "$TAR" origin/main schemas
+    scp -q -i "$SSH_KEY" -o StrictHostKeyChecking=no "$TAR" "$PROD_HOST:$TAR"
+    ROOT "chown alf $TAR"
+    RS "$SM" "$TAR" <<'EOS'
+set -e
+cd "$1"
+rm -rf schemas.incoming && mkdir schemas.incoming
+tar -xf "$2" -C schemas.incoming
+rm -rf schemas.prev && mv schemas schemas.prev && mv schemas.incoming/schemas schemas
+rmdir schemas.incoming && rm -f "$2"
+EOS
+    rm -f "$TAR"
+    echo "    $SM/schemas -> origin/main $REV (previous tree kept as $SM/schemas.prev)"
 done
+if [ -n "$DRIFT" ]; then
+    STILL=$(schema_drift)
+    if [ -n "$STILL" ]; then echo "ABORT: schemas still differ from origin/main after sync: $STILL" >&2; exit 1; fi
+    echo "    verified: every schema tree now matches origin/main blob-for-blob"
+fi
 
 say "5. Restart"
 ROOT 'supervisorctl restart heaviside' || true
